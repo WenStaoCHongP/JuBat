@@ -52,6 +52,11 @@
     rs::Float64 = 0
     as::Float64 = 0
     sig::Float64 = 0
+    # Mechanical/thermal properties for stress
+    E::Float64 = 0            # Young's modulus [Pa]
+    nu::Float64 = 0           # Poisson's ratio [-]
+    alphaT::Float64 = 0       # Thermal expansion coefficient [1/K]
+    Omega::Float64 = 0        # Partial molar volume [m^3/mol]
     Eac_D::Float64 = 0
     Eac_k::Float64 = 0
     alpha::Float64 = 0
@@ -112,12 +117,30 @@ end
     h::Float64 = 0
     T0::Float64 = 298.
     T_amb::Float64 = 0
+    # Jellyroll geometry (optional)
+    Rin::Float64 = 0.0
+    Rout::Float64 = 0.0
+    height::Float64 = 0.0
+    # Effective thermal conductivities for jellyroll (optional)
+    lambda_r::Float64 = 0.0
+    lambda_t::Float64 = 0.0
+    # Thermal mesh divisions for jellyroll top-view (optional)
+    Nr_th::Int = 0
+    Nθ_th::Int = 0
+    n_windings::Int = 0
 end
 
 @with_kw mutable struct Tab
     length::Float64 = 0
     width::Float64 = 0
     area::Float64 = 0
+    # Jellyroll terminal tabs (customizable)
+    n_pos::Int = 1              # number of positive tabs (PCC, top by default)
+    n_neg::Int = 1              # number of negative tabs (NCC, bottom by default)
+    theta_pos::Vector{Float64} = [0.0]    # angles (rad) on circumference for positive tabs
+    theta_neg::Vector{Float64} = [pi]     # angles (rad) for negative tabs
+    side_pos::Symbol = :top     # :top or :bottom
+    side_neg::Symbol = :bottom  # :top or :bottom
 end
 # param_dim.Tab.width = 0.75 * param_dim.Tab.length  
 # param_dim.Tab.area = param_dim.Tab.length * param_dim.Tab.width
@@ -151,6 +174,15 @@ end
     k_n::Float64 = 0
     I_typ::Float64 = 0
     R_cell::Float64 = 0
+    E_n::Float64 = 0
+    E_p::Float64 = 0
+    # --- Thermal scaling (Scheme B) ---
+    L_th::Float64 = 0          # characteristic thermal length
+    k_th::Float64 = 0          # reference thermal conductivity
+    rho_c_th::Float64 = 0      # reference volumetric heat capacity (rho * cp)
+    t_th::Float64 = 0          # thermal diffusion time scale rho_c_th L_th^2 / k_th
+    q_th::Float64 = 0          # reference volumetric heat source k_th*T_ref/L_th^2
+    h_th::Float64 = 0          # Biot number reference (h*L_th/k_th)
 end
 
 @with_kw mutable struct Params
@@ -178,6 +210,12 @@ function ChooseCell(CellType::String="LG M50")
         include("../src/parameters/LGM50.jl") # pathof(JuBat)
     elseif CellType == "Northrop"
         include("../src/parameters/Northrop.jl") # pathof(JuBat)
+    elseif CellType == "Enertech"
+        include("../src/parameters/Enertech.jl") # pathof(JuBat)
+    elseif CellType == "Jellyroll"
+        include(joinpath(@__DIR__, "parameters", "Jellyroll.jl"))
+    elseif CellType == "ThermalMinimal"
+        include(joinpath(@__DIR__, "parameters", "ThermalMinimal.jl"))
     end
     param_dim.PE.eps_s = 1 - param_dim.PE.eps - param_dim.PE.eps_fi
     param_dim.NE.eps_s = 1 - param_dim.NE.eps - param_dim.NE.eps_fi
@@ -215,9 +253,26 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.cp_max = param_dim.PE.cs_max
     param_dim.scale.cn_max = param_dim.NE.cs_max
     param_dim.scale.ce = param_dim.EL.ce0
+    param_dim.scale.E_n = param_dim.NE.cs_max * param_dim.scale.R * param_dim.scale.T_ref
+    param_dim.scale.E_p = param_dim.PE.cs_max * param_dim.scale.R * param_dim.scale.T_ref
     param_dim.scale.k_p = param_dim.scale.j / param_dim.PE.cs_max / sqrt(param_dim.EL.ce0)
     param_dim.scale.k_n = param_dim.scale.j / param_dim.NE.cs_max / sqrt(param_dim.EL.ce0)
     param_dim.scale.R_cell = param_dim.scale.phi / param_dim.scale.I_typ
+
+    # ---------------- Thermal scaling (Scheme B) ----------------
+    # Characteristic thermal length: use outer radius if available, else max(length,width) or L
+    L_th = param_dim.cell.Rout
+    k_ref = param_dim.PE.lambda > 0 ? param_dim.PE.lambda : (param_dim.NE.lambda > 0 ? param_dim.NE.lambda : 1.0)
+    rho_c_ref = param_dim.cell.rho * param_dim.cell.heat_Q
+    q_ref = k_ref * param_dim.scale.T_ref / L_th^2
+    t_th = rho_c_ref * L_th^2 / k_ref
+    h_ref = param_dim.cell.h * L_th / k_ref  # Biot number (dimensionless h)
+    param_dim.scale.L_th = L_th
+    param_dim.scale.k_th = k_ref
+    param_dim.scale.rho_c_th = rho_c_ref
+    param_dim.scale.q_th = q_ref
+    param_dim.scale.t_th = t_th
+    param_dim.scale.h_th = h_ref
     return param_dim
 end
 
@@ -242,8 +297,13 @@ function NormaliseParam(param_dim::Params)
     param.PE.k = param_dim.PE.k / param.scale.k_p
     param.PE.rs = param_dim.PE.rs / param.scale.r0
     param.PE.sig = param_dim.PE.sig / param.scale.sig
-    param.PE.U = x-> param_dim.PE.U(x) / param.scale.phi
-    param.PE.dUdT =x-> param_dim.PE.dUdT(x) / param.scale.phi * param.scale.T_ref
+    # copy mechanical/thermal expansion properties without scaling (kept in SI)
+    param.PE.E = param_dim.PE.E / param_dim.scale.E_p
+    param.PE.nu = param_dim.PE.nu
+    param.PE.alphaT = param_dim.PE.alphaT
+    param.PE.Omega = param_dim.PE.Omega * param_dim.PE.cs_max
+    param.PE.U = x-> Base.invokelatest(param_dim.PE.U, x) / param.scale.phi
+    param.PE.dUdT = x-> Base.invokelatest(param_dim.PE.dUdT, x) / param.scale.phi * param.scale.T_ref
     param.PE.as = param_dim.PE.as / param.scale.a0
     param.PE.Eac_D = param_dim.PE.Eac_D / param.scale.R / param.scale.T_ref
     param.PE.Eac_k = param_dim.PE.Eac_k / param.scale.R / param.scale.T_ref
@@ -260,8 +320,13 @@ function NormaliseParam(param_dim::Params)
     param.NE.k = param_dim.NE.k / param.scale.k_n
     param.NE.rs = param_dim.NE.rs / param.scale.r0
     param.NE.sig = param_dim.NE.sig / param.scale.sig
-    param.NE.U =x-> param_dim.NE.U(x) / param.scale.phi
-    param.NE.dUdT =x-> param_dim.NE.dUdT(x) / param.scale.phi * param.scale.T_ref
+    # copy mechanical/thermal expansion properties without scaling (kept in SI)
+    param.NE.E = param_dim.NE.E / param_dim.scale.E_n
+    param.NE.nu = param_dim.NE.nu
+    param.NE.alphaT = param_dim.NE.alphaT
+    param.NE.Omega = param_dim.NE.Omega * param_dim.NE.cs_max
+    param.NE.U = x-> Base.invokelatest(param_dim.NE.U, x) / param.scale.phi
+    param.NE.dUdT = x-> Base.invokelatest(param_dim.NE.dUdT, x) / param.scale.phi * param.scale.T_ref
     param.NE.as = param_dim.NE.as / param.scale.a0
     param.NE.Eac_D = param_dim.NE.Eac_D / param.scale.R / param.scale.T_ref
     param.NE.Eac_k = param_dim.NE.Eac_k / param.scale.R / param.scale.T_ref
@@ -280,13 +345,13 @@ function NormaliseParam(param_dim::Params)
     param.NCC.thickness = param_dim.NCC.thickness / param.scale.L
     param.NCC.sig = param_dim.NCC.sig / param.scale.sig
 
-    # electrolyte
-    param.EL.De = (x, y=1)-> param_dim.EL.De(x * param.scale.ce, y * param.scale.T_ref) / param.scale.De
-    param.EL.kappa = (x, y=1)-> param_dim.EL.kappa(x * param.scale.ce, y * param.scale.T_ref) / param.scale.kappa
+    # electrolyte (wrap with invokelatest to avoid world-age issues for closures from parameters)
+    param.EL.De = (x, y=1)-> Base.invokelatest(param_dim.EL.De, x * param.scale.ce, y * param.scale.T_ref) / param.scale.De
+    param.EL.kappa = (x, y=1)-> Base.invokelatest(param_dim.EL.kappa, x * param.scale.ce, y * param.scale.T_ref) / param.scale.kappa
     param.EL.tplus = param_dim.EL.tplus
     param.EL.ce0 = param_dim.EL.ce0 / param.scale.ce
 
-
+    
     # cell
     param.cell.cooling_surface = param_dim.cell.cooling_surface / param_dim.cell.area
     param.cell.h = param_dim.cell.h * param_dim.cell.area * param.scale.T_ref / param.scale.phi / param.scale.I_typ

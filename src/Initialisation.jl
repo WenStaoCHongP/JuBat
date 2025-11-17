@@ -32,6 +32,17 @@ function ModelInitialisation(case::Case)
         end
         if case.opt.thermalmodel == "lumped"
             y0 =[y0; case.param.cell.T0]
+        elseif case.opt.thermalmodel == "distributed1D"
+            # 预留：若未来加入 1D 分布式热网格，可在此追加 DOF
+            # 当前无实现
+        elseif case.opt.thermalmodel == "distributed2D"
+            # 将二维分布式热的节点温度自由度追加到主状态向量，
+            # 以便在时间推进中与电化学自由度一起求解（与 lumped 一致）。
+            if haskey(case.mesh, "thermal2D")
+                nT = case.mesh["thermal2D"].nlen
+                T0_nodes = fill(case.param.cell.T0, nT)
+                y0 = [y0; T0_nodes]
+            end
         end
         if case.opt.model == "P2D"
             y0 =[y0; phis_n; phis_p; phie0]

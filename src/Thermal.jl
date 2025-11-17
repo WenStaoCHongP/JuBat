@@ -1,3 +1,16 @@
+"""
+    Thermal model type hierarchy (Phase A)
+    - ThermalModel: abstract base type for all thermal models
+    - ThermalLumpedModel: lumped-capacitance model marker
+    - ThermalDistributed1DModel / ThermalDistributed2DModel: distributed models markers
+    These model types will be used for dispatch in later phases.
+"""
+abstract type ThermalModel end
+
+struct ThermalLumpedModel <: ThermalModel end
+struct ThermalDistributed1DModel <: ThermalModel end
+struct ThermalDistributed2DModel <: ThermalModel end
+
 function ThermalLumped(case::Case, variables::Dict{String, Union{Array{Float64},Float64}})
     param = case.param
     t = variables["time"]
