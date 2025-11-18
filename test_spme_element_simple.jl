@@ -28,11 +28,10 @@ opt.thermalmodel = "none"
 case = JuBat.SetCase(param_dim, opt)
 println("✓ 案例创建成功")
 
-# 初始化
-yt0_raw = JuBat.ModelInitialisation(case)
-# 确保是向量形式
-yt0 = isa(yt0_raw, Vector) ? yt0_raw : vec(yt0_raw)
+# 初始化（可能是矩阵，SPMe_element会自动处理）
+yt0 = JuBat.ModelInitialisation(case)
 println("✓ 初始化完成，状态向量长度: $(length(yt0))")
+println("  类型: $(typeof(yt0))")
 
 # 测试1: 基本调用
 println("\n[测试1] 基本调用...")

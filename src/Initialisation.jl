@@ -2,17 +2,17 @@ function ModelInitialisation(case::Case)
     if isempty(case.opt.y0)
         if case.opt.model == "SPM"
             Nrn = case.mesh["negative particle"].nlen
-            csn0 = ones(Float64, Nrn) * case.param.NE.cs0
+            csn0 = ones(Float64, Nrn, 1) * case.param.NE.cs0
             Nrp = case.mesh["positive particle"].nlen
-            csp0 = ones(Float64, Nrp) * case.param.PE.cs0
+            csp0 = ones(Float64, Nrp, 1) * case.param.PE.cs0
             y0 = [csn0;  csp0]
         elseif case.opt.model == "SPMe"
             Nrn = case.mesh["negative particle"].nlen
-            csn0 = ones(Float64, Nrn) *  case.param.NE.cs0
+            csn0 = ones(Float64, Nrn, 1) *  case.param.NE.cs0
             Nrp = case.mesh["positive particle"].nlen
-            csp0 = ones(Float64, Nrp) *  case.param.PE.cs0
+            csp0 = ones(Float64, Nrp, 1) *  case.param.PE.cs0
             Ne = case.mesh["electrolyte"].nlen
-            ce0 = ones(Float64, Ne) *  case.param.EL.ce0
+            ce0 = ones(Float64, Ne, 1) *  case.param.EL.ce0
             y0 = [csn0;  csp0; ce0]
         elseif case.opt.model == "P2D"
             Nrn = case.mesh["negative particle"].nlen
@@ -20,12 +20,12 @@ function ModelInitialisation(case::Case)
             Ne = case.mesh["electrolyte"].nlen
             Nn = case.mesh["negative electrode"].nlen
             Np = case.mesh["positive electrode"].nlen
-            csn0 = ones(Float64, Nrn) * case.param.NE.cs0
-            csp0 = ones(Float64, Nrp) * case.param.PE.cs0
-            ce0 = ones(Float64, Ne) * case.param.EL.ce0
-            phie0 = - ones(Float64, Ne) * case.param.NE.U(case.param.NE.cs0)
-            phis_p =  ones(Float64, Nn) * case.param.PE.U(case.param.PE.cs0) .+ phie0[1] # guessed values are not used
-            phis_n = zeros(Float64, Np)
+            csn0 = ones(Float64, Nrn, 1) * case.param.NE.cs0
+            csp0 = ones(Float64, Nrp, 1) * case.param.PE.cs0
+            ce0 = ones(Float64, Ne, 1) * case.param.EL.ce0
+            phie0 = - ones(Float64, Ne, 1) * case.param.NE.U(case.param.NE.cs0)
+            phis_p =  ones(Float64, Nn, 1) * case.param.PE.U(case.param.PE.cs0) .+ phie0[1] # guessed values are not used
+            phis_n = zeros(Float64, Np, 1)
             y0 = [csn0;  csp0; ce0]
         else
             error( "Error: $(case.opt.model{1}) model has not been implemented!\n ")
@@ -50,8 +50,7 @@ function ModelInitialisation(case::Case)
     else
         y0 = case.opt.y0 
     end
-    # 确保返回向量（而非矩阵）
-    return vec(y0)
+    return y0
 end
 
 
@@ -251,7 +250,10 @@ yt_5 = MultiSPMe_extract_element_state(y0, 5, case)
 M_e, K_e, F_e, vars_e = SPMe_element(case, yt_5, t, 5; I_e=I_e[5], T_e=T_e[5])
 ```
 """
-function MultiSPMe_extract_element_state(y::Vector{Float64}, e::Int, case::Case)
+function MultiSPMe_extract_element_state(y::Array{Float64}, e::Int, case::Case)
+    # 自动转换为向量（兼容矩阵输入）
+    y_vec = vec(y)
+    
     if !haskey(case, :multi_spme_layout)
         error("case.multi_spme_layout not found. Did you call ModelInitialisation_MultiSPMe?")
     end
@@ -265,7 +267,7 @@ function MultiSPMe_extract_element_state(y::Vector{Float64}, e::Int, case::Case)
     end
     
     offset = (e - 1) * n_chem
-    yt_e = y[(offset + 1):(offset + n_chem)]
+    yt_e = y_vec[(offset + 1):(offset + n_chem)]
     
     return yt_e
 end
@@ -290,7 +292,10 @@ y0 = ModelInitialisation_MultiSPMe(case)
 T_nodes = MultiSPMe_get_thermal_dofs(y0, case)
 ```
 """
-function MultiSPMe_get_thermal_dofs(y::Vector{Float64}, case::Case)
+function MultiSPMe_get_thermal_dofs(y::Array{Float64}, case::Case)
+    # 自动转换为向量（兼容矩阵输入）
+    y_vec = vec(y)
+    
     if !haskey(case, :multi_spme_layout)
         error("case.multi_spme_layout not found. Did you call ModelInitialisation_MultiSPMe?")
     end
@@ -298,7 +303,7 @@ function MultiSPMe_get_thermal_dofs(y::Vector{Float64}, case::Case)
     layout = case.multi_spme_layout
     thermal_range = layout["thermal_range"]
     
-    T_nodes = y[thermal_range]
+    T_nodes = y_vec[thermal_range]
     
     return T_nodes
 end

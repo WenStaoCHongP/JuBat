@@ -36,7 +36,7 @@ end
 
 
 """
-    SPMe_element(case::Case, yt_e::Vector{Float64}, t::Float64, e::Int; 
+    SPMe_element(case::Case, yt_e::Array{Float64}, t::Float64, e::Int; 
                  I_e::Float64, T_e::Float64, jacobi::String="update")
 
 为单个热单元求解SPMe模型（多SPMe并行架构）。
@@ -46,9 +46,10 @@ end
 
 # 参数
 - `case::Case`: 全局案例对象（包含参数、网格等）
-- `yt_e::Vector{Float64}`: 该单元的局部电化学状态向量
+- `yt_e::Array{Float64}`: 该单元的局部电化学状态向量（接受向量或矩阵）
   - 结构: [cn_surf[1:Nrn]; cp_surf[1:Nrp]; ce[1:Nel]]
   - 长度: Nrn + Nrp + Nel（与全局SPMe的yt长度相同）
+  - 注：自动转换为向量，兼容 ModelInitialisation 返回的矩阵形式
 - `t::Float64`: 当前时间（无量纲，相对 t0）
 - `e::Int`: 单元编号（用于调试和日志）
 - `I_e::Float64`: 该单元的无量纲电流（由分流求解器提供，相对 I_typ）
@@ -67,17 +68,18 @@ end
 3. 返回的 M_e, K_e, F_e 用于全局装配时的 blockdiag 操作
 4. 如果 jacobi="constant"，会复用 case.param.NE.M_d 等缓存矩阵
    （注意：多线程并行时应使用 jacobi="update" 避免竞争）
+5. yt_e 可以是向量或矩阵（列向量），函数内部自动转换
 
 # 示例
 ```julia
-# 初始化单元状态（可从全局初始化复制）
-yt_e = ModelInitialisation(case)
+# 初始化单元状态（可从全局初始化复制，可能是矩阵）
+yt_e = ModelInitialisation(case)  # 可能返回 Matrix{Float64}
 
 # 单元电流和温度（由外部提供）
 I_e = 1.0  # 1C放电
 T_e = 1.02  # 略高于参考温度
 
-# 求解该单元的电化学响应
+# 求解该单元的电化学响应（自动处理矩阵输入）
 M_e, K_e, F_e, vars_e = SPMe_element(case, yt_e, 0.0, 1; I_e=I_e, T_e=T_e)
 
 # 提取单元电压
@@ -90,11 +92,14 @@ V_e = vars_e["cell voltage"]
 - 电流大的单元: 锂离子消耗快，浓度下降快
 - 这种架构真实反映了空间异质性，适用于温度分布显著的场景
 """
-function SPMe_element(case::Case, yt_e::Vector{Float64}, t::Float64, e::Int; 
+function SPMe_element(case::Case, yt_e::Array{Float64}, t::Float64, e::Int; 
                       I_e::Float64, T_e::Float64, jacobi::String="update")
+    # 0) 确保 yt_e 是向量（兼容 ModelInitialisation 返回的列向量矩阵）
+    yt_e_vec = vec(yt_e)
+    
     # 1) 调用 SPMe_variables，覆写 I_app 和 T_e
-    # 这里 yt_e 是该单元的局部状态向量，SPMe_variables 会从中提取浓度场
-    variables_e = SPMe_variables(case, yt_e, t; I_app=I_e, T_e=T_e)
+    # 这里 yt_e_vec 是该单元的局部状态向量，SPMe_variables 会从中提取浓度场
+    variables_e = SPMe_variables(case, yt_e_vec, t; I_app=I_e, T_e=T_e)
     
     # 2) 力学耦合（如果启用）
     if case.opt.mechanicalmodel == "full"
