@@ -29,7 +29,7 @@ function SPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
     M_el = M_el .* param.scale.te / case.param_dim.scale.t0 
     F = SPMe_BC(case, variables)
     M = blockdiag(M_np, M_pp, M_el)
-    K = blockdiag(K_np, K_np, K_el)
+    K = blockdiag(K_np, K_pp, K_el)  # 修复：第二个应该是 K_pp，不是 K_np
 
     return M, K, F, variables
 end
