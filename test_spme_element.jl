@@ -56,7 +56,9 @@ println("    - Nrn=$(case.opt.Nrn), Nrp=$(case.opt.Nrp)")
 println("    - 电极单元: Nn=$(case.opt.Nn), Ns=$(case.opt.Ns), Np=$(case.opt.Np)")
 
 # 初始化状态向量
-yt0 = ModelInitialisation(case)
+yt0_raw = ModelInitialisation(case)
+# 确保是向量形式（如果是矩阵则转换）
+yt0 = isa(yt0_raw, Vector) ? yt0_raw : vec(yt0_raw)
 println("  ✓ 初始状态向量长度: $(length(yt0))")
 
 # ============================================================================
