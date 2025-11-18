@@ -6,8 +6,25 @@ function Solve(case::Case)
     t0 = RunTime[1] 
     t_end = RunTime[end]
     
-    # initialisation 
-    y0 = ModelInitialisation(case) 
+    # initialisation（根据模式选择初始化函数）
+    multi_spme_enabled = (
+        case.opt.model == "SPMe" &&
+        hasproperty(case.opt, :per_element_spme) && case.opt.per_element_spme &&
+        case.opt.thermalmodel == "distributed2D" &&
+        haskey(case.mesh, "thermal2D")
+    )
+    
+    if multi_spme_enabled
+        y0 = ModelInitialisation_MultiSPMe(case)
+        if hasproperty(case.opt, :debug_multi_spme) && case.opt.debug_multi_spme
+            println("[Solve] 多SPMe模式：状态向量维度 = $(length(y0))")
+            layout = case.multi_spme_layout
+            println("  ne = $(layout["ne"]), n_chem = $(layout["n_chem"]), nT = $(layout["nT"])")
+        end
+    else
+        y0 = ModelInitialisation(case)
+    end
+    
     if case.opt.solveType == "Crank-Nicolson"
         theta = 0.5 
     elseif case.opt.solveType == "forward"
