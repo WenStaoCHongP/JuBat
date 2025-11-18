@@ -104,11 +104,24 @@ println("    ‖M_global - M_elem‖ = $(norm_M_diff)")
 println("    ‖K_global - K_elem‖ = $(norm_K_diff)")
 println("    ‖F_global - F_elem‖ = $(norm_F_diff)")
 
+# 检查NaN
+if isnan(norm_K_diff)
+    println("  ⚠ K矩阵包含NaN，检查详情:")
+    println("    K_global有NaN: $(any(isnan.(Matrix(K_global))))")
+    println("    K_elem有NaN: $(any(isnan.(Matrix(K_elem))))")
+end
+if isnan(norm_F_diff)
+    println("  ⚠ F向量包含NaN，检查详情:")
+    println("    F_global有NaN: $(any(isnan.(F_global)))")
+    println("    F_elem有NaN: $(any(isnan.(F_elem)))")
+end
+
 tol = 1e-10
-if norm_M_diff < tol && norm_K_diff < tol && norm_F_diff < tol
+if !isnan(norm_M_diff) && !isnan(norm_K_diff) && !isnan(norm_F_diff) &&
+   norm_M_diff < tol && norm_K_diff < tol && norm_F_diff < tol
     println("  ✓ 矩阵数值一致（误差 < $(tol)）")
 else
-    println("  ⚠ 矩阵数值有差异")
+    println("  ⚠ 矩阵数值有差异或包含NaN")
 end
 
 # 比较关键变量
@@ -116,7 +129,7 @@ key_vars = ["cell voltage", "negative electrode overpotential", "positive electr
             "negative electrode interfacial current density", "positive electrode interfacial current density"]
 
 println("  关键变量对比:")
-all_vars_match = true
+local all_vars_match = true  # 明确声明为局部变量
 for var_name in key_vars
     if haskey(vars_global, var_name) && haskey(vars_elem, var_name)
         val_global = vars_global[var_name]
