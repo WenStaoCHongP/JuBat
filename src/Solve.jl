@@ -45,12 +45,14 @@ function Solve(case::Case)
     vt = 2  
     v = 1 
     
-    # DEBUG: 检查初始状态向量
-    println("\n[DEBUG] Solve: 检查初始状态向量 y0")
-    println("  长度: $(length(y0))")
+    # DEBUG: 检查初始状态向量（只在有问题时打印）
     nan_in_y0 = sum(.!isfinite.(y0))
     if nan_in_y0 > 0
-        println("  ⚠️  包含 $nan_in_y0 个 NaN/Inf！")
+        println("\n" * "="^80)
+        println("❌ [DEBUG] 初始状态向量 y0 包含 NaN/Inf！")
+        println("="^80)
+        println("  长度: $(length(y0))")
+        println("  NaN/Inf 数量: $nan_in_y0")
         if multi_spme_enabled
             layout = case.multi_spme_layout
             ne = layout["ne"]
@@ -63,16 +65,7 @@ function Solve(case::Case)
             println("  化学部分: $nan_chem / $(length(chem_range))")
             println("  热部分: $nan_thermal / $(length(thermal_range))")
         end
-    else
-        println("  ✓ 初始状态向量正常")
-        if multi_spme_enabled
-            layout = case.multi_spme_layout
-            nT = layout["nT"]
-            n_total = layout["n_total"]
-            T_part = y0[(n_total - nT + 1):n_total]
-            T_mean_init = sum(T_part) / length(T_part)
-            println("  初始温度均值: $T_mean_init")
-        end
+        println("="^80 * "\n")
     end
     
     M_old, K_old, F_old, variables, y_phi= CallModel(case, y0, t, jacobi="update") 
@@ -358,46 +351,54 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 提取热场
     T_nodes = MultiSPMe_get_thermal_dofs(yt, case)
     
-    # DEBUG: 无条件打印温度场基本信息
-    println("\n[DEBUG] 温度场基本信息 (时间 t=$t):")
-    println("  T_nodes 长度: $(length(T_nodes))")
+    # DEBUG: 温度场检查（简洁模式，只在异常时详细打印）
     if length(T_nodes) > 0
         T_min = minimum(T_nodes)
         T_max = maximum(T_nodes)
         T_mean = sum(T_nodes) / length(T_nodes)
-        println("  T_nodes 范围: [$T_min, $T_max]")
-        println("  T_nodes 均值: $T_mean")
         
         # 检查异常值
         nan_count_here = sum(.!isfinite.(T_nodes))
         abnormal_count = sum(abs.(T_nodes) .> 10.0)  # 无量纲温度应该接近1
-        negative_count = sum(T_nodes .< 0.0)
+        large_deviation_count = sum(abs.(T_nodes .- 1.0) .> 5.0)  # 偏离1.0超过5
         
-        if nan_count_here == length(T_nodes)
-            println("  ❌ 所有 T_nodes 都是 NaN/Inf！")
-        elseif nan_count_here > 0
-            println("  ⚠️  有 $nan_count_here 个 NaN/Inf 节点")
-        elseif abnormal_count > 0
-            println("  ⚠️  有 $abnormal_count 个异常值（|T| > 10）")
-            println("  T_nodes 前5个: $(T_nodes[1:min(5,length(T_nodes))])")
-            println("  T_nodes 后5个: $(T_nodes[max(1,end-4):end])")
+        # 只在异常时详细打印
+        if nan_count_here > 0 || abnormal_count > 0 || large_deviation_count > 0
+            println("\n" * "="^80)
+            println("⚠️  [DEBUG] 温度场异常！时间 t=$t")
+            println("="^80)
+            println("  T_nodes 长度: $(length(T_nodes))")
+            println("  T_nodes 范围: [$T_min, $T_max]")
+            println("  T_nodes 均值: $T_mean")
             
-            # 找出前5个异常节点
-            println("  前5个异常节点:")
-            count_print = 0
-            for i in 1:length(T_nodes)
-                if abs(T_nodes[i]) > 10.0 && count_print < 5
-                    count_print += 1
-                    println("    节点 $i: T = $(T_nodes[i])")
-                end
+            if nan_count_here == length(T_nodes)
+                println("  ❌ 所有 T_nodes 都是 NaN/Inf！")
+            elseif nan_count_here > 0
+                println("  ⚠️  有 $nan_count_here 个 NaN/Inf 节点")
             end
-        elseif negative_count > 0
-            println("  ⚠️  有 $negative_count 个负温度！")
-        else
-            println("  ✓ 温度场正常")
+            
+            if abnormal_count > 0
+                println("  ⚠️  有 $abnormal_count 个极端异常值（|T| > 10）")
+            end
+            
+            if large_deviation_count > 0
+                println("  ⚠️  有 $large_deviation_count 个大偏差值（|T-1| > 5）")
+            end
+            
+            println("\n  前10个和后10个节点温度:")
+            println("  前10个: $(T_nodes[1:min(10,length(T_nodes))])")
+            println("  后10个: $(T_nodes[max(1,end-9):end])")
+            
+            # 找出前10个最异常的节点
+            println("\n  前10个最异常节点:")
+            deviations = abs.(T_nodes .- 1.0)
+            sorted_indices = sortperm(deviations, rev=true)
+            for i in 1:min(10, length(sorted_indices))
+                idx = sorted_indices[i]
+                println("    节点 $idx: T = $(T_nodes[idx]), 偏差 = $(deviations[idx])")
+            end
+            println("="^80 * "\n")
         end
-    else
-        println("  ⚠️  错误：T_nodes 为空！")
     end
     
     # 提取每个单元的电化学状态
@@ -619,23 +620,33 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     MT, KT, FT = ThermalDistributed2D(case, variables)
     t_ratio = case.param_dim.scale.t_th / case.param_dim.scale.t0
     
-    # DEBUG: 检查第一次调用时的热矩阵和参数
-    if t < 1e-6  # 只在第一次调用时打印
-        println("\n[DEBUG] 热矩阵装配信息:")
-        println("  时间尺度比 t_ratio = t_th/t0 = $t_ratio")
-        println("  t_th = $(case.param_dim.scale.t_th) s")
-        println("  t0 = $(case.param_dim.scale.t0) s")
-        println("  MT 维度: $(size(MT))")
-        println("  KT 维度: $(size(KT))")
-        println("  FT 长度: $(length(FT))")
-        println("  FT 范围: [$(minimum(FT)), $(maximum(FT))]")
-        println("  FT 均值: $(sum(FT)/length(FT))")
+    # DEBUG: 检查第一次调用时的热矩阵和参数（只在参数可疑时打印）
+    if t < 1e-6  # 只在第一次调用时检查
+        # 检查时间尺度是否合理
+        if t_ratio < 0.001 || t_ratio > 1000.0
+            println("\n" * "="^80)
+            println("⚠️  [DEBUG] 时间尺度比异常！")
+            println("="^80)
+            println("  t_ratio = t_th/t0 = $t_ratio")
+            println("  t_th = $(case.param_dim.scale.t_th) s")
+            println("  t0 = $(case.param_dim.scale.t0) s")
+            println("  建议：t_ratio 应在 [0.01, 100] 范围内")
+            println("="^80 * "\n")
+        end
         
-        # 检查热源
+        # 检查热源是否过大
         if haskey(variables, "heat_source_fields")
             q_elem = variables["heat_source_fields"]
-            println("  热源范围: [$(minimum(q_elem)), $(maximum(q_elem))]")
-            println("  热源均值: $(sum(q_elem)/length(q_elem))")
+            q_max = maximum(abs.(q_elem))
+            if q_max > 100.0
+                println("\n" * "="^80)
+                println("⚠️  [DEBUG] 无量纲热源过大！")
+                println("="^80)
+                println("  热源范围: [$(minimum(q_elem)), $(maximum(q_elem))]")
+                println("  热源均值: $(sum(q_elem)/length(q_elem))")
+                println("  建议：无量纲热源应在 [1e-6, 10] 范围内")
+                println("="^80 * "\n")
+            end
         end
     end
     

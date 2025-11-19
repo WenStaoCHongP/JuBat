@@ -396,8 +396,8 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
         C5 = R_EL + c_sigma
         coeffs[e] = (C1=C1, C2=C2, alpha_p=alpha_p, alpha_n=alpha_n, C5=C5)
         
-        # DEBUG: 只在预计算值正常但单元系数异常时才打印（避免重复）
-        if !has_nan_prefactor && (!isfinite(C1) || !isfinite(C2) || !isfinite(alpha_p) || !isfinite(alpha_n) || !isfinite(C5))
+        # DEBUG: 只在预计算值正常但单元系数异常时才打印（避免重复），且只打印第一个异常单元
+        if !has_nan_prefactor && (!isfinite(C1) || !isfinite(C2) || !isfinite(alpha_p) || !isfinite(alpha_n) || !isfinite(C5)) && e == 1
             println("\n" * "="^80)
             println("❌ [DEBUG] 单元 $e 的系数包含 NaN/Inf (但预计算值正常)")
             println("="^80)
