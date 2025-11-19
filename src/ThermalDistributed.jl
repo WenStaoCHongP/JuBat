@@ -272,9 +272,10 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64=0.0)
                     N1 = 0.5*(1 - s)
                     N2 = 0.5*(1 + s)
                     wt = h_coeff * w * (J / L_th)  # dL* 缩放
-                    ke11 += wt * (N1*N1)
-                    ke12 += wt * (N1*N2)
-                    ke22 += wt * (N2*N2)
+                    # 加负号以与体内扩散项的约定统一（KT 包含负号）
+                    ke11 += -wt * (N1*N1)
+                    ke12 += -wt * (N1*N2)
+                    ke22 += -wt * (N2*N2)
                     fe1  += wt * (T_amb * N1)
                     fe2  += wt * (T_amb * N2)
                 end
