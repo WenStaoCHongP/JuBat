@@ -441,7 +441,10 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64,
     
     # 7) 装配热学矩阵
     MT, KT, FT = ThermalDistributed2D(case, variables)
-    t_ratio = case.param_dim.scale.t0 / case.param_dim.scale.t_th
+    # 时间尺度转换：MT装配时基于热时间尺度t_th，主循环使用电化学时间尺度t0
+    # 有效质量矩阵：MT_eff = MT * (t_th/t0)，使得离散化为 [MT_eff/dt_nd]*dT = -KT*T + FT
+    # 其中dt_nd基于t0，而MT原本基于t_th，需要比值t_th/t0进行转换
+    t_ratio = case.param_dim.scale.t_th / case.param_dim.scale.t0  # 修复：t_th/t0（非t0/t_th）
     MT = MT .* t_ratio
     ThermalDistributed2D_BC(KT, FT, case, t)
     
@@ -556,9 +559,11 @@ function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
             end
             # 装配热学矩阵并施加边界条件
             MT, KT, FT = ThermalDistributed2D(case, variables)
-            # 时间尺度匹配：主求解器以 t0 为时间标尺，热模块以 t_th 为标尺，
-            # 将热质量矩阵按 t_ratio = t0/t_th 放大，使得 M_eff = MT * t_ratio。
-            t_ratio = case.param_dim.scale.t0 / case.param_dim.scale.t_th
+            # 时间尺度匹配：主求解器以 t0 为时间标尺，热模块以 t_th 为标尺
+            # MT装配时基于t_th，需要转换到t0时间尺度：MT_eff = MT * (t_th/t0)
+            # 物理意义：dt_nd = dt_SI/t0，而热方程需要dt_th = dt_SI/t_th = dt_nd*(t0/t_th)
+            # 因此 MT/dt_th = MT/(dt_nd*t0/t_th) = (MT*t_th/t0)/dt_nd
+            t_ratio = case.param_dim.scale.t_th / case.param_dim.scale.t0  # 修复：t_th/t0（非t0/t_th）
             MT = MT .* t_ratio
             ThermalDistributed2D_BC(KT, FT, case, t)
             # 拼接到主系统
