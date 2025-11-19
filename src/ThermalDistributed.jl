@@ -82,7 +82,17 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Flo
         ρc_cell_nd = (case.param_dim.cell.rho * case.param_dim.cell.heat_Q) / ρc_ref
         ρc_weights .= ρc_cell_nd .* (wJ ./ (L_th^2))
     end
-    MT = Assemble(Vi, Vj, Ni, Ni, ρc_weights, nnode)
+    # 装配一致质量矩阵
+    MT_consistent = Assemble(Vi, Vj, Ni, Ni, ρc_weights, nnode)
+    
+    # 使用集中质量矩阵（Lumped Mass Matrix）以保证离散最大值原理
+    # 原因：一致质量矩阵 + Crank-Nicolson 可能产生数值振荡，导致温度低于环境温度
+    # 集中化方法：行和对角化（Row-Sum Lumping）
+    row_sums = vec(sum(MT_consistent, dims=2))
+    MT = spdiagm(0 => row_sums)
+    
+    # 可选：如果需要更高精度，可以使用一致质量矩阵（需注意可能的振荡）
+    # MT = MT_consistent  # 取消注释使用一致质量矩阵（不推荐）
 
     # 刚度矩阵（各向异性/各向同性自适应）：KT = ∬ Bᵀ K B dΩ
     # 当可用 jellyroll 有效张量时采用各向异性；否则退化为各向同性 k_iso.
