@@ -208,18 +208,18 @@ function ModelInitialisation_MultiSPMe(case::Case; initial_soc_distribution::Uni
     # 7) 组装全局状态向量
     y0 = [y0_chem_all; T0_nodes]
     
-    # 8) 缓存状态向量结构信息（用于后续提取）
-    if !haskey(case, :multi_spme_layout)
-        case.multi_spme_layout = Dict{String, Any}()
-    end
-    case.multi_spme_layout["ne"] = ne
-    case.multi_spme_layout["n_chem"] = n_chem
-    case.multi_spme_layout["nT"] = nT
-    case.multi_spme_layout["n_total"] = length(y0)
-    case.multi_spme_layout["chem_range"] = 1:(ne * n_chem)
-    case.multi_spme_layout["thermal_range"] = (ne * n_chem + 1):(ne * n_chem + nT)
+    # 8) 设置标志并返回布局信息（不存储在case中）
+    case.opt.per_element_spme = true
     
-    return y0
+    # 返回布局信息（作为返回值，不存储在case中）
+    layout = Dict{String, Int64}(
+        "ne" => ne,
+        "n_chem" => n_chem,
+        "nT" => nT,
+        "n_total" => length(y0)
+    )
+    
+    return y0, layout  # 返回元组
 end
 
 
@@ -250,17 +250,9 @@ yt_5 = MultiSPMe_extract_element_state(y0, 5, case)
 M_e, K_e, F_e, vars_e = SPMe_element(case, yt_5, t, 5; I_e=I_e[5], T_e=T_e[5])
 ```
 """
-function MultiSPMe_extract_element_state(y::Array{Float64}, e::Int, case::Case)
+function MultiSPMe_extract_element_state(y::Array{Float64}, e::Int, ne::Int, n_chem::Int)
     # 自动转换为向量（兼容矩阵输入）
     y_vec = vec(y)
-    
-    if !haskey(case, :multi_spme_layout)
-        error("case.multi_spme_layout not found. Did you call ModelInitialisation_MultiSPMe?")
-    end
-    
-    layout = case.multi_spme_layout
-    ne = layout["ne"]
-    n_chem = layout["n_chem"]
     
     if e < 1 || e > ne
         error("Element index $e out of range [1, $ne]")
@@ -292,18 +284,12 @@ y0 = ModelInitialisation_MultiSPMe(case)
 T_nodes = MultiSPMe_get_thermal_dofs(y0, case)
 ```
 """
-function MultiSPMe_get_thermal_dofs(y::Array{Float64}, case::Case)
+function MultiSPMe_get_thermal_dofs(y::Array{Float64}, ne::Int, n_chem::Int)
     # 自动转换为向量（兼容矩阵输入）
     y_vec = vec(y)
     
-    if !haskey(case, :multi_spme_layout)
-        error("case.multi_spme_layout not found. Did you call ModelInitialisation_MultiSPMe?")
-    end
-    
-    layout = case.multi_spme_layout
-    thermal_range = layout["thermal_range"]
-    
-    T_nodes = y_vec[thermal_range]
+    idx_start = ne * n_chem + 1
+    T_nodes = y_vec[idx_start:end]
     
     return T_nodes
 end
@@ -332,15 +318,7 @@ yt_e_new = time_step_solve(yt_e, ...)
 MultiSPMe_update_element_state!(y_new, e, yt_e_new, case)
 ```
 """
-function MultiSPMe_update_element_state!(y::Vector{Float64}, e::Int, yt_e::Vector{Float64}, case::Case)
-    if !haskey(case, :multi_spme_layout)
-        error("case.multi_spme_layout not found. Did you call ModelInitialisation_MultiSPMe?")
-    end
-    
-    layout = case.multi_spme_layout
-    ne = layout["ne"]
-    n_chem = layout["n_chem"]
-    
+function MultiSPMe_update_element_state!(y::Vector{Float64}, e::Int, yt_e::Vector{Float64}, ne::Int, n_chem::Int)
     if e < 1 || e > ne
         error("Element index $e out of range [1, $ne]")
     end
@@ -373,20 +351,16 @@ T_nodes_new = thermal_solve(T_nodes, ...)
 MultiSPMe_update_thermal_dofs!(y_new, T_nodes_new, case)
 ```
 """
-function MultiSPMe_update_thermal_dofs!(y::Vector{Float64}, T_nodes::Vector{Float64}, case::Case)
-    if !haskey(case, :multi_spme_layout)
-        error("case.multi_spme_layout not found. Did you call ModelInitialisation_MultiSPMe?")
+function MultiSPMe_update_thermal_dofs!(y::Vector{Float64}, T_nodes::Vector{Float64}, ne::Int, n_chem::Int)
+    nT = length(T_nodes)
+    idx_start = ne * n_chem + 1
+    idx_end = ne * n_chem + nT
+    
+    if idx_end != length(y)
+        error("T_nodes length ($nT) doesn't match thermal DOFs in y ($(length(y) - ne * n_chem))")
     end
     
-    layout = case.multi_spme_layout
-    nT = layout["nT"]
-    thermal_range = layout["thermal_range"]
-    
-    if length(T_nodes) != nT
-        error("T_nodes length ($(length(T_nodes))) must equal nT ($nT)")
-    end
-    
-    y[thermal_range] .= T_nodes
+    y[idx_start:idx_end] .= T_nodes
     
     return nothing
 end
