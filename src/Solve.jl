@@ -359,7 +359,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     T_nodes = MultiSPMe_get_thermal_dofs(yt, case)
     
     # DEBUG: 无条件打印温度场基本信息
-    println("\n[DEBUG] 温度场基本信息:")
+    println("\n[DEBUG] 温度场基本信息 (时间 t=$t):")
     println("  T_nodes 长度: $(length(T_nodes))")
     if length(T_nodes) > 0
         T_min = minimum(T_nodes)
@@ -367,15 +367,34 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         T_mean = sum(T_nodes) / length(T_nodes)
         println("  T_nodes 范围: [$T_min, $T_max]")
         println("  T_nodes 均值: $T_mean")
-        println("  T_nodes 前5个: $(T_nodes[1:min(5,length(T_nodes))])")
-        println("  T_nodes 后5个: $(T_nodes[max(1,end-4):end])")
         
-        # 检查是否全是 NaN
+        # 检查异常值
         nan_count_here = sum(.!isfinite.(T_nodes))
+        abnormal_count = sum(abs.(T_nodes) .> 10.0)  # 无量纲温度应该接近1
+        negative_count = sum(T_nodes .< 0.0)
+        
         if nan_count_here == length(T_nodes)
-            println("  ⚠️  警告：所有 T_nodes 都是 NaN/Inf！")
+            println("  ❌ 所有 T_nodes 都是 NaN/Inf！")
         elseif nan_count_here > 0
-            println("  ⚠️  警告：有 $nan_count_here 个 NaN/Inf 节点")
+            println("  ⚠️  有 $nan_count_here 个 NaN/Inf 节点")
+        elseif abnormal_count > 0
+            println("  ⚠️  有 $abnormal_count 个异常值（|T| > 10）")
+            println("  T_nodes 前5个: $(T_nodes[1:min(5,length(T_nodes))])")
+            println("  T_nodes 后5个: $(T_nodes[max(1,end-4):end])")
+            
+            # 找出前5个异常节点
+            println("  前5个异常节点:")
+            count_print = 0
+            for i in 1:length(T_nodes)
+                if abs(T_nodes[i]) > 10.0 && count_print < 5
+                    count_print += 1
+                    println("    节点 $i: T = $(T_nodes[i])")
+                end
+            end
+        elseif negative_count > 0
+            println("  ⚠️  有 $negative_count 个负温度！")
+        else
+            println("  ✓ 温度场正常")
         end
     else
         println("  ⚠️  错误：T_nodes 为空！")
@@ -599,6 +618,27 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 7) 装配热学矩阵
     MT, KT, FT = ThermalDistributed2D(case, variables)
     t_ratio = case.param_dim.scale.t_th / case.param_dim.scale.t0
+    
+    # DEBUG: 检查第一次调用时的热矩阵和参数
+    if t < 1e-6  # 只在第一次调用时打印
+        println("\n[DEBUG] 热矩阵装配信息:")
+        println("  时间尺度比 t_ratio = t_th/t0 = $t_ratio")
+        println("  t_th = $(case.param_dim.scale.t_th) s")
+        println("  t0 = $(case.param_dim.scale.t0) s")
+        println("  MT 维度: $(size(MT))")
+        println("  KT 维度: $(size(KT))")
+        println("  FT 长度: $(length(FT))")
+        println("  FT 范围: [$(minimum(FT)), $(maximum(FT))]")
+        println("  FT 均值: $(sum(FT)/length(FT))")
+        
+        # 检查热源
+        if haskey(variables, "heat_source_fields")
+            q_elem = variables["heat_source_fields"]
+            println("  热源范围: [$(minimum(q_elem)), $(maximum(q_elem))]")
+            println("  热源均值: $(sum(q_elem)/length(q_elem))")
+        end
+    end
+    
     MT = MT .* t_ratio
     ThermalDistributed2D_BC(KT, FT, case, t)
     
