@@ -331,6 +331,22 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
     u_p_val(T) = u_p_ref_val + (T - T_ref) * du_p_dT_val
 
     c_sigma = (param.NE.thickness / param.NE.sig + param.PE.thickness / param.PE.sig) / 3.0
+    
+    # DEBUG: 检查关键预计算值
+    if !isfinite(prefactor_n) || !isfinite(prefactor_p) || !isfinite(csn_av) || !isfinite(csp_av) || 
+       !isfinite(u_n_ref_val) || !isfinite(u_p_ref_val) || !isfinite(c_sigma)
+        println("⚠ [DEBUG] Prefactor values contain NaN/Inf:")
+        println("  prefactor_n = $prefactor_n")
+        println("  prefactor_p = $prefactor_p")
+        println("  csn_av = $csn_av, csp_av = $csp_av")
+        println("  u_n_ref_val = $u_n_ref_val, u_p_ref_val = $u_p_ref_val")
+        println("  du_n_dT_val = $du_n_dT_val, du_p_dT_val = $du_p_dT_val")
+        println("  c_sigma = $c_sigma")
+        println("  cn_surf (first 5): $(cn_surf[1:min(5,length(cn_surf))])")
+        println("  cp_surf (first 5): $(cp_surf[1:min(5,length(cp_surf))])")
+        println("  ce_n_gs (first 5): $(ce_n_gs[1:min(5,length(ce_n_gs))])")
+        println("  ce_p_gs (first 5): $(ce_p_gs[1:min(5,length(ce_p_gs))])")
+    end
 
     coeffs = Vector{NamedTuple{(:C1,:C2,:alpha_p,:alpha_n,:C5)}}(undef, ne)
     for e in 1:ne
@@ -358,6 +374,20 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
         alpha_n =  1.0 / (2.0 * j0_n * param.NE.as * param.NE.thickness)
         C5 = R_EL + c_sigma
         coeffs[e] = (C1=C1, C2=C2, alpha_p=alpha_p, alpha_n=alpha_n, C5=C5)
+        
+        # DEBUG: 检查是否有 NaN
+        if !isfinite(C1) || !isfinite(C2) || !isfinite(alpha_p) || !isfinite(alpha_n) || !isfinite(C5)
+            println("⚠ [DEBUG] Element $e coeffs contains NaN/Inf:")
+            println("  T_e = $T_e")
+            println("  arr_n = $arr_n, arr_p = $arr_p")
+            println("  j0_n = $j0_n, j0_p = $j0_p")
+            println("  prefactor_n = $prefactor_n, prefactor_p = $prefactor_p")
+            println("  kappa_ne = $kappa_ne, kappa_pe = $kappa_pe, kappa_sp = $kappa_sp")
+            println("  R_EL = $R_EL, c_sigma = $c_sigma")
+            println("  u_p_val(T_e) = $(u_p_val(T_e)), u_n_val(T_e) = $(u_n_val(T_e))")
+            println("  csp_av = $csp_av, csn_av = $csn_av")
+            println("  C1 = $C1, C2 = $C2, alpha_p = $alpha_p, alpha_n = $alpha_n, C5 = $C5")
+        end
     end
 
     function branch_voltage(coeff, I::Float64)
@@ -383,7 +413,21 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
         I_e .= (w .* I_total)
     end
 
-    V = sum(branch_voltage(coeffs[e], I_e[e]) for e in 1:ne) / ne
+    # DEBUG: 计算初始V并检查
+    V_branches = [branch_voltage(coeffs[e], I_e[e]) for e in 1:ne]
+    V = sum(V_branches) / ne
+    
+    if !isfinite(V)
+        println("⚠ [DEBUG] Initial voltage V is NaN/Inf:")
+        println("  I_total = $I_total")
+        println("  ne = $ne")
+        for e in 1:ne
+            if !isfinite(V_branches[e])
+                println("  Element $e: V_branch = $(V_branches[e]), I_e = $(I_e[e])")
+                println("    coeffs: C1=$(coeffs[e].C1), C2=$(coeffs[e].C2), alpha_p=$(coeffs[e].alpha_p), alpha_n=$(coeffs[e].alpha_n), C5=$(coeffs[e].C5)")
+            end
+        end
+    end
 
     if abs(I_total) <= 1e-14
         I_e .= 0.0
@@ -445,6 +489,12 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
             V_trial = V + λ * ΔV
             if !isfinite(V_trial)
                 ok = false
+                if attempt == 1  # 只在第一次尝试时打印
+                    println("⚠ [DEBUG] V_trial is NaN/Inf in iteration $iter:")
+                    println("  V = $V, ΔV = $ΔV, λ = $λ")
+                    println("  res_V = $res_V, res_I = $res_I")
+                    println("  num = $num, denom = $denom")
+                end
             end
             if ok
                 @inbounds for e in 1:ne
@@ -463,6 +513,7 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
             λ *= 0.5
         end
         if !success
+            println("⚠ [DEBUG] Line search failed at iteration $iter, breaking Newton loop")
             break
         end
 
@@ -474,6 +525,20 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
         I_e .= (areas ./ (A_global > 0 ? A_global : 1.0)) .* I_total
         V = sum(coeffs[e].C1 for e in 1:ne) / ne
         variables["thermal2D Vsolve iters"] = float(last_iter)
+        
+        # DEBUG: 检查收敛失败后的V
+        if !isfinite(V)
+            println("⚠ [DEBUG] V is NaN/Inf after convergence failure:")
+            println("  Fallback: V = sum(coeffs[e].C1) / ne")
+            C1_sum = 0.0
+            for e in 1:ne
+                C1_sum += coeffs[e].C1
+                if !isfinite(coeffs[e].C1)
+                    println("  Element $e: C1 = $(coeffs[e].C1) (NaN/Inf detected)")
+                end
+            end
+            println("  C1_sum = $C1_sum, ne = $ne, V = $V")
+        end
     end
 
     sx = sum(w .* I_e)
@@ -484,6 +549,15 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
     # 最终边界检查：无量纲电压必须处于 [V_MIN, V_MAX]
     if !(V_MIN <= V <= V_MAX)
         V_phys = V * phi_scale
+        println("⚠ [DEBUG] Voltage out of bounds error details:")
+        println("  V (nondim) = $V")
+        println("  V (phys) = $V_phys")
+        println("  V_MIN (nondim) = $V_MIN, V_MAX (nondim) = $V_MAX")
+        println("  V_MIN (phys) = $(V_MIN*phi_scale), V_MAX (phys) = $(V_MAX*phi_scale)")
+        println("  converged = $converged, last_iter = $last_iter")
+        println("  I_total = $I_total")
+        println("  sum(w.*I_e) = $(sum(w .* I_e))")
+        println("  First 5 C1 values: $(coeffs[1:min(5,ne)])")
         throw(ErrorException("thermal2D common voltage out of bounds: V(nd)=$(V), V(V)=$(V_phys), allowed [$(V_MIN), $(V_MAX)] nd -> [$(V_MIN*phi_scale), $(V_MAX*phi_scale)] V; I_total_nd=$(I_total), sum(w.*I_e)=$(sum(w .* I_e))"))
     end
 
