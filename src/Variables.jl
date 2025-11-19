@@ -98,6 +98,17 @@ function StandardVariables(case::Case, num::Int64)
     variables["T_nodes"] = zeros(Float64, 0, num)
     variables["T_prev"] = zeros(Float64, 0, num)
     variables["heat_source_fields"] = zeros(Float64, 0, num)
+    # Phase B: 多SPMe模式的逐单元变量历史记录（如果启用）
+    if hasproperty(case.opt, :per_element_spme) && case.opt.per_element_spme && 
+       case.opt.thermalmodel == "distributed2D" && haskey(case.mesh, "thermal2D")
+        ne = size(case.mesh["thermal2D"].element, 1)
+        variables["thermal2D element current"] = zeros(Float64, ne, num)
+        variables["thermal2D eta_n_e"] = zeros(Float64, ne, num)
+        variables["thermal2D eta_p_e"] = zeros(Float64, ne, num)
+        variables["thermal2D dUdT_n_e"] = zeros(Float64, ne, num)
+        variables["thermal2D dUdT_p_e"] = zeros(Float64, ne, num)
+        variables["thermal2D element voltages"] = zeros(Float64, ne, num)
+    end
 
     return variables
 end

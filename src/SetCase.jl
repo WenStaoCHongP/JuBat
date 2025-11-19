@@ -86,15 +86,17 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
         index["electrolyte potential in positive electrode"] =  v0 .+ mesh_el.nlen .- collect(mesh_el_pe.nlen - 1:-1:0)
         index["electrolyte potential in separator"] =  v0 + mesh_el_ne.nlen - 1 .+ collect(1: mesh_el_sp.nlen)
     end
-    case = Case(param_dim, param, opt, mesh, index)
+    # 初始化 multi_spme_layout 为空字典，供多SPMe模式后续填充
+    case = Case(param_dim, param, opt, mesh, index, Dict{String,Any}())
     return case
 end
 
 
 mutable struct Case
-    param_dim::Params   # parameters
-    param::Params   # dimensionless parameters
-    opt::Option # option for solver
-    mesh::Dict{String, Mesh}    # mesh for discretisation
-    index::Dict{String, Union{Array{Int64}, Int64}} # the index of unknowns
+    param_dim::Params                      # dimensional parameters
+    param::Params                          # dimensionless parameters
+    opt::Option                            # solver options
+    mesh::Dict{String, Mesh}               # discretisation meshes
+    index::Dict{String, Union{Array{Int64}, Int64}} # indices of unknowns
+    multi_spme_layout::Dict{String,Any}    # layout metadata for multi-SPMe (ne, n_chem, ranges, etc.)
 end

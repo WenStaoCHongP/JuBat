@@ -25,7 +25,9 @@ include("Jellyrollmodel.jl")
 
 export Assemble, ElectrodeDiffusion, ElectrolyteDiffusion, Postprocessing, SetCase, SetMesh, ChooseCell
 export Mesh1D, Mesh2D,GetGS, LagrangeBasis, GSweight, ShapeFunction1D, NormaliseParam, StandardVariables
-export SPM, Solve, SPMe
+export SPM, Solve, SPMe, SPMe_element, ModelInitialisation
+export ModelInitialisation_MultiSPMe, MultiSPMe_extract_element_state, MultiSPMe_get_thermal_dofs
+export MultiSPMe_update_element_state!, MultiSPMe_update_thermal_dofs!
 export Arrhenius, IntV
 export jellyroll_spiral_params, cart2pol, pol2cart, material_at
 export jellyroll_element_layer_weights, get_element_layer_weights

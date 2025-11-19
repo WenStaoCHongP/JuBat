@@ -34,6 +34,120 @@ function SPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
     return M, K, F, variables
 end
 
+"""
+    SPMe_element(case::Case, yt_e::Array{Float64}, t::Float64, e::Int; 
+                 I_e::Float64, T_e::Float64, jacobi::String="update")
+
+为单个热单元求解SPMe模型（多SPMe并行架构）。
+
+此函数是 `SPMe` 的单元级版本，用于多SPMe并行模式。每个热单元对应一个独立的
+电化学状态向量 yt_e，该状态根据该单元的分电流 I_e 和温度 T_e 独立演化。
+
+# 参数
+- `case::Case`: 全局案例对象（包含参数、网格等）
+- `yt_e::Array{Float64}`: 该单元的局部电化学状态向量（接受向量或矩阵）
+  - 结构: [cn_surf[1:Nrn]; cp_surf[1:Nrp]; ce[1:Nel]]
+  - 长度: Nrn + Nrp + Nel（与全局SPMe的yt长度相同）
+  - 注：自动转换为向量，兼容 ModelInitialisation 返回的矩阵形式
+- `t::Float64`: 当前时间（无量纲，相对 t0）
+- `e::Int`: 单元编号（用于调试和日志）
+- `I_e::Float64`: 该单元的无量纲电流（由分流求解器提供，相对 I_typ）
+- `T_e::Float64`: 该单元的无量纲温度（由热场提供，相对 T_ref）
+- `jacobi::String`: 雅可比矩阵更新策略 ("constant" 或 "update")
+
+# 返回
+- `M_e::SparseMatrixCSC`: 该单元的质量矩阵（电化学部分）
+- `K_e::SparseMatrixCSC`: 该单元的刚度矩阵（电化学部分）
+- `F_e::Vector{Float64}`: 该单元的载荷向量（边界条件）
+- `variables_e::Dict`: 该单元的电化学变量字典
+
+# 注意事项
+1. yt_e 是该单元的**局部**状态向量，不是全局向量
+2. I_e 和 T_e 应为无量纲值（已按各自的特征尺度归一化）
+3. 返回的 M_e, K_e, F_e 用于全局装配时的 blockdiag 操作
+4. 如果 jacobi="constant"，会复用 case.param.NE.M_d 等缓存矩阵
+   （注意：多线程并行时应使用 jacobi="update" 避免竞争）
+5. yt_e 可以是向量或矩阵（列向量），函数内部自动转换
+
+# 示例
+```julia
+# 初始化单元状态（可从全局初始化复制，可能是矩阵）
+yt_e = ModelInitialisation(case)  # 可能返回 Matrix{Float64}
+
+# 单元电流和温度（由外部提供）
+I_e = 1.0  # 1C放电
+T_e = 1.02  # 略高于参考温度
+
+# 求解该单元的电化学响应（自动处理矩阵输入）
+M_e, K_e, F_e, vars_e = SPMe_element(case, yt_e, 0.0, 1; I_e=I_e, T_e=T_e)
+
+# 提取单元电压
+V_e = vars_e["cell voltage"]
+```
+
+# 物理意义
+在多SPMe架构中，每个单元维护独立的浓度场，根据该单元的电流和温度历史演化：
+- 温度高的单元: 反应速率快，浓度梯度大，极化大
+- 电流大的单元: 锂离子消耗快，浓度下降快
+- 这种架构真实反映了空间异质性，适用于温度分布显著的场景
+"""
+function SPMe_element(case::Case, yt_e::Array{Float64}, t::Float64, e::Int; I_e::Float64, T_e::Float64, jacobi::String="update")
+    # 0) 确保 yt_e 是向量（兼容 ModelInitialisation 返回的列向量矩阵）
+    yt_e_vec = vec(yt_e)
+    
+    # 1) 调用 SPMe_variables，覆写 I_app 和 T_e
+    # 这里 yt_e_vec 是该单元的局部状态向量，SPMe_variables 会从中提取浓度场
+    variables_e = SPMe_variables(case, yt_e_vec, t; I_app=I_e, T_e=T_e)
+    
+    # 2) 力学耦合（如果启用）
+    if case.opt.mechanicalmodel == "full"
+        variables_e = Mechanicaloutput(case, variables_e)
+        theta_Mn = variables_e["negative particle stress coupling diffusion coefficient"][1]
+        theta_Mp = variables_e["positive particle stress coupling diffusion coefficient"][1]
+    else
+        theta_Mn = 0.0
+        theta_Mp = 0.0
+    end
+    
+    # 3) 提取高斯点浓度（用于扩散系数计算）
+    csn_gs = variables_e["negative particle concentration at gauss point"]
+    csp_gs = variables_e["positive particle concentration at gauss point"]
+    param = case.param
+    
+    # 4) 粒子扩散矩阵
+    # 注意：在多线程环境下，应使用 jacobi="update" 避免竞争 param.NE.M_d
+    if jacobi == "constant" && !isempty(param.NE.M_d) && !isempty(param.NE.K_d)
+        M_np = param.NE.M_d
+        K_np = param.NE.K_d
+        M_pp = param.PE.M_d
+        K_pp = param.PE.K_d
+    else
+        mesh_np = case.mesh["negative particle"]
+        mesh_pp = case.mesh["positive particle"]
+        M_np, K_np = ElectrodeDiffusion(param.NE, mesh_np, mesh_np.nlen, csn_gs, theta_Mn)
+        M_pp, K_pp = ElectrodeDiffusion(param.PE, mesh_pp, mesh_pp.nlen, csp_gs, theta_Mp)
+    end
+    # 时间尺度归一化
+    M_np = M_np .* param.scale.ts_n / case.param_dim.scale.t0
+    M_pp = M_pp .* param.scale.ts_p / case.param_dim.scale.t0
+    
+    # 5) 电解液扩散矩阵
+    mesh_el = case.mesh["electrolyte"]
+    M_el, K_el = ElectrolyteDiffusion(param, mesh_el, mesh_el.nlen, variables_e)
+    M_el = M_el .* param.scale.te / case.param_dim.scale.t0
+    
+    # 6) 边界条件（源项）
+    F_e = SPMe_BC(case, variables_e)
+    
+    # 7) 装配该单元的局部系统矩阵
+    M_e = blockdiag(M_np, M_pp, M_el)
+    K_e = blockdiag(K_np, K_pp, K_el)
+    
+    # 8) 可选：添加单元编号到 variables_e（用于调试）
+    variables_e["element index"] = Float64(e)
+    
+    return M_e, K_e, F_e, variables_e
+end
 
 function SPMe_BC(case::Case, variables::Dict{String, Union{Array{Float64},Float64}})
     param = case.param
