@@ -68,7 +68,17 @@ function Solve(case::Case)
         println("="^80 * "\n")
     end
     
-    M_old, K_old, F_old, variables, y_phi= CallModel(case, y0, t, jacobi="update") 
+    M_old, K_old, F_old, variables, y_phi= CallModel(case, y0, t, jacobi="update")
+    
+    # DEBUG: 打印初始电压和终止条件
+    V_init = variables["cell voltage"] * case.param.scale.phi
+    println("\n[Solve] 初始化完成")
+    println("  初始电压: $V_init V")
+    println("  电压范围: [$(case.param.cell.v_l), $(case.param.cell.v_h)] V")
+    println("  初始 t: $(t * case.param.scale.t0) s")
+    println("  目标 t_end: $(t_end * case.param.scale.t0) s")
+    println("  dt_min: $(dt_min * case.param.scale.t0) s, dt_max: $(dt_max * case.param.scale.t0) s")
+    
     # Thermal-distributed init if enabled
     if case.opt.thermal_enabled && case.opt.thermalmodel == "distributed2D" && haskey(case.mesh, "thermal2D")
         # 初始化热场 T 为环境初温
@@ -187,7 +197,9 @@ function Solve(case::Case)
     print( "start to solve the problem \n")
 
     # run the model
+    iter_count = 0  # 添加迭代计数器
     while t <= t_end
+        iter_count += 1
         # 1) 先用当前热场的均温影响动力学（简单耦合：把 T0 更新为当前均温）
         if case.opt.thermal_enabled && case.opt.thermalmodel == "distributed2D" && !isempty(T_nodes_carry)
             # T_nodes_carry is dimensionless (T/T_ref) under Scheme B thermal scaling
@@ -196,7 +208,13 @@ function Solve(case::Case)
         end
 
         # 2) 电化学步
-        M_new, K_new, F_new, variables, y_phi = CallModel(case, y_old, t, jacobi="update") 
+        M_new, K_new, F_new, variables, y_phi = CallModel(case, y_old, t, jacobi="update")
+        
+        # DEBUG: 每10步或前5步打印一次
+        if iter_count <= 5 || iter_count % 10 == 0
+            V_now = variables["cell voltage"] * case.param.scale.phi
+            println("[Solve] 迭代 $iter_count: t=$(t*case.param.scale.t0)s, V=$V_now V, dt=$dt")
+        end 
         # 统一约定：M dy/dt = K y + F（K 已包含负号）
         Mt = M_new - theta * K_new * dt 
         Kt = (1 - theta) * K_old * dt + M_new 
@@ -268,10 +286,28 @@ function Solve(case::Case)
             F_old = deepcopy(F_new)
             t += dt 
         end
-        if variables["cell voltage"] * case.param.scale.phi < case.param.cell.v_l || variables["cell voltage"] * case.param.scale.phi > case.param.cell.v_h
+        # 电压边界检查
+        V_phys = variables["cell voltage"] * case.param.scale.phi
+        if V_phys < case.param.cell.v_l || V_phys > case.param.cell.v_h
+            println("\n[INFO] 电压超出范围，终止求解")
+            println("  当前时间: $(t * case.param.scale.t0) s")
+            println("  当前电压: $V_phys V")
+            println("  允许范围: [$(case.param.cell.v_l), $(case.param.cell.v_h)] V")
+            println("  终止原因: $(V_phys < case.param.cell.v_l ? "低于下限" : "高于上限")")
+            println("  完成迭代数: $iter_count")
             break
         end
     end
+    
+    # 循环结束总结
+    println("\n[Solve] 时间循环结束")
+    println("  总迭代次数: $iter_count")
+    println("  最终时间: $(t * case.param.scale.t0) s / $(t_end * case.param.scale.t0) s")
+    println("  最终电压: $(variables["cell voltage"] * case.param.scale.phi) V")
+    if iter_count < 5
+        println("  ⚠️  警告：迭代次数过少，可能存在问题！")
+    end
+    
     result = PostProcessing(case, variables_hist, v) 
     # 附加多SPMe逐单元历史与热源历史，便于脚本分析
     try
