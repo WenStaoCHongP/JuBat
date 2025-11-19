@@ -368,10 +368,10 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         
         if nan_count_nodes > 0
             println("\n📊 T_nodes 中的 NaN/Inf 位置 (前10个):")
-            count = 0
+            printed_count = 0
             for i in 1:length(T_nodes)
-                if !isfinite(T_nodes[i]) && count < 10
-                    count += 1
+                if !isfinite(T_nodes[i]) && printed_count < 10
+                    printed_count += 1
                     println("  节点 $i: T_nodes[$i] = $(T_nodes[i])")
                 end
             end
@@ -379,10 +379,10 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         
         if nan_count_elem > 0
             println("\n📊 Te_prev 中的 NaN/Inf 单元 (前10个):")
-            count = 0
+            printed_count = 0
             for e in 1:ne
-                if !isfinite(Te_prev[e]) && count < 10
-                    count += 1
+                if !isfinite(Te_prev[e]) && printed_count < 10
+                    printed_count += 1
                     nds = mesh_th.element[e, :]
                     println("  单元 $e: Te_prev[$e] = $(Te_prev[e])")
                     println("    节点: $nds")

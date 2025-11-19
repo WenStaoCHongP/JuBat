@@ -460,10 +460,10 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
         println("="^80)
         println("  I_total = $I_total, ne = $ne")
         println("  检查前3个异常单元:")
-        count = 0
+        printed_count = 0
         for e in 1:ne
-            if !isfinite(V_branches[e]) && count < 3
-                count += 1
+            if !isfinite(V_branches[e]) && printed_count < 3
+                printed_count += 1
                 println("\n  单元 $e:")
                 println("    V_branch = $(V_branches[e]), I_e = $(I_e[e])")
                 println("    C1=$(coeffs[e].C1), C2=$(coeffs[e].C2)")
