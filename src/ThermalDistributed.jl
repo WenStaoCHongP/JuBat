@@ -371,7 +371,12 @@ function heatQ_Source(case::Case, variables::Dict{String,Union{Array{Float64},Fl
     end
     I_e = variables["thermal2D element current"]
     # 正确获取层权重矩阵（而非布尔值）；此处仅取值，不更改/检查其内容
-    fks = haskey(variables, "thermal2D layer_weights") ? variables["thermal2D layer_weights"] : nothing
+    fks = if haskey(variables, "thermal2D layer_weights")
+        variables["thermal2D layer_weights"]
+    else
+        # 默认假设所有单元包含所有层（权重都为1）
+        ones(Float64, ne, 5)
+    end
     # 小工具
     to_vec(x) = isa(x, Number) ? [Float64(x)] : (isa(x, AbstractVector) ? Vector{Float64}(x) : (isa(x, AbstractArray) ? Vector{Float64}(x[:,1]) : Float64[]))
     vec_mean(x) = (isempty(x) ? 0.0 : sum(x) / length(x))
