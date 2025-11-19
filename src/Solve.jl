@@ -200,6 +200,23 @@ function Solve(case::Case)
         end
     end
     result = PostProcessing(case, variables_hist, v) 
+    # 附加多SPMe逐单元历史与热源历史，便于脚本分析
+    try
+        if haskey(variables_hist, "thermal2D element current")
+            result["thermal2D element current"] = variables_hist["thermal2D element current"][:, 1:v]
+        end
+        if haskey(variables_hist, "thermal2D eta_n_e")
+            result["thermal2D eta_n_e"] = variables_hist["thermal2D eta_n_e"][:, 1:v]
+        end
+        if haskey(variables_hist, "thermal2D eta_p_e")
+            result["thermal2D eta_p_e"] = variables_hist["thermal2D eta_p_e"][:, 1:v]
+        end
+        if haskey(variables_hist, "heat_source_fields") && size(variables_hist["heat_source_fields"], 1) > 0
+            result["heat_source_fields"] = variables_hist["heat_source_fields"][:, 1:v]
+        end
+    catch
+        # non-fatal
+    end
     # Attach final thermal field for post-plotting convenience
     try
         if case.opt.thermal_enabled && haskey(case.mesh, "thermal2D")
@@ -263,6 +280,9 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     mesh_th = case.mesh["thermal2D"]
     param = case.param
     
+    # 初始化 variables（提前，以便后续缓存/读取中使用）
+    variables = StandardVariables(case, 1)
+    
     # 1) 解析状态向量
     # 提取热场
     T_nodes = MultiSPMe_get_thermal_dofs(yt, case)
@@ -270,12 +290,12 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 提取每个单元的电化学状态
     yt_chem = Vector{Vector{Float64}}(undef, ne)
     for e in 1:ne
-        yt_chem[e] = MultiSPMe_extract_element_state(yt, e, case)
+        yt_chem[e] = vec(MultiSPMe_extract_element_state(yt, e, case))
     end
     
     # 2) 计算元素面积和均温
-    areas = if haskey(case, :thermal2D_element_area_cache)
-        case.thermal2D_element_area_cache
+    areas = if haskey(variables, "thermal2D element area")
+        variables["thermal2D element area"]
     else
         A = zeros(Float64, ne)
         ngs = length(mesh_th.gs.detJ)
@@ -283,7 +303,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
             e = mesh_th.gs.ele[g]
             A[e] += mesh_th.gs.weight[g] * mesh_th.gs.detJ[g]
         end
-        case.thermal2D_element_area_cache = A
+        variables["thermal2D element area"] = A
         A
     end
     
@@ -294,27 +314,34 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     end
     
     # 3) 分流求解（获取 I_e）
-    I_total = case.opt.Current(t * case.param.scale.t0) / case.param_dim.cell.I1C
+    # 使用与 SPMe 变量一致的电流无量纲尺度（param.scale.I_typ）
+    I_total = case.opt.Current(t * case.param.scale.t0) / case.param.scale.I_typ
     
-    # 初始化 variables（用于传递给分流求解器）
-    variables = StandardVariables(case, 1)
+    # 更新 variables（用于传递给分流求解器）
     variables["cell current"] = I_total
     variables["T_nodes"] = T_nodes
     variables["thermal2D element area"] = areas
     
     # 使用缓存的 I_e 作为初值
-    I_e_prev = haskey(case, :I_e_cache) ? case.I_e_cache : nothing
+    I_e_prev = hasproperty(case, :I_e_cache) ? case.I_e_cache : nothing
     
-    # 分流求解需要代表性的全局状态（用于计算 prefactor）
-    # 这里使用所有单元的平均状态
+    # 分流求解需要代表性的全局状态（用于计算 prefactor）。
+    # 这里使用所有单元的平均状态，并先生成与之匹配的电化学变量，确保标度一致。
     yt_representative = mean(yt_chem)
-    
+    T_rep = mean(Te_prev)
+    vars_rep = SPMe_variables(case, yt_representative, t; I_app=I_total, T_e=T_rep)
+    for (k, v) in vars_rep
+        variables[k] = v
+    end
+    # 保留热相关场
+    variables["T_nodes"] = T_nodes
+    variables["thermal2D element area"] = areas
+
     variables, I_e, Vc = solve_branch_currents_newton(
         case, variables, yt_representative, t, I_total, areas, Te_prev, I_e_prev
     )
     
-    # 缓存 I_e 供下一步使用
-    case.I_e_cache = copy(I_e)
+    # 如需缓存，可考虑挂在 case.opt 或外部管理；此处不在 Case 上添加新字段
     
     # 4) 并行求解每个单元的SPMe
     M_elems = Vector{SparseMatrixCSC{Float64,Int64}}(undef, ne)
@@ -333,7 +360,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         )
         M_elems[e] = sparse(M_e)
         K_elems[e] = sparse(K_e)
-        F_elems[e] = F_e
+        F_elems[e] = vec(F_e)
         variables_elems[e] = vars_e
     end
     
@@ -428,7 +455,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     
     # 7) 装配热学矩阵
     MT, KT, FT = ThermalDistributed2D(case, variables)
-    t_ratio = case.param_dim.scale.t0 / case.param_dim.scale.t_th
+    t_ratio = case.param_dim.scale.t_th / case.param_dim.scale.t0
     MT = MT .* t_ratio
     ThermalDistributed2D_BC(KT, FT, case, t)
     
@@ -543,7 +570,7 @@ function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
             MT, KT, FT = ThermalDistributed2D(case, variables)
             # 时间尺度匹配：主求解器以 t0 为时间标尺，热模块以 t_th 为标尺，
             # 将热质量矩阵按 t_ratio = t0/t_th 放大，使得 M_eff = MT * t_ratio。
-            t_ratio = case.param_dim.scale.t0 / case.param_dim.scale.t_th
+            t_ratio = case.param_dim.scale.t_th / case.param_dim.scale.t0
             MT = MT .* t_ratio
             ThermalDistributed2D_BC(KT, FT, case, t)
             # 拼接到主系统

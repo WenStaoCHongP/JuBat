@@ -281,7 +281,8 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
         I_e = w .* I_total
         # store both nondimensional local currents (i_e) and physical branch currents (A)
         variables["thermal2D element current"] = I_e
-        variables["thermal2D element current A"] = case.param_dim.cell.I1C .* w .* I_e
+        # 使用与求解一致的无量纲尺度 I_typ 来恢复物理电流
+        variables["thermal2D element current A"] = case.param.scale.I_typ .* w .* I_e
         variables["thermal2D common voltage"] = 0.0
         variables["thermal2D Vsolve status"] = 1.0
         variables["thermal2D Vsolve iters"] = 0.0
@@ -487,8 +488,8 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
     end
 
     variables["thermal2D element current"] = I_e
-    # also expose physical branch currents [A] for diagnostics
-    variables["thermal2D element current A"] = case.param_dim.cell.I1C .* w .* I_e
+    # also expose physical branch currents [A] for diagnostics (use I_typ for consistency)
+    variables["thermal2D element current A"] = case.param.scale.I_typ .* w .* I_e
     variables["thermal2D common voltage"] = V
     variables["thermal2D Vsolve status"] = converged ? 3.0 : 3.5
     variables["thermal2D Vsolve converged"] = converged ? 1.0 : 0.0

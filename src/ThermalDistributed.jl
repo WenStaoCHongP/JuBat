@@ -83,7 +83,7 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Flo
         ρc_weights .= ρc_cell_nd .* (wJ ./ (L_th^2))
     end
     MT = Assemble(Vi, Vj, Ni, Ni, ρc_weights, nnode)
-
+    
     # 刚度矩阵（各向异性/各向同性自适应）：KT = ∬ Bᵀ K B dΩ
     # 当可用 jellyroll 有效张量时采用各向异性；否则退化为各向同性 k_iso.
     ngs = size(Ni,1)

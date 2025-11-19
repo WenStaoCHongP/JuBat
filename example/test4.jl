@@ -10,12 +10,17 @@
 =#
 
 using Plots, CSV, DataFrames, Statistics
-include("./src/JuBat.jl")
+include("../src/JuBat.jl")
+using .JuBat
 using Printf, LinearAlgebra
 
 println("="^80)
 println("阶段4测试：多SPMe模式完整时间推进")
 println("="^80)
+
+# 预先声明结果变量，避免作用域导致的未定义错误
+result = Dict{String, Any}()
+result_single = Dict{String, Any}()
 
 # ============================================================================
 # 测试1：多SPMe模式短时间仿真
@@ -23,7 +28,7 @@ println("="^80)
 println("\n[1/4] 测试多SPMe模式短时间仿真（10秒）...")
 
 # 创建案例
-param_dim = JuBat.ChooseCell("LG M50")
+param_dim = JuBat.ChooseCell("Jellyroll")
 opt = JuBat.Option()
 opt.model = "SPMe"
 opt.Nn = 5
@@ -37,7 +42,7 @@ opt.dt = [1e-3 0.1]
 opt.dtType = "auto"
 opt.thermalmodel = "distributed2D"
 opt.per_element_spme = true  # 启用多SPMe模式
-opt.debug_multi_spme = true  # 启用调试输出
+# 调试输出（可选）：如需更多日志，可在库中开启 debug_coupling
 opt.jacobi = "update"
 opt.solveType = "Crank-Nicolson"
 opt.thermal_enabled = true
@@ -67,6 +72,7 @@ println("  仿真时间: 10秒")
 # 运行Solve
 println("\n开始求解...")
 try
+    global result
     result = JuBat.Solve(case)
     
     println("✓ 求解成功")
@@ -75,9 +81,9 @@ try
     println("\n结果验证:")
     
     # 基本变量
-    t = result["time"]
-    V = result["cell voltage"]
-    I = result["cell current"]
+    t = result["time [s]"]
+    V = result["cell voltage [V]"]
+    I = result["cell current [A]"]
     
     println("  时间步数: $(length(t))")
     @printf("  初始电压: %.4f V\n", V[1])
@@ -86,8 +92,8 @@ try
     @printf("  平均电流: %.4f A\n", mean(I))
     
     # 温度
-    if haskey(result, "temperature")
-        T = result["temperature"]
+    if haskey(result, "temperature [K]")
+        T = result["temperature [K]"]
         @printf("  初始温度: %.4f K\n", T[1])
         @printf("  最终温度: %.4f K\n", T[end])
         @printf("  温升: %.4f K\n", T[end] - T[1])
@@ -121,8 +127,8 @@ try
     end
     
     # 验证温度合理性
-    if haskey(result, "temperature")
-        T = result["temperature"]
+    if haskey(result, "temperature [K]")
+        T = result["temperature [K]"]
         if all(T .> 280) && all(T .< 400)
             println("✓ 温度范围合理")
         else
@@ -144,19 +150,22 @@ println("\n[2/4] 测试单SPMe模式对比...")
 
 case_single = deepcopy(case)
 case_single.opt.per_element_spme = false
-case_single.opt.debug_multi_spme = false
+if hasproperty(case_single.opt, :debug_multi_spme)
+    case_single.opt.debug_multi_spme = false
+end
 
 println("运行单SPMe模式...")
 try
+    global result_single
     result_single = JuBat.Solve(case_single)
     
     println("✓ 单SPMe求解成功")
     
     # 对比结果
-    t_multi = result["time"]
-    V_multi = result["cell voltage"]
-    t_single = result_single["time"]
-    V_single = result_single["cell voltage"]
+    t_multi = result["time [s]"]
+    V_multi = result["cell voltage [V]"]
+    t_single = result_single["time [s]"]
+    V_single = result_single["cell voltage [V]"]
     
     println("\n结果对比（最终时刻）:")
     @printf("  多SPMe电压: %.4f V\n", V_multi[end])
@@ -164,9 +173,9 @@ try
     @printf("  差异: %.4f V (%.2f%%)\n", abs(V_multi[end] - V_single[end]), 
             100*abs(V_multi[end] - V_single[end])/V_single[end])
     
-    if haskey(result, "temperature") && haskey(result_single, "temperature")
-        T_multi = result["temperature"][end]
-        T_single = result_single["temperature"][end]
+    if haskey(result, "temperature [K]") && haskey(result_single, "temperature [K]")
+        T_multi = result["temperature [K]"][end]
+        T_single = result_single["temperature [K]"][end]
         @printf("  多SPMe温度: %.4f K\n", T_multi)
         @printf("  单SPMe温度: %.4f K\n", T_single)
         @printf("  差异: %.4f K\n", abs(T_multi - T_single))
@@ -193,9 +202,9 @@ end
 println("\n[3/4] 测试能量守恒...")
 
 try
-    t = result["time"]
-    V = result["cell voltage"]
-    I = result["cell current"]
+    t = result["time [s]"]
+    V = result["cell voltage [V]"]
+    I = result["cell current [A]"]
     
     # 计算电能（焦耳）
     E_elec = 0.0
@@ -208,8 +217,8 @@ try
     println("  总放电电能: $(@sprintf("%.2f", E_elec)) J")
     
     # 温升对应的热能
-    if haskey(result, "temperature")
-        T = result["temperature"]
+    if haskey(result, "temperature [K]")
+        T = result["temperature [K]"]
         dT = T[end] - T[1]
         # 估算电池热容（简化）
         m_cell = 0.065  # kg（LG M50约65克）
@@ -305,7 +314,7 @@ println("""
   - 节点数: $nT
   - 状态向量维度: $(ne * 60 + nT)
   - 仿真时间: 10秒
-  - 时间步数: $(length(result["time"]))
+    - 时间步数: $(length(result["time [s]"]))
 
 下一步：阶段5 - 性能优化（并行化）
          阶段6 - 完整验证测试

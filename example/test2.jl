@@ -23,7 +23,7 @@ println("="^80)
 println("\n[1/6] 创建测试案例（SPMe + thermal2D）...")
 
 # 创建案例
-param_dim = JuBat.ChooseCell("LG M50")
+param_dim = JuBat.ChooseCell("Jellyroll")
 opt = JuBat.Option()
 opt.model = "SPMe"
 opt.Nn = 5

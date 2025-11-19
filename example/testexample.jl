@@ -15,7 +15,8 @@
 """
 
 using LinearAlgebra, SparseArrays, Statistics, Plots, Printf
-include("./src/JuBat.jl")
+include(joinpath(@__DIR__, "../src/JuBat.jl"))
+using .JuBat
 
 function main()
     println("="^80)
@@ -62,7 +63,6 @@ function main()
     
     # ✨ 关键：启用多SPMe并行模式
     opt.per_element_spme = true
-    opt.debug_multi_spme = true  # 启用调试输出
     
     println("✓ 参数设置完成")
     @printf("  电流: %.2f A (%.2f C)\n", i, Crates)
@@ -78,7 +78,7 @@ function main()
     
     # 创建Jellyroll collector-seeded网格
     # nθ: 周向单元数，影响角度分辨率和计算量
-    nθ = 40  # 减少以加速调试（原示例用80）
+    nθ = 16  # 减少以加速调试（原示例用80）
     mesh_th = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, gsorder=2)
     case.mesh["thermal2D"] = mesh_th
     
@@ -112,6 +112,17 @@ function main()
     if fks !== nothing
         println("  ✓ layer_weights计算完成")
     end
+
+    # 预计算热单元面积，用于电流守恒分析
+    element_areas = let mesh = mesh_th
+        A = zeros(Float64, size(mesh.element, 1))
+        ngs = length(mesh.gs.detJ)
+        @inbounds for g in 1:ngs
+            e = mesh.gs.ele[g]
+            A[e] += mesh.gs.weight[g] * mesh.gs.detJ[g]
+        end
+        A
+    end
     
     # ========================================================================
     # 3. 运行求解器（使用多SPMe模式）
@@ -136,9 +147,9 @@ function main()
     println("\n[4/6] 提取结果和诊断...")
     
     # 基本变量
-    t = result["time"]
-    V = result["cell voltage"]
-    I_total = result["cell current"]
+    t = result["time [s]"]
+    V = result["cell voltage [V]"]
+    I_total = result["cell current [A]"]
     
     num_steps = length(t)
     println("✓ 结果提取完成")
@@ -148,8 +159,8 @@ function main()
     @printf("  电压降: %.4f V\n", V[1] - V[end])
     
     # 温度
-    if haskey(result, "temperature")
-        T_mean = result["temperature"]
+    if haskey(result, "temperature [K]")
+        T_mean = result["temperature [K]"]
         @printf("  初始温度: %.2f K (%.2f °C)\n", T_mean[1], T_mean[1] - 273.15)
         @printf("  最终温度: %.2f K (%.2f °C)\n", T_mean[end], T_mean[end] - 273.15)
         @printf("  温升: %.2f K\n", T_mean[end] - T_mean[1])
@@ -160,7 +171,9 @@ function main()
     
     if haskey(result, "thermal2D element current")
         I_e_hist = result["thermal2D element current"]
-        I_e_final = I_e_hist[:, end]
+        I_e_final_nd = I_e_hist[:, end]
+        I_scale = case.param.scale.I_typ
+        I_e_final = I_e_final_nd .* I_scale
         
         @printf("    电流分布:\n")
         @printf("      平均: %.4e A\n", mean(I_e_final))
@@ -168,11 +181,11 @@ function main()
         @printf("      极差: [%.4e, %.4e] A\n", minimum(I_e_final), maximum(I_e_final))
         
         # 验证电流守恒
-        areas = case.thermal2D_element_area_cache
-        w = areas ./ sum(areas)
-        I_sum = sum(w .* I_e_final)
-        @printf("      电流守恒: I_total=%.4e, Σ(w·I_e)=%.4e, 误差=%.2e\n", 
-                I_total[end], I_sum, abs(I_total[end] - I_sum))
+        w = element_areas ./ sum(element_areas)
+        I_sum = sum(w .* I_e_final_nd)
+        I_total_nd = I_total[end] / I_scale
+        @printf("      电流守恒: I_total_nd=%.4e, Σ(w·I_e)=%.4e, 误差=%.2e\n",
+            I_total_nd, I_sum, abs(I_total_nd - I_sum))
     else
         println("    ⚠ 未找到 thermal2D element current")
     end
@@ -215,8 +228,8 @@ function main()
     println("  ✓ 保存: testexample_voltage.png")
     
     # 图2：温度-时间
-    if haskey(result, "temperature")
-        T_mean = result["temperature"]
+    if haskey(result, "temperature [K]")
+        T_mean = result["temperature [K]"]
         p2 = plot(t, T_mean, xlabel="Time (s)", ylabel="Temperature (K)", 
                   label="Mean Temperature", linewidth=2, title="Temperature Evolution")
         savefig(p2, "testexample_temperature.png")
@@ -368,8 +381,8 @@ function main()
       - 电压降: $(V[1] - V[end]) V
     """)
     
-    if haskey(result, "temperature")
-        T_mean = result["temperature"]
+    if haskey(result, "temperature [K]")
+        T_mean = result["temperature [K]"]
         println("""
       - 温升: $(T_mean[end] - T_mean[1]) K
         """)

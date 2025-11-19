@@ -102,6 +102,8 @@ function StandardVariables(case::Case, num::Int64)
     if hasproperty(case.opt, :per_element_spme) && case.opt.per_element_spme && 
        case.opt.thermalmodel == "distributed2D" && haskey(case.mesh, "thermal2D")
         ne = size(case.mesh["thermal2D"].element, 1)
+        # 覆盖热源历史为逐单元尺寸
+        variables["heat_source_fields"] = zeros(Float64, ne, num)
         variables["thermal2D element current"] = zeros(Float64, ne, num)
         variables["thermal2D eta_n_e"] = zeros(Float64, ne, num)
         variables["thermal2D eta_p_e"] = zeros(Float64, ne, num)

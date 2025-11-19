@@ -24,7 +24,7 @@ println("="^80)
 println("\n[1/5] 创建多SPMe测试案例...")
 
 # 创建案例
-param_dim = JuBat.ChooseCell("LG M50")
+param_dim = JuBat.ChooseCell("Jellyroll")
 opt = JuBat.Option()
 opt.model = "SPMe"
 opt.Nn = 5
@@ -144,8 +144,18 @@ try
         
         # 验证电流守恒
         layout = case.multi_spme_layout
-        areas = case.thermal2D_element_area_cache
-        I_total = case.opt.Current(t * case.param.scale.t0) / case.param_dim.cell.I1C
+        areas = haskey(variables, "thermal2D element area") ? variables["thermal2D element area"] : begin
+            mesh = case.mesh["thermal2D"]
+            A = zeros(Float64, size(mesh.element, 1))
+            ngs = length(mesh.gs.detJ)
+            @inbounds for g in 1:ngs
+                e = mesh.gs.ele[g]
+                A[e] += mesh.gs.weight[g] * mesh.gs.detJ[g]
+            end
+            A
+        end
+        # 与模型内部一致的电流无量纲（相对 I_typ）
+        I_total = case.opt.Current(t * case.param.scale.t0) / case.param.scale.I_typ
         w = areas ./ sum(areas)
         I_sum = sum(w .* I_e)
         
