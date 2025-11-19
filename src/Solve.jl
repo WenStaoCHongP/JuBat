@@ -14,6 +14,17 @@ function Solve(case::Case)
         haskey(case.mesh, "thermal2D")
     )
     
+    # 诊断：打印模式检测结果
+    println("\n[DEBUG Solve] 模式检测:")
+    println("  case.opt.model = ", case.opt.model)
+    println("  has per_element_spme? ", hasproperty(case.opt, :per_element_spme))
+    if hasproperty(case.opt, :per_element_spme)
+        println("  per_element_spme value = ", case.opt.per_element_spme)
+    end
+    println("  thermalmodel = ", case.opt.thermalmodel)
+    println("  has thermal2D mesh? ", haskey(case.mesh, "thermal2D"))
+    println("  ➡️  多SPMe模式: ", multi_spme_enabled ? "✅ 启用" : "❌ 未启用")
+    
     ne_layout = 0
     n_chem_layout = 0
     nT_layout = 0
@@ -472,16 +483,17 @@ end
 
 function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
     # 判断是否启用多SPMe模式
+    # 注意：CallModel不应该调用MultiSPMe，MultiSPMe应该在Solve主循环中直接调用
+    # 这里检测到多SPMe模式时报错，提示用户应该使用正确的调用方式
     multi_spme_enabled = (
         case.opt.model == "SPMe" &&
         hasproperty(case.opt, :per_element_spme) && case.opt.per_element_spme &&
         case.opt.thermalmodel == "distributed2D" &&
-        haskey(case.mesh, "thermal2D") &&
-        haskey(case, :multi_spme_layout)
+        haskey(case.mesh, "thermal2D")
     )
     
     if multi_spme_enabled
-        return CallModel_MultiSPMe(case, yt, t, jacobi=jacobi)
+        error("CallModel detected per_element_spme mode. This should not happen - Solve should call CallModel_MultiSPMe directly. Check initialization and main loop.")
     end
     
     # 原有逻辑（单SPMe模式）

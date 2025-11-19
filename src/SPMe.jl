@@ -1,5 +1,16 @@
 function SPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
+    # 诊断：检查输入状态向量
+    println("\n[DEBUG SPMe] 函数调用:")
+    println("  yt类型: $(typeof(yt)), 长度: $(length(yt))")
+    println("  yt sample (前5个): ", yt[1:min(5,length(yt))])
+    
     variables = SPMe_variables(case, yt, t)
+    
+    # 诊断：检查关键变量
+    println("  关键变量:")
+    println("    cell current = ", get(variables, "cell current", "MISSING"))
+    println("    cell voltage = ", get(variables, "cell voltage", "MISSING"))
+    println("    temperature = ", get(variables, "temperature", "MISSING"))
     if case.opt.mechanicalmodel == "full"
         variables = Mechanicaloutput(case,variables)
         theta_Mn = variables["negative particle stress coupling diffusion coefficient"][1]
@@ -335,6 +346,21 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
 
     c_sigma = (param.NE.thickness / param.NE.sig + param.PE.thickness / param.PE.sig) / 3.0
 
+    # 诊断：检查prefactor和浓度
+    println("\n[DEBUG solve_branch_currents_newton] 电化学参数检查:")
+    println("  prefactor_n = $prefactor_n")
+    println("  prefactor_p = $prefactor_p")
+    println("  cn_surf sample: ", cn_surf[1:min(3,length(cn_surf))])
+    println("  cp_surf sample: ", cp_surf[1:min(3,length(cp_surf))])
+    println("  u_n_ref_val = $u_n_ref_val, u_p_ref_val = $u_p_ref_val")
+    println("  T_ref = $T_ref")
+    if !isfinite(prefactor_n)
+        println("  ❌ ERROR: prefactor_n is not finite!")
+    end
+    if !isfinite(prefactor_p)
+        println("  ❌ ERROR: prefactor_p is not finite!")
+    end
+    
     coeffs = Vector{NamedTuple{(:C1,:C2,:alpha_p,:alpha_n,:C5)}}(undef, ne)
     for e in 1:ne
         T_e = Te_prev[e]
@@ -360,6 +386,20 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
         alpha_p = -1.0 / (2.0 * j0_p * param.PE.as * param.PE.thickness)
         alpha_n =  1.0 / (2.0 * j0_n * param.NE.as * param.NE.thickness)
         C5 = R_EL + c_sigma
+        
+        # 诊断：检查第一个单元的系数
+        if e == 1
+            println("\n  单元 $e 系数计算:")
+            println("    T_e = $T_e")
+            println("    arr_n = $arr_n, arr_p = $arr_p")
+            println("    j0_n = $j0_n, j0_p = $j0_p")
+            println("    alpha_p = $alpha_p, alpha_n = $alpha_n")
+            println("    C1 = $C1, C2 = $C2, C5 = $C5")
+            if !isfinite(C1) || !isfinite(alpha_p) || !isfinite(alpha_n)
+                println("    ❌ ERROR: Coefficients contain non-finite values!")
+            end
+        end
+        
         coeffs[e] = (C1=C1, C2=C2, alpha_p=alpha_p, alpha_n=alpha_n, C5=C5)
     end
 
@@ -386,7 +426,31 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
         I_e .= (w .* I_total)
     end
 
+    # 诊断：计算初始电压前检查
+    println("\n[DEBUG solve_branch_currents_newton] 初始电压计算:")
+    println("  ne = $ne, I_total = $I_total")
+    println("  I_e sample (前3个): ", I_e[1:min(3,ne)])
+    
+    # 检查coeffs是否有NaN
+    for e in 1:min(3,ne)
+        c = coeffs[e]
+        println("  coeffs[$e]: C1=$(c.C1), C2=$(c.C2), alpha_p=$(c.alpha_p), alpha_n=$(c.alpha_n), C5=$(c.C5)")
+        V_test = branch_voltage(c, I_e[e])
+        println("    branch_voltage(coeffs[$e], I_e[$e]=$(I_e[e])) = $V_test")
+        if !isfinite(V_test)
+            println("    ❌ WARNING: branch_voltage is not finite!")
+            # 详细诊断
+            apI = c.alpha_p * I_e[e]
+            anI = c.alpha_n * I_e[e]
+            println("      alpha_p*I = $apI, asinh(alpha_p*I) = $(asinh(apI))")
+            println("      alpha_n*I = $anI, asinh(alpha_n*I) = $(asinh(anI))")
+        end
+    end
+    
     V = sum(branch_voltage(coeffs[e], I_e[e]) for e in 1:ne) / ne
+    println("  初始 V (无量纲) = $V")
+    println("  初始 V (物理) = $(V * phi_scale) V")
+    println("  允许范围: [$(V_MIN * phi_scale), $(V_MAX * phi_scale)] V\n")
 
     if abs(I_total) <= 1e-14
         I_e .= 0.0
