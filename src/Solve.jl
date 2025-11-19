@@ -128,8 +128,8 @@ function Solve(case::Case)
 
     dt_init = 1e-8
     vc = 1:size(M_old,1)
-    # 修复：向后 Euler: (M + dt*K) y_new = M y_old + dt*F
-    y_c = (M_old + K_old * dt_init) \ (M_old * y0[vc] + F_old * dt_init)
+    # 向后 Euler: (M - dt*K) y_new = M y_old + dt*F（K已包含负号）
+    y_c = (M_old - K_old * dt_init) \ (M_old * y0[vc] + F_old * dt_init)
     y_old = vcat(y_c, y_phi)
     
     # DEBUG: 检查初始求解步骤是否破坏了状态向量
@@ -197,10 +197,9 @@ function Solve(case::Case)
 
         # 2) 电化学步
         M_new, K_new, F_new, variables, y_phi = CallModel(case, y_old, t, jacobi="update") 
-        # Crank-Nicolson: M dy/dt = -K y + F
-        # (M + theta*dt*K_new) y_new = (M - (1-theta)*dt*K_old) y_old + dt*F
-        Mt = M_new + theta * K_new * dt      # 修复：改为 +
-        Kt = M_new - (1 - theta) * K_old * dt  # 修复：改为 M - ...
+        # 统一约定：M dy/dt = K y + F（K 已包含负号）
+        Mt = M_new - theta * K_new * dt 
+        Kt = (1 - theta) * K_old * dt + M_new 
         Ft = theta * F_new * dt + (1 - theta) * F_old * dt 
         y_c = convert(SparseMatrixCSC{Float64,Int}, Mt) \ (Kt * y_old[vc] + Ft) 
         y_new = vcat(y_c, y_phi)

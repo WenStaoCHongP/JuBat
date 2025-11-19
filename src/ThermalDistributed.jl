@@ -21,6 +21,10 @@ end
 
  果冻卷热传导装配：
   方程: (ρ c) ∂T/∂t = ∇·(k ∇T) + q
+  
+  **重要约定**：为与电化学部分统一，返回的 KT 已包含负号
+  即：M dT/dt = KT T + F （其中 KT = -∫ k ∇N^T ∇N dΩ）
+  
   极坐标: ∇·(k ∇T) = 1/r ∂/∂r(r k_rr ∂T/∂r) + 1/r^2 k_θθ ∂²T/∂θ² (忽略耦合项, k 对角)。
   实现策略：
     1. 使用参数域 Q4 元素 (r,θ)；在每个 Gauss 点将 (∂N/∂r, ∂N/∂θ) → 笛卡尔梯度形式, 但对各向同性 k 时可直接在极坐标形式简化。
@@ -28,7 +32,7 @@ end
     3. 质量矩阵采用一致 (consistent) Nᵀ N ρc r w h。
     4. 内热源 q 已映射为节点值 (variables["heat source total"])；装配右端 F = ∫ N q r w h。
     5. 边界条件: 
-        - r = Rout 外边界：对流 -k ∂T/∂r = h (T - T_amb)  ⇒ 贡献到刚度 (h) 与载荷 (-h T_amb)。
+        - r = Rout 外边界：对流 -k ∂T/∂n = h (T - T_amb)  ⇒ 贡献到刚度 (h) 与载荷 (-h T_amb)。
         - r = Rin 内侧：若存在冷却 (cell.h_inner>0) 同理；否则绝热。
     6. 返回 (MT,KT,FT) 。
 """
@@ -154,9 +158,10 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Flo
             Kxy[g] = (lt - lr)*s*c
             Kyy[g] = lr*s*s + lt*c*c
         end
-        cxx = Kxx .* wJ
-        cxy = Kxy .* wJ
-        cyy = Kyy .* wJ
+        # 加负号以与电化学约定统一：M dT/dt = KT T（KT 包含负号）
+        cxx = -Kxx .* wJ
+        cxy = -Kxy .* wJ
+        cyy = -Kyy .* wJ
         KT_xx = Assemble(Vi, Vj, dNdx, dNdx, cxx, nnode)
         KT_xy = Assemble(Vi, Vj, dNdx, dNdy, cxy, nnode)
         KT_yx = Assemble(Vi, Vj, dNdy, dNdx, cxy, nnode) # Kxy=Kyx
@@ -173,8 +178,9 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Flo
                     1.0
                 end
             end
-            KT_x = Assemble(Vi, Vj, dNdx, dNdx, (λ_iso_nd .* wJ), nnode)
-            KT_y = Assemble(Vi, Vj, dNdy, dNdy, (λ_iso_nd .* wJ), nnode)
+            # 加负号以与电化学约定统一：M dT/dt = KT T（KT 包含负号）
+            KT_x = Assemble(Vi, Vj, dNdx, dNdx, (-λ_iso_nd .* wJ), nnode)
+            KT_y = Assemble(Vi, Vj, dNdy, dNdy, (-λ_iso_nd .* wJ), nnode)
             KT = KT_x + KT_y
         end
     end
