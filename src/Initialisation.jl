@@ -222,8 +222,8 @@ function ModelInitialisation_MultiSPMe(case::Case; initial_soc_distribution::Uni
     
     # DEBUG: 验证初始化结果
     if any(!isfinite, y0)
-        nan_in_chem = count(!isfinite, y0_chem_all)
-        nan_in_T = count(!isfinite, T0_nodes)
+        nan_in_chem = sum(.!isfinite.(y0_chem_all))
+        nan_in_T = sum(.!isfinite.(T0_nodes))
         println("\n" * "="^80)
         println("❌ [DEBUG] 初始状态向量包含 NaN/Inf！")
         println("="^80)

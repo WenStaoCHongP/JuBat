@@ -44,6 +44,37 @@ function Solve(case::Case)
     t = t0
     vt = 2  
     v = 1 
+    
+    # DEBUG: 检查初始状态向量
+    println("\n[DEBUG] Solve: 检查初始状态向量 y0")
+    println("  长度: $(length(y0))")
+    nan_in_y0 = sum(.!isfinite.(y0))
+    if nan_in_y0 > 0
+        println("  ⚠️  包含 $nan_in_y0 个 NaN/Inf！")
+        if multi_spme_enabled
+            layout = case.multi_spme_layout
+            ne = layout["ne"]
+            n_chem = layout["n_chem"]
+            nT = layout["nT"]
+            chem_range = 1:(ne * n_chem)
+            thermal_range = (ne * n_chem + 1):(ne * n_chem + nT)
+            nan_chem = sum(.!isfinite.(y0[chem_range]))
+            nan_thermal = sum(.!isfinite.(y0[thermal_range]))
+            println("  化学部分: $nan_chem / $(length(chem_range))")
+            println("  热部分: $nan_thermal / $(length(thermal_range))")
+        end
+    else
+        println("  ✓ 初始状态向量正常")
+        if multi_spme_enabled
+            layout = case.multi_spme_layout
+            nT = layout["nT"]
+            n_total = layout["n_total"]
+            T_part = y0[(n_total - nT + 1):n_total]
+            T_mean_init = sum(T_part) / length(T_part)
+            println("  初始温度均值: $T_mean_init")
+        end
+    end
+    
     M_old, K_old, F_old, variables, y_phi= CallModel(case, y0, t, jacobi="update") 
     # Thermal-distributed init if enabled
     if case.opt.thermal_enabled && case.opt.thermalmodel == "distributed2D" && haskey(case.mesh, "thermal2D")
@@ -278,7 +309,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     nT = layout["nT"]
     
     # DEBUG: 检查输入状态向量
-    nan_count = count(!isfinite, yt)
+    nan_count = sum(.!isfinite.(yt))
     if nan_count > 0
         println("\n" * "="^80)
         println("❌ [DEBUG] CallModel_MultiSPMe 收到包含 NaN/Inf 的状态向量！")
@@ -290,8 +321,8 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         # 检查是化学部分还是热部分
         chem_range = 1:(ne * n_chem)
         thermal_range = (ne * n_chem + 1):(ne * n_chem + nT)
-        nan_chem = count(!isfinite, yt[chem_range])
-        nan_thermal = count(!isfinite, yt[thermal_range])
+        nan_chem = sum(.!isfinite.(yt[chem_range]))
+        nan_thermal = sum(.!isfinite.(yt[thermal_range]))
         
         println("  化学部分 NaN 数: $nan_chem / $(length(chem_range))")
         println("  热部分 NaN 数: $nan_thermal / $(length(thermal_range))")
@@ -327,6 +358,29 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 提取热场
     T_nodes = MultiSPMe_get_thermal_dofs(yt, case)
     
+    # DEBUG: 无条件打印温度场基本信息
+    println("\n[DEBUG] 温度场基本信息:")
+    println("  T_nodes 长度: $(length(T_nodes))")
+    if length(T_nodes) > 0
+        T_min = minimum(T_nodes)
+        T_max = maximum(T_nodes)
+        T_mean = sum(T_nodes) / length(T_nodes)
+        println("  T_nodes 范围: [$T_min, $T_max]")
+        println("  T_nodes 均值: $T_mean")
+        println("  T_nodes 前5个: $(T_nodes[1:min(5,length(T_nodes))])")
+        println("  T_nodes 后5个: $(T_nodes[max(1,end-4):end])")
+        
+        # 检查是否全是 NaN
+        nan_count_here = sum(.!isfinite.(T_nodes))
+        if nan_count_here == length(T_nodes)
+            println("  ⚠️  警告：所有 T_nodes 都是 NaN/Inf！")
+        elseif nan_count_here > 0
+            println("  ⚠️  警告：有 $nan_count_here 个 NaN/Inf 节点")
+        end
+    else
+        println("  ⚠️  错误：T_nodes 为空！")
+    end
+    
     # 提取每个单元的电化学状态
     yt_chem = Vector{Vector{Float64}}(undef, ne)
     for e in 1:ne
@@ -354,8 +408,8 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     end
     
     # DEBUG: 检查温度场是否有 NaN
-    nan_count_nodes = count(!isfinite, T_nodes)
-    nan_count_elem = count(!isfinite, Te_prev)
+    nan_count_nodes = sum(.!isfinite.(T_nodes))
+    nan_count_elem = sum(.!isfinite.(Te_prev))
     if nan_count_nodes > 0 || nan_count_elem > 0
         println("\n" * "="^80)
         println("❌ [DEBUG] 温度场包含 NaN/Inf - 这是问题的根源！")
