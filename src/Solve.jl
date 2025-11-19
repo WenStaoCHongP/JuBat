@@ -277,6 +277,46 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     n_chem = layout["n_chem"]
     nT = layout["nT"]
     
+    # DEBUG: 检查输入状态向量
+    nan_count = count(!isfinite, yt)
+    if nan_count > 0
+        println("\n" * "="^80)
+        println("❌ [DEBUG] CallModel_MultiSPMe 收到包含 NaN/Inf 的状态向量！")
+        println("="^80)
+        println("  时间 t = $t")
+        println("  状态向量长度: $(length(yt))")
+        println("  NaN/Inf 数量: $nan_count")
+        
+        # 检查是化学部分还是热部分
+        chem_range = 1:(ne * n_chem)
+        thermal_range = (ne * n_chem + 1):(ne * n_chem + nT)
+        nan_chem = count(!isfinite, yt[chem_range])
+        nan_thermal = count(!isfinite, yt[thermal_range])
+        
+        println("  化学部分 NaN 数: $nan_chem / $(length(chem_range))")
+        println("  热部分 NaN 数: $nan_thermal / $(length(thermal_range))")
+        
+        if nan_thermal > 0
+            println("\n📊 热部分的 NaN 位置 (前10个):")
+            T_part = yt[thermal_range]
+            count_print = 0
+            for i in 1:length(T_part)
+                if !isfinite(T_part[i]) && count_print < 10
+                    count_print += 1
+                    global_idx = thermal_range[i]
+                    println("  yt[$global_idx] (T_nodes[$i]) = $(T_part[i])")
+                end
+            end
+        end
+        
+        println("\n💡 这表明状态向量在传入 CallModel 之前就已损坏")
+        println("   可能原因:")
+        println("   • 初始化函数返回了 NaN")
+        println("   • 上一个时间步的求解产生了 NaN")
+        println("   • 状态向量更新逻辑有误")
+        println("="^80 * "\n")
+    end
+    
     mesh_th = case.mesh["thermal2D"]
     param = case.param
     
@@ -311,6 +351,55 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     @inbounds for e in 1:ne
         nds = mesh_th.element[e, :]
         Te_prev[e] = sum(T_nodes[nds]) / length(nds)
+    end
+    
+    # DEBUG: 检查温度场是否有 NaN
+    nan_count_nodes = count(!isfinite, T_nodes)
+    nan_count_elem = count(!isfinite, Te_prev)
+    if nan_count_nodes > 0 || nan_count_elem > 0
+        println("\n" * "="^80)
+        println("❌ [DEBUG] 温度场包含 NaN/Inf - 这是问题的根源！")
+        println("="^80)
+        println("📊 温度统计:")
+        println("  T_nodes 总数: $(length(T_nodes))")
+        println("  T_nodes 中 NaN/Inf 数量: $nan_count_nodes")
+        println("  Te_prev (单元平均温度) 总数: $(length(Te_prev))")
+        println("  Te_prev 中 NaN/Inf 数量: $nan_count_elem")
+        
+        if nan_count_nodes > 0
+            println("\n📊 T_nodes 中的 NaN/Inf 位置 (前10个):")
+            count = 0
+            for i in 1:length(T_nodes)
+                if !isfinite(T_nodes[i]) && count < 10
+                    count += 1
+                    println("  节点 $i: T_nodes[$i] = $(T_nodes[i])")
+                end
+            end
+        end
+        
+        if nan_count_elem > 0
+            println("\n📊 Te_prev 中的 NaN/Inf 单元 (前10个):")
+            count = 0
+            for e in 1:ne
+                if !isfinite(Te_prev[e]) && count < 10
+                    count += 1
+                    nds = mesh_th.element[e, :]
+                    println("  单元 $e: Te_prev[$e] = $(Te_prev[e])")
+                    println("    节点: $nds")
+                    println("    节点温度: [$(T_nodes[nds])]")
+                end
+            end
+        end
+        
+        println("\n💡 可能原因:")
+        println("  • 状态向量 yt 的温度部分没有正确初始化")
+        println("  • MultiSPMe_get_thermal_dofs 提取错误")
+        println("  • 初始化函数 ModelInitialisation_MultiSPMe 有问题")
+        println("\n💡 建议:")
+        println("  • 检查 case.param.cell.T0 是否设置")
+        println("  • 检查 ModelInitialisation_MultiSPMe 中的温度初始化")
+        println("  • 确认状态向量长度和布局正确")
+        println("="^80 * "\n")
     end
     
     # 3) 分流求解（获取 I_e）

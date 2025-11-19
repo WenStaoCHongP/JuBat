@@ -148,18 +148,69 @@ julia example/testexample.jl
 | 只有 alpha 是 NaN | j0 太小或为零 | 检查 `prefactor_n/p` |
 | 初始时正常，迭代后 NaN | 数值不稳定 | 减小时间步长或电流 |
 
-## 实际案例
+## 完整调试链
 
-根据您提供的输出：
+我们现在有一个**多层防护**的调试系统：
+
+### 🛡️ 第1道防线：初始化检查
+**位置：** `src/Initialisation.jl` - `ModelInitialisation_MultiSPMe`
+
+**检查内容：**
+- `case.param.cell.T0` 是否定义
+- `T0` 是否为 NaN/Inf
+- `T0` 是否在合理范围（0-500）
+- 初始状态向量 `y0` 是否包含 NaN
+
+**如果失败：** 程序在初始化阶段就会报错并指出问题
+
+### 🛡️ 第2道防线：CallModel 入口检查
+**位置：** `src/Solve.jl` - `CallModel_MultiSPMe`
+
+**检查内容：**
+- 输入状态向量 `yt` 是否包含 NaN
+- 区分化学部分和热部分的 NaN
+- 显示前10个 NaN 的位置
+
+**输出示例：**
 ```
-First 5 C1 values: [...(C1 = NaN, C2 = NaN, alpha_p = NaN, alpha_n = NaN, C5 = 0.0265...)]
+❌ [DEBUG] CallModel_MultiSPMe 收到包含 NaN/Inf 的状态向量！
+  化学部分 NaN 数: 0 / 18900
+  热部分 NaN 数: 100 / 630
 ```
 
-**诊断：** C5 正常（0.0265）说明电阻计算没问题，但 C1, C2, alpha 都是 NaN
+### 🛡️ 第3道防线：温度场检查
+**位置：** `src/Solve.jl` - 温度提取后
 
-**结论：** 问题在预计算值层面，很可能是：
-- `prefactor_n` 或 `prefactor_p` 是 NaN（导致 alpha 是 NaN）
-- `u_n_ref_val` 或 `u_p_ref_val` 是 NaN（导致 C1 是 NaN）
-- `T_ref` 是 NaN（导致 C2 是 NaN）
+**检查内容：**
+- `T_nodes` 数组是否包含 NaN
+- `Te_prev` (单元平均温度) 是否包含 NaN
+- 显示哪些节点和单元有问题
 
-**下一步：** 重新运行，查看 `❌ [DEBUG] 预计算值包含 NaN/Inf` 的输出，确认具体是哪个值的问题。
+### 🛡️ 第4道防线：电化学系数检查
+**位置：** `src/SPMe.jl` - `solve_branch_currents_newton`
+
+**检查内容：**
+- 预计算值（prefactor, u_ref, etc.）
+- 单元级系数（C1, C2, alpha, etc.）
+- 初始电压计算
+
+## 实际案例分析
+
+**您的输出显示：**
+```
+❌ [DEBUG] 单元 630 的系数包含 NaN/Inf
+  T_e = NaN ❌ NaN/Inf
+```
+
+**诊断链：**
+1. 单元 630 的温度 `T_e = NaN`
+2. 这是从 `Te_prev[630]` 来的
+3. `Te_prev` 是从 `T_nodes` 计算的（节点温度平均）
+4. `T_nodes` 是从状态向量 `yt` 提取的
+5. 所以根本问题在状态向量的温度部分
+
+**下一步操作：**
+重新运行程序，您会看到更上游的调试信息：
+- 如果在初始化时就报错 → T0 设置有问题
+- 如果看到 "CallModel 收到 NaN" → 上一个时间步产生了 NaN
+- 如果看到 "温度场包含 NaN" → 状态向量提取或计算有问题
