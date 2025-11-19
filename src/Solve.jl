@@ -130,6 +130,53 @@ function Solve(case::Case)
     vc = 1:size(M_old,1)
     y_c = (M_old - K_old * dt_init) \ (M_old * y0[vc] + F_old * dt_init)
     y_old = vcat(y_c, y_phi)
+    
+    # DEBUG: 检查初始求解步骤是否破坏了状态向量
+    nan_in_yold = sum(.!isfinite.(y_old))
+    if nan_in_yold > 0 || (multi_spme_enabled && maximum(abs.(y_old)) > 100.0)
+        println("\n" * "="^80)
+        println("❌ [DEBUG] 初始求解步骤产生异常！")
+        println("="^80)
+        println("  dt_init = $dt_init")
+        println("  y0 长度: $(length(y0)), 范围: [$(minimum(y0)), $(maximum(y0))]")
+        println("  y_old 长度: $(length(y_old)), 范围: [$(minimum(y_old)), $(maximum(y_old))]")
+        println("  y_old 中 NaN/Inf: $nan_in_yold")
+        
+        if multi_spme_enabled
+            layout = case.multi_spme_layout
+            ne = layout["ne"]
+            n_chem = layout["n_chem"]
+            nT = layout["nT"]
+            
+            # 检查化学和热部分
+            chem_range = 1:(ne * n_chem)
+            thermal_range = (ne * n_chem + 1):(ne * n_chem + nT)
+            
+            y0_chem = y0[chem_range]
+            y0_thermal = y0[thermal_range]
+            yold_chem = y_old[chem_range]
+            yold_thermal = y_old[thermal_range]
+            
+            println("\n  化学部分:")
+            println("    y0: [$(minimum(y0_chem)), $(maximum(y0_chem))]")
+            println("    y_old: [$(minimum(yold_chem)), $(maximum(yold_chem))]")
+            
+            println("\n  热部分:")
+            println("    y0: [$(minimum(y0_thermal)), $(maximum(y0_thermal))]")
+            println("    y_old: [$(minimum(yold_thermal)), $(maximum(yold_thermal))]")
+            
+            # 找出最异常的值
+            thermal_deviations = abs.(yold_thermal .- 1.0)
+            max_dev_idx = argmax(thermal_deviations)
+            println("\n  最大偏差节点:")
+            println("    节点 $max_dev_idx: y0=$(y0_thermal[max_dev_idx]), y_old=$(yold_thermal[max_dev_idx])")
+        end
+        
+        println("\n💡 问题：初始求解步骤 dt_init=1e-8 可能导致数值不稳定")
+        println("   建议：增大 dt_init 或跳过这个步骤")
+        println("="^80 * "\n")
+    end
+    
     Variable_update!(variables_hist, variables, v)
     t += dt 
     if case.opt.jacobi == "constant"

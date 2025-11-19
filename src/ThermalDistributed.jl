@@ -311,22 +311,11 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64=0.0)
 
         if !isempty(tab_nodes)
             # 读取配置：加热速率（K/s）与惩罚强度
-            rate_Ks = hasproperty(case.opt, :tab_heating_rate) ? case.opt.tab_heating_rate : 0.0  # 默认改为0（关闭加热）
+            rate_Ks = hasproperty(case.opt, :tab_heating_rate) ? case.opt.tab_heating_rate : 0.1
             penalty = hasproperty(case.opt, :tab_penalty) ? case.opt.tab_penalty : 1e12
             scale = case.param_dim.scale
             T_amb_nd = case.param_dim.cell.T_amb / scale.T_ref
-            
-            # 修复：t 是无量纲时间，需要乘以 t0 转换为物理时间（秒）
-            # 物理时间 = t * t0，温升 = rate_Ks * t * t0
-            # 无量纲温升 = (rate_Ks * t * t0) / T_ref
-            t0 = scale.t0  # 时间尺度（秒）
-            T_tab_nd = T_amb_nd + (rate_Ks * t * t0) / max(scale.T_ref, 1e-16)
-            
-            # 添加安全检查：如果极耳温度异常，发出警告
-            if abs(T_tab_nd - T_amb_nd) > 10.0
-                @warn "极耳温度异常！" T_tab_nd T_amb_nd rate_Ks t t0 T_ref=scale.T_ref
-            end
-            
+            T_tab_nd = T_amb_nd + (rate_Ks * t) / max(scale.T_ref, 1e-16)
             for n in tab_nodes
                 KT[n,n] += penalty
                 FT[n]   += penalty * T_tab_nd
