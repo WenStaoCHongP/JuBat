@@ -454,18 +454,18 @@ function heatQ_Source(case::Case, variables::Dict{String,Union{Array{Float64},Fl
             # 负极层（NE）
             Q_rxn_NE = as_n * abs(j_n) * abs(eta_n)  # 反应热：a_s * j * η
             Q_rev_NE = as_n * j_n * T_nd_e * param.NE.dUdT(csn_surf)  # 可逆热：a_s * j * T * dU/dT
-            Q_ohm_s_NE = I_nd^2 * t_n / (3.0 * sig_n_eff) / t_n  # 固相欧姆热：I²/(3σ)
-            Q_ohm_e_NE = I_nd^2 * t_n / (3.0 * kappa_ne) / t_n   # 液相欧姆热：I²/(3κ)
+            Q_ohm_s_NE = I_nd^2 / (3.0 * sig_n_eff)  # 固相欧姆热：I²/(3σ)
+            Q_ohm_e_NE = I_nd^2 / (3.0 * kappa_ne)   # 液相欧姆热：I²/(3κ)
             Q_NE = Q_rxn_NE + Q_rev_NE + Q_ohm_s_NE + Q_ohm_e_NE
             
             # 隔膜层（SP）- 仅液相欧姆热
-            Q_SP = I_nd^2 * t_sp / kappa_sp / t_sp  # 隔膜欧姆热：I²/κ（无1/3因子）
+            Q_SP = I_nd^2 / kappa_sp  # 隔膜欧姆热：I²/κ（无1/3因子）
             
             # 正极层（PE）
             Q_rxn_PE = as_p * abs(j_p) * abs(eta_p)  # 反应热
             Q_rev_PE = as_p * j_p * T_nd_e * param.PE.dUdT(csp_surf)  # 可逆热
-            Q_ohm_s_PE = I_nd^2 * t_p / (3.0 * sig_p_eff) / t_p  # 固相欧姆热
-            Q_ohm_e_PE = I_nd^2 * t_p / (3.0 * kappa_pe) / t_p   # 液相欧姆热
+            Q_ohm_s_PE = I_nd^2 / (3.0 * sig_p_eff)  # 固相欧姆热
+            Q_ohm_e_PE = I_nd^2 / (3.0 * kappa_pe)   # 液相欧姆热
             Q_PE = Q_rxn_PE + Q_rev_PE + Q_ohm_s_PE + Q_ohm_e_PE
             
             # 集流体层（PCC/NCC）- 仅欧姆热
