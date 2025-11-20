@@ -617,14 +617,12 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     K_chem = blockdiag(K_elems...)
     F_chem = vcat(F_elems...)
     
-    # 6) 计算逐单元热源
+    # 6) 计算逐单元热源（按理论文档 A.5 分层计算）
     q_elem = zeros(Float64, ne)
     eta_n_e = zeros(Float64, ne)
     eta_p_e = zeros(Float64, ne)
     dUdT_n_e = zeros(Float64, ne)
     dUdT_p_e = zeros(Float64, ne)
-    
-    L_th = case.param_dim.scale.L_th
     
     # 获取 layer_weights（如果存在）
     fks = haskey(variables, "thermal2D layer_weights") ? variables["thermal2D layer_weights"] : nothing
@@ -641,46 +639,65 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         dUdT_n_e[e] = param.NE.dUdT(cn_surf_e)[1]
         dUdT_p_e[e] = param.PE.dUdT(cp_surf_e)[1]
         
-        # 热源计算
+        # 当前单元的温度和电流
         T_e = Te_prev[e]
         I_e_local = I_e[e]
         
-        # 反应热（使用逐单元过电位）
-        Q_rxn = abs(I_e_local * (eta_p_e[e] - eta_n_e[e]))
+        # 界面电流密度（从单元 variables_e 获取）
+        j_n_e = vars_e["negative electrode interfacial current density"]
+        j_p_e = vars_e["positive electrode interfacial current density"]
         
-        # 可逆热（使用逐单元 dUdT）
-        Q_rev = abs(I_e_local) * T_e * (dUdT_p_e[e] - dUdT_n_e[e])
+        # 比表面积
+        as_n = param.NE.as
+        as_p = param.PE.as
         
-        # 欧姆热（电极固相 + 电解液）
+        # 有效电导率
         sig_n_eff = param.NE.sig * param.NE.eps_s
         sig_p_eff = param.PE.sig * param.PE.eps_s
         kappa_ne = param.EL.kappa(param.EL.ce0, T_e) * param.NE.eps ^ param.NE.brugg
         kappa_pe = param.EL.kappa(param.EL.ce0, T_e) * param.PE.eps ^ param.PE.brugg
         kappa_sp = param.EL.kappa(param.EL.ce0, T_e) * param.SP.eps ^ param.SP.brugg
         
-        t_n = param.NE.thickness / L_th
-        t_p = param.PE.thickness / L_th
-        t_sp = param.SP.thickness / L_th
+        # 层厚度（无量纲）
+        t_n = param.NE.thickness
+        t_p = param.PE.thickness
+        t_sp = param.SP.thickness
         
-        P_s_ne = I_e_local^2 * (t_n / sig_n_eff) / 3.0
-        P_s_pe = I_e_local^2 * (t_p / sig_p_eff) / 3.0
-        P_e_ne = I_e_local^2 * (t_n / kappa_ne) / 3.0
-        P_e_sp = I_e_local^2 * (t_sp / kappa_sp)
-        P_e_pe = I_e_local^2 * (t_p / kappa_pe) / 3.0
+        # ========== 分层计算热源（体热源密度，无量纲）==========
+        # 公式基于理论文档 A.5 节
         
-        Q_ohm = P_e_ne / t_n + P_s_ne / t_n + P_e_pe / t_p + P_s_pe / t_p + P_e_sp / t_sp
+        # 负极层（NE）
+        Q_rxn_NE = as_n * abs(j_n_e) * abs(eta_n_e[e])  # 反应热：a_s * j * η
+        Q_rev_NE = as_n * j_n_e * T_e * dUdT_n_e[e]     # 可逆热：a_s * j * T * dU/dT
+        Q_ohm_s_NE = I_e_local^2 / (3.0 * sig_n_eff)    # 固相欧姆热：I²/(3σ)
+        Q_ohm_e_NE = I_e_local^2 / (3.0 * kappa_ne)     # 液相欧姆热：I²/(3κ)
+        Q_NE = Q_rxn_NE + Q_rev_NE + Q_ohm_s_NE + Q_ohm_e_NE
         
-        Q_ele = Q_rxn + Q_rev + Q_ohm
+        # 隔膜层（SP）- 仅液相欧姆热
+        Q_SP = I_e_local^2 / kappa_sp  # 隔膜欧姆热：I²/κ（无1/3因子）
         
-        # 集流体欧姆热（如果有 layer_weights）
+        # 正极层（PE）
+        Q_rxn_PE = as_p * abs(j_p_e) * abs(eta_p_e[e])  # 反应热
+        Q_rev_PE = as_p * j_p_e * T_e * dUdT_p_e[e]     # 可逆热
+        Q_ohm_s_PE = I_e_local^2 / (3.0 * sig_p_eff)    # 固相欧姆热
+        Q_ohm_e_PE = I_e_local^2 / (3.0 * kappa_pe)     # 液相欧姆热
+        Q_PE = Q_rxn_PE + Q_rev_PE + Q_ohm_s_PE + Q_ohm_e_PE
+        
+        # 集流体层（PCC/NCC）- 仅欧姆热
+        σ_PCC = max(hasproperty(param, :PCC) && hasproperty(param.PCC, :sig) ? param.PCC.sig : 1e12, 1e-12)
+        σ_NCC = max(hasproperty(param, :NCC) && hasproperty(param.NCC, :sig) ? param.NCC.sig : 1e12, 1e-12)
+        t_PCC = hasproperty(param, :PCC) && hasproperty(param.PCC, :thickness) ? param.PCC.thickness : 0.0
+        t_NCC = hasproperty(param, :NCC) && hasproperty(param.NCC, :thickness) ? param.NCC.thickness : 0.0
+        Q_PCC = (t_PCC > 0) ? I_e_local^2 / (3.0 * σ_PCC) : 0.0
+        Q_NCC = (t_NCC > 0) ? I_e_local^2 / (3.0 * σ_NCC) : 0.0
+        
+        # 按层权重聚合到单元平均热源
+        # fks[e,:] = [f_NE, f_SP, f_PE, f_PCC, f_NCC]
         if fks !== nothing
-            σ_PCC = max(hasproperty(param, :PCC) && hasproperty(param.PCC, :sig) ? param.PCC.sig : 1e12, 1e-12)
-            σ_NCC = max(hasproperty(param, :NCC) && hasproperty(param.NCC, :sig) ? param.NCC.sig : 1e12, 1e-12)
-            Q_PCC = I_e_local^2 / (3.0 * σ_PCC)
-            Q_NCC = I_e_local^2 / (3.0 * σ_NCC)
-            q_elem[e] = (fks[e,1] + fks[e,2] + fks[e,3]) * Q_ele + fks[e,4] * Q_PCC + fks[e,5] * Q_NCC
+            q_elem[e] = fks[e,1]*Q_NE + fks[e,2]*Q_SP + fks[e,3]*Q_PE + fks[e,4]*Q_PCC + fks[e,5]*Q_NCC
         else
-            q_elem[e] = Q_ele
+            # 回退：使用简化聚合（假设单元完全在电极区）
+            q_elem[e] = Q_NE + Q_SP + Q_PE + Q_PCC + Q_NCC
         end
     end
     

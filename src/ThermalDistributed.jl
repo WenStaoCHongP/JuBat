@@ -417,40 +417,68 @@ function heatQ_Source(case::Case, variables::Dict{String,Union{Array{Float64},Fl
     # 热尺度（用于长度无量纲）
     L_th = case.param_dim.scale.L_th
     for e in 1:ne
-    # I_app = I_e / I1C_total
         I_nd = I_e[e]
         T_nd_e = T_e[e]
         if case.opt.model == "SPM" || case.opt.model == "SPMe"
             I_app = variables["cell current"]
-            # 取界面电流密度、过电位与 dUdT
+            
+            # 获取电化学变量
             eta_n = variables["negative electrode overpotential"][1]
             eta_p = variables["positive electrode overpotential"][end]
             csn_surf = variables["negative particle surface lithium concentration"][1]
             csp_surf = variables["positive particle surface lithium concentration"][end]
-            Q_rxn = abs(I_app * (eta_p - eta_n) ) # reaction heat is always positive
-            Q_rev = abs(I_app) * T_nd_e * (param.PE.dUdT(csp_surf) - param.NE.dUdT(csn_surf)) 
-            # 欧姆热（电极固相/电解液/隔膜）
-            sig_n_eff = param.NE.sig .* param.NE.eps_s
-            sig_p_eff = param.PE.sig .* param.PE.eps_s
+            
+            # 界面电流密度（从 SPMe_variables 输出获取）
+            j_n = variables["negative electrode interfacial current density"]
+            j_p = variables["positive electrode interfacial current density"]
+            
+            # 比表面积
+            as_n = param.NE.as
+            as_p = param.PE.as
+            
+            # 有效电导率
+            sig_n_eff = param.NE.sig * param.NE.eps_s
+            sig_p_eff = param.PE.sig * param.PE.eps_s
             kappa_ne = param.EL.kappa(param.EL.ce0, T_nd_e) * param.NE.eps ^ param.NE.brugg
             kappa_pe = param.EL.kappa(param.EL.ce0, T_nd_e) * param.PE.eps ^ param.PE.brugg
             kappa_sp = param.EL.kappa(param.EL.ce0, T_nd_e) * param.SP.eps ^ param.SP.brugg
-            t_n = param.NE.thickness / L_th
-            t_p = param.PE.thickness / L_th
-            t_sp = param.SP.thickness / L_th
-            P_s_ne = I_nd^2 * (t_n / sig_n_eff) / 3.0
-            P_s_pe = I_nd^2 * (t_p / sig_p_eff) / 3.0
-            P_e_ne = I_nd^2 * (t_n / kappa_ne) / 3.0
-            P_e_sp = I_nd^2 * (t_sp / kappa_sp)
-            P_e_pe = I_nd^2 * (t_p / kappa_pe) / 3.0
-            Q_ohm = P_e_ne / t_n + P_s_ne / t_n + P_e_pe / t_p + P_s_pe / t_p + P_e_sp / t_sp 
-            Q_ele = Q_rxn + Q_rev + Q_ohm
+            
+            # 层厚度（无量纲）
+            t_n = param.NE.thickness
+            t_p = param.PE.thickness
+            t_sp = param.SP.thickness
+            
+            # ========== 分层计算热源（体热源密度，无量纲） ==========
+            # 公式基于理论文档 A.5 节
+            
+            # 负极层（NE）
+            Q_rxn_NE = as_n * abs(j_n) * abs(eta_n)  # 反应热：a_s * j * η
+            Q_rev_NE = as_n * j_n * T_nd_e * param.NE.dUdT(csn_surf)  # 可逆热：a_s * j * T * dU/dT
+            Q_ohm_s_NE = I_nd^2 * t_n / (3.0 * sig_n_eff) / t_n  # 固相欧姆热：I²/(3σ)
+            Q_ohm_e_NE = I_nd^2 * t_n / (3.0 * kappa_ne) / t_n   # 液相欧姆热：I²/(3κ)
+            Q_NE = Q_rxn_NE + Q_rev_NE + Q_ohm_s_NE + Q_ohm_e_NE
+            
+            # 隔膜层（SP）- 仅液相欧姆热
+            Q_SP = I_nd^2 * t_sp / kappa_sp / t_sp  # 隔膜欧姆热：I²/κ（无1/3因子）
+            
+            # 正极层（PE）
+            Q_rxn_PE = as_p * abs(j_p) * abs(eta_p)  # 反应热
+            Q_rev_PE = as_p * j_p * T_nd_e * param.PE.dUdT(csp_surf)  # 可逆热
+            Q_ohm_s_PE = I_nd^2 * t_p / (3.0 * sig_p_eff) / t_p  # 固相欧姆热
+            Q_ohm_e_PE = I_nd^2 * t_p / (3.0 * kappa_pe) / t_p   # 液相欧姆热
+            Q_PE = Q_rxn_PE + Q_rev_PE + Q_ohm_s_PE + Q_ohm_e_PE
+            
+            # 集流体层（PCC/NCC）- 仅欧姆热
             σ_PCC = (hasproperty(case.param, :PCC) && hasproperty(case.param.PCC, :sig)) ? max(case.param.PCC.sig, 1e-12) : 1e12
             σ_NCC = (hasproperty(case.param, :NCC) && hasproperty(case.param.NCC, :sig)) ? max(case.param.NCC.sig, 1e-12) : 1e12
-            Q_PCC = I_nd^2 / (3.0 * σ_PCC)
-            Q_NCC = I_nd^2 / (3.0 * σ_NCC)
-            # 使用已获取的 fks 矩阵进行索引（脚本已提供 fks）
-            q_elem[e] = (fks[e,1] + fks[e,2] + fks[e,3]) * Q_ele + fks[e,4] * Q_PCC + fks[e,5] * Q_NCC 
+            t_PCC = hasproperty(case.param, :PCC) && hasproperty(case.param.PCC, :thickness) ? case.param.PCC.thickness : 0.0
+            t_NCC = hasproperty(case.param, :NCC) && hasproperty(case.param.NCC, :thickness) ? case.param.NCC.thickness : 0.0
+            Q_PCC = (t_PCC > 0) ? I_nd^2 * t_PCC / (3.0 * σ_PCC) / t_PCC : 0.0
+            Q_NCC = (t_NCC > 0) ? I_nd^2 * t_NCC / (3.0 * σ_NCC) / t_NCC : 0.0
+            
+            # 按层权重聚合到单元平均热源
+            # fks[e,:] = [f_NE, f_SP, f_PE, f_PCC, f_NCC]
+            q_elem[e] = fks[e,1]*Q_NE + fks[e,2]*Q_SP + fks[e,3]*Q_PE + fks[e,4]*Q_PCC + fks[e,5]*Q_NCC
         end
         if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling && hasproperty(case.opt, :debug_sample_elems) && sample_log < case.opt.debug_sample_elems
             @info "[thermal] heat elem=$(e)" I_nd=I_nd T_nd=T_nd_e Q_PCC=Q_PCC Q_NCC=Q_NCC q_e=q_elem[e]
