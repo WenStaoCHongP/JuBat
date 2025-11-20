@@ -229,28 +229,21 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64=0.0)
     mesh = case.mesh["thermal2D"]
     @assert mesh.type == "Q4" && mesh.dimension == 2 "Boundary BC currently implemented for Q4/2D"
     
-    # 边界节点识别：基于螺旋线方程的精确判断
-    # 可配置参数：
-    # - boundary_inner_theta: 内边界 θ 范围，默认 (0.0, 2π)（第1圈）
-    # - boundary_outer_theta: 外边界 θ 范围，默认 (2π(N-1), 2π*N)（第N圈）
-    # - boundary_tol: 节点到螺旋线的距离容差，默认 1e-4
+    # 边界节点识别配置
+    # - boundary_inner_theta: 内边界 θ 范围，默认 (0.0, 2π)
+    # - boundary_outer_theta: 外边界 θ 范围，默认 (2π(N-1), 2π*N)
+    # - boundary_tol: 距离容差，默认 1e-4
     
     pgeo = jellyroll_spiral_params(case.param_dim)
     N = max(1, Int(pgeo.n_wind))
     
-    # 内边界 θ 范围（默认：第1圈）
-    if hasproperty(case.opt, :boundary_inner_theta)
-        θ_in_range = case.opt.boundary_inner_theta
-    else
-        θ_in_range = (0.0, 2.0*pi)
-    end
+    # 内边界 θ 范围
+    θ_in_range = hasproperty(case.opt, :boundary_inner_theta) ? 
+                 case.opt.boundary_inner_theta : (0.0, 2.0*pi)
     
-    # 外边界 θ 范围（默认：第N圈）
-    if hasproperty(case.opt, :boundary_outer_theta)
-        θ_out_range = case.opt.boundary_outer_theta
-    else
-        θ_out_range = (2.0*pi*(N-1), 2.0*pi*N)
-    end
+    # 外边界 θ 范围
+    θ_out_range = hasproperty(case.opt, :boundary_outer_theta) ? 
+                  case.opt.boundary_outer_theta : (2.0*pi*(N-1), 2.0*pi*N)
     
     # 容差
     tol = hasproperty(case.opt, :boundary_tol) ? case.opt.boundary_tol : 1e-4
@@ -258,19 +251,14 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64=0.0)
     ne = size(mesh.element, 1)
     nnode = mesh.nlen
     
-    # 精确识别内外边界节点
-    is_inner_node = falses(nnode)
-    is_outer_node = falses(nnode)
+    # 识别边界节点
+    is_inner_node = [edge_boundary(mesh, i, case.param_dim; 
+                                    which=:inner, theta_range=θ_in_range, tol=tol) 
+                     for i in 1:nnode]
     
-    for i in 1:nnode
-        # 内边界：判断是否在内螺旋线的指定 θ 段上
-        is_inner_node[i] = edge_boundary(:node_on_spiral, mesh, i, case.param_dim; 
-                                         which=:inner, theta_range=θ_in_range, tol=tol)
-        
-        # 外边界：判断是否在外螺旋线的指定 θ 段上
-        is_outer_node[i] = edge_boundary(:node_on_spiral, mesh, i, case.param_dim; 
-                                         which=:outer, theta_range=θ_out_range, tol=tol)
-    end
+    is_outer_node = [edge_boundary(mesh, i, case.param_dim; 
+                                    which=:outer, theta_range=θ_out_range, tol=tol) 
+                     for i in 1:nnode]
 
     # 3) 对外边界边组装对流项（内侧默认绝热）。扫描单元四条边，若两端均为外边界节点则施加换热。
     # 使用维度化或无量纲参数需全局一致；此处沿用 param 中的 h 与 T_amb。

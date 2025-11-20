@@ -265,169 +265,90 @@ end
 
 
 """
-    edge_boundary(kind::Symbol, args...; kwargs...)
+    edge_boundary(mesh, nidx, param_dim; which=:inner/:outer, theta_range=(θ_min, θ_max), tol=1e-4)
 
-统一边界识别工具，支持基于螺旋线方程的精确判断。
+基于螺旋线方程的精确边界识别。
 
-# 边界定义
-- **内边界**：内螺旋线 r(θ) = a + b*θ 的指定 θ 段
-- **外边界**：外螺旋线 r(θ) = a + b*θ + t_repeat 的指定 θ 段
+# 螺旋线方程
+- 内螺旋：r(θ) = a + b·θ
+- 外螺旋：r(θ) = a + b·θ + t_repeat
 
-# 精确判断方法
-对于节点 (x, y)：
-1. 转换为极坐标 (r, φ)，φ ∈ (-π, π]
-2. 计算累计角度 θ_cum：
-   - 内螺旋：θ_cum_in = (r - a) / b
-   - 外螺旋：θ_cum_out = (r - a - t_repeat) / b
-3. 检查 θ_cum 是否在目标范围内
-4. 验证节点到螺旋线的距离 < 容差
+# 判断方法
+1. 计算节点累计角度 θ_cum
+2. 检查 θ_cum ∈ [θ_min, θ_max]
+3. 验证节点到理论螺旋线的距离 ≤ tol
 
 # 参数
-- `kind`: 识别类型
-  - `:is_on_spiral`: 判断点是否在指定螺旋线段上（精确）
-  - `:node_on_spiral`: 判断网格节点是否在螺旋线段上（精确）
-  - `:r`, `:theta_range`, `:is_on`, `:node_on`: 旧接口（兼容）
+- `mesh`: 网格对象
+- `nidx`: 节点索引
+- `param_dim`: 参数对象
+- `which`: `:inner`（内螺旋）或 `:outer`（外螺旋）
+- `theta_range`: θ 范围 (θ_min, θ_max)，默认第1圈或第N圈
+- `tol`: 距离容差（m），默认 1e-4
 
 # 示例
 ```julia
-# 精确判断：节点是否在第1圈的内螺旋上
-is_inner = edge_boundary(:node_on_spiral, mesh, i, param_dim; 
-                         which=:inner, theta_range=(0.0, 2π), tol=1e-4)
+# 判断节点是否在第0圈内螺旋上
+is_inner = edge_boundary(mesh, i, param_dim; which=:inner, theta_range=(0.0, 2π))
 
-# 精确判断：节点是否在第N圈的外螺旋上
-is_outer = edge_boundary(:node_on_spiral, mesh, i, param_dim; 
-                         which=:outer, theta_range=(2π*(N-1), 2π*N), tol=1e-4)
+# 判断节点是否在第0圈外螺旋上
+is_outer = edge_boundary(mesh, i, param_dim; which=:outer, theta_range=(0.0, 2π))
 ```
 """
-function edge_boundary(kind::Symbol, args...; kwargs...)
-    if kind === :r
-        theta = args[1]; param_dim = args[2]
-        p = jellyroll_spiral_params(param_dim)
-        # 第二个参数决定 inner/outer，由 kwargs[:which] 指定为 :inner 或 :outer
-        which = get(kwargs, :which, :inner)
+function edge_boundary(mesh, nidx::Int, param_dim; 
+                       which::Symbol=:inner, 
+                       theta_range::Union{Tuple{Float64,Float64},Nothing}=nothing, 
+                       tol::Float64=1e-4)
+    # 获取节点坐标
+    x, y = mesh.node[nidx, 1], mesh.node[nidx, 2]
+    
+    # 获取螺旋参数
+    p = jellyroll_spiral_params(param_dim)
+    bval = p.b == 0.0 ? 1e-12 : p.b
+    
+    # 获取 θ 范围
+    if theta_range === nothing
         if which === :inner
-            return p.a + p.b * theta
+            θ_min, θ_max = 0.0, 2.0*pi
         elseif which === :outer
-            return p.a + p.b * theta + p.t_repeat
+            N = max(1, Int(p.n_wind))
+            θ_min, θ_max = 2.0*pi*(N-1), 2.0*pi*N
         else
-            error("edge_boundary(:r) which must be :inner or :outer")
+            error("which must be :inner or :outer")
         end
-    elseif kind === :theta_range
-        param_dim = args[1]
-        which = get(kwargs, :which, :inner)
-        if which === :inner
-            return 0.0, 2.0*pi
-        elseif which === :outer
-            # 对于 collector_seed_mesh 网格：外圈与内圈在同一θ段
-            # 返回 [0, 2π] 表示"任意一圈的外螺旋"
-            return 0.0, 2.0*pi
-        else
-            error("edge_boundary(:theta_range) which must be :inner or :outer")
-        end
-    elseif kind === :is_on
-        x = args[1]; y = args[2]; param_dim = args[3]
-        which = get(kwargs, :which, :inner)
-        p = jellyroll_spiral_params(param_dim)
-        
-        # 自适应容差：对于小螺距，使用更小的长度容差以避免角度容差过大
-        # tol_default = min(1e-4, 0.05 * abs(p.b)) 确保 eps_theta < 0.05 弧度（约3度）
-        bval = p.b == 0.0 ? 1e-12 : p.b
-        tol_default = min(1e-4, 0.05 * abs(bval))
-        tol = get(kwargs, :tol, tol_default)
-        
-        r, φ = cart2pol(x, y)
-        # cumulative theta for inner/outer spirals
-        # θ_cum_in = (r - a - s_in)/b with s_in=0
-        # θ_cum_out = (r - a - s_out)/b with s_out = t_repeat
-        θ_cum_in = (r - p.a) / bval
-        θ_cum_out = (r - p.a - p.t_repeat) / bval
-        eps_theta = tol / max(abs(bval), 1e-12)
-        if which === :inner
-            θ_start, θ_end = 0.0, 2.0*pi
-            return (θ_cum_in >= θ_start - eps_theta) && (θ_cum_in <= θ_end + eps_theta)
-        elseif which === :outer
-            # 对于 collector_seed_mesh 网格：内外圈在同一θ段，只是半径偏移
-            # 所以外圈判断应该检查"在任意一圈的外螺旋上"，而不是"第N圈"
-            # 方法：将 θ_cum_out 模 2π，检查是否在 [0, 2π] 范围
-            θ_mod = mod(θ_cum_out, 2.0*pi)
-            θ_start, θ_end = 0.0, 2.0*pi
-            return (θ_mod >= θ_start - eps_theta) && (θ_mod <= θ_end + eps_theta)
-        else
-            error("edge_boundary(:is_on) which must be :inner or :outer")
-        end
-    elseif kind === :node_on
-        mesh = args[1]; nidx = args[2]; param_dim = args[3]
-        tol = get(kwargs, :tol, 1e-4)
-        which = get(kwargs, :which, :inner)
-        x = mesh.node[nidx,1]; y = mesh.node[nidx,2]
-        return edge_boundary(:is_on, x, y, param_dim; tol=tol, which=which)
-    elseif kind === :is_on_spiral
-        # 精确判断：点 (x, y) 是否在指定的螺旋线段上
-        # 用法：edge_boundary(:is_on_spiral, x, y, param_dim; which=:inner/:outer, theta_range=(θ_min, θ_max), tol=1e-4)
-        x = args[1]; y = args[2]; param_dim = args[3]
-        p = jellyroll_spiral_params(param_dim)
-        which = get(kwargs, :which, :inner)
-        tol = get(kwargs, :tol, 1e-4)
-        
-        # 获取 θ 范围：默认为第1圈（内边界）或第N圈（外边界）
-        if haskey(kwargs, :theta_range)
-            θ_min, θ_max = kwargs[:theta_range]
-        else
-            if which === :inner
-                θ_min, θ_max = 0.0, 2.0*pi
-            elseif which === :outer
-                N = max(1, Int(p.n_wind))
-                θ_min, θ_max = 2.0*pi*(N-1), 2.0*pi*N
-            else
-                error("edge_boundary(:is_on_spiral) which must be :inner or :outer")
-            end
-        end
-        
-        # 转换为极坐标
-        r, φ = cart2pol(x, y)
-        
-        # 计算累计角度 θ_cum
-        bval = p.b == 0.0 ? 1e-12 : p.b
-        if which === :inner
-            # 内螺旋：r = a + b*θ_cum，求解 θ_cum
-            θ_cum = (r - p.a) / bval
-        elseif which === :outer
-            # 外螺旋：r = a + b*θ_cum + t_repeat，求解 θ_cum
-            θ_cum = (r - p.a - p.t_repeat) / bval
-        else
-            error("edge_boundary(:is_on_spiral) which must be :inner or :outer")
-        end
-        
-        # 检查 θ_cum 是否在目标范围内
-        if θ_cum < θ_min || θ_cum > θ_max
-            return false
-        end
-        
-        # 精确验证：计算节点到螺旋线的距离
-        # 理论位置：(x_theo, y_theo) = r_theo * (cos(θ_cum), sin(θ_cum))
-        if which === :inner
-            r_theo = p.a + p.b * θ_cum
-        else
-            r_theo = p.a + p.b * θ_cum + p.t_repeat
-        end
-        x_theo = r_theo * cos(θ_cum)
-        y_theo = r_theo * sin(θ_cum)
-        
-        # 计算实际位置与理论位置的距离
-        dist = hypot(x - x_theo, y - y_theo)
-        
-        return dist <= tol
-        
-    elseif kind === :node_on_spiral
-        # 精确判断：网格节点是否在指定的螺旋线段上
-        # 用法：edge_boundary(:node_on_spiral, mesh, nidx, param_dim; which=:inner/:outer, theta_range=(θ_min, θ_max), tol=1e-4)
-        mesh = args[1]; nidx = args[2]; param_dim = args[3]
-        x = mesh.node[nidx,1]; y = mesh.node[nidx,2]
-        return edge_boundary(:is_on_spiral, x, y, param_dim; kwargs...)
-        
     else
-        error("Unsupported edge_boundary(kind=$(kind)). Use :r, :theta_range, :is_on, :node_on, :is_on_spiral, or :node_on_spiral")
+        θ_min, θ_max = theta_range
     end
+    
+    # 转换为极坐标
+    r = hypot(x, y)
+    
+    # 计算累计角度 θ_cum
+    if which === :inner
+        θ_cum = (r - p.a) / bval
+    elseif which === :outer
+        θ_cum = (r - p.a - p.t_repeat) / bval
+    else
+        error("which must be :inner or :outer")
+    end
+    
+    # 检查 θ 范围
+    if θ_cum < θ_min || θ_cum > θ_max
+        return false
+    end
+    
+    # 计算理论位置
+    if which === :inner
+        r_theo = p.a + p.b * θ_cum
+    else
+        r_theo = p.a + p.b * θ_cum + p.t_repeat
+    end
+    x_theo = r_theo * cos(θ_cum)
+    y_theo = r_theo * sin(θ_cum)
+    
+    # 验证距离
+    dist = hypot(x - x_theo, y - y_theo)
+    return dist <= tol
 end
 
 """

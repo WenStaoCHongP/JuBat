@@ -31,7 +31,7 @@ println("=" ^ 80)
 
 # 使用精确方法识别第1圈内螺旋
 θ_range_inner = (0.0, 2.0*pi)
-is_inner_precise = [JuBat.edge_boundary(:node_on_spiral, mesh_th, i, param_dim; 
+is_inner_precise = [JuBat.edge_boundary(mesh_th, i, param_dim; 
                                         which=:inner, theta_range=θ_range_inner, tol=1e-4) 
                     for i in 1:mesh_th.nlen]
 
@@ -73,7 +73,7 @@ N = Int(p.n_wind)
 θ_range_outer = (2.0*pi*(N-1), 2.0*pi*N)
 println("  第N圈范围: θ ∈ [$(θ_range_outer[1]), $(θ_range_outer[2])]")
 
-is_outer_precise = [JuBat.edge_boundary(:node_on_spiral, mesh_th, i, param_dim; 
+is_outer_precise = [JuBat.edge_boundary(mesh_th, i, param_dim; 
                                         which=:outer, theta_range=θ_range_outer, tol=1e-4) 
                     for i in 1:mesh_th.nlen]
 
@@ -115,7 +115,7 @@ println("测试3: 识别第0圈的外螺旋（θ ∈ [0, 2π]）- collector_seed
 println("=" ^ 80)
 
 θ_range_outer_0 = (0.0, 2.0*pi)
-is_outer_0 = [JuBat.edge_boundary(:node_on_spiral, mesh_th, i, param_dim; 
+is_outer_0 = [JuBat.edge_boundary(mesh_th, i, param_dim; 
                                   which=:outer, theta_range=θ_range_outer_0, tol=1e-4) 
               for i in 1:mesh_th.nlen]
 
