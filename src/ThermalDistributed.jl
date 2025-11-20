@@ -229,19 +229,19 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64=0.0)
     mesh = case.mesh["thermal2D"]
     @assert mesh.type == "Q4" && mesh.dimension == 2 "Boundary BC currently implemented for Q4/2D"
     
-    # 边界节点识别配置
-    # - boundary_inner_theta: 内边界 θ 范围，默认 (0.0, 2π)
-    # - boundary_outer_theta: 外边界 θ 范围，默认 (2π(N-1), 2π*N)
+    # 边界节点识别配置（适用于覆盖整个螺旋的网格）
+    # - boundary_inner_theta: 内边界 θ 范围，默认第1圈 [0, 2π]
+    # - boundary_outer_theta: 外边界 θ 范围，默认第N圈 [2π(N-1), 2π*N]
     # - boundary_tol: 距离容差，默认 1e-4
     
     pgeo = jellyroll_spiral_params(case.param_dim)
     N = max(1, Int(pgeo.n_wind))
     
-    # 内边界 θ 范围
+    # 内边界：第1圈内螺旋（最内层）
     θ_in_range = hasproperty(case.opt, :boundary_inner_theta) ? 
                  case.opt.boundary_inner_theta : (0.0, 2.0*pi)
     
-    # 外边界 θ 范围
+    # 外边界：第N圈外螺旋（最外层）
     θ_out_range = hasproperty(case.opt, :boundary_outer_theta) ? 
                   case.opt.boundary_outer_theta : (2.0*pi*(N-1), 2.0*pi*N)
     
