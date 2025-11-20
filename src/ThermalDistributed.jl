@@ -229,30 +229,47 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64=0.0)
     mesh = case.mesh["thermal2D"]
     @assert mesh.type == "Q4" && mesh.dimension == 2 "Boundary BC currently implemented for Q4/2D"
     
-    # 边界节点识别方法：可选 :spiral（基于螺旋线θ）或 :radial（基于半径r）
-    # - :spiral 适用于 collector_seed_mesh，识别"外螺旋线"上的节点
-    # - :radial 适用于任何网格，识别"r ≈ Rout"的节点（推荐用于对流换热）
-    boundary_method = hasproperty(case.opt, :boundary_method) ? case.opt.boundary_method : :spiral
+    # 边界节点识别：基于螺旋线方程的精确判断
+    # 可配置参数：
+    # - boundary_inner_theta: 内边界 θ 范围，默认 (0.0, 2π)（第1圈）
+    # - boundary_outer_theta: 外边界 θ 范围，默认 (2π(N-1), 2π*N)（第N圈）
+    # - boundary_tol: 节点到螺旋线的距离容差，默认 1e-4
+    
+    pgeo = jellyroll_spiral_params(case.param_dim)
+    N = max(1, Int(pgeo.n_wind))
+    
+    # 内边界 θ 范围（默认：第1圈）
+    if hasproperty(case.opt, :boundary_inner_theta)
+        θ_in_range = case.opt.boundary_inner_theta
+    else
+        θ_in_range = (0.0, 2.0*pi)
+    end
+    
+    # 外边界 θ 范围（默认：第N圈）
+    if hasproperty(case.opt, :boundary_outer_theta)
+        θ_out_range = case.opt.boundary_outer_theta
+    else
+        θ_out_range = (2.0*pi*(N-1), 2.0*pi*N)
+    end
+    
+    # 容差
+    tol = hasproperty(case.opt, :boundary_tol) ? case.opt.boundary_tol : 1e-4
     
     ne = size(mesh.element, 1)
     nnode = mesh.nlen
+    
+    # 精确识别内外边界节点
+    is_inner_node = falses(nnode)
     is_outer_node = falses(nnode)
     
-    if boundary_method === :spiral
-        # 方法1：基于螺旋线 θ（原方法）
-        for i in 1:nnode
-            # which=:outer 对应外螺旋线节点（任意一圈）
-            is_outer_node[i] = edge_boundary(:node_on, mesh, i, case.param_dim; which=:outer)
-        end
-    elseif boundary_method === :radial
-        # 方法2：基于半径 r（推荐用于对流换热）
-        tol = hasproperty(case.opt, :boundary_radial_tol) ? case.opt.boundary_radial_tol : 1e-3
-        for i in 1:nnode
-            # which=:outer 识别 r ≈ Rout 的节点
-            is_outer_node[i] = edge_boundary(:radial, mesh, i, case.param_dim; which=:outer, tol=tol)
-        end
-    else
-        error("Unsupported boundary_method=$(boundary_method). Use :spiral or :radial")
+    for i in 1:nnode
+        # 内边界：判断是否在内螺旋线的指定 θ 段上
+        is_inner_node[i] = edge_boundary(:node_on_spiral, mesh, i, case.param_dim; 
+                                         which=:inner, theta_range=θ_in_range, tol=tol)
+        
+        # 外边界：判断是否在外螺旋线的指定 θ 段上
+        is_outer_node[i] = edge_boundary(:node_on_spiral, mesh, i, case.param_dim; 
+                                         which=:outer, theta_range=θ_out_range, tol=tol)
     end
 
     # 3) 对外边界边组装对流项（内侧默认绝热）。扫描单元四条边，若两端均为外边界节点则施加换热。

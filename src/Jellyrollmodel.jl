@@ -267,9 +267,37 @@ end
 """
     edge_boundary(kind::Symbol, args...; kwargs...)
 
-统一边界工具：当 kind==:inner 或 :outer 时，返回与原有函数等价的结果。
+统一边界识别工具，支持基于螺旋线方程的精确判断。
 
-此函数集中实现了内/外边界的共同逻辑，保留原有函数作为小包装以保证向后兼容。
+# 边界定义
+- **内边界**：内螺旋线 r(θ) = a + b*θ 的指定 θ 段
+- **外边界**：外螺旋线 r(θ) = a + b*θ + t_repeat 的指定 θ 段
+
+# 精确判断方法
+对于节点 (x, y)：
+1. 转换为极坐标 (r, φ)，φ ∈ (-π, π]
+2. 计算累计角度 θ_cum：
+   - 内螺旋：θ_cum_in = (r - a) / b
+   - 外螺旋：θ_cum_out = (r - a - t_repeat) / b
+3. 检查 θ_cum 是否在目标范围内
+4. 验证节点到螺旋线的距离 < 容差
+
+# 参数
+- `kind`: 识别类型
+  - `:is_on_spiral`: 判断点是否在指定螺旋线段上（精确）
+  - `:node_on_spiral`: 判断网格节点是否在螺旋线段上（精确）
+  - `:r`, `:theta_range`, `:is_on`, `:node_on`: 旧接口（兼容）
+
+# 示例
+```julia
+# 精确判断：节点是否在第1圈的内螺旋上
+is_inner = edge_boundary(:node_on_spiral, mesh, i, param_dim; 
+                         which=:inner, theta_range=(0.0, 2π), tol=1e-4)
+
+# 精确判断：节点是否在第N圈的外螺旋上
+is_outer = edge_boundary(:node_on_spiral, mesh, i, param_dim; 
+                         which=:outer, theta_range=(2π*(N-1), 2π*N), tol=1e-4)
+```
 """
 function edge_boundary(kind::Symbol, args...; kwargs...)
     if kind === :r
@@ -333,28 +361,72 @@ function edge_boundary(kind::Symbol, args...; kwargs...)
         which = get(kwargs, :which, :inner)
         x = mesh.node[nidx,1]; y = mesh.node[nidx,2]
         return edge_boundary(:is_on, x, y, param_dim; tol=tol, which=which)
-    elseif kind === :radial
-        # 新增：基于半径的内外边界识别（适用于任何网格类型）
-        # 用法：edge_boundary(:radial, mesh, nidx, param_dim; which=:inner/:outer, tol=1e-4)
-        mesh = args[1]; nidx = args[2]; param_dim = args[3]
+    elseif kind === :is_on_spiral
+        # 精确判断：点 (x, y) 是否在指定的螺旋线段上
+        # 用法：edge_boundary(:is_on_spiral, x, y, param_dim; which=:inner/:outer, theta_range=(θ_min, θ_max), tol=1e-4)
+        x = args[1]; y = args[2]; param_dim = args[3]
         p = jellyroll_spiral_params(param_dim)
-        tol = get(kwargs, :tol, 1e-4)
         which = get(kwargs, :which, :inner)
+        tol = get(kwargs, :tol, 1e-4)
         
-        x = mesh.node[nidx,1]; y = mesh.node[nidx,2]
-        r = hypot(x, y)
-        
-        if which === :inner
-            # 内边界：r ≈ Rin（靠近内半径）
-            return abs(r - p.Rin) <= tol
-        elseif which === :outer
-            # 外边界：r ≈ Rout（靠近外半径）
-            return abs(r - p.Rout) <= tol
+        # 获取 θ 范围：默认为第1圈（内边界）或第N圈（外边界）
+        if haskey(kwargs, :theta_range)
+            θ_min, θ_max = kwargs[:theta_range]
         else
-            error("edge_boundary(:radial) which must be :inner or :outer")
+            if which === :inner
+                θ_min, θ_max = 0.0, 2.0*pi
+            elseif which === :outer
+                N = max(1, Int(p.n_wind))
+                θ_min, θ_max = 2.0*pi*(N-1), 2.0*pi*N
+            else
+                error("edge_boundary(:is_on_spiral) which must be :inner or :outer")
+            end
         end
+        
+        # 转换为极坐标
+        r, φ = cart2pol(x, y)
+        
+        # 计算累计角度 θ_cum
+        bval = p.b == 0.0 ? 1e-12 : p.b
+        if which === :inner
+            # 内螺旋：r = a + b*θ_cum，求解 θ_cum
+            θ_cum = (r - p.a) / bval
+        elseif which === :outer
+            # 外螺旋：r = a + b*θ_cum + t_repeat，求解 θ_cum
+            θ_cum = (r - p.a - p.t_repeat) / bval
+        else
+            error("edge_boundary(:is_on_spiral) which must be :inner or :outer")
+        end
+        
+        # 检查 θ_cum 是否在目标范围内
+        if θ_cum < θ_min || θ_cum > θ_max
+            return false
+        end
+        
+        # 精确验证：计算节点到螺旋线的距离
+        # 理论位置：(x_theo, y_theo) = r_theo * (cos(θ_cum), sin(θ_cum))
+        if which === :inner
+            r_theo = p.a + p.b * θ_cum
+        else
+            r_theo = p.a + p.b * θ_cum + p.t_repeat
+        end
+        x_theo = r_theo * cos(θ_cum)
+        y_theo = r_theo * sin(θ_cum)
+        
+        # 计算实际位置与理论位置的距离
+        dist = hypot(x - x_theo, y - y_theo)
+        
+        return dist <= tol
+        
+    elseif kind === :node_on_spiral
+        # 精确判断：网格节点是否在指定的螺旋线段上
+        # 用法：edge_boundary(:node_on_spiral, mesh, nidx, param_dim; which=:inner/:outer, theta_range=(θ_min, θ_max), tol=1e-4)
+        mesh = args[1]; nidx = args[2]; param_dim = args[3]
+        x = mesh.node[nidx,1]; y = mesh.node[nidx,2]
+        return edge_boundary(:is_on_spiral, x, y, param_dim; kwargs...)
+        
     else
-        error("Unsupported edge_boundary(kind=$(kind)). Use :r, :theta_range, :is_on, :node_on, or :radial")
+        error("Unsupported edge_boundary(kind=$(kind)). Use :r, :theta_range, :is_on, :node_on, :is_on_spiral, or :node_on_spiral")
     end
 end
 
