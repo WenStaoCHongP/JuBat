@@ -201,11 +201,43 @@ function ModelInitialisation_MultiSPMe(case::Case; initial_soc_distribution::Uni
     end
     
     # 6) 添加热场初始温度
-    T0_nodes = fill(case.param.cell.T0, nT)
+    # DEBUG: 检查 T0 是否有效
+    if !hasproperty(case.param.cell, :T0)
+        error("❌ case.param.cell.T0 未定义！请在参数初始化时设置初始温度。")
+    end
+    
+    T0_val = case.param.cell.T0
+    if !isfinite(T0_val)
+        error("❌ case.param.cell.T0 = $T0_val (NaN/Inf)！初始温度必须是有限的正数。")
+    end
+    
+    if T0_val <= 0 || T0_val > 500
+        @warn "⚠️  case.param.cell.T0 = $T0_val 看起来不合理（期望 273-373 K 或类似范围）"
+    end
+    
+    T0_nodes = fill(T0_val, nT)
     
     # 7) 组装全局状态向量
     y0 = [y0_chem_all; T0_nodes]
-    
+    # DEBUG: 验证初始化结果
+    if any(!isfinite, y0)
+        nan_in_chem = sum(.!isfinite.(y0_chem_all))
+        nan_in_T = sum(.!isfinite.(T0_nodes))
+        println("\n" * "="^80)
+        println("❌ [DEBUG] 初始状态向量包含 NaN/Inf！")
+        println("="^80)
+        println("  化学部分 (长度 $(length(y0_chem_all))): $nan_in_chem 个 NaN/Inf")
+        println("  温度部分 (长度 $(length(T0_nodes))): $nan_in_T 个 NaN/Inf")
+        println("  T0_val = $T0_val")
+        if nan_in_chem > 0
+            println("\n💡 化学部分有 NaN - 检查 SOC 分布或单元初始化")
+        end
+        if nan_in_T > 0
+            println("\n💡 温度部分有 NaN - case.param.cell.T0 有问题")
+        end
+        println("="^80 * "\n")
+        error("ModelInitialisation_MultiSPMe: 初始状态向量包含 NaN/Inf")
+    end
     # 8) 缓存状态向量结构信息（用于后续提取）
     if isempty(case.multi_spme_layout)
         # 初始化或清空后填充布局信息

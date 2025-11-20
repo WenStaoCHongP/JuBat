@@ -1,10 +1,46 @@
 function Solve(case::Case)
-    # Electrochemical time still scaled by t0
-    dt_min = case.opt.dt[1] / case.param.scale.t0 
-    dt_max = case.opt.dt[2] / case.param.scale.t0 
-    RunTime = case.opt.time / case.param.scale.t0 
-    t0 = RunTime[1] 
-    t_end = RunTime[end]
+    # 将调试输出统一写入 output 目录下的日志文件（可通过 opt.debug_to_file 关闭）
+    enable_file_log = true
+    if hasproperty(case.opt, :debug_to_file)
+        try
+            enable_file_log = Bool(getfield(case.opt, :debug_to_file))
+        catch
+            enable_file_log = true
+        end
+    end
+    log_io = nothing
+    log_file = ""
+    old_out = stdout
+    old_err = stderr
+    if enable_file_log
+        log_dir = normpath(joinpath(@__DIR__, "..", "output"))
+        try
+            isdir(log_dir) || mkpath(log_dir)
+            # 使用 epoch 秒作为时间戳，避免依赖 Dates 标准库的 import
+            timestamp = string(round(Int, time()))
+            log_file = joinpath(log_dir, "debug_$(timestamp).log")
+            log_io = open(log_file, "w")
+            println(log_io, "===== JuBat Debug Log $(timestamp) =====")
+            flush(log_io)
+            redirect_stdout(log_io)
+            redirect_stderr(log_io)
+        catch err
+            # 如果日志初始化失败，则回退为标准控制台输出
+            try
+                log_io !== nothing && close(log_io)
+            catch
+            end
+            log_io = nothing
+        end
+    end
+    result = nothing
+    try
+        # Electrochemical time still scaled by t0
+        dt_min = case.opt.dt[1] / case.param.scale.t0 
+        dt_max = case.opt.dt[2] / case.param.scale.t0 
+        RunTime = case.opt.time / case.param.scale.t0 
+        t0 = RunTime[1] 
+        t_end = RunTime[end]
     
     # initialisation（根据模式选择初始化函数）
     multi_spme_enabled = (
@@ -44,7 +80,44 @@ function Solve(case::Case)
     t = t0
     vt = 2  
     v = 1 
-    M_old, K_old, F_old, variables, y_phi= CallModel(case, y0, t, jacobi="update") 
+    # DEBUG: 检查初始状态向量
+    println("\n[DEBUG] Solve: 检查初始状态向量 y0")
+    println("  长度: $(length(y0))")
+    nan_in_y0 = sum(.!isfinite.(y0))
+    if nan_in_y0 > 0
+        println("  ⚠️  包含 $nan_in_y0 个 NaN/Inf！")
+        if multi_spme_enabled
+            layout = case.multi_spme_layout
+            ne = layout["ne"]
+            n_chem = layout["n_chem"]
+            nT = layout["nT"]
+            chem_range = 1:(ne * n_chem)
+            thermal_range = (ne * n_chem + 1):(ne * n_chem + nT)
+            nan_chem = sum(.!isfinite.(y0[chem_range]))
+            nan_thermal = sum(.!isfinite.(y0[thermal_range]))
+            println("  化学部分: $nan_chem / $(length(chem_range))")
+            println("  热部分: $nan_thermal / $(length(thermal_range))")
+        end
+    else
+        println("  ✓ 初始状态向量正常")
+        if multi_spme_enabled
+            layout = case.multi_spme_layout
+            nT = layout["nT"]
+            n_total = layout["n_total"]
+            T_part = y0[(n_total - nT + 1):n_total]
+            T_mean_init = sum(T_part) / length(T_part)
+            println("  初始温度均值: $T_mean_init")
+        end
+    end
+    M_old, K_old, F_old, variables, y_phi= CallModel(case, y0, t, jacobi="update")
+    # DEBUG: 打印初始电压和终止条件
+    V_init = variables["cell voltage"] * case.param.scale.phi
+    println("\n[Solve] 初始化完成")
+    println("  初始电压: $V_init V")
+    println("  电压范围: [$(case.param.cell.v_l), $(case.param.cell.v_h)] V")
+    println("  初始 t: $(t * case.param.scale.t0) s")
+    println("  目标 t_end: $(t_end * case.param.scale.t0) s")
+    println("  dt_min: $(dt_min * case.param.scale.t0) s, dt_max: $(dt_max * case.param.scale.t0) s") 
     # Thermal-distributed init if enabled
     if case.opt.thermal_enabled && case.opt.thermalmodel == "distributed2D" && haskey(case.mesh, "thermal2D")
         # 初始化热场 T 为环境初温
@@ -116,7 +189,7 @@ function Solve(case::Case)
 
     # run the model
     while t <= t_end
-        # 1) 先用当前热场的均温影响动力学（简单耦合：把 T0 更新为当前均温）
+        # 1) 先用当前热场的均温影响动力学
         if case.opt.thermal_enabled && case.opt.thermalmodel == "distributed2D" && !isempty(T_nodes_carry)
             # T_nodes_carry is dimensionless (T/T_ref) under Scheme B thermal scaling
             Tm = mean(T_nodes_carry)  # dimensionless
@@ -237,6 +310,19 @@ function Solve(case::Case)
     end
     print("finish the simulation\n") 
     errors = errors[1:v] 
+    # 延后返回，以便执行 finally 中的日志恢复
+    finally
+        if log_io !== nothing
+            # 恢复标准输出/错误到控制台
+            redirect_stdout(old_out)
+            redirect_stderr(old_err)
+            try
+                close(log_io)
+            catch
+            end
+            println("Debug log saved to $(log_file)")
+        end
+    end
     return result
 end
 """
@@ -276,7 +362,45 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     ne = layout["ne"]
     n_chem = layout["n_chem"]
     nT = layout["nT"]
-    
+    # DEBUG: 检查输入状态向量
+    nan_count = sum(.!isfinite.(yt))
+    if nan_count > 0
+        println("\n" * "="^80)
+        println("❌ [DEBUG] CallModel_MultiSPMe 收到包含 NaN/Inf 的状态向量！")
+        println("="^80)
+        println("  时间 t = $t")
+        println("  状态向量长度: $(length(yt))")
+        println("  NaN/Inf 数量: $nan_count")
+        
+        # 检查是化学部分还是热部分
+        chem_range = 1:(ne * n_chem)
+        thermal_range = (ne * n_chem + 1):(ne * n_chem + nT)
+        nan_chem = sum(.!isfinite.(yt[chem_range]))
+        nan_thermal = sum(.!isfinite.(yt[thermal_range]))
+        
+        println("  化学部分 NaN 数: $nan_chem / $(length(chem_range))")
+        println("  热部分 NaN 数: $nan_thermal / $(length(thermal_range))")
+        
+        if nan_thermal > 0
+            println("\n📊 热部分的 NaN 位置 (前10个):")
+            T_part = yt[thermal_range]
+            count_print = 0
+            for i in 1:length(T_part)
+                if !isfinite(T_part[i]) && count_print < 10
+                    count_print += 1
+                    global_idx = thermal_range[i]
+                    println("  yt[$global_idx] (T_nodes[$i]) = $(T_part[i])")
+                end
+            end
+        end
+        
+        println("\n💡 这表明状态向量在传入 CallModel 之前就已损坏")
+        println("   可能原因:")
+        println("   • 初始化函数返回了 NaN")
+        println("   • 上一个时间步的求解产生了 NaN")
+        println("   • 状态向量更新逻辑有误")
+        println("="^80 * "\n")
+    end
     mesh_th = case.mesh["thermal2D"]
     param = case.param
     
@@ -286,7 +410,47 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 1) 解析状态向量
     # 提取热场
     T_nodes = MultiSPMe_get_thermal_dofs(yt, case)
-    
+    # DEBUG: 无条件打印温度场基本信息
+    println("\n[DEBUG] 温度场基本信息 (时间 t=$t):")
+    println("  T_nodes 长度: $(length(T_nodes))")
+    if length(T_nodes) > 0
+        T_min = minimum(T_nodes)
+        T_max = maximum(T_nodes)
+        T_mean = sum(T_nodes) / length(T_nodes)
+        println("  T_nodes 范围: [$T_min, $T_max]")
+        println("  T_nodes 均值: $T_mean")
+        
+        # 检查异常值
+        nan_count_here = sum(.!isfinite.(T_nodes))
+        abnormal_count = sum(abs.(T_nodes) .> 10.0)  # 无量纲温度应该接近1
+        negative_count = sum(T_nodes .< 0.0)
+        
+        if nan_count_here == length(T_nodes)
+            println("  ❌ 所有 T_nodes 都是 NaN/Inf！")
+        elseif nan_count_here > 0
+            println("  ⚠️  有 $nan_count_here 个 NaN/Inf 节点")
+        elseif abnormal_count > 0
+            println("  ⚠️  有 $abnormal_count 个异常值（|T| > 10）")
+            println("  T_nodes 前5个: $(T_nodes[1:min(5,length(T_nodes))])")
+            println("  T_nodes 后5个: $(T_nodes[max(1,end-4):end])")
+            
+            # 找出前5个异常节点
+            println("  前5个异常节点:")
+            count_print = 0
+            for i in 1:length(T_nodes)
+                if abs(T_nodes[i]) > 10.0 && count_print < 5
+                    count_print += 1
+                    println("    节点 $i: T = $(T_nodes[i])")
+                end
+            end
+        elseif negative_count > 0
+            println("  ⚠️  有 $negative_count 个负温度！")
+        else
+            println("  ✓ 温度场正常")
+        end
+    else
+        println("  ⚠️  错误：T_nodes 为空！")
+    end
     # 提取每个单元的电化学状态
     yt_chem = Vector{Vector{Float64}}(undef, ne)
     for e in 1:ne
@@ -312,7 +476,54 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         nds = mesh_th.element[e, :]
         Te_prev[e] = sum(T_nodes[nds]) / length(nds)
     end
-    
+    # DEBUG: 检查温度场是否有 NaN
+    nan_count_nodes = sum(.!isfinite.(T_nodes))
+    nan_count_elem = sum(.!isfinite.(Te_prev))
+    if nan_count_nodes > 0 || nan_count_elem > 0
+        println("\n" * "="^80)
+        println("❌ [DEBUG] 温度场包含 NaN/Inf - 这是问题的根源！")
+        println("="^80)
+        println("📊 温度统计:")
+        println("  T_nodes 总数: $(length(T_nodes))")
+        println("  T_nodes 中 NaN/Inf 数量: $nan_count_nodes")
+        println("  Te_prev (单元平均温度) 总数: $(length(Te_prev))")
+        println("  Te_prev 中 NaN/Inf 数量: $nan_count_elem")
+        
+        if nan_count_nodes > 0
+            println("\n📊 T_nodes 中的 NaN/Inf 位置 (前10个):")
+            printed_count = 0
+            for i in 1:length(T_nodes)
+                if !isfinite(T_nodes[i]) && printed_count < 10
+                    printed_count += 1
+                    println("  节点 $i: T_nodes[$i] = $(T_nodes[i])")
+                end
+            end
+        end
+        
+        if nan_count_elem > 0
+            println("\n📊 Te_prev 中的 NaN/Inf 单元 (前10个):")
+            printed_count = 0
+            for e in 1:ne
+                if !isfinite(Te_prev[e]) && printed_count < 10
+                    printed_count += 1
+                    nds = mesh_th.element[e, :]
+                    println("  单元 $e: Te_prev[$e] = $(Te_prev[e])")
+                    println("    节点: $nds")
+                    println("    节点温度: [$(T_nodes[nds])]")
+                end
+            end
+        end
+        
+        println("\n💡 可能原因:")
+        println("  • 状态向量 yt 的温度部分没有正确初始化")
+        println("  • MultiSPMe_get_thermal_dofs 提取错误")
+        println("  • 初始化函数 ModelInitialisation_MultiSPMe 有问题")
+        println("\n💡 建议:")
+        println("  • 检查 case.param.cell.T0 是否设置")
+        println("  • 检查 ModelInitialisation_MultiSPMe 中的温度初始化")
+        println("  • 确认状态向量长度和布局正确")
+        println("="^80 * "\n")
+    end
     # 3) 分流求解（获取 I_e）
     # 使用与 SPMe 变量一致的电流无量纲尺度（param.scale.I_typ）
     I_total = case.opt.Current(t * case.param.scale.t0) / case.param.scale.I_typ
@@ -456,6 +667,25 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 7) 装配热学矩阵
     MT, KT, FT = ThermalDistributed2D(case, variables)
     t_ratio = case.param_dim.scale.t_th / case.param_dim.scale.t0
+    # DEBUG: 检查第一次调用时的热矩阵和参数
+    if t < 1e-6  # 只在第一次调用时打印
+        println("\n[DEBUG] 热矩阵装配信息:")
+        println("  时间尺度比 t_ratio = t_th/t0 = $t_ratio")
+        println("  t_th = $(case.param_dim.scale.t_th) s")
+        println("  t0 = $(case.param_dim.scale.t0) s")
+        println("  MT 维度: $(size(MT))")
+        println("  KT 维度: $(size(KT))")
+        println("  FT 长度: $(length(FT))")
+        println("  FT 范围: [$(minimum(FT)), $(maximum(FT))]")
+        println("  FT 均值: $(sum(FT)/length(FT))")
+        
+        # 检查热源
+        if haskey(variables, "heat_source_fields")
+            q_elem = variables["heat_source_fields"]
+            println("  热源范围: [$(minimum(q_elem)), $(maximum(q_elem))]")
+            println("  热源均值: $(sum(q_elem)/length(q_elem))")
+        end
+    end
     MT = MT .* t_ratio
     ThermalDistributed2D_BC(KT, FT, case, t)
     

@@ -41,5 +41,4 @@ using Parameters
     strong_relaxation::Float64 = 0.5   # relaxation factor for T (0<ω<=1)
     # --- Debug/Diagnostics ---
     debug_coupling::Bool = false       # print detailed logs for electro-thermal coupling
-    debug_sample_elems::Int = 3        # number of sample elements to print per iteration
 end

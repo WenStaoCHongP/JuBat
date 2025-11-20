@@ -20,7 +20,7 @@ end
     ThermalDistributed2D(case, variables)
 
  果冻卷热传导装配：
-  方程: (ρ c) ∂T/∂t = ∇·(k ∇T) + q
+  方程: (ρ c) ∂T/∂t = ∇·(k ∇T) + q（其中 KT = -∫ k ∇N^T ∇N dΩ）
   极坐标: ∇·(k ∇T) = 1/r ∂/∂r(r k_rr ∂T/∂r) + 1/r^2 k_θθ ∂²T/∂θ² (忽略耦合项, k 对角)。
   实现策略：
     1. 使用参数域 Q4 元素 (r,θ)；在每个 Gauss 点将 (∂N/∂r, ∂N/∂θ) → 笛卡尔梯度形式, 但对各向同性 k 时可直接在极坐标形式简化。
@@ -154,9 +154,9 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Flo
             Kxy[g] = (lt - lr)*s*c
             Kyy[g] = lr*s*s + lt*c*c
         end
-        cxx = Kxx .* wJ
-        cxy = Kxy .* wJ
-        cyy = Kyy .* wJ
+        cxx = - Kxx .* wJ
+        cxy = - Kxy .* wJ
+        cyy = - Kyy .* wJ
         KT_xx = Assemble(Vi, Vj, dNdx, dNdx, cxx, nnode)
         KT_xy = Assemble(Vi, Vj, dNdx, dNdy, cxy, nnode)
         KT_yx = Assemble(Vi, Vj, dNdy, dNdx, cxy, nnode) # Kxy=Kyx
@@ -173,8 +173,8 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Flo
                     1.0
                 end
             end
-            KT_x = Assemble(Vi, Vj, dNdx, dNdx, (λ_iso_nd .* wJ), nnode)
-            KT_y = Assemble(Vi, Vj, dNdy, dNdy, (λ_iso_nd .* wJ), nnode)
+            KT_x = Assemble(Vi, Vj, dNdx, dNdx, (-λ_iso_nd .* wJ), nnode)
+            KT_y = Assemble(Vi, Vj, dNdy, dNdy, (-λ_iso_nd .* wJ), nnode)
             KT = KT_x + KT_y
         end
     end
@@ -222,14 +222,32 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64=0.0)
     @assert haskey(case.mesh, "thermal2D") "thermal2D mesh is missing in case.mesh"
     mesh = case.mesh["thermal2D"]
     @assert mesh.type == "Q4" && mesh.dimension == 2 "Boundary BC currently implemented for Q4/2D"
-    # 使用 edge_boundary(:node_on) 判定外边界节点：
+    # 边界节点识别配置
+    # - boundary_inner_theta: 内边界 θ 范围，默认 (0.0, 2π)
+    # - boundary_outer_theta: 外边界 θ 范围，默认 (2π(N-1), 2π*N)
+    # - boundary_tol: 距离容差，默认 1e-4
+    
+    pgeo = jellyroll_spiral_params(case.param_dim)
+    N = max(1, Int(pgeo.n_wind))
+    
+    # 内边界 θ 范围
+    θ_in_range = hasproperty(case.opt, :boundary_inner_theta) ? case.opt.boundary_inner_theta : (0.0, 2.0*pi)
+    
+    # 外边界 θ 范围
+    θ_out_range = hasproperty(case.opt, :boundary_outer_theta) ? case.opt.boundary_outer_theta : (2.0*pi*(N-1), 2.0*pi*N)
+    
+    # 容差
+    tol = hasproperty(case.opt, :boundary_tol) ? case.opt.boundary_tol : 0
     ne = size(mesh.element, 1)
     nnode = mesh.nlen
-    is_outer_node = falses(nnode)
-    for i in 1:nnode
-        # which=:outer 对应外螺旋终圈 θ ∈ [2π(N-1), 2πN]
-        is_outer_node[i] = edge_boundary(:node_on, mesh, i, case.param_dim; which=:outer)
-    end
+    # 识别边界节点
+    is_inner_node = [edge_boundary(mesh, i, case.param_dim; 
+                                    which=:inner, theta_range=θ_in_range, tol=tol) 
+                     for i in 1:nnode]
+    
+    is_outer_node = [edge_boundary(mesh, i, case.param_dim; 
+                                    which=:outer, theta_range=θ_out_range, tol=tol) 
+                     for i in 1:nnode]
 
     # 3) 对外边界边组装对流项（内侧默认绝热）。扫描单元四条边，若两端均为外边界节点则施加换热。
     # 使用维度化或无量纲参数需全局一致；此处沿用 param 中的 h 与 T_amb。
@@ -266,9 +284,9 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64=0.0)
                     N1 = 0.5*(1 - s)
                     N2 = 0.5*(1 + s)
                     wt = h_coeff * w * (J / L_th)  # dL* 缩放
-                    ke11 += wt * (N1*N1)
-                    ke12 += wt * (N1*N2)
-                    ke22 += wt * (N2*N2)
+                    ke11 += -wt * (N1*N1)
+                    ke12 += -wt * (N1*N2)
+                    ke22 += -wt * (N2*N2)
                     fe1  += wt * (T_amb * N1)
                     fe2  += wt * (T_amb * N2)
                 end
@@ -317,7 +335,11 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64=0.0)
             T_amb_nd = case.param_dim.cell.T_amb / scale.T_ref
             T_tab_nd = T_amb_nd + (rate_Ks * t) / max(scale.T_ref, 1e-16)
             for n in tab_nodes
-                KT[n,n] += penalty
+                # 注意：本模块中 KT 存储的是“负刚度”形式（域内使用 -∫k ∇Nᵀ∇N），
+                # 因此惩罚法应当以“负号”加入对角项，确保整体仍为负定（对应正定的物理刚度）。
+                # 标准形式（正刚度 K_pos）为：K_pos[n,n] += penalty；F += penalty*T_target。
+                # 现有存储（K = -K_pos）应为：KT[n,n] -= penalty；F 不变方向：+= penalty*T_target。
+                KT[n,n] -= penalty
                 FT[n]   += penalty * T_tab_nd
             end
         end
@@ -371,7 +393,12 @@ function heatQ_Source(case::Case, variables::Dict{String,Union{Array{Float64},Fl
     end
     I_e = variables["thermal2D element current"]
     # 正确获取层权重矩阵（而非布尔值）；此处仅取值，不更改/检查其内容
-    fks = haskey(variables, "thermal2D layer_weights") ? variables["thermal2D layer_weights"] : nothing
+    fks = if haskey(variables, "thermal2D layer_weights")
+        variables["thermal2D layer_weights"]
+    else
+        # 默认假设所有单元包含所有层（权重都为1）
+        ones(Float64, ne, 5)
+    end
     # 小工具
     to_vec(x) = isa(x, Number) ? [Float64(x)] : (isa(x, AbstractVector) ? Vector{Float64}(x) : (isa(x, AbstractArray) ? Vector{Float64}(x[:,1]) : Float64[]))
     vec_mean(x) = (isempty(x) ? 0.0 : sum(x) / length(x))

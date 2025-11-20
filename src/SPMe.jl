@@ -332,6 +332,43 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
 
     c_sigma = (param.NE.thickness / param.NE.sig + param.PE.thickness / param.PE.sig) / 3.0
 
+    # DEBUG: 检查关键预计算值
+    has_nan_prefactor = !isfinite(prefactor_n) || !isfinite(prefactor_p) || !isfinite(csn_av) || !isfinite(csp_av) || 
+                        !isfinite(u_n_ref_val) || !isfinite(u_p_ref_val) || !isfinite(c_sigma)
+    if has_nan_prefactor
+        println("\n" * "="^80)
+        println("❌ [DEBUG] 预计算值包含 NaN/Inf - 这是问题的根源！")
+        println("="^80)
+        println("📊 预因子和平均值:")
+        println("  prefactor_n = $prefactor_n $(isfinite(prefactor_n) ? "✓" : "❌ NaN/Inf")")
+        println("  prefactor_p = $prefactor_p $(isfinite(prefactor_p) ? "✓" : "❌ NaN/Inf")")
+        println("  csn_av = $csn_av $(isfinite(csn_av) ? "✓" : "❌ NaN/Inf")")
+        println("  csp_av = $csp_av $(isfinite(csp_av) ? "✓" : "❌ NaN/Inf")")
+        
+        println("\n📊 开路电位和温度系数:")
+        println("  u_n_ref_val = $u_n_ref_val $(isfinite(u_n_ref_val) ? "✓" : "❌ NaN/Inf")")
+        println("  u_p_ref_val = $u_p_ref_val $(isfinite(u_p_ref_val) ? "✓" : "❌ NaN/Inf")")
+        println("  du_n_dT_val = $du_n_dT_val $(isfinite(du_n_dT_val) ? "✓" : "❌ NaN/Inf")")
+        println("  du_p_dT_val = $du_p_dT_val $(isfinite(du_p_dT_val) ? "✓" : "❌ NaN/Inf")")
+        println("  c_sigma = $c_sigma $(isfinite(c_sigma) ? "✓" : "❌ NaN/Inf")")
+        
+        println("\n📊 输入浓度数据 (前5个值):")
+        println("  cn_surf: $(cn_surf[1:min(5,length(cn_surf))])")
+        println("  cp_surf: $(cp_surf[1:min(5,length(cp_surf))])")
+        println("  ce_n_gs: $(ce_n_gs[1:min(5,length(ce_n_gs))])")
+        println("  ce_p_gs: $(ce_p_gs[1:min(5,length(ce_p_gs))])")
+        
+        println("\n💡 可能原因:")
+        if !isfinite(prefactor_n) || !isfinite(prefactor_p)
+            println("  • prefactor 计算出错 - 检查固相表面浓度和电解液浓度是否合理")
+            println("    公式: prefactor = IntV(sqrt(|cs_surf*(1-cs_surf)*ce_gs|)) / thickness")
+        end
+        if !isfinite(u_n_ref_val) || !isfinite(u_p_ref_val)
+            println("  • 开路电位 U(cs_surf) 返回 NaN - 检查 cs_surf 是否在合理范围 [0,1]")
+        end
+        println("="^80 * "\n")
+    end
+
     coeffs = Vector{NamedTuple{(:C1,:C2,:alpha_p,:alpha_n,:C5)}}(undef, ne)
     for e in 1:ne
         T_e = Te_prev[e]
@@ -383,7 +420,28 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
         I_e .= (w .* I_total)
     end
 
-    V = sum(branch_voltage(coeffs[e], I_e[e]) for e in 1:ne) / ne
+    # DEBUG: 计算初始V并检查 (只在之前没有检测到NaN时才详细打印)
+    V_branches = [branch_voltage(coeffs[e], I_e[e]) for e in 1:ne]
+    V = sum(V_branches) / ne
+    
+    if !has_nan_prefactor && !isfinite(V)
+        println("\n" * "="^80)
+        println("❌ [DEBUG] 初始电压 V 是 NaN/Inf (但预计算值和系数正常)")
+        println("="^80)
+        println("  I_total = $I_total, ne = $ne")
+        println("  检查前3个异常单元:")
+        printed_count = 0
+        for e in 1:ne
+            if !isfinite(V_branches[e]) && printed_count < 3
+                printed_count += 1
+                println("\n  单元 $e:")
+                println("    V_branch = $(V_branches[e]), I_e = $(I_e[e])")
+                println("    C1=$(coeffs[e].C1), C2=$(coeffs[e].C2)")
+                println("    alpha_p=$(coeffs[e].alpha_p), alpha_n=$(coeffs[e].alpha_n), C5=$(coeffs[e].C5)")
+            end
+        end
+        println("="^80 * "\n")
+    end
 
     if abs(I_total) <= 1e-14
         I_e .= 0.0
@@ -484,6 +542,12 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
     # 最终边界检查：无量纲电压必须处于 [V_MIN, V_MAX]
     if !(V_MIN <= V <= V_MAX)
         V_phys = V * phi_scale
+        # 简化输出 - 关键信息已在上面打印
+        if !has_nan_prefactor
+            println("\n⚠️ [DEBUG] 电压超出边界，但前面的计算看起来正常？")
+            println("  V (V) = $V_phys, 允许范围 [$(V_MIN*phi_scale), $(V_MAX*phi_scale)]")
+            println("  收敛状态: converged=$converged, iters=$last_iter")
+        end
         throw(ErrorException("thermal2D common voltage out of bounds: V(nd)=$(V), V(V)=$(V_phys), allowed [$(V_MIN), $(V_MAX)] nd -> [$(V_MIN*phi_scale), $(V_MAX*phi_scale)] V; I_total_nd=$(I_total), sum(w.*I_e)=$(sum(w .* I_e))"))
     end
 

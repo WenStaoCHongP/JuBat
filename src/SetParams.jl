@@ -134,13 +134,6 @@ end
     length::Float64 = 0
     width::Float64 = 0
     area::Float64 = 0
-    # Jellyroll terminal tabs (customizable)
-    n_pos::Int = 1              # number of positive tabs (PCC, top by default)
-    n_neg::Int = 1              # number of negative tabs (NCC, bottom by default)
-    theta_pos::Vector{Float64} = [0.0]    # angles (rad) on circumference for positive tabs
-    theta_neg::Vector{Float64} = [pi]     # angles (rad) for negative tabs
-    side_pos::Symbol = :top     # :top or :bottom
-    side_neg::Symbol = :bottom  # :top or :bottom
 end
 # param_dim.Tab.width = 0.75 * param_dim.Tab.length  
 # param_dim.Tab.area = param_dim.Tab.length * param_dim.Tab.width

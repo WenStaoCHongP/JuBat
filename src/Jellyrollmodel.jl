@@ -265,70 +265,90 @@ end
 
 
 """
-    edge_boundary(kind::Symbol, args...; kwargs...)
+    edge_boundary(mesh, nidx, param_dim; which=:inner/:outer, theta_range=(θ_min, θ_max), tol=1e-4)
 
-统一边界工具：当 kind==:inner 或 :outer 时，返回与原有函数等价的结果。
+基于螺旋线方程的精确边界识别。
 
-此函数集中实现了内/外边界的共同逻辑，保留原有函数作为小包装以保证向后兼容。
+# 螺旋线方程
+- 内螺旋：r(θ) = a + b·θ
+- 外螺旋：r(θ) = a + b·θ + t_repeat
+
+# 判断方法
+1. 计算节点累计角度 θ_cum
+2. 检查 θ_cum ∈ [θ_min, θ_max]
+3. 验证节点到理论螺旋线的距离 ≤ tol
+
+# 参数
+- `mesh`: 网格对象
+- `nidx`: 节点索引
+- `param_dim`: 参数对象
+- `which`: `:inner`（内螺旋）或 `:outer`（外螺旋）
+- `theta_range`: θ 范围 (θ_min, θ_max)，默认第1圈或第N圈
+- `tol`: 距离容差（m），默认 1e-4
+
+# 示例
+```julia
+# 判断节点是否在第0圈内螺旋上
+is_inner = edge_boundary(mesh, i, param_dim; which=:inner, theta_range=(0.0, 2π))
+
+# 判断节点是否在第0圈外螺旋上
+is_outer = edge_boundary(mesh, i, param_dim; which=:outer, theta_range=(0.0, 2π))
+```
 """
-function edge_boundary(kind::Symbol, args...; kwargs...)
-    if kind === :r
-        theta = args[1]; param_dim = args[2]
-        p = jellyroll_spiral_params(param_dim)
-        # 第二个参数决定 inner/outer，由 kwargs[:which] 指定为 :inner 或 :outer
-        which = get(kwargs, :which, :inner)
+function edge_boundary(mesh, nidx::Int, param_dim; 
+                       which::Symbol=:inner, 
+                       theta_range::Union{Tuple{Float64,Float64},Nothing}=nothing, 
+                       tol::Float64=1e-16)
+    # 获取节点坐标
+    x, y = mesh.node[nidx, 1], mesh.node[nidx, 2]
+    
+    # 获取螺旋参数
+    p = jellyroll_spiral_params(param_dim)
+    bval = p.b == 0.0 ? 1e-12 : p.b
+    
+    # 获取 θ 范围
+    if theta_range === nothing
         if which === :inner
-            return p.a + p.b * theta
-        elseif which === :outer
-            return p.a + p.b * theta + p.t_repeat
-        else
-            error("edge_boundary(:r) which must be :inner or :outer")
-        end
-    elseif kind === :theta_range
-        param_dim = args[1]
-        which = get(kwargs, :which, :inner)
-        if which === :inner
-            return 0.0, 2.0*pi
-        elseif which === :outer
-            p = jellyroll_spiral_params(param_dim)
-            N = max(1, Int(p.n_wind))
-            return 2.0*pi*(N-1), 2.0*pi*N
-        else
-            error("edge_boundary(:theta_range) which must be :inner or :outer")
-        end
-    elseif kind === :is_on
-        x = args[1]; y = args[2]; param_dim = args[3]
-        # tighten default tol (meters) and use cumulative-angle θ_cum for robust per-turn classification
-        tol = get(kwargs, :tol, 1e-6)
-        which = get(kwargs, :which, :inner)
-        p = jellyroll_spiral_params(param_dim)
-        r, φ = cart2pol(x, y)
-        # cumulative theta for inner/outer spirals
-        # θ_cum_in = (r - a - s_in)/b with s_in=0
-        # θ_cum_out = (r - a - s_out)/b with s_out = t_repeat
-        bval = p.b == 0.0 ? 1e-12 : p.b
-        θ_cum_in = (r - p.a) / bval
-        θ_cum_out = (r - p.a - p.t_repeat) / bval
-        eps_theta = tol / max(abs(bval), 1e-12)
-        if which === :inner
-            θ_start, θ_end = 0.0, 2.0*pi
-            return (θ_cum_in >= θ_start - eps_theta) && (θ_cum_in <= θ_end + eps_theta)
+            θ_min, θ_max = 0.0, 2.0*pi
         elseif which === :outer
             N = max(1, Int(p.n_wind))
-            θ_start, θ_end = 2.0*pi*(N-1), 2.0*pi*N
-            return (θ_cum_out >= θ_start - eps_theta) && (θ_cum_out <= θ_end + eps_theta)
+            θ_min, θ_max = 2.0*pi*(N-1), 2.0*pi*N
         else
-            error("edge_boundary(:is_on) which must be :inner or :outer")
+            error("which must be :inner or :outer")
         end
-    elseif kind === :node_on
-        mesh = args[1]; nidx = args[2]; param_dim = args[3]
-        tol = get(kwargs, :tol, 1e-4)
-        which = get(kwargs, :which, :inner)
-        x = mesh.node[nidx,1]; y = mesh.node[nidx,2]
-        return edge_boundary(:is_on, x, y, param_dim; tol=tol, which=which)
     else
-        error("Unsupported edge_boundary(kind=$(kind)). Use :r, :theta_range, :is_on, or :node_on")
+        θ_min, θ_max = theta_range
     end
+    
+    # 转换为极坐标
+    r = hypot(x, y)
+    
+    # 计算累计角度 θ_cum
+    if which === :inner
+        θ_cum = (r - p.a) / bval
+    elseif which === :outer
+        θ_cum = (r - p.a - p.t_repeat) / bval
+    else
+        error("which must be :inner or :outer")
+    end
+    
+    # 检查 θ 范围
+    if θ_cum < θ_min || θ_cum > θ_max
+        return false
+    end
+    
+    # 计算理论位置
+    if which === :inner
+        r_theo = p.a + p.b * θ_cum
+    else
+        r_theo = p.a + p.b * θ_cum + p.t_repeat
+    end
+    x_theo = r_theo * cos(θ_cum)
+    y_theo = r_theo * sin(θ_cum)
+    
+    # 验证距离
+    dist = hypot(x - x_theo, y - y_theo)
+    return dist <= tol
 end
 
 """

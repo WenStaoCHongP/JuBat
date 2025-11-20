@@ -50,7 +50,7 @@ function main()
     opt.dimension = 1
     
     # 时间设置
-    opt.time = [0.0, 30.0]  # 仿真时间 (s)
+    opt.time = [0.0, 100]  # 仿真时间 (s)
     opt.dt = [0.01, 0.5]    # 时间步长范围 [dt_min, dt_max] (s)
     opt.dtType = "auto"     # 自动时间步长
     opt.jacobi = "update"
@@ -78,7 +78,7 @@ function main()
     
     # 创建Jellyroll collector-seeded网格
     # nθ: 周向单元数，影响角度分辨率和计算量
-    nθ = 16  # 减少以加速调试（原示例用80）
+    nθ = 80  # 高分辨率周向单元数
     mesh_th = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, gsorder=2)
     case.mesh["thermal2D"] = mesh_th
     
@@ -130,6 +130,7 @@ function main()
     println("\n[3/6] 运行多SPMe并行求解器...")
     println("  这将自动使用 CallModel_MultiSPMe 和 ModelInitialisation_MultiSPMe")
     
+    result = nothing
     try
         # 调用Solve，自动使用多SPMe模式
         result = JuBat.Solve(case)
@@ -139,6 +140,9 @@ function main()
     catch e
         println("✗ 求解失败: $e")
         rethrow(e)
+    end
+    if result === nothing
+        error("Solve(case) did not return a result; aborting post-processing")
     end
     
     # ========================================================================
