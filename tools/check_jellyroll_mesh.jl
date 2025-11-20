@@ -41,42 +41,16 @@ param_dim = ParamDimStub(
     CellStub(0.01, 0.05, 0.065)
 )
 
-
-println("=== inscribed ===")
-mesh_ins = jellyroll_Q4_mesh(param_dim; nx=40, ny=40, gsorder=2, crop_to_annulus=true, crop_mode=:inscribed)
-summarize_mesh(mesh_ins)
-fw = jellyroll_get_layer_weights(mesh_ins)
+println("=== collector_seeded ===")
+mesh_col = jellyroll_collector_seed_mesh(param_dim; nθ=120, gsorder=2)
+summarize_mesh(mesh_col)
+fw = jellyroll_get_layer_weights(mesh_col)
 println("layer_weights present? ", fw !== nothing)
 if fw !== nothing
     println("fw shape: ", size(fw))
-    println("fw row sample: ", fw[1:min(5,size(fw,1)), :])
-end
-
-println("\n=== center ===")
-mesh_cen = jellyroll_Q4_mesh(param_dim; nx=40, ny=40, gsorder=2, crop_to_annulus=true, crop_mode=:center)
-summarize_mesh(mesh_cen)
-fw2 = jellyroll_get_layer_weights(mesh_cen)
-println("layer_weights present? ", fw2 !== nothing)
-if fw2 !== nothing
-    println("fw shape: ", size(fw2))
-    println("fw row sample: ", fw2[1:min(5,size(fw2,1)), :])
-else
-    # compute sample weights
-    fks = jellyroll_element_layer_weights(mesh_cen, param_dim; nsamples_per_dim=4, logic=:spiral)
-    println("computed fks shape: ", size(fks))
-    println("fks sample: ", fks[1:min(5,size(fks,1)), :])
-end
-
-println("\n=== collector_seeded ===")
-mesh_col = jellyroll_Q4_mesh(param_dim; nx=120, ny=40, gsorder=2, crop_to_annulus=true, crop_mode=:collector_seeded)
-summarize_mesh(mesh_col)
-fw3 = jellyroll_get_layer_weights(mesh_col)
-println("layer_weights present? ", fw3 !== nothing)
-if fw3 !== nothing
-    println("fw shape: ", size(fw3))
     println("unique rows in fw (first 5): ")
-    uniq = unique(fw3, dims=1)
+    uniq = unique(fw, dims=1)
     println(uniq[1:min(5,size(uniq,1)), :])
 end
 
-println("done")
+println("\ndone")

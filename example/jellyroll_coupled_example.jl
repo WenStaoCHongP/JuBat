@@ -73,7 +73,7 @@ println("Starting jellyroll coupled example")
 # create a thermal mesh (collector-seeded) and attach to case so thermal assembly runs
 try
     nθ = try parse(Int, get(ENV, "JUBAT_NTHETA", quick ? "120" : "180")) catch; 180 end
-    mesh_th = JuBat.jellyroll_Q4_mesh(param_dim; nx=nθ, gsorder=2, crop_mode=:collector_seeded)
+    mesh_th = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, gsorder=2)
     case.mesh["thermal2D"] = mesh_th
     println("Created thermal2D mesh with ", size(mesh_th.element,1), " elements; nθ=", nθ)
 catch e
@@ -93,7 +93,7 @@ catch e
     # recreate case and thermal mesh
     case = JuBat.SetCase(param_dim, opt)
     try
-    mesh_th = JuBat.jellyroll_Q4_mesh(param_dim; nx=120, gsorder=2, crop_mode=:collector_seeded)
+    mesh_th = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=120, gsorder=2)
         case.mesh["thermal2D"] = mesh_th
     println("(Fallback) Created thermal2D mesh with ", size(mesh_th.element,1), " elements")
     catch e2

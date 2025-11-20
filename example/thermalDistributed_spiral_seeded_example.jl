@@ -26,7 +26,7 @@ function main()
     case = JuBat.SetCase(param_dim, opt)
     # 这里 nx 被解释为每圈分段数（见 Jellyrollmodel.jl 实现注释）
     seg_per_turn = 64
-    mesh_th = JuBat.jellyroll_Q4_mesh(param_dim; nx=seg_per_turn, ny=1, gsorder=2, crop_to_annulus=true, crop_mode=:collector_seeded)
+    mesh_th = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=seg_per_turn, gsorder=2)
     case.mesh["thermal2D"] = mesh_th
 
     # 3) 变量与热源：利用网格内置的元素层权重 f_k 合成 q_e（SI → 无量纲由装配处理）
@@ -34,8 +34,7 @@ function main()
     # 获取与该 mesh 关联的 f_k（ne×5，顺序 [NE,SP,PE,PCC,NCC]）
     fks = JuBat.jellyroll_get_layer_weights(mesh_th)
     if fks === nothing
-        # 理论上不会发生；回退采样
-        fks = JuBat.jellyroll_element_layer_weights(mesh_th, param_dim; nsamples_per_dim=4, logic=:spiral)
+        error("网格不是通过 jellyroll_collector_seed_mesh 生成，无法获取层权重")
     end
     ne = size(mesh_th.element, 1)
     # 设定分层体热源（W/m^3）：给不同层不同强度，便于验证 f_k 聚合效果

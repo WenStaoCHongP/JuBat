@@ -34,7 +34,7 @@ function main()
     case = JuBat.SetCase(param_dim, opt)
     begin
         nθ = max(12, n_theta)
-        mesh_th = JuBat.jellyroll_Q4_mesh(param_dim; nx=nθ, gsorder=2, crop_mode=:collector_seeded)
+        mesh_th = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, gsorder=2)
         case.mesh["thermal2D"] = mesh_th
     end
 
@@ -51,7 +51,7 @@ function main()
         if fks !== nothing
             variables["thermal2D layer_weights"] = fks
         else
-            variables["thermal2D layer_weights"] = JuBat.jellyroll_element_layer_weights(mesh, param_dim; nsamples_per_dim=4, logic=:spiral)
+            error("网格不是通过 jellyroll_collector_seed_mesh 生成，无法获取层权重")
         end
     catch
     end
