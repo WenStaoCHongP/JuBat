@@ -720,7 +720,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     
     # 7) 装配热学矩阵
     MT, KT, FT = ThermalDistributed2D(case, variables)
-    t_ratio = case.param_dim.scale.t_th / case.param_dim.scale.t0
+    t_ratio = case.param_dim.scale.t0 / case.param_dim.scale.t_th
     
     # DEBUG: 检查第一次调用时的热矩阵和参数（只在参数可疑时打印）
     if t < 1e-6  # 只在第一次调用时检查
@@ -866,7 +866,7 @@ function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
             MT, KT, FT = ThermalDistributed2D(case, variables)
             # 时间尺度匹配：主求解器以 t0 为时间标尺，热模块以 t_th 为标尺，
             # 将热质量矩阵按 t_ratio = t0/t_th 放大，使得 M_eff = MT * t_ratio。
-            t_ratio = case.param_dim.scale.t_th / case.param_dim.scale.t0
+            t_ratio = case.param_dim.scale.t0 / case.param_dim.scale.t_th
             MT = MT .* t_ratio
             ThermalDistributed2D_BC(KT, FT, case, t)
             # 拼接到主系统
