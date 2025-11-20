@@ -298,15 +298,19 @@ function edge_boundary(kind::Symbol, args...; kwargs...)
         end
     elseif kind === :is_on
         x = args[1]; y = args[2]; param_dim = args[3]
-        # tighten default tol (meters) and use cumulative-angle θ_cum for robust per-turn classification
-        tol = get(kwargs, :tol, 1e-6)
         which = get(kwargs, :which, :inner)
         p = jellyroll_spiral_params(param_dim)
+        
+        # 自适应容差：对于小螺距，使用更小的长度容差以避免角度容差过大
+        # tol_default = min(1e-4, 0.05 * abs(p.b)) 确保 eps_theta < 0.05 弧度（约3度）
+        bval = p.b == 0.0 ? 1e-12 : p.b
+        tol_default = min(1e-4, 0.05 * abs(bval))
+        tol = get(kwargs, :tol, tol_default)
+        
         r, φ = cart2pol(x, y)
         # cumulative theta for inner/outer spirals
         # θ_cum_in = (r - a - s_in)/b with s_in=0
         # θ_cum_out = (r - a - s_out)/b with s_out = t_repeat
-        bval = p.b == 0.0 ? 1e-12 : p.b
         θ_cum_in = (r - p.a) / bval
         θ_cum_out = (r - p.a - p.t_repeat) / bval
         eps_theta = tol / max(abs(bval), 1e-12)

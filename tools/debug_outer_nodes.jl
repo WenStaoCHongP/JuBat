@@ -32,7 +32,17 @@ println("Tight tol classification count   = ", count_tight, ", inner misclassifi
 println("eps_theta_default = ", eps_theta_default, ", eps_theta_tight = ", eps_theta_tight)
 
 # Show first 10 node cumulative theta values for inner and outer curves for inspection
-function cumulative_theta_values(indices)
+function cumulative_theta_values_inner(indices)
+    vals = Float64[]
+    for i in indices
+        x = mesh_th.node[i,1]; y = mesh_th.node[i,2]
+        r = hypot(x,y)
+        push!(vals, (r - p.a)/b)  # theta_cum_in formula (s_in=0)
+    end
+    return vals
+end
+
+function cumulative_theta_values_outer(indices)
     vals = Float64[]
     for i in indices
         x = mesh_th.node[i,1]; y = mesh_th.node[i,2]
@@ -41,5 +51,27 @@ function cumulative_theta_values(indices)
     end
     return vals
 end
-println("Sample theta_cum_out inner[1:5] = ", cumulative_theta_values(1:5))
-println("Sample theta_cum_out outer[1:5] (shifted index) = ", cumulative_theta_values( (160+2):(160+6) ))
+
+println("\n内圈节点 (应该在 [0, 2π] 范围):")
+println("  Sample theta_cum_in inner[1:5] = ", cumulative_theta_values_inner(1:5))
+println("  预期范围: [0, $(2*pi)]")
+
+println("\n外圈节点 (应该在 [2π*(N-1), 2π*N] 范围):")
+println("  Sample theta_cum_out outer[1:5] = ", cumulative_theta_values_outer((160+2):(160+6)))
+println("  预期范围: [$(2*pi*(N-1)), $(2*pi*N)]")
+
+println("\n与预期的比较:")
+inner_theta = cumulative_theta_values_inner(1:5)
+outer_theta = cumulative_theta_values_outer((160+2):(160+6))
+if all(theta -> 0 <= theta <= 2*pi + 0.01, inner_theta)
+    println("  ✓ 内圈 theta_cum 在预期范围内")
+else
+    println("  ❌ 内圈 theta_cum 超出预期范围！")
+end
+if all(theta -> 2*pi*(N-1) - 0.01 <= theta <= 2*pi*N + 0.01, outer_theta)
+    println("  ✓ 外圈 theta_cum 在预期范围内")
+else
+    println("  ❌ 外圈 theta_cum 超出预期范围！")
+    println("    实际范围: [$(minimum(outer_theta)), $(maximum(outer_theta))]")
+    println("    预期范围: [$(2*pi*(N-1)), $(2*pi*N)]")
+end
