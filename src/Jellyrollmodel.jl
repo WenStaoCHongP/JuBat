@@ -290,9 +290,9 @@ function edge_boundary(kind::Symbol, args...; kwargs...)
         if which === :inner
             return 0.0, 2.0*pi
         elseif which === :outer
-            p = jellyroll_spiral_params(param_dim)
-            N = max(1, Int(p.n_wind))
-            return 2.0*pi*(N-1), 2.0*pi*N
+            # 对于 collector_seed_mesh 网格：外圈与内圈在同一θ段
+            # 返回 [0, 2π] 表示"任意一圈的外螺旋"
+            return 0.0, 2.0*pi
         else
             error("edge_boundary(:theta_range) which must be :inner or :outer")
         end
@@ -318,9 +318,12 @@ function edge_boundary(kind::Symbol, args...; kwargs...)
             θ_start, θ_end = 0.0, 2.0*pi
             return (θ_cum_in >= θ_start - eps_theta) && (θ_cum_in <= θ_end + eps_theta)
         elseif which === :outer
-            N = max(1, Int(p.n_wind))
-            θ_start, θ_end = 2.0*pi*(N-1), 2.0*pi*N
-            return (θ_cum_out >= θ_start - eps_theta) && (θ_cum_out <= θ_end + eps_theta)
+            # 对于 collector_seed_mesh 网格：内外圈在同一θ段，只是半径偏移
+            # 所以外圈判断应该检查"在任意一圈的外螺旋上"，而不是"第N圈"
+            # 方法：将 θ_cum_out 模 2π，检查是否在 [0, 2π] 范围
+            θ_mod = mod(θ_cum_out, 2.0*pi)
+            θ_start, θ_end = 0.0, 2.0*pi
+            return (θ_mod >= θ_start - eps_theta) && (θ_mod <= θ_end + eps_theta)
         else
             error("edge_boundary(:is_on) which must be :inner or :outer")
         end
