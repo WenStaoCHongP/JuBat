@@ -228,13 +228,31 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64=0.0)
     @assert haskey(case.mesh, "thermal2D") "thermal2D mesh is missing in case.mesh"
     mesh = case.mesh["thermal2D"]
     @assert mesh.type == "Q4" && mesh.dimension == 2 "Boundary BC currently implemented for Q4/2D"
-    # 使用 edge_boundary(:node_on) 判定外边界节点：
+    
+    # 边界节点识别方法：可选 :spiral（基于螺旋线θ）或 :radial（基于半径r）
+    # - :spiral 适用于 collector_seed_mesh，识别"外螺旋线"上的节点
+    # - :radial 适用于任何网格，识别"r ≈ Rout"的节点（推荐用于对流换热）
+    boundary_method = hasproperty(case.opt, :boundary_method) ? case.opt.boundary_method : :spiral
+    
     ne = size(mesh.element, 1)
     nnode = mesh.nlen
     is_outer_node = falses(nnode)
-    for i in 1:nnode
-        # which=:outer 对应外螺旋终圈 θ ∈ [2π(N-1), 2πN]
-        is_outer_node[i] = edge_boundary(:node_on, mesh, i, case.param_dim; which=:outer)
+    
+    if boundary_method === :spiral
+        # 方法1：基于螺旋线 θ（原方法）
+        for i in 1:nnode
+            # which=:outer 对应外螺旋线节点（任意一圈）
+            is_outer_node[i] = edge_boundary(:node_on, mesh, i, case.param_dim; which=:outer)
+        end
+    elseif boundary_method === :radial
+        # 方法2：基于半径 r（推荐用于对流换热）
+        tol = hasproperty(case.opt, :boundary_radial_tol) ? case.opt.boundary_radial_tol : 1e-3
+        for i in 1:nnode
+            # which=:outer 识别 r ≈ Rout 的节点
+            is_outer_node[i] = edge_boundary(:radial, mesh, i, case.param_dim; which=:outer, tol=tol)
+        end
+    else
+        error("Unsupported boundary_method=$(boundary_method). Use :spiral or :radial")
     end
 
     # 3) 对外边界边组装对流项（内侧默认绝热）。扫描单元四条边，若两端均为外边界节点则施加换热。

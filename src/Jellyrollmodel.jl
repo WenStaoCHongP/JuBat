@@ -333,8 +333,28 @@ function edge_boundary(kind::Symbol, args...; kwargs...)
         which = get(kwargs, :which, :inner)
         x = mesh.node[nidx,1]; y = mesh.node[nidx,2]
         return edge_boundary(:is_on, x, y, param_dim; tol=tol, which=which)
+    elseif kind === :radial
+        # 新增：基于半径的内外边界识别（适用于任何网格类型）
+        # 用法：edge_boundary(:radial, mesh, nidx, param_dim; which=:inner/:outer, tol=1e-4)
+        mesh = args[1]; nidx = args[2]; param_dim = args[3]
+        p = jellyroll_spiral_params(param_dim)
+        tol = get(kwargs, :tol, 1e-4)
+        which = get(kwargs, :which, :inner)
+        
+        x = mesh.node[nidx,1]; y = mesh.node[nidx,2]
+        r = hypot(x, y)
+        
+        if which === :inner
+            # 内边界：r ≈ Rin（靠近内半径）
+            return abs(r - p.Rin) <= tol
+        elseif which === :outer
+            # 外边界：r ≈ Rout（靠近外半径）
+            return abs(r - p.Rout) <= tol
+        else
+            error("edge_boundary(:radial) which must be :inner or :outer")
+        end
     else
-        error("Unsupported edge_boundary(kind=$(kind)). Use :r, :theta_range, :is_on, or :node_on")
+        error("Unsupported edge_boundary(kind=$(kind)). Use :r, :theta_range, :is_on, :node_on, or :radial")
     end
 end
 
