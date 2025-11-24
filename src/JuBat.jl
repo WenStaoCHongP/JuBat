@@ -36,7 +36,7 @@ export jellyroll_tab_node_indices, edge_boundary
 export jellyroll_element_centers, jellyroll_effective_K_at
 export ThermalDistributed1D, ThermalDistributed2D, ThermalDistributed_BC, heatQ_Source, solve_branch_currents_newton
 export ThermalModel, ThermalLumpedModel, ThermalDistributed1DModel, ThermalDistributed2DModel
-export thermal_stress
+export thermal_stress, homogenize_particle_stress_to_2D
 export CohesiveInterface, ContactInterface
 export init_cohesive_interface, compute_cohesive_traction, update_cohesive_damage!, cohesive_stiffness_matrix
 export init_contact_interface, detect_contact, compute_contact_pressure, compute_friction_stress

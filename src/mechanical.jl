@@ -176,6 +176,12 @@ function thermal_stress(case::Case, variables::Dict{String, Union{Array{Float64}
         end
         variables["thermal2D element thermal stress"] = σ_th_elem
     end
+    
+    # 多尺度均匀化：将颗粒扩散应力映射到2D网格（如果启用力学模块）
+    if case.opt.mechanical_enabled && haskey(case.mesh, "thermal2D")
+        variables = homogenize_particle_stress_to_2D(case, variables)
+    end
+    
     return variables
 end
 
@@ -207,3 +213,134 @@ function Calstressdisp(electrode::Electrode, mesh::Mesh, cs::Array{Float64}, T::
         theta_M =  2 * E * (Omega^2) ./(T *(9 * (1 - nu)))
         return stress_r_center, stress_theta_surf, disp_surf, theta_M, cs_gs
     end
+
+"""
+    homogenize_particle_stress_to_2D(case::Case, variables::Dict)
+
+多尺度均匀化：将颗粒尺度扩散应力映射到宏观2D Jellyroll网格
+
+# 理论背景
+将微观颗粒应力（~10 μm尺度）均匀化到宏观单元应力（~1 mm尺度）
+
+均匀化公式：
+    σ_macro = Σ(f_layer · ε_active · σ_particle)
+
+其中：
+- f_layer = 层权重（负极/隔膜/正极的体积分数）
+- ε_active = 活性材料体积分数（通常0.6-0.8）
+- σ_particle = 颗粒表面切向应力
+
+# 尺度桥接
+```
+微观（颗粒）         均匀化          宏观（单元）
+~10 μm          =========>        ~1 mm
+σ_particle                        σ_macro
+```
+
+# 方法选择
+1. 如果有layer_weights：精细映射（推荐用于Jellyroll）
+2. 否则：简单厚度加权平均
+
+# 参数
+- `case::Case` - JuBat案例对象
+- `variables::Dict` - 包含颗粒应力的变量字典
+
+# 返回
+更新后的`variables`，新增：
+- `"thermal2D element diffusion stress (homogenized)"` - 均匀化扩散应力 [Pa]
+- `"thermal2D element total stress"` - 总应力（热应力+扩散应力） [Pa]
+
+# 示例
+```julia
+# 在thermal_stress之后调用
+variables = thermal_stress(case, variables)
+variables = homogenize_particle_stress_to_2D(case, variables)
+
+# 提取总应力
+σ_total = variables["thermal2D element total stress"]
+```
+"""
+function homogenize_particle_stress_to_2D(case::Case, variables::Dict)
+    # 检查是否有2D网格
+    if !haskey(case.mesh, "thermal2D")
+        return variables
+    end
+    
+    # 检查是否有颗粒应力
+    if !haskey(variables, "negative particle surface tangential stress") ||
+       !haskey(variables, "positive particle surface tangential stress")
+        return variables
+    end
+    
+    mesh_th = case.mesh["thermal2D"]
+    ne_th = size(mesh_th.element, 1)
+    param = case.param
+    param_dim = case.param_dim
+    
+    # 提取颗粒应力（微观尺度）
+    σ_particle_n = variables["negative particle surface tangential stress"]
+    σ_particle_p = variables["positive particle surface tangential stress"]
+    
+    # 活性材料体积分数（考虑孔隙）
+    ε_active_n = hasproperty(param_dim.NE, :epsilon_s) ? param_dim.NE.epsilon_s : 0.65
+    ε_active_p = hasproperty(param_dim.PE, :epsilon_s) ? param_dim.PE.epsilon_s : 0.60
+    
+    # 有效应力 = 颗粒应力 × 体积分数
+    σ_eff_n = isa(σ_particle_n, Number) ? σ_particle_n * ε_active_n : σ_particle_n .* ε_active_n
+    σ_eff_p = isa(σ_particle_p, Number) ? σ_particle_p * ε_active_p : σ_particle_p .* ε_active_p
+    
+    # 获取layer_weights（如果可用）
+    fks = nothing
+    if haskey(variables, "thermal2D layer_weights")
+        fks = variables["thermal2D layer_weights"]
+    end
+    
+    # 均匀化到宏观单元
+    σ_element = zeros(Float64, ne_th)
+    
+    if fks !== nothing && size(fks, 2) >= 3
+        # 方法1：精细映射（使用layer_weights）
+        @inbounds for e in 1:ne_th
+            f_neg = fks[e, 1]  # 负极层体积分数
+            f_pos = fks[e, 3]  # 正极层体积分数
+            # 隔膜层（f_sep = fks[e,2]）不贡献扩散应力
+            
+            if isa(σ_eff_n, Number)
+                # SPM/SPMe: 标量应力，所有颗粒相同
+                σ_element[e] = f_neg * σ_eff_n + f_pos * σ_eff_p
+            else
+                # P2D: 向量应力，沿x轴分布
+                # 简化：使用平均值（可改进为空间插值）
+                σ_element[e] = f_neg * mean(σ_eff_n) + f_pos * mean(σ_eff_p)
+            end
+        end
+        
+    else
+        # 方法2：简单厚度加权（没有layer_weights时的退化方案）
+        t_n = param_dim.NE.thickness
+        t_p = param_dim.PE.thickness
+        t_total = t_n + t_p
+        
+        if isa(σ_eff_n, Number)
+            σ_macro = (σ_eff_n * t_n + σ_eff_p * t_p) / t_total
+            σ_element .= σ_macro
+        else
+            σ_macro = (mean(σ_eff_n) * t_n + mean(σ_eff_p) * t_p) / t_total
+            σ_element .= σ_macro
+        end
+    end
+    
+    # 存储均匀化后的扩散应力
+    variables["thermal2D element diffusion stress (homogenized)"] = σ_element
+    
+    # 叠加热应力（如果已计算）
+    if haskey(variables, "thermal2D element thermal stress")
+        σ_thermal = variables["thermal2D element thermal stress"]
+        variables["thermal2D element total stress"] = σ_thermal .+ σ_element
+    else
+        # 如果只有扩散应力
+        variables["thermal2D element total stress"] = σ_element
+    end
+    
+    return variables
+end
