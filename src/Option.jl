@@ -26,6 +26,10 @@ using Parameters
     thermalmodel::String  = "none" # none, lumped, distributed1D, distributed2D
     mechanicalmodel::String = "none" #none or full
     cite::Vector{String} = String[]
+    # Mechanical module flags (Phase C - Advanced Mechanics)
+    mechanical_enabled::Bool = false   # whether advanced mechanics is active
+    cohesive_enabled::Bool = false     # enable cohesive zone model (CZM)
+    contact_enabled::Bool = false      # enable interface contact mechanics
     # Thermal module flags (Phase A)
     thermal_enabled::Bool = false      # whether thermal module is active
     thermal_dim::String = "1D"        # "1D" or "2D" for distributed models
