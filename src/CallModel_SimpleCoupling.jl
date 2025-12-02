@@ -4,6 +4,10 @@
 using SparseArrays: blockdiag
 using Statistics: mean
 
+# 导入ThermalDistributed的内部函数（用于热源计算）
+# _compute_layer_heat_sources 已在 ThermalDistributed.jl 中完整实现
+# 包括：反应热、可逆热、固相/液相欧姆热、集流体欧姆热
+
 """
     CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jacobi::String="update")
 
@@ -72,27 +76,54 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
     case.param.T0 = T0_original
     
     # ========================================================================
-    # 3. 计算总内热源
+    # 3. 计算体积热源密度（调用已有函数）
     # ========================================================================
     
-    Q_total = compute_total_heat_source_simple(case, variables_chem, y_T)
+    # 直接调用ThermalDistributed的层热源计算函数
+    # 注意：这里使用单个SPMe的结果，假设所有单元条件相同
+    mesh = case.mesh["thermal2D"]
+    ne = size(mesh.element, 1)
+    
+    # 计算单个单元的热源密度（W/m³）- 直接调用已有函数
+    # 获取总电流（有量纲，A）
+    I_app = case.opt.Current(t * case.param.scale.t0)
+    Q_layers = _compute_layer_heat_sources(case, variables_chem, T_avg, I_app)
+    
+    # 获取层权重
+    layer_weights = jellyroll_get_layer_weights(mesh)
+    
+    if layer_weights !== nothing
+        # 按层权重计算每个单元的热源密度
+        q_volumetric = zeros(Float64, ne)
+        for e in 1:ne
+            q_volumetric[e] = sum(layer_weights[e, i] * Q_layers[i] for i in 1:5)
+        end
+    else
+        # Fallback：使用简单平均（均匀假设）
+        q_uniform = mean(Q_layers)
+        q_volumetric = fill(q_uniform, ne)
+    end
+    
+    # 计算总热源功率（用于统计，W）
+    V_total = compute_total_volume(case, mesh)
+    Q_total = mean(q_volumetric) * V_total
     
     # ========================================================================
-    # 4. 将热源均匀分配到所有单元
+    # 4. 求解2D热传导
     # ========================================================================
     
-    q_volumetric = distribute_heat_source_uniform(case, Q_total)
-    
-    # ========================================================================
-    # 5. 求解2D热传导
-    # ========================================================================
-    
-    # 构建热变量字典（包含体积热源）
+    # 构建热变量字典（ThermalDistributed2D需要的格式）
     variables_thermal = Dict{String, Any}(
-        "volumetric heat source" => q_volumetric,
+        "heat_source_fields" => q_volumetric,  # W/m³
+        "heat_source_units_code" => 1.0,        # SI单位
         "average temperature" => T_avg,
         "total heat source" => Q_total
     )
+    
+    # 添加层权重
+    if layer_weights !== nothing
+        variables_thermal["layer_weights"] = layer_weights
+    end
     
     # 调用ThermalDistributed求解
     M_T, K_T, F_T = solve_thermal2D_simple_coupling(case, y_T, variables_thermal, t, jacobi)
@@ -130,124 +161,14 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
 end
 
 
-"""
-    compute_total_heat_source_simple(case, variables_chem, y_T)
+# ========================================================================
+# 热源计算：直接调用ThermalDistributed的已有函数
+# ========================================================================
 
-从SPMe结果计算总内热源（有量纲）。
-
-# 热源组成
-- Q_rxn: 反应热（过电位×电流）
-- Q_ohm: 欧姆热（I²R）
-- Q_rev: 熵热（dU/dT × I × T）
-
-# 返回
-- Q_total: 总热源功率 (W)
-"""
-function compute_total_heat_source_simple(case, variables_chem, y_T)
-    # 提取关键变量
-    I_app = case.opt.I_app  # 总电流 (A)
-    T_avg = mean(y_T) * case.param.scale.T0  # 平均温度 (K)
-    
-    # 初始化各热源项
-    Q_rxn = 0.0
-    Q_ohm = 0.0
-    Q_rev = 0.0
-    
-    # ========================================================================
-    # 1. 反应热（过电位）
-    # ========================================================================
-    # 负极反应热
-    if haskey(variables_chem, "negative electrode overpotential")
-        η_n = variables_chem["negative electrode overpotential"]
-        # 如果是数组，取第一个值；如果是标量，直接使用
-        η_n_val = isa(η_n, Array) ? η_n[1] : η_n
-        
-        # 负极反应热 = I × |η_n|
-        Q_rxn_n = abs(I_app) * abs(η_n_val)
-        Q_rxn += Q_rxn_n
-    end
-    
-    # 正极反应热
-    if haskey(variables_chem, "positive electrode overpotential")
-        η_p = variables_chem["positive electrode overpotential"]
-        η_p_val = isa(η_p, Array) ? η_p[1] : η_p
-        
-        # 正极反应热 = I × |η_p|
-        Q_rxn_p = abs(I_app) * abs(η_p_val)
-        Q_rxn += Q_rxn_p
-    end
-    
-    # ========================================================================
-    # 2. 欧姆热（电解质电阻）
-    # ========================================================================
-    # 对于SPMe，电解质欧姆极化可以从电解质电位降计算
-    # Q_ohm = I × ΔΦ_e（电解质电位降）
-    # 这部分通常已经包含在过电位中，避免重复计算
-    # 暂时保留为0，避免过度估计
-    Q_ohm = 0.0
-    
-    # ========================================================================
-    # 3. 熵热（可逆热）
-    # ========================================================================
-    # 熵热 = I × T × (dU_p/dT - dU_n/dT)
-    dUdT_n_val = 0.0
-    dUdT_p_val = 0.0
-    
-    if haskey(variables_chem, "negative electrode entropic coefficient")
-        dUdT_n = variables_chem["negative electrode entropic coefficient"]
-        dUdT_n_val = isa(dUdT_n, Array) ? dUdT_n[1] : dUdT_n
-    end
-    
-    if haskey(variables_chem, "positive electrode entropic coefficient")
-        dUdT_p = variables_chem["positive electrode entropic coefficient"]
-        dUdT_p_val = isa(dUdT_p, Array) ? dUdT_p[1] : dUdT_p
-    end
-    
-    # 可逆热
-    Q_rev = I_app * T_avg * (dUdT_p_val - dUdT_n_val)
-    
-    # ========================================================================
-    # 总热源
-    # ========================================================================
-    Q_total = Q_rxn + Q_ohm + Q_rev
-    
-    # 调试输出（可选）
-    if hasproperty(case.opt, :debug_simple_coupling) && case.opt.debug_simple_coupling
-        if abs(Q_total) > 0.1  # 避免初始零值输出
-            @printf("    Heat sources: Q_rxn=%.2f W, Q_ohm=%.2f W, Q_rev=%.2f W\n", 
-                    Q_rxn, Q_ohm, Q_rev)
-        end
-    end
-    
-    return Q_total
-end
-
-
-"""
-    distribute_heat_source_uniform(case, Q_total)
-
-将总热源均匀分配到所有单元。
-
-# 参数
-- case: 案例对象
-- Q_total: 总热源功率 (W)
-
-# 返回
-- q_volumetric: 每个单元的体积热源密度 (W/m³)，向量长度为ne
-"""
-function distribute_heat_source_uniform(case, Q_total)
-    mesh = case.mesh["thermal2D"]
-    ne = size(mesh.element, 1)
-    
-    # 计算总体积
-    V_total = compute_total_volume(case, mesh)
-    
-    # 均匀体积热源密度
-    q_uniform = Q_total / V_total  # W/m³
-    
-    # 返回所有单元相同的热源
-    return fill(q_uniform, ne)
-end
+# 注意：这里导入内部函数（仅用于简化耦合模式）
+# _compute_layer_heat_sources 在 ThermalDistributed.jl 中定义
+# 它计算5层的体积热源密度 [Q_NE, Q_SP, Q_PE, Q_PCC, Q_NCC]（单位：W/m³）
+# 包括：反应热 + 可逆热 + 固相欧姆热 + 液相欧姆热 + 集流体欧姆热
 
 
 """
