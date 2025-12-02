@@ -18,10 +18,10 @@ function main()
     tab_nodes = unique(vcat(pos_nodes, neg_nodes))
 
     # identify outer boundary nodes using new edge_boundary logic
-    # which=:outer 表示外螺旋终圈 (θ_cum ∈ [2π(N-1),2πN])
+    # which=:outer 表示外螺旋（默认θ范围与网格生成一致）
     outer_nodes = Int[]
     for i in 1:mesh_th.nlen
-        if JuBat.edge_boundary(:node_on, mesh_th, i, param_dim; which=:outer)
+        if JuBat.edge_boundary(mesh_th, i, param_dim; which=:outer)
             push!(outer_nodes, i)
         end
     end
