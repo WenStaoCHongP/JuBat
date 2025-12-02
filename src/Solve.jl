@@ -73,7 +73,21 @@ function Solve(case::Case)
     dt = deepcopy(dt_min)
     dt_temp = 0
     dt_temp_flag = false
-    num = round(Int64, (t_end - t0)/dt * 1.5) 
+    # 计算预期时间步数，添加安全限制避免内存溢出
+    num_estimated = round(Int64, (t_end - t0)/dt * 1.5)
+    # 限制最大预分配步数（避免内存溢出）
+    # 对于多SPMe模式，由于每步需要存储ne个单元的数据，限制更严格
+    max_steps = 100000  # 默认最大步数
+    if hasproperty(case.opt, :per_element_spme) && case.opt.per_element_spme
+        max_steps = 50000  # 多SPMe模式限制更严格
+    end
+    num = min(num_estimated, max_steps)
+    
+    if num_estimated > max_steps
+        @warn "预期时间步数 $(num_estimated) 超过最大限制 $(max_steps)，将使用动态扩展策略"
+        @warn "这可能导致性能下降。建议增大时间步长 dt_min = $(dt*case.param.scale.t0) 秒"
+    end
+    
     variables_hist = StandardVariables(case, num)
     errors = zeros(num, 1)
 
