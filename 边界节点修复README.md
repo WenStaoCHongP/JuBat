@@ -22,10 +22,16 @@
 ### 1. 源代码修改
 
 #### `src/Jellyrollmodel.jl` (核心修改)
-- **函数**：`edge_boundary`
+
+**函数1**: `edge_boundary`
 - **位置**：第306-327行
 - **改动**：默认只识别第一圈/最后一圈，而不是整个螺旋线
 - **文档**：第247-286行（同步更新）
+
+**函数2**: `jellyroll_tab_node_indices`
+- **位置**：第382行
+- **改动**：修复`get(tab, :width, 0.0)`为`hasproperty(tab, :width) ? tab.width : 0.0`
+- **原因**：tab是结构体不是字典
 
 #### `src/ThermalDistributed.jl`
 - **函数**：`_identify_boundary_nodes`

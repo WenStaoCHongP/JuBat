@@ -379,7 +379,7 @@ function jellyroll_tab_node_indices(mesh, param_dim)
     a, b = p.a, p.b
     Rin, Rout = p.Rin, p.Rout
     tab = param_dim.tab
-    tw = get(tab, :width, 0.0)
+    tw = hasproperty(tab, :width) ? tab.width : 0.0
     
     # 预计算所有节点的累计角度
     nn = size(mesh.node, 1)
