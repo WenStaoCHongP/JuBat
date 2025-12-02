@@ -34,11 +34,6 @@ using Parameters
     collector_seeded::Bool = false     # use collector-seeded band mesh semantics (layer_weights)
     per_element_spme::Bool = false     # allow passing per-element I_app and T to SPMe
     units_thermal::String = "nd"      # "nd" (dimensionless Scheme B) or "SI"
-    # --- Strong coupling (per-element SPMe) controls ---
-    strong_max_iter::Int = 5           # inner iterations per thermal time step
-    strong_tol_T::Float64 = 5e-3       # temperature change tol in nd (≈0.005*T_ref)
-    strong_tol_Irel::Float64 = 1e-3    # relative change of I_e tolerance
-    strong_relaxation::Float64 = 0.5   # relaxation factor for T (0<ω<=1)
     # --- Debug/Diagnostics ---
     debug_coupling::Bool = false       # print detailed logs for electro-thermal coupling
 end

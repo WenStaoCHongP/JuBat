@@ -24,13 +24,15 @@ include("mechanical.jl")
 include("Jellyrollmodel.jl")
 
 export Assemble, ElectrodeDiffusion, ElectrolyteDiffusion, Postprocessing, SetCase, SetMesh, ChooseCell
-export Mesh1D, Mesh2D,GetGS, LagrangeBasis, GSweight, ShapeFunction1D, NormaliseParam, StandardVariables
+export Mesh1D, Mesh2D, GetGS, LagrangeBasis, GSweight, ShapeFunction1D, NormaliseParam, StandardVariables
 export SPM, Solve, SPMe, SPMe_element, ModelInitialisation
 export ModelInitialisation_MultiSPMe, MultiSPMe_extract_element_state, MultiSPMe_get_thermal_dofs
 export MultiSPMe_update_element_state!, MultiSPMe_update_thermal_dofs!
 export Arrhenius, IntV
-export jellyroll_spiral_params, cart2pol, pol2cart, material_at
-export jellyroll_element_layer_weights, get_element_layer_weights
+export jellyroll_spiral_params, cart2pol, material_at
+export jellyroll_collector_seed_mesh, jellyroll_get_layer_weights
+export jellyroll_tab_node_indices, edge_boundary
+export jellyroll_element_centers, jellyroll_effective_K_at
 export ThermalDistributed1D, ThermalDistributed2D, ThermalDistributed_BC, heatQ_Source, solve_branch_currents_newton
 export ThermalModel, ThermalLumpedModel, ThermalDistributed1DModel, ThermalDistributed2DModel
 export thermal_stress

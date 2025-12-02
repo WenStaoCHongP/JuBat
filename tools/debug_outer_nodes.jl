@@ -174,6 +174,25 @@ function main()
     println("    内圈节点中被识别为内螺旋的: $match_inner / $count_inner_topo")
     println("    外圈节点中被识别为外螺旋的: $match_outer / $count_outer_topo")
 
+    missing_inner = setdiff(inner_curve_range, findall(is_inner_precise))
+    extra_inner = setdiff(findall(is_inner_precise), inner_curve_range)
+    missing_outer = setdiff(outer_curve_range, findall(is_outer_0))
+    extra_outer = setdiff(findall(is_outer_0), outer_curve_range)
+
+    if !isempty(missing_inner)
+        println("    ⚠ Missing inner indices: $(collect(missing_inner))")
+    end
+    if !isempty(extra_inner)
+        println("    ⚠ Extra inner indices: $(collect(extra_inner)[1:min(end,10)]) ...")
+    end
+    if !isempty(missing_outer)
+        println("    ⚠ Missing outer indices: $(collect(missing_outer))")
+    end
+    if !isempty(extra_outer)
+        preview = collect(extra_outer)[1:min(end,10)]
+        println("    ⚠ Extra outer indices (first 10): $preview")
+    end
+
     if match_inner == count_inner_topo && match_outer == count_outer_topo
         println("    ✓ 完全匹配！精确识别正确。")
     elseif match_inner == count_inner && match_outer == count_outer_0

@@ -50,7 +50,7 @@ function main()
     opt.dimension = 1
     
     # 时间设置
-    opt.time = [0.0, 100]  # 仿真时间 (s)
+    opt.time = [0.0, 3600]  # 仿真时间 (s)
     opt.dt = [0.01, 0.5]    # 时间步长范围 [dt_min, dt_max] (s)
     opt.dtType = "auto"     # 自动时间步长
     opt.jacobi = "update"

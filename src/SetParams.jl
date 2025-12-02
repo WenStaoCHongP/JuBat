@@ -134,6 +134,8 @@ end
     length::Float64 = 0
     width::Float64 = 0
     area::Float64 = 0
+    theta_pos::Vector{Float64} = Float64[]
+    theta_neg::Vector{Float64} = Float64[]
 end
 # param_dim.Tab.width = 0.75 * param_dim.Tab.length  
 # param_dim.Tab.area = param_dim.Tab.length * param_dim.Tab.width
