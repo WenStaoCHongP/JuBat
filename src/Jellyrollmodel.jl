@@ -256,10 +256,10 @@ export edge_boundary
 # 判断方法
 1. 计算节点的累计角度 θ_cum
 2. 检查 θ_cum ∈ [θ_min, θ_max]
-    - **默认范围与 `jellyroll_collector_seed_mesh` 的截断角度完全一致**
-    - θ_start = max(0.0, (Rin - a - s_spiral) / b)
-    - θ_end = min((Rout - a - s_spiral) / b, (Rout - a) / b)
-    - 其中 s_spiral = 0（内螺旋）或 t_repeat（外螺旋）
+    - **默认识别边界周期**：
+      - 内边界（which=:inner）：第一个周期 [θ0, θ0+2π]
+      - 外边界（which=:outer）：最后一个周期 [θ1-2π, θ1]
+    - 其中 θ0, θ1 是网格实际覆盖的起点和终点
 3. 验证节点到理论螺旋线的距离 ≤ tol
 
 # 参数
@@ -267,7 +267,7 @@ export edge_boundary
 - `nidx`: 节点索引
 - `param_dim`: 参数对象
 - `which`: `:inner`（内螺旋）或 `:outer`（外螺旋）
-- `theta_range`: θ 范围 (θ_min, θ_max)，默认使用网格覆盖的完整角度区间
+- `theta_range`: θ 范围 (θ_min, θ_max)，默认识别边界周期（第一圈/最后一圈）
 - `tol`: 距离容差（m），默认 1e-4
 
 # 返回
@@ -275,13 +275,16 @@ export edge_boundary
 
 # 示例
 ```julia
-# 使用默认范围（与网格生成一致）
-is_inner = edge_boundary(mesh, i, param_dim; which=:inner)
-is_outer = edge_boundary(mesh, i, param_dim; which=:outer)
+# 使用默认范围（识别第一圈/最后一圈）
+is_inner = edge_boundary(mesh, i, param_dim; which=:inner)  # 第一圈
+is_outer = edge_boundary(mesh, i, param_dim; which=:outer)  # 最后一圈
 
-# 自定义θ范围（如只识别特定圈层）
+# 自定义θ范围（识别特定圈层）
 is_inner_first = edge_boundary(mesh, i, param_dim; which=:inner, theta_range=(0.0, 2π))
-is_outer_last = edge_boundary(mesh, i, param_dim; which=:outer, theta_range=(2π*(N-1), 2π*N))
+is_outer_nth = edge_boundary(mesh, i, param_dim; which=:outer, theta_range=(2π*(N-1), 2π*N))
+
+# 识别整个螺旋线（用于调试）
+is_all_inner = edge_boundary(mesh, i, param_dim; which=:inner, theta_range=(θ0, θ1))
 ```
 """
 function edge_boundary(mesh, nidx::Int, param_dim; 
@@ -303,18 +306,26 @@ function edge_boundary(mesh, nidx::Int, param_dim;
     r = hypot(x, y)
     bval = max(p.b, 1e-12)
     
-    # 确定 θ 范围；默认遵循 collector_seed_mesh 的截断逻辑
+    # 确定 θ 范围；默认识别边界圈层
     if theta_range === nothing
-        # 与 jellyroll_collector_seed_mesh 保持完全一致：
-        # 网格生成时内外螺旋共享同一个θ范围 [θ0, θ1]：
+        # 计算网格实际覆盖的θ范围（与 jellyroll_collector_seed_mesh 一致）
         # θ0 = max(0.0, (Rin - a - s_in) / b)  其中 s_in = 0
         # θ1 = min((Rout - a - s_out) / b, (Rout - a) / b)  其中 s_out = t_repeat
-        # 这个θ范围由内螺旋的起点和外螺旋的终点共同确定
         s_in = 0.0
         s_out = p.t_repeat
-        θ_start = max(0.0, (p.Rin - p.a - s_in) / bval)
-        θ_end = min((p.Rout - p.a - s_out) / bval, (p.Rout - p.a) / bval)
-        θ_min, θ_max = θ_start, θ_end 
+        θ0_mesh = max(0.0, (p.Rin - p.a - s_in) / bval)
+        θ1_mesh = min((p.Rout - p.a - s_out) / bval, (p.Rout - p.a) / bval)
+        
+        # 默认行为：识别边界周期
+        # 内边界：从起点开始的第一个周期 [θ0, θ0+2π]
+        # 外边界：到终点结束的最后一个周期 [θ1-2π, θ1]
+        if which === :inner
+            θ_min = θ0_mesh
+            θ_max = min(θ0_mesh + 2.0*π, θ1_mesh)
+        else  # :outer
+            θ_min = max(θ1_mesh - 2.0*π, θ0_mesh)
+            θ_max = θ1_mesh
+        end
     else
         θ_min, θ_max = theta_range
     end

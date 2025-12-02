@@ -90,11 +90,11 @@ function _identify_boundary_nodes(mesh, param_dim, opt)
     θ1_mesh = min((pgeo.Rout - pgeo.a - s_out) / bval, (pgeo.Rout - pgeo.a) / bval)
     
     # 获取配置
-    # 默认：内边界取第1圈，外边界取最后1圈（使用网格实际终点）
+    # 默认：内边界取第1圈，外边界取最后1圈
     θ_in_range = hasproperty(opt, :boundary_inner_theta) ? 
-                 opt.boundary_inner_theta : (θ0_mesh, min(2.0*π, θ1_mesh))
+                 opt.boundary_inner_theta : (θ0_mesh, min(θ0_mesh + 2.0*π, θ1_mesh))
     θ_out_range = hasproperty(opt, :boundary_outer_theta) ? 
-                  opt.boundary_outer_theta : (max(θ1_mesh - 2.0*π, 0.0), θ1_mesh)
+                  opt.boundary_outer_theta : (max(θ1_mesh - 2.0*π, θ0_mesh), θ1_mesh)
     tol = hasproperty(opt, :boundary_tol) ? opt.boundary_tol : 1e-4
     
     # 向量化识别

@@ -17,8 +17,8 @@ function main()
     neg_nodes = unique(neg_idx)
     tab_nodes = unique(vcat(pos_nodes, neg_nodes))
 
-    # identify outer boundary nodes using new edge_boundary logic
-    # which=:outer 表示外螺旋（默认θ范围与网格生成一致）
+    # identify outer boundary nodes using edge_boundary logic
+    # which=:outer 表示外螺旋的最后一圈（默认行为）
     outer_nodes = Int[]
     for i in 1:mesh_th.nlen
         if JuBat.edge_boundary(mesh_th, i, param_dim; which=:outer)
@@ -30,7 +30,7 @@ function main()
     println("Found tab nodes: ", length(tab_nodes), ", outer boundary nodes: ", length(outer_nodes))
 
     # plot
-    plt = plot(size=(900,900), title="Boundary nodes (edge_boundary): red=tab, green=outer boundary")
+    plt = plot(size=(900,900), title="Boundary nodes: red=pos_tab, yellow=neg_tab, green=outer(last turn)")
     scatter!(plt, x, y; ms=1.0, color=:gray, alpha=0.3, label=false)
     if !isempty(outer_nodes)
         scatter!(plt, x[outer_nodes], y[outer_nodes]; ms=3.5, color=:green, label="outer boundary")
@@ -53,7 +53,7 @@ function main()
     end
     try
         # create a high-resolution raster version (e.g., 3600x3600)
-    plt_hr = plot(size=(3600,3600), title="Boundary nodes (edge_boundary): red=tab, green=outer boundary")
+    plt_hr = plot(size=(3600,3600), title="Boundary nodes: red=pos_tab, yellow=neg_tab, green=outer(last turn)")
         scatter!(plt_hr, x, y; ms=1.0, color=:gray, alpha=0.3, label=false)
         if !isempty(outer_nodes)
             scatter!(plt_hr, x[outer_nodes], y[outer_nodes]; ms=6.0, color=:green, label="outer boundary")
