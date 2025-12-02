@@ -111,6 +111,19 @@ function StandardVariables(case::Case, num::Int64)
         variables["thermal2D dUdT_p_e"] = zeros(Float64, ne, num)
         variables["thermal2D element voltages"] = zeros(Float64, ne, num)
     end
+    
+    # Phase C: 简化耦合模式的变量历史记录
+    if hasproperty(case.opt, :simple_thermal_coupling) && 
+       case.opt.simple_thermal_coupling &&
+       case.opt.thermalmodel == "distributed2D" && 
+       haskey(case.mesh, "thermal2D")
+        nT = case.mesh["thermal2D"].nlen
+        # 温度场历史
+        variables["thermal2D temperature"] = zeros(Float64, nT, num)
+        # 全局变量
+        variables["average temperature"] = zeros(Float64, 1, num)
+        variables["total heat source"] = zeros(Float64, 1, num)
+    end
 
     return variables
 end

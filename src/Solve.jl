@@ -50,7 +50,15 @@ function Solve(case::Case)
         haskey(case.mesh, "thermal2D")
     )
     
-    if multi_spme_enabled
+    # 检查模式并初始化（优先级：简化耦合 > 多SPMe > 标准）
+    if hasproperty(case.opt, :simple_thermal_coupling) && 
+       case.opt.simple_thermal_coupling &&
+       case.opt.thermalmodel == "distributed2D"
+        y0 = ModelInitialisation_SimpleCoupling(case)
+        if hasproperty(case.opt, :debug_simple_coupling) && case.opt.debug_simple_coupling
+            println("[Solve] 简化耦合模式：状态向量维度 = $(length(y0))")
+        end
+    elseif multi_spme_enabled
         y0 = ModelInitialisation_MultiSPMe(case)
         if hasproperty(case.opt, :debug_multi_spme) && case.opt.debug_multi_spme
             println("[Solve] 多SPMe模式：状态向量维度 = $(length(y0))")
@@ -562,6 +570,13 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     return M, K, F, variables, y_phi
 end
 function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
+    # 检查简化耦合模式
+    if hasproperty(case.opt, :simple_thermal_coupling) && 
+       case.opt.simple_thermal_coupling &&
+       case.opt.thermalmodel == "distributed2D"
+        return CallModel_SimpleCoupling(case, yt, t; jacobi=jacobi)
+    end
+    
     # 判断是否启用多SPMe模式
     multi_spme_enabled = (
         case.opt.model == "SPMe" &&
