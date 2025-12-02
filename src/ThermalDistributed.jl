@@ -82,11 +82,19 @@ function _identify_boundary_nodes(mesh, param_dim, opt)
     pgeo = jellyroll_spiral_params(param_dim)
     N = max(1, Int(pgeo.n_wind))
     
+    # 计算网格实际覆盖的θ范围（与jellyroll_collector_seed_mesh一致）
+    s_in = 0.0
+    s_out = pgeo.t_repeat
+    bval = max(pgeo.b, 1e-12)
+    θ0_mesh = max(0.0, (pgeo.Rin - pgeo.a - s_in) / bval)
+    θ1_mesh = min((pgeo.Rout - pgeo.a - s_out) / bval, (pgeo.Rout - pgeo.a) / bval)
+    
     # 获取配置
+    # 默认：内边界取第1圈，外边界取最后1圈（使用网格实际终点）
     θ_in_range = hasproperty(opt, :boundary_inner_theta) ? 
-                 opt.boundary_inner_theta : (0.0, 2.0*π)
+                 opt.boundary_inner_theta : (θ0_mesh, min(2.0*π, θ1_mesh))
     θ_out_range = hasproperty(opt, :boundary_outer_theta) ? 
-                  opt.boundary_outer_theta : (2.0*π*(N-1), 2.0*π*N)
+                  opt.boundary_outer_theta : (max(θ1_mesh - 2.0*π, 0.0), θ1_mesh)
     tol = hasproperty(opt, :boundary_tol) ? opt.boundary_tol : 1e-4
     
     # 向量化识别
