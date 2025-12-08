@@ -57,12 +57,19 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
     mesh_th = case.mesh["thermal2D"]
     ne = size(mesh_th.element, 1)
     I_total_nd = case.opt.Current(t * case.param.scale.t0) / case.param.scale.I_typ
-    Q_layers = try
+    Q_layers_ec = try
         _compute_layer_heat_sources(case, variables_chem, T_avg_nd, I_total_nd)
     catch err
         @warn "_compute_layer_heat_sources 失败，热源将置零" err
         zeros(Float64, 5)
     end
+    
+    # 尺度转换: _compute_layer_heat_sources 返回的热源使用电化学尺度 (I×φ/V)
+    # 但热传导方程使用傅里叶尺度 (k×T/L²)，需要转换
+    q_ec_scale = case.param_dim.scale.I_typ * case.param_dim.scale.phi / case.param_dim.cell.volume
+    q_fourier_scale = case.param_dim.scale.k_th * case.param_dim.scale.T_ref / case.param_dim.scale.L_th^2
+    scale_conversion = q_ec_scale / q_fourier_scale
+    Q_layers = Q_layers_ec .* scale_conversion
 
     layer_weights = try
         jellyroll_get_layer_weights(mesh_th)
