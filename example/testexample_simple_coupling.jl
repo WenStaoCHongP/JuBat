@@ -43,6 +43,21 @@ function main()
     # 电化学参数
     Crates = 1.0  # C-rate
     i = param_dim.cell.I1C * Crates  # 电流 (A) - 使用参数文件中的I1C（60A）
+    
+    # 诊断输出：检查电流设置
+    println("\n" * "="^80)
+    println("【诊断】电流设置")
+    println("="^80)
+    @printf("  参数文件 I1C: %.2f A\n", param_dim.cell.I1C)
+    @printf("  参数文件 capacity: %.2f Ah\n", param_dim.cell.capacity)
+    @printf("  C-rate: %.2f C\n", Crates)
+    @printf("  计算电流 i: %.2f A\n", i)
+    @printf("  归一化电流: %.4f\n", i / param_dim.cell.I1C)
+    @printf("  理论放电时间: %.1f s\n", opt.time[end])
+    @printf("  理论放电量: %.2f Ah\n", i * opt.time[end] / 3600)
+    @printf("  放电比例: %.1f%%\n", 100 * i * opt.time[end] / 3600 / param_dim.cell.capacity)
+    println("="^80 * "\n")
+    
     opt.Current = x -> i
     opt.model = "SPMe"
     opt.Nn = 10  # 负极网格数
