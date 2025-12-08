@@ -254,18 +254,22 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.k_n = param_dim.scale.j / param_dim.NE.cs_max / sqrt(param_dim.EL.ce0)
     param_dim.scale.R_cell = param_dim.scale.phi / param_dim.scale.I_typ
 
-    # ---------------- Thermal scaling (Scheme B) ----------------
+    # ---------------- Thermal scaling (Scheme B - Hybrid approach) ----------------
     # Characteristic thermal length: use outer radius if available, else max(length,width) or L
     L_th = param_dim.cell.Rout
     k_ref = param_dim.PE.lambda > 0 ? param_dim.PE.lambda : (param_dim.NE.lambda > 0 ? param_dim.NE.lambda : 1.0)
     rho_c_ref = param_dim.cell.rho * param_dim.cell.heat_Q
     
-    # Use power-based heat source scaling (consistent with electrochemical heat generation)
-    q_ref = param_dim.scale.I_typ * param_dim.scale.phi / param_dim.cell.volume
+    # Hybrid thermal scaling strategy:
+    # - Use Fourier scaling for time (t_th) to maintain proper time coupling with t_ratio
+    # - Use power-based scaling for heat source (q_th) to match electrochemical heat generation
     
-    # Time scale must match the heat source scale: ρc/t_th = q/T_ref
-    # t_th = rho_c_ref * T_ref / q_ref
-    t_th = rho_c_ref * param_dim.scale.T_ref / q_ref
+    # Fourier-based time scale (for thermal diffusion and t_ratio)
+    t_th = rho_c_ref * L_th^2 / k_ref
+    
+    # Power-based heat source scale (for electrochemical heat generation)
+    # This is stored separately and will be used in simple coupling mode
+    q_ref = param_dim.scale.I_typ * param_dim.scale.phi / param_dim.cell.volume
     
     h_ref = param_dim.cell.h * L_th / k_ref  # Biot number (dimensionless h)
     param_dim.scale.L_th = L_th
