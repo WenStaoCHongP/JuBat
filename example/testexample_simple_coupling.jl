@@ -42,7 +42,7 @@ function main()
     
     # 电化学参数
     Crates = 1.0  # C-rate
-    i = 5 * Crates  # 电流 (A)
+    i = param_dim.cell.I1C * Crates  # 电流 (A) - 使用参数文件中的I1C（60A）
     opt.Current = x -> i
     opt.model = "SPMe"
     opt.Nn = 10  # 负极网格数

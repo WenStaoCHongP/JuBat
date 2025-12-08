@@ -23,7 +23,7 @@ PE.k = 3.42e-6
 PE.cs_max = 63104        # Chen2020 max concentration (already matching)
 PE.cs0 = 17038
 PE.rs = 5.22e-6
-PE.sig = 0.18
+PE.sig = 10.0  # 修改自0.18，提高到合理值
 # Mechanical/thermal expansion (example values)
 PE.E = 5.0e10         # Pa
 PE.nu = 0.30          # -
