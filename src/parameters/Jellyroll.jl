@@ -28,7 +28,7 @@ PE.sig = 0.18
 PE.E = 5.0e10         # Pa
 PE.nu = 0.30          # -
 PE.alphaT = 1.0e-5    # 1/K
-PE.Omega = 1.0e-6     # m^3/mol (placeholder if diffusion-stress needed)
+PE.Omega = -7.28e-7     # m^3/mol (placeholder if diffusion-stress needed)
 PE.Eac_D = 0
 PE.Eac_k = 17800
 PE.alpha = 0.5
@@ -51,12 +51,12 @@ NE.k = 6.48e-7
 NE.cs_max = 33133.0      # Chen2020 max concentration
 NE.cs0 = 29866
 NE.rs = 5.86e-6          # Chen2020 negative particle radius
-NE.sig = 100
+NE.sig = 215.0
 # Mechanical/thermal expansion (example values)
 NE.E = 2.0e10         # Pa
 NE.nu = 0.28          # -
 NE.alphaT = 3.0e-6    # 1/K
-NE.Omega = 1.0e-6     # m^3/mol (placeholder if diffusion-stress needed)
+NE.Omega = 3.1e-6    # m^3/mol (placeholder if diffusion-stress needed)
 NE.Eac_D = 0.
 NE.Eac_k = 35000.
 NE.alpha = 0.5
@@ -94,10 +94,10 @@ tab.theta_neg = []
 
 # Cell parameters for thermal model
 cell = Cell()    
-cell.Rout = 0.065/2
+cell.Rout = 0.021/2
 cell.Rin = 1.92e-3
-cell.length = 938.7693138   # Using outer diameter proxy (not used by scaling below)
-cell.width = 5.212683e-2
+cell.length = 2.10   # Using outer diameter proxy (not used by scaling below)
+cell.width = 7e-2
 cell.wrapper = 0
 cell.I1C = 5
 cell.no_layers = 1
