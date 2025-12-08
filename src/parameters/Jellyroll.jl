@@ -99,9 +99,9 @@ cell.Rin = 1.92e-3
 cell.length = 938.7693138   # Using outer diameter proxy (not used by scaling below)
 cell.width = 5.212683e-2
 cell.wrapper = 0
-cell.I1C = 60
+cell.I1C = 5
 cell.no_layers = 1
-cell.capacity = 60
+cell.capacity = 5
 # 有效宏观受流面积（用于 1D 电化学归一化）
 cell.area = cell.width * cell.length * cell.no_layers
 
