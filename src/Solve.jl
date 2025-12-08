@@ -50,7 +50,15 @@ function Solve(case::Case)
         haskey(case.mesh, "thermal2D")
     )
     
-    if multi_spme_enabled
+    # 检查模式并初始化（优先级：简化耦合 > 多SPMe > 标准）
+    if hasproperty(case.opt, :simple_thermal_coupling) && 
+       case.opt.simple_thermal_coupling &&
+       case.opt.thermalmodel == "distributed2D"
+        y0 = ModelInitialisation_SimpleCoupling(case)
+        if hasproperty(case.opt, :debug_simple_coupling) && case.opt.debug_simple_coupling
+            println("[Solve] 简化耦合模式：状态向量维度 = $(length(y0))")
+        end
+    elseif multi_spme_enabled
         y0 = ModelInitialisation_MultiSPMe(case)
         if hasproperty(case.opt, :debug_multi_spme) && case.opt.debug_multi_spme
             println("[Solve] 多SPMe模式：状态向量维度 = $(length(y0))")
@@ -73,7 +81,21 @@ function Solve(case::Case)
     dt = deepcopy(dt_min)
     dt_temp = 0
     dt_temp_flag = false
-    num = round(Int64, (t_end - t0)/dt * 1.5) 
+    # 计算预期时间步数，添加安全限制避免内存溢出
+    num_estimated = round(Int64, (t_end - t0)/dt * 1.5)
+    # 限制最大预分配步数（避免内存溢出）
+    # 对于多SPMe模式，由于每步需要存储ne个单元的数据，限制更严格
+    max_steps = 100000  # 默认最大步数
+    if hasproperty(case.opt, :per_element_spme) && case.opt.per_element_spme
+        max_steps = 50000  # 多SPMe模式限制更严格
+    end
+    num = min(num_estimated, max_steps)
+    
+    if num_estimated > max_steps
+        @warn "预期时间步数 $(num_estimated) 超过最大限制 $(max_steps)，将使用动态扩展策略"
+        @warn "这可能导致性能下降。建议增大时间步长 dt_min = $(dt*case.param.scale.t0) 秒"
+    end
+    
     variables_hist = StandardVariables(case, num)
     errors = zeros(num, 1)
 
@@ -250,6 +272,15 @@ function Solve(case::Case)
         end
         if haskey(variables_hist, "heat_source_fields") && size(variables_hist["heat_source_fields"], 1) > 0
             result["heat_source_fields"] = variables_hist["heat_source_fields"][:, 1:v]
+        end
+        if haskey(variables_hist, "average temperature") && size(variables_hist["average temperature"], 2) >= v
+            result["average temperature [K]"] = vec(variables_hist["average temperature"][1, 1:v])
+        end
+        if haskey(variables_hist, "total heat source") && size(variables_hist["total heat source"], 2) >= v
+            result["total heat source [W]"] = vec(variables_hist["total heat source"][1, 1:v])
+        end
+        if haskey(variables_hist, "thermal2D temperature") && size(variables_hist["thermal2D temperature"], 2) >= v
+            result["thermal2D temperature [K]"] = variables_hist["thermal2D temperature"][:, 1:v]
         end
         if case.opt.thermal_enabled && haskey(case.mesh, "thermal2D")
             if isa(T_nodes_carry, Array{Float64}) && length(T_nodes_carry) == case.mesh["thermal2D"].nlen
@@ -548,6 +579,13 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     return M, K, F, variables, y_phi
 end
 function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
+    # 检查简化耦合模式
+    if hasproperty(case.opt, :simple_thermal_coupling) && 
+       case.opt.simple_thermal_coupling &&
+       case.opt.thermalmodel == "distributed2D"
+        return CallModel_SimpleCoupling(case, yt, t; jacobi=jacobi)
+    end
+    
     # 判断是否启用多SPMe模式
     multi_spme_enabled = (
         case.opt.model == "SPMe" &&

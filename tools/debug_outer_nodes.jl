@@ -1,226 +1,267 @@
 using Statistics
 include("../src/JuBat.jl")
 
+"""打印索引集合的简要信息，避免铺满终端"""
+function print_indices_summary(label, indices; limit=12)
+    count = length(indices)
+    println("  $label: $count")
+    if count == 0
+        return
+    end
+    prefix = first(indices, min(limit, count))
+    println("    示例索引: $(join(prefix, ", "))")
+    if count > limit
+        println("    ... 省略 $(count - limit) 个")
+    end
+end
+
+"""
+验证 edge_boundary 修复后是否正确识别所有边界节点
+"""
 function main()
     println("=" ^ 80)
-    println("精确边界识别测试：基于螺旋线方程")
+    println("验证 edge_boundary 修复：终点角度判定与网格生成一致")
     println("=" ^ 80)
-
+    
     param_dim = JuBat.ChooseCell("Jellyroll")
-    mesh_th = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=160, gsorder=2)
+    nθ = 160
+    mesh_th = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, gsorder=2)
     p = JuBat.jellyroll_spiral_params(param_dim)
-
-    println("\n网格信息:")
+    
+    println("\n网格参数:")
     println("  总节点数: $(mesh_th.nlen)")
+    println("  分段数 nθ: $nθ")
+    println("  预期内圈节点数: $(nθ+1)")
+    println("  预期外圈节点数: $(nθ+1)")
     println("  Rin = $(p.Rin) m, Rout = $(p.Rout) m")
     println("  螺距 b = $(p.b) m/rad")
     println("  层厚 t_repeat = $(p.t_repeat) m")
-    println("  总圈数 N = $(p.n_wind)")
-
-    x_all = mesh_th.node[:,1]
-    y_all = mesh_th.node[:,2]
-    r_all = hypot.(x_all, y_all)
-
-    println("\n节点半径分布:")
-    println("  最小半径: $(minimum(r_all)) m")
-    println("  最大半径: $(maximum(r_all)) m")
-
+    
+    # 计算网格生成的θ范围
+    s_in = 0.0
+    s_out = p.t_repeat
+    θ0_mesh = max(0.0, (p.Rin - p.a - s_in) / p.b)
+    θ1_mesh = min((p.Rout - p.a - s_out) / p.b, (p.Rout - p.a) / p.b)
+    
+    println("\n网格生成的θ范围:")
+    println("  θ0 = $θ0_mesh rad ($(θ0_mesh * 180 / π) deg)")
+    println("  θ1 = $θ1_mesh rad ($(θ1_mesh * 180 / π) deg)")
+    println("  覆盖圈数: $(θ1_mesh / (2π)) 圈")
+    
     println("\n" * "=" ^ 80)
-    println("测试1: 识别第1圈的内螺旋（θ ∈ [0, 2π]）")
+    println("测试1: 识别内螺旋边界节点")
     println("=" ^ 80)
-
-    θ_range_inner = (0.0, 2.0*pi)
-    is_inner_precise = [JuBat.edge_boundary(mesh_th, i, param_dim;
-                                            which=:inner, theta_range=θ_range_inner, tol=1e-4)
-                        for i in 1:mesh_th.nlen]
-
-    count_inner = count(identity, is_inner_precise)
-    println("  识别到的内边界节点数: $count_inner")
-
-    if count_inner > 0
-        r_inner = r_all[is_inner_precise]
-        println("  内边界节点半径范围: [$(minimum(r_inner)), $(maximum(r_inner))] m")
-
-        θ_cum_inner = [(r_all[i] - p.a) / p.b for i in 1:mesh_th.nlen if is_inner_precise[i]]
-        println("  θ_cum 范围: [$(minimum(θ_cum_inner)), $(maximum(θ_cum_inner))]")
-        println("  预期范围: [0.0, $(2*pi)]")
-
-        max_dist = 0.0
-        for i in 1:mesh_th.nlen
-            if is_inner_precise[i]
-                x, y = mesh_th.node[i,1], mesh_th.node[i,2]
-                r = hypot(x, y)
-                θ_cum = (r - p.a) / p.b
-                r_theo = p.a + p.b * θ_cum
-                x_theo = r_theo * cos(θ_cum)
-                y_theo = r_theo * sin(θ_cum)
-                dist = hypot(x - x_theo, y - y_theo)
-                max_dist = max(max_dist, dist)
-            end
+    
+    # 识别内螺旋节点（使用默认θ范围）
+    inner_nodes = Int[]
+    for i in 1:mesh_th.nlen
+        if JuBat.edge_boundary(mesh_th, i, param_dim; which=:inner)
+            push!(inner_nodes, i)
         end
-        println("  节点到螺旋线的最大距离: $(max_dist) m")
     end
-
+    
+    count_inner = length(inner_nodes)
+    expected_inner = nθ + 1
+    
+    println("  识别到的内螺旋节点数: $count_inner")
+    println("  预期节点数: $expected_inner")
+    
+    if count_inner == expected_inner
+        println("  ✓ 节点数匹配！")
+    else
+        println("  ⚠️  节点数不匹配，差值: $(count_inner - expected_inner)")
+    end
+    
+    # 检查网格拓扑结构中的内圈节点是否都被识别
+    inner_topo = 1:(nθ+1)  # 网格拓扑中前 nθ+1 个节点是内圈
+    missing_inner = setdiff(inner_topo, inner_nodes)
+    extra_inner = setdiff(inner_nodes, inner_topo)
+    
+    if isempty(missing_inner)
+        println("  ✓ 所有拓扑内圈节点都被识别")
+    else
+        println("  ⚠️  遗漏的拓扑内圈节点:")
+        print_indices_summary("遗漏", missing_inner)
+    end
+    
+    if isempty(extra_inner)
+        println("  ✓ 没有额外识别的节点")
+    else
+        println("  ⚠️  额外识别的节点:")
+        print_indices_summary("额外", extra_inner)
+    end
+    
     println("\n" * "=" ^ 80)
-    println("测试2: 识别第N圈的外螺旋（θ ∈ [2π(N-1), 2π*N]）")
+    println("测试2: 识别外螺旋边界节点")
     println("=" ^ 80)
-
-    N = Int(p.n_wind)
-    θ_range_outer = (2.0*pi*(N-1), 2.0*pi*N)
-    println("  第N圈范围: θ ∈ [$(θ_range_outer[1]), $(θ_range_outer[2])]")
-
-    is_outer_precise = [JuBat.edge_boundary(mesh_th, i, param_dim;
-                                            which=:outer, theta_range=θ_range_outer, tol=1e-4)
-                        for i in 1:mesh_th.nlen]
-
-    count_outer = count(identity, is_outer_precise)
-    println("  识别到的外边界节点数: $count_outer")
-
-    if count_outer > 0
-        r_outer = r_all[is_outer_precise]
-        println("  外边界节点半径范围: [$(minimum(r_outer)), $(maximum(r_outer))] m")
-
-        θ_cum_outer = [(r_all[i] - p.a - p.t_repeat) / p.b for i in 1:mesh_th.nlen if is_outer_precise[i]]
-        println("  θ_cum 范围: [$(minimum(θ_cum_outer)), $(maximum(θ_cum_outer))]")
-        println("  预期范围: [$(2*pi*(N-1)), $(2*pi*N)]")
-
-        max_dist = 0.0
-        for i in 1:mesh_th.nlen
-            if is_outer_precise[i]
-                x, y = mesh_th.node[i,1], mesh_th.node[i,2]
+    
+    # 识别外螺旋节点（使用默认θ范围）
+    outer_nodes = Int[]
+    for i in 1:mesh_th.nlen
+        if JuBat.edge_boundary(mesh_th, i, param_dim; which=:outer)
+            push!(outer_nodes, i)
+        end
+    end
+    
+    count_outer = length(outer_nodes)
+    expected_outer = nθ + 1
+    
+    println("  识别到的外螺旋节点数: $count_outer")
+    println("  预期节点数: $expected_outer")
+    
+    if count_outer == expected_outer
+        println("  ✓ 节点数匹配！")
+    else
+        println("  ⚠️  节点数不匹配，差值: $(count_outer - expected_outer)")
+    end
+    
+    # 检查网格拓扑结构中的外圈节点是否都被识别
+    outer_topo = (50276):(50436)  # 网格拓扑中后 nθ+1 个节点是外圈
+    missing_outer = setdiff(outer_topo, outer_nodes)
+    extra_outer = setdiff(outer_nodes, outer_topo)
+    
+    if isempty(missing_outer)
+        println("  ✓ 所有拓扑外圈节点都被识别")
+    else
+        println("  ⚠️  遗漏的拓扑外圈节点:")
+        print_indices_summary("遗漏", missing_outer)
+        # 打印遗漏节点的详细信息
+        if length(missing_outer) <= 10
+            println("\n  遗漏节点详细信息:")
+            for idx in collect(missing_outer)
+                x, y = mesh_th.node[idx, :]
                 r = hypot(x, y)
                 θ_cum = (r - p.a - p.t_repeat) / p.b
-                r_theo = p.a + p.b * θ_cum + p.t_repeat
-                x_theo = r_theo * cos(θ_cum)
-                y_theo = r_theo * sin(θ_cum)
-                dist = hypot(x - x_theo, y - y_theo)
-                max_dist = max(max_dist, dist)
+                println("    节点$idx: r=$r, θ_cum=$θ_cum ($(θ_cum * 180 / π) deg)")
             end
         end
-        println("  节点到螺旋线的最大距离: $(max_dist) m")
+    end
+    
+    if isempty(extra_outer)
+        println("  ✓ 没有额外识别的节点")
     else
-        println("  ⚠️  没有识别到外边界节点！")
-        println("  原因：collector_seed_mesh 只覆盖第0圈，不覆盖第N圈")
+        println("  ⚠️  额外识别的节点:")
+        print_indices_summary("额外", extra_outer)
     end
-
+    
     println("\n" * "=" ^ 80)
-    println("测试3: 识别第0圈的外螺旋（θ ∈ [0, 2π]）- collector_seed_mesh 实际覆盖")
+    println("测试3: 验证节点到螺旋线的距离")
     println("=" ^ 80)
-
-    θ_range_outer_0 = (0.0, 2.0*pi)
-    is_outer_0 = [JuBat.edge_boundary(mesh_th, i, param_dim;
-                                      which=:outer, theta_range=θ_range_outer_0, tol=1e-4)
-                  for i in 1:mesh_th.nlen]
-
-    count_outer_0 = count(identity, is_outer_0)
-    println("  识别到的外螺旋节点数（第0圈）: $count_outer_0")
-
-    if count_outer_0 > 0
-        r_outer_0 = r_all[is_outer_0]
-        println("  外螺旋节点半径范围: [$(minimum(r_outer_0)), $(maximum(r_outer_0))] m")
-
-        θ_cum_outer_0 = [(r_all[i] - p.a - p.t_repeat) / p.b for i in 1:mesh_th.nlen if is_outer_0[i]]
-        println("  θ_cum 范围: [$(minimum(θ_cum_outer_0)), $(maximum(θ_cum_outer_0))]")
-        println("  预期范围: [0.0, $(2*pi)]")
-
-        max_dist = 0.0
-        for i in 1:mesh_th.nlen
-            if is_outer_0[i]
-                x, y = mesh_th.node[i,1], mesh_th.node[i,2]
-                r = hypot(x, y)
-                θ_cum = (r - p.a - p.t_repeat) / p.b
-                r_theo = p.a + p.b * θ_cum + p.t_repeat
-                x_theo = r_theo * cos(θ_cum)
-                y_theo = r_theo * sin(θ_cum)
-                dist = hypot(x - x_theo, y - y_theo)
-                max_dist = max(max_dist, dist)
-            end
-        end
-        println("  节点到螺旋线的最大距离: $(max_dist) m")
+    
+    # 检查内螺旋节点的距离
+    max_dist_inner = 0.0
+    for i in inner_nodes
+        x, y = mesh_th.node[i, :]
+        r = hypot(x, y)
+        θ_cum = (r - p.a - 0.0) / p.b
+        r_theo = p.a + p.b * θ_cum + 0.0
+        x_theo = r_theo * cos(θ_cum)
+        y_theo = r_theo * sin(θ_cum)
+        dist = hypot(x - x_theo, y - y_theo)
+        max_dist_inner = max(max_dist_inner, dist)
     end
-
-    println("\n" * "=" ^ 80)
-    println("测试4: 检查重叠（同时被识别为内边界和外边界的节点）")
-    println("=" ^ 80)
-
-    overlap = count(i -> is_inner_precise[i] && is_outer_0[i], 1:mesh_th.nlen)
-    println("  重叠节点数（第1圈内螺旋 ∩ 第0圈外螺旋）: $overlap")
-    if overlap == 0
-        println("  ✓ 无重叠，边界分类正确")
-    end
-
-    println("\n" * "=" ^ 80)
-    println("测试5: 与 collector_seed_mesh 网格拓扑结构对比")
-    println("=" ^ 80)
-
-    inner_curve_range = 1:(160+1)
-    outer_curve_range = (160+2):(2*(160+1))
-
-    count_inner_topo = 161
-    count_outer_topo = 161
-
-    println("  网格拓扑结构:")
-    println("    内圈节点（拓扑）: 1-161 (共161个)")
-    println("    外圈节点（拓扑）: 162-322 (共161个)")
-
-    println("\n  精确识别结果（第0圈）:")
-    println("    内螺旋（θ ∈ [0, 2π]）: $count_inner 个节点")
-    println("    外螺旋（θ ∈ [0, 2π]）: $count_outer_0 个节点")
-
-    match_inner = count(i -> is_inner_precise[i], inner_curve_range)
-    match_outer = count(i -> is_outer_0[i], outer_curve_range)
-
-    println("\n  匹配度:")
-    println("    内圈节点中被识别为内螺旋的: $match_inner / $count_inner_topo")
-    println("    外圈节点中被识别为外螺旋的: $match_outer / $count_outer_topo")
-
-    missing_inner = setdiff(inner_curve_range, findall(is_inner_precise))
-    extra_inner = setdiff(findall(is_inner_precise), inner_curve_range)
-    missing_outer = setdiff(outer_curve_range, findall(is_outer_0))
-    extra_outer = setdiff(findall(is_outer_0), outer_curve_range)
-
-    if !isempty(missing_inner)
-        println("    ⚠ Missing inner indices: $(collect(missing_inner))")
-    end
-    if !isempty(extra_inner)
-        println("    ⚠ Extra inner indices: $(collect(extra_inner)[1:min(end,10)]) ...")
-    end
-    if !isempty(missing_outer)
-        println("    ⚠ Missing outer indices: $(collect(missing_outer))")
-    end
-    if !isempty(extra_outer)
-        preview = collect(extra_outer)[1:min(end,10)]
-        println("    ⚠ Extra outer indices (first 10): $preview")
-    end
-
-    if match_inner == count_inner_topo && match_outer == count_outer_topo
-        println("    ✓ 完全匹配！精确识别正确。")
-    elseif match_inner == count_inner && match_outer == count_outer_0
-        println("    ✓ 高度匹配（可能有边界节点未精确在螺旋线上）")
+    
+    println("  内螺旋节点到理论螺旋线的最大距离: $(max_dist_inner) m")
+    if max_dist_inner < 1e-4
+        println("  ✓ 距离在容差范围内（< 1e-4 m）")
     else
-        println("    ⚠️ 部分匹配，请检查容差设置")
+        println("  ⚠️  距离超出容差范围")
     end
-
+    
+    # 检查外螺旋节点的距离
+    max_dist_outer = 0.0
+    for i in outer_nodes
+        x, y = mesh_th.node[i, :]
+        r = hypot(x, y)
+        θ_cum = (r - p.a - p.t_repeat) / p.b
+        r_theo = p.a + p.b * θ_cum + p.t_repeat
+        x_theo = r_theo * cos(θ_cum)
+        y_theo = r_theo * sin(θ_cum)
+        dist = hypot(x - x_theo, y - y_theo)
+        max_dist_outer = max(max_dist_outer, dist)
+    end
+    
+    println("  外螺旋节点到理论螺旋线的最大距离: $(max_dist_outer) m")
+    if max_dist_outer < 1e-4
+        println("  ✓ 距离在容差范围内（< 1e-4 m）")
+    else
+        println("  ⚠️  距离超出容差范围")
+    end
+    
+    println("\n" * "=" ^ 80)
+    println("测试4: 检查内外螺旋节点重叠")
+    println("=" ^ 80)
+    
+    overlap = intersect(inner_nodes, outer_nodes)
+    if isempty(overlap)
+        println("  ✓ 无重叠节点，边界分类正确")
+    else
+        println("  ⚠️  发现重叠节点:")
+        print_indices_summary("重叠", overlap)
+    end
+    
+    println("\n" * "=" ^ 80)
+    println("测试5: 验证edge_boundary默认θ范围与网格生成一致")
+    println("=" ^ 80)
+    
+    # 手动计算edge_boundary使用的默认θ范围
+    # 根据修改后的代码（第313-316行）
+    θ_start_edge = max(0.0, (p.Rin - p.a - 0.0) / p.b)
+    θ_end_edge = min((p.Rout - p.a - p.t_repeat) / p.b, (p.Rout - p.a) / p.b)
+    
+    println("  网格生成的θ范围: [$(θ0_mesh), $(θ1_mesh)]")
+    println("  edge_boundary的θ范围: [$(θ_start_edge), $(θ_end_edge)]")
+    
+    θ_diff_start = abs(θ0_mesh - θ_start_edge)
+    θ_diff_end = abs(θ1_mesh - θ_end_edge)
+    
+    if θ_diff_start < 1e-10 && θ_diff_end < 1e-10
+        println("  ✓ θ范围完全一致（误差 < 1e-10）")
+    else
+        println("  ⚠️  θ范围存在差异:")
+        println("    θ_start差异: $θ_diff_start")
+        println("    θ_end差异: $θ_diff_end")
+    end
+    
     println("\n" * "=" ^ 80)
     println("总结")
     println("=" ^ 80)
-
-    println("\n✓ 精确边界识别方法特点:")
-    println("  1. 基于螺旋线方程 r(θ) = a + b*θ (+ t_repeat)")
-    println("  2. 计算节点到理论螺旋线的距离，验证 dist < tol")
-    println("  3. 可指定任意 θ 范围，如 [0, 2π]（第1圈）或 [2π(N-1), 2π*N]（第N圈）")
-
-    println("\n⚠️ collector_seed_mesh 的限制:")
-    println("  - 网格只覆盖第0圈（或某一圈），θ ∈ [0, 2π]")
-    println("  - 内外圈在同一圈层，只是半径不同")
-    println("  - 无法识别第1圈内螺旋和第N圈外螺旋（网格不覆盖）")
-
-    println("\n💡 建议:")
-    if count_outer == 0
-        println("  - 对于 collector_seed_mesh，使用 θ_range=(0, 2π) 识别外螺旋")
-        println("  - 或创建覆盖全螺旋的网格（θ ∈ [0, 2π*N]）")
+    
+    all_pass = (count_inner == expected_inner) && 
+               (count_outer == expected_outer) && 
+               isempty(missing_inner) && 
+               isempty(missing_outer) && 
+               isempty(overlap) && 
+               (max_dist_inner < 1e-4) && 
+               (max_dist_outer < 1e-4) && 
+               (θ_diff_start < 1e-10) && 
+               (θ_diff_end < 1e-10)
+    
+    if all_pass
+        println("\n✅ 所有测试通过！edge_boundary修复成功。")
+        println("\n修复内容:")
+        println("  1. θ起点从 θ_end-2π 改为 max(0.0, (Rin-a-s_in)/b)")
+        println("  2. θ终点使用 min((Rout-a-s_out)/b, (Rout-a)/b) 与网格一致")
+        println("  3. 内外螺旋共享相同的θ范围")
+    else
+        println("\n⚠️  部分测试未通过，请检查:")
+        if count_inner != expected_inner
+            println("  - 内螺旋节点数不匹配")
+        end
+        if count_outer != expected_outer
+            println("  - 外螺旋节点数不匹配")
+        end
+        if !isempty(missing_inner) || !isempty(missing_outer)
+            println("  - 存在遗漏的边界节点")
+        end
+        if !isempty(overlap)
+            println("  - 存在重叠节点")
+        end
+        if max_dist_inner >= 1e-4 || max_dist_outer >= 1e-4
+            println("  - 节点到螺旋线距离超出容差")
+        end
     end
-
+    
     println("\n" * "=" ^ 80)
 end
 

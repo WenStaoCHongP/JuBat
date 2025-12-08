@@ -111,11 +111,44 @@ function StandardVariables(case::Case, num::Int64)
         variables["thermal2D dUdT_p_e"] = zeros(Float64, ne, num)
         variables["thermal2D element voltages"] = zeros(Float64, ne, num)
     end
+    
+    # Phase C: 简化耦合模式的变量历史记录
+    if hasproperty(case.opt, :simple_thermal_coupling) && 
+       case.opt.simple_thermal_coupling &&
+       case.opt.thermalmodel == "distributed2D" && 
+       haskey(case.mesh, "thermal2D")
+        nT = case.mesh["thermal2D"].nlen
+        # 温度场历史
+        variables["thermal2D temperature"] = zeros(Float64, nT, num)
+        # 全局变量
+        variables["average temperature"] = zeros(Float64, 1, num)
+        variables["total heat source"] = zeros(Float64, 1, num)
+    end
+
+    if case.opt.thermalmodel == "lumped"
+        variables["thermal lumped internal heat"] = zeros(Float64, 1, num)
+        variables["thermal lumped internal heat [W]"] = zeros(Float64, 1, num)
+    end
 
     return variables
 end
 
 function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Float64}}, variables::Dict{String, Union{Array{Float64},Float64}}, v::Int64)
+    # 检查是否需要扩展数组（动态增长）
+    for k in keys(variables_hist)
+        if isa(variables_hist[k], Array{Float64}) && ndims(variables_hist[k]) == 2
+            current_size = size(variables_hist[k], 2)
+            if v > current_size
+                # 需要扩展
+                expansion_size = max(1000, current_size ÷ 2)
+                @warn "时间步 $(v) 超过预分配 $(current_size)，扩展 $(expansion_size) 步（变量: $(k)）"
+                n_rows = size(variables_hist[k], 1)
+                new_cols = zeros(Float64, n_rows, expansion_size)
+                variables_hist[k] = hcat(variables_hist[k], new_cols)
+            end
+        end
+    end
+    
     # 仅更新历史中已存在的键，避免临时/额外键尺寸不匹配
     for k in keys(variables_hist)
         # 支持标量历史（1行）和向量历史（n行）

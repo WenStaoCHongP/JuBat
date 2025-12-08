@@ -34,6 +34,8 @@ using Parameters
     collector_seeded::Bool = false     # use collector-seeded band mesh semantics (layer_weights)
     per_element_spme::Bool = false     # allow passing per-element I_app and T to SPMe
     units_thermal::String = "nd"      # "nd" (dimensionless Scheme B) or "SI"
+    simple_thermal_coupling::Bool = false  # single-SPMe heat source coupling flag
+    debug_simple_coupling::Bool = false    # verbose logging for simplified coupling
     # --- Debug/Diagnostics ---
     debug_coupling::Bool = false       # print detailed logs for electro-thermal coupling
 end

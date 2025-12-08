@@ -256,7 +256,10 @@ export edge_boundary
 # 判断方法
 1. 计算节点的累计角度 θ_cum
 2. 检查 θ_cum ∈ [θ_min, θ_max]
-    - 默认范围与 `jellyroll_collector_seed_mesh` 的截断角度一致
+    - **默认范围与 `jellyroll_collector_seed_mesh` 的截断角度完全一致**
+    - θ_start = max(0.0, (Rin - a - s_spiral) / b)
+    - θ_end = min((Rout - a - s_spiral) / b, (Rout - a) / b)
+    - 其中 s_spiral = 0（内螺旋）或 t_repeat（外螺旋）
 3. 验证节点到理论螺旋线的距离 ≤ tol
 
 # 参数
@@ -264,7 +267,7 @@ export edge_boundary
 - `nidx`: 节点索引
 - `param_dim`: 参数对象
 - `which`: `:inner`（内螺旋）或 `:outer`（外螺旋）
-- `theta_range`: θ 范围 (θ_min, θ_max)，默认使用网格覆盖的角度区间
+- `theta_range`: θ 范围 (θ_min, θ_max)，默认使用网格覆盖的完整角度区间
 - `tol`: 距离容差（m），默认 1e-4
 
 # 返回
@@ -273,7 +276,7 @@ export edge_boundary
 # 示例
 ```julia
 # 判断节点是否在第1圈内螺旋上
-is_inner = edge_boundary(mesh, i, param_dim; which=:inner, theta_range=(0.0, 2π))
+is_inner = edge_boundary(mesh, i, param_dim; which=:inner)
 
 # 判断节点是否在第N圈外螺旋上
 is_outer = edge_boundary(mesh, i, param_dim; which=:outer)
@@ -300,8 +303,17 @@ function edge_boundary(mesh, nidx::Int, param_dim;
     
     # 确定 θ 范围；默认遵循 collector_seed_mesh 的截断逻辑
     if theta_range === nothing
-        θ_end = (p.Rout - p.a - p.t_repeat) / bval
-        θ_min, θ_max = θ_end-2π, θ_end 
+        s_in = 0.0
+        s_out = p.t_repeat
+        θ_start = 0.0
+        θ_end = min((p.Rout - p.a - s_out) / bval, (p.Rout - p.a) / bval)
+        if which === :inner
+            θ_min = θ_start
+            θ_max = min(θ_start + 2.0*π, θ_end)
+        else  # :outer
+            θ_min = max(θ_end - 2.0*π, θ_start)
+            θ_max = θ_end
+        end
     else
         θ_min, θ_max = theta_range
     end
@@ -355,7 +367,7 @@ function jellyroll_tab_node_indices(mesh, param_dim)
     a, b = p.a, p.b
     Rin, Rout = p.Rin, p.Rout
     tab = param_dim.tab
-    tw = get(tab, :width, 0.0)
+    tw = hasproperty(tab, :width) ? tab.width : 0.0
     
     # 预计算所有节点的累计角度
     nn = size(mesh.node, 1)

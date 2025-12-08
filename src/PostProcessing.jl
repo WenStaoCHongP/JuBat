@@ -45,5 +45,14 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
         result["negative electrode interfacial current density [A/m^2]"]  = variables["negative electrode interfacial current density"] * case.param.scale.j
         result["positive electrode interfacial current density [A/m^2]"]  = variables["positive electrode interfacial current density"] * case.param.scale.j
     end
+
+    if case.opt.thermalmodel == "lumped"
+        if haskey(variables, "thermal lumped internal heat")
+            result["thermal lumped internal heat [nd]"] = vec(variables["thermal lumped internal heat"][1, 1:v])
+        end
+        if haskey(variables, "thermal lumped internal heat [W]")
+            result["thermal lumped internal heat [W]"] = vec(variables["thermal lumped internal heat [W]"][1, 1:v])
+        end
+    end
     return result
 end
