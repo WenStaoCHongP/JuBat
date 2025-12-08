@@ -535,18 +535,18 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     variables["thermal2D dUdT_p_e"] = dUdT_p_e
     
     # 无量纲化热源
-    # 注意: q_elem 使用电化学尺度计算，需要转换为热传导尺度
+    # 注意: q_elem 是无量纲的（相对于电化学尺度），需要转换为物理值再用傅里叶尺度归一化
     if hasproperty(case.opt, :units_thermal) && case.opt.units_thermal == "SI"
         variables["heat_source_fields"] = q_elem
         variables["heat_source_units_code"] = 1.0
     else
-        # 尺度转换: 电化学尺度 → 傅里叶尺度
+        # q_elem 相对于电化学尺度，转换为物理值
         q_ec_scale = case.param_dim.scale.I_typ * case.param_dim.scale.phi / case.param_dim.cell.volume
-        q_fourier_scale = case.param_dim.scale.k_th * case.param_dim.scale.T_ref / case.param_dim.scale.L_th^2
-        scale_conversion = q_ec_scale / q_fourier_scale
+        q_elem_physical = q_elem .* q_ec_scale  # 物理热源 [W/m³]
         
+        # 用傅里叶尺度归一化
         q_ref = case.param_dim.scale.q_th  # 傅里叶尺度
-        variables["heat_source_fields"] = (q_elem .* scale_conversion) ./ q_ref
+        variables["heat_source_fields"] = q_elem_physical ./ q_ref
         variables["heat_source_units_code"] = 0.0
     end
     

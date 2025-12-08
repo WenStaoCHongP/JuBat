@@ -64,12 +64,13 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
         zeros(Float64, 5)
     end
     
-    # 尺度转换: _compute_layer_heat_sources 返回的热源使用电化学尺度 (I×φ/V)
-    # 但热传导方程使用傅里叶尺度 (k×T/L²)，需要转换
+    # 尺度转换: Q_layers_ec 是无量纲的（相对于电化学尺度 I×φ/V）
+    # 需要转换为相对于傅里叶尺度 (k×T/L²) 的无量纲值
     q_ec_scale = case.param_dim.scale.I_typ * case.param_dim.scale.phi / case.param_dim.cell.volume
-    q_fourier_scale = case.param_dim.scale.k_th * case.param_dim.scale.T_ref / case.param_dim.scale.L_th^2
-    scale_conversion = q_ec_scale / q_fourier_scale
-    Q_layers = Q_layers_ec .* scale_conversion
+    q_ref = case.param_dim.scale.q_th  # 傅里叶尺度
+    
+    # 转换: 电化学无量纲 → 物理值 → 傅里叶无量纲
+    Q_layers = Q_layers_ec .* (q_ec_scale / q_ref)
 
     layer_weights = try
         jellyroll_get_layer_weights(mesh_th)
@@ -89,8 +90,8 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
         q_mean = mean(Q_layers)
         fill!(q_elem, q_mean)
     end
-
-    q_ref = case.param_dim.scale.q_th
+    
+    # q_ref 已在上面定义
     if q_ref <= 0
         @warn "simple coupling heat scaling fallback" q_ref=q_ref
         q_ref = 1.0
