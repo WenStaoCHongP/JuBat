@@ -138,8 +138,9 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
         println("  Q_total = $(total_heat_W) W")
         println("  q_avg = $(q_avg_Wm3) W/m^3")
         Vc_val = begin
-            Vc = variables_chem["cell voltage"]
-            isa(Vc, AbstractArray) ? (length(Vc) > 0 ? Vc[1] : 0.0) : Vc
+            Vc_nd = variables_chem["cell voltage"]  # 无量纲电压
+            Vc_nd_scalar = isa(Vc_nd, AbstractArray) ? (length(Vc_nd) > 0 ? Vc_nd[1] : 0.0) : Vc_nd
+            Vc_nd_scalar * case.param.scale.phi  # 转换为有量纲 [V]
         end
         println("  V_cell = $(Vc_val) V")
     end
