@@ -329,38 +329,132 @@ function main()
             vmax = maximum(Zvals)
             
             println("  ✓ 插值完成")
-            @printf("    温度范围: [%.2f, %.2f] K\n", vmin, vmax)
+            @printf("    温度范围: [%.4f, %.4f] K (精度: 0.01 K)\n", vmin, vmax)
+            @printf("    温度差: %.4f K\n", vmax - vmin)
             
-            # 绘制
-            p5 = plot(size=(800, 800), title="Final Temperature Field")
+            # 计算等高线间隔（0.01 K）
+            T_range = vmax - vmin
+            contour_interval = 0.01  # 精度要求: 0.01 K
+            n_contours = max(5, min(100, Int(round(T_range / contour_interval))))
+            contour_levels = range(vmin, vmax, length=n_contours)
+            
+            println("  等高线设置:")
+            @printf("    间隔: %.4f K\n", T_range / (n_contours - 1))
+            @printf("    数量: %d 条\n", n_contours)
+            
+            # 绘制高精度温度场
+            p5 = plot(size=(900, 800), title="Final Temperature Field (0.01K Precision)")
+            
+            # 热图
             heatmap!(p5, xs, ys, Z; 
                      aspect_ratio=1, 
                      color=:inferno, 
                      colorbar=true, 
+                     colorbar_title="T (K)",
                      xlabel="x (m)", 
                      ylabel="y (m)",
                      clims=(vmin, vmax))
+            
+            # 高精度等高线（0.01 K间隔）
             contour!(p5, xs, ys, Z; 
-                     levels=10, 
-                     linewidth=1, 
-                     linecolor=:black, 
-                     alpha=0.5)
-            scatter!(p5, xnod, ynod; 
-                     ms=0.5, 
-                     color=:white, 
-                     alpha=0.3, 
-                     label=false)
+                     levels=contour_levels, 
+                     linewidth=0.8, 
+                     linecolor=:white, 
+                     alpha=0.6,
+                     linestyle=:solid)
+            
+            # 粗等高线（每0.1 K一条加粗线）
+            if T_range > 0.1
+                major_levels = range(ceil(vmin*10)/10, floor(vmax*10)/10, step=0.1)
+                if length(major_levels) > 0
+                    contour!(p5, xs, ys, Z; 
+                             levels=collect(major_levels), 
+                             linewidth=1.5, 
+                             linecolor=:black, 
+                             alpha=0.8,
+                             linestyle=:solid)
+                end
+            end
+            
+            # 节点位置（可选，避免过于密集）
+            if length(xnod) < 2000
+                scatter!(p5, xnod, ynod; 
+                         ms=0.5, 
+                         color=:white, 
+                         alpha=0.2, 
+                         label=false)
+            end
             
             savefig(p5, "testexample_Tfield.png")
             println("  ✓ 保存: testexample_Tfield.png")
             
-            # 高分辨率版本（可选）
+            # 高分辨率矢量图
             try
                 savefig(p5, "testexample_Tfield.svg")
                 println("  ✓ 保存: testexample_Tfield.svg")
             catch e
                 @warn "SVG保存失败" exception=(e, catch_backtrace())
             end
+            
+            # 温度分布直方图（精度分析）
+            p6 = plot(layout=(2,1), size=(800, 600))
+            
+            # 子图1: 节点温度直方图
+            histogram!(p6[1], T_nodes_final, 
+                      bins=50, 
+                      xlabel="Temperature (K)", 
+                      ylabel="Frequency",
+                      title="Node Temperature Distribution (N=$(length(T_nodes_final)))",
+                      label="Nodes",
+                      alpha=0.7,
+                      color=:steelblue)
+            vline!(p6[1], [mean(T_nodes_final)], 
+                   label="Mean", 
+                   linewidth=2, 
+                   linestyle=:dash, 
+                   color=:red)
+            
+            # 子图2: 温度统计信息
+            T_stats = [
+                minimum(T_nodes_final),
+                quantile(T_nodes_final, 0.25),
+                median(T_nodes_final),
+                quantile(T_nodes_final, 0.75),
+                maximum(T_nodes_final),
+                mean(T_nodes_final),
+                std(T_nodes_final)
+            ]
+            stat_labels = ["Min", "Q1", "Median", "Q3", "Max", "Mean", "Std"]
+            
+            bar!(p6[2], 1:7, T_stats,
+                 xticks=(1:7, stat_labels),
+                 ylabel="Temperature (K)",
+                 title="Temperature Statistics (Precision: 0.01 K)",
+                 label=false,
+                 color=:coral,
+                 alpha=0.7)
+            
+            # 添加数值标签（精确到0.01 K）
+            for i in 1:7
+                annotate!(p6[2], i, T_stats[i], 
+                         text(@sprintf("%.2f", T_stats[i]), :bottom, 8))
+            end
+            
+            savefig(p6, "testexample_Tdistribution.png")
+            println("  ✓ 保存: testexample_Tdistribution.png")
+            
+            # 输出详细统计信息
+            println("\n  详细温度统计 (精度: 0.01 K):")
+            @printf("    最小值: %.4f K (%.2f °C)\n", 
+                    minimum(T_nodes_final), minimum(T_nodes_final) - 273.15)
+            @printf("    第25百分位: %.4f K\n", quantile(T_nodes_final, 0.25))
+            @printf("    中位数: %.4f K\n", median(T_nodes_final))
+            @printf("    平均值: %.4f K\n", mean(T_nodes_final))
+            @printf("    第75百分位: %.4f K\n", quantile(T_nodes_final, 0.75))
+            @printf("    最大值: %.4f K (%.2f °C)\n", 
+                    maximum(T_nodes_final), maximum(T_nodes_final) - 273.15)
+            @printf("    标准差: %.4f K\n", std(T_nodes_final))
+            @printf("    温度范围: %.4f K\n", maximum(T_nodes_final) - minimum(T_nodes_final))
         else
             println("  ⚠ 无有效温度数据可视化")
         end
@@ -406,8 +500,9 @@ function main()
       2. testexample_temperature.png - 温度演化
       3. testexample_current_snapshots.png - 逐单元电流分布快照
       4. testexample_current_heterogeneity.png - 电流异质性演化
-      5. testexample_Tfield.png - 最终温度场
-      6. testexample_Tfield.svg - 最终温度场（矢量图）
+      5. testexample_Tfield.png - 最终温度场（0.01 K精度等高线）
+      6. testexample_Tfield.svg - 最终温度场（矢量图，高清）
+      7. testexample_Tdistribution.png - 温度分布统计（0.01 K精度）
     
     多SPMe并行架构验证：
       ✓ 每个热单元对应独立SPMe模型
