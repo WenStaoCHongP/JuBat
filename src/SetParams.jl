@@ -259,8 +259,14 @@ function ChooseCell(CellType::String="LG M50")
     L_th = param_dim.cell.Rout
     k_ref = param_dim.PE.lambda > 0 ? param_dim.PE.lambda : (param_dim.NE.lambda > 0 ? param_dim.NE.lambda : 1.0)
     rho_c_ref = param_dim.cell.rho * param_dim.cell.heat_Q
-    q_ref = k_ref * param_dim.scale.T_ref / L_th^2
-    t_th = rho_c_ref * L_th^2 / k_ref
+    
+    # Use power-based heat source scaling (consistent with electrochemical heat generation)
+    q_ref = param_dim.scale.I_typ * param_dim.scale.phi / param_dim.cell.volume
+    
+    # Time scale must match the heat source scale: ρc/t_th = q/T_ref
+    # t_th = rho_c_ref * T_ref / q_ref
+    t_th = rho_c_ref * param_dim.scale.T_ref / q_ref
+    
     h_ref = param_dim.cell.h * L_th / k_ref  # Biot number (dimensionless h)
     param_dim.scale.L_th = L_th
     param_dim.scale.k_th = k_ref
