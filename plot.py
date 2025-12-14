@@ -251,9 +251,11 @@ def draw_collector_seeded_band_mesh(
             ax.plot(xin, yin, color=rail_color, lw=rail_lw, alpha=0.9)
             ax.plot(xout, yout, color=rail_color, lw=rail_lw, alpha=0.9)
         else:
+            # Only draw innermost (k==0) and outermost (k==nbands-1) rails to show two spiral boundaries
             if k == 0:
                 ax.plot(xin, yin, color=rail_color, lw=rail_lw, alpha=0.9)
-            ax.plot(xout, yout, color=rail_color, lw=rail_lw, alpha=0.9)
+            if k == nbands - 1:
+                ax.plot(xout, yout, color=rail_color, lw=rail_lw, alpha=0.9)
 
         # Draw Q4 edges between rails to form bands
         for i in range(len(theta) - 1):
