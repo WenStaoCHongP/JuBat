@@ -365,12 +365,12 @@ def draw_cylinder_panel(ax):
         r_out=1.9,
         turns=3.2,
         nbands=6,
-    seg_per_turn=24,
-    phase=0.0,
-        rail_lw=1.0,
-        edge_lw=0.6,
+        seg_per_turn=16,  # 减少分段数，使螺旋更明显
+        phase=0.0,
+        rail_lw=2.5,  # 增加螺旋线粗细
+        edge_lw=0.3,  # 减少网格线粗细
         rail_color="#B05300",
-        edge_color="#555555",
+        edge_color="#CCCCCC",  # 淡化网格线
         node_stride=8,
     )
 
@@ -569,7 +569,7 @@ def draw_coupling_arrows_unidirectional(ax):
 
 # === New: Individual figures per theory section ===
 def figure_topview_thermal_mesh(
-    r_in=0.25, r_out=1.9, turns=3.2, nbands=6, seg_per_turn=24, phase=0.0,
+    r_in=0.25, r_out=1.9, turns=3.2, nbands=6, seg_per_turn=16, phase=0.0,
     save=True
 ):
     fig, ax = plt.subplots(1, 1, figsize=(6, 6))
@@ -580,9 +580,9 @@ def figure_topview_thermal_mesh(
         ax,
         r_in=r_in, r_out=r_out, turns=turns, nbands=nbands,
         seg_per_turn=seg_per_turn, phase=phase,
-    rail_lw=1.0, edge_lw=0.6, rail_color="#B05300", edge_color="#555555",
-    node_stride=8, show_layers=False, fill_layers=True, fill_alpha=0.5,
-    overlay_layers_band_index=max(0, nbands//2 - 1), overlay_tick_stride=2,
+        rail_lw=2.5, edge_lw=0.3, rail_color="#B05300", edge_color="#CCCCCC",
+        node_stride=8, show_layers=False, fill_layers=True, fill_alpha=0.5,
+        overlay_layers_band_index=max(0, nbands//2 - 1), overlay_tick_stride=2,
     )
     # axes triad
     ax.arrow(0, 0, 0.9, 0.0, head_width=0.08, head_length=0.12, fc="k", ec="k")
@@ -607,22 +607,24 @@ def figure_topview_thermal_mesh(
 
 
 def figure_single_spiral_layered(
-    r_in=0.25, r_out=1.9, turns=3.2, nbands=6, seg_per_turn=48, phase=0.0,
+    r_in=0.25, r_out=1.9, turns=3.2, nbands=6, seg_per_turn=24, phase=0.0,
     band_index=None, save=True
 ):
     fig, ax = plt.subplots(1, 1, figsize=(6, 6))
     R = 2.3
     ax.add_patch(Circle((0, 0), R, fill=False, ec="black", lw=1.5))
+    
+    # 绘制完整的网格结构（所有bands）
     if band_index is None:
         band_index = max(0, nbands//2 - 1)
     draw_collector_seeded_band_mesh(
         ax,
         r_in=r_in, r_out=r_out, turns=turns, nbands=nbands,
         seg_per_turn=seg_per_turn, phase=phase,
-        rail_lw=1.2, edge_lw=0.8, rail_color="#B05300", edge_color="#BBBBBB",
+        rail_lw=2.5, edge_lw=0.3, rail_color="#B05300", edge_color="#DDDDDD",
         node_stride=0,
         show_layers=False, fill_layers=False, fill_alpha=0.0, force_layered=False,
-        only_band_index=band_index,
+        only_band_index=None,  # 显示所有bands
     )
     # axes triad
     ax.arrow(0, 0, 0.9, 0.0, head_width=0.08, head_length=0.12, fc="k", ec="k")
