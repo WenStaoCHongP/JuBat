@@ -172,8 +172,8 @@ def draw_collector_seeded_band_mesh(
     node_stride=6,
     show_layers=False,
     layer_fracs=(0.12, 0.30, 0.16, 0.30, 0.12),
-    layer_names=("NCC", "NE", "SP", "PE", "PCC"),
-    layer_colors=("#5B5B5B", "#1f77b4", "#7f7f7f", "#ff7f0e", "#8c564b"),
+    layer_names=("PCC", "PE", "SP", "NE", "NCC"),
+    layer_colors=("#8c564b", "#ff7f0e", "#7f7f7f", "#1f77b4", "#5B5B5B"),
     layer_tick_stride=14,
     fill_layers=False,
     fill_alpha=0.35,
@@ -185,33 +185,57 @@ def draw_collector_seeded_band_mesh(
     force_layered=False,
 ):
     """
-    Collector-seeded band Q4 mesh (以直代曲):
-    - Two spiral rails r=a+bθ+s_in and r=a+bθ+s_out sampled uniformly in θ.
-    - Connect straight edges between adjacent samples to form Q4 bands.
-    - Repeat across radius by stacking bands to fill the annulus.
+    基于集流体"导轨"的条带网格生成器（以直代曲）
+    
+    网格生成原理（仿照 Jellyrollmodel.jl）:
+    - 阿基米德螺旋方程: r(θ) = a + bθ，其中 a=Rin, b=t_repeat/(2π)
+    - 沿内外螺旋线等角度采样：
+      * 内螺旋: r_in(θ) = a + bθ + s_in（PCC内侧）
+      * 外螺旋: r_out(θ) = a + bθ + s_out（NCC外侧）
+    - 连接对应采样点形成Q4条带单元: [(in_i, out_i, out_{i+1}, in_{i+1})]
+    - 通过径向堆叠多个条带填充整个环形区域
+    
+    层序定义（从内到外）:
+    - PCC (正极集流体) → PE (正极) → SP (隔膜) → NE (负极) → NCC (负极集流体)
+    
+    参数:
+    - r_in, r_out: 内外半径 [m]
+    - turns: 螺旋圈数
+    - nbands: 径向条带数量
+    - seg_per_turn: 每圈的周向分段数（建议≥24）
+    - phase: 相位对齐角度 [rad]
+    - show_layers: 是否显示层序标记
+    - fill_layers: 是否填充各层颜色
+    - fill_homogenized: 是否使用均质化颜色
     """
     theta_max = 2 * np.pi * turns
+    
+    # 螺旋参数（与Julia代码保持一致）
+    # a: 螺旋起始半径（Rin）
+    # b: 螺旋节距系数 = t_repeat / (2π)
     a = r_in
-    b = 0.5 * (r_out - r_in) / theta_max
+    t_repeat = (r_out - r_in) / max(1, nbands)  # 估算单层厚度
+    b = t_repeat / (2.0 * np.pi)
 
-    # Split the annulus into nbands radial bands of equal thickness (illustrative)
+    # 将环形区域划分为nbands个径向条带（每个条带厚度相等）
     dr = (r_out - r_in) / nbands
-    dtheta = 2 * np.pi / float(max(1, seg_per_turn))
+    dtheta = 2 * np.pi / float(max(1, seg_per_turn))  # 周向角度步长
 
-    # For optional colored fills, collect polygons across bands
+    # 用于颜色填充的多边形集合
     poly_verts = []
     poly_fc = []
 
-    # Turn-to-turn radial pitch Δr_turn; overlapping risk if dr > Δr_turn
+    # 圈间径向节距 Δr_turn = 2πb（螺旋每转一圈的径向增量）
+    # 当条带厚度 dr > Δr_turn 时，存在视觉重叠风险
     delta_r_turn = 2 * np.pi * b
     do_homog = bool(fill_homogenized)
-    # Auto-switch layered fill to homogenized when band thicker than pitch
+    
+    # 自动切换到均质化填充以避免视觉重叠
     if fill_layers and (dr > delta_r_turn) and (not force_layered):
         do_homog = True
-        # lightweight note to console (non-blocking)
-        print(f"[note] dr={dr:.3f} > Δr_turn={delta_r_turn:.3f}: switch to homogenized fill to avoid visual overlap")
+        print(f"[注意] dr={dr:.3f} > Δr_turn={delta_r_turn:.3f}: 切换到均质化填充以避免视觉重叠")
 
-    # Precompute homogenized color (layer-weighted mix)
+    # 预计算均质化颜色（按层体积分数加权混合）
     def _mix_color_hex(hex_colors, weights):
         import matplotlib.colors as mcolors
         w = np.asarray(weights, dtype=float)
@@ -221,50 +245,61 @@ def draw_collector_seeded_band_mesh(
         return rgb
     homog_color = _mix_color_hex(layer_colors, layer_fracs)
 
+    # 遍历每个径向条带
     for k in range(nbands):
-        # In only-band mode, skip other bands
+        # 仅绘制单条带模式（用于演示）
         if (only_band_index is not None) and (k != int(only_band_index)):
             continue
+        
+        # 当前条带的径向偏移范围 [s_in, s_out]
         s_in = k * dr
         s_out = (k + 1) * dr
-        # θ range such that both rails stay within [r_in, r_out]
+        
+        # θ 范围裁剪（确保内外螺旋都在 [r_in, r_out] 内）
+        # θ0: 起始角度，确保 r_in(θ0) ≥ r_in
+        # θ1: 终止角度，确保 r_out(θ1) ≤ r_out
         theta0 = max(0.0, (r_in - a - s_in) / b)
         theta1_lim = (r_out - a - s_out) / b
         if theta1_lim <= theta0:
             continue
         theta1 = min(theta_max, theta1_lim)
-        # Align to equal-angle grid with optional phase
+        
+        # 等角度网格相位对齐（与Julia代码保持一致）
         k0 = int(np.ceil((theta0 - phase) / dtheta))
         k1 = int(np.floor((theta1 - phase) / dtheta))
         if k1 <= k0:
-            # Fallback: at least two samples to draw a short band segment
+            # 备选方案：至少两个采样点以绘制短条带段
             theta = np.array([theta0, min(theta1, theta0 + dtheta*0.75)])
         else:
             theta = phase + dtheta * np.arange(k0, k1 + 1)
 
+        # 生成内外螺旋线上的采样点
         xin, yin, _ = _arch_spiral(a + s_in, b, theta, center)
         xout, yout, _ = _arch_spiral(a + s_out, b, theta, center)
 
-        # Draw rails; avoid duplicating shared rail between adjacent bands
+        # 绘制螺旋"导轨"（避免相邻条带间重复绘制共享导轨）
         if only_band_index is not None:
-            # In single-band mode, draw both rails for the selected band
+            # 单条带模式：绘制选中条带的内外两条导轨
             ax.plot(xin, yin, color=rail_color, lw=rail_lw, alpha=0.9)
             ax.plot(xout, yout, color=rail_color, lw=rail_lw, alpha=0.9)
         else:
+            # 多条带模式：仅绘制最内侧导轨和每个条带的外侧导轨
             if k == 0:
                 ax.plot(xin, yin, color=rail_color, lw=rail_lw, alpha=0.9)
             ax.plot(xout, yout, color=rail_color, lw=rail_lw, alpha=0.9)
 
-        # Draw Q4 edges between rails to form bands
+        # 生成Q4条带单元（连接内外导轨形成四边形网格）
+        # 单元节点顺序: [n1(内侧当前), n2(外侧当前), n3(外侧下一个), n4(内侧下一个)]
         for i in range(len(theta) - 1):
-            # transverse edges (connect rails)
+            # 横向边（连接内外导轨）
             ax.plot([xin[i], xout[i]], [yin[i], yout[i]], color=edge_color, lw=edge_lw)
             ax.plot([xin[i + 1], xout[i + 1]], [yin[i + 1], yout[i + 1]], color=edge_color, lw=edge_lw)
-            # longitudinal edges (between successive samples)
+            # 纵向边（沿螺旋线方向连接相邻采样点）
             ax.plot([xout[i], xout[i + 1]], [yout[i], yout[i + 1]], color=edge_color, lw=edge_lw)
             ax.plot([xin[i], xin[i + 1]], [yin[i], yin[i + 1]], color=edge_color, lw=edge_lw)
 
-            # Optional: whole-band layered fill using Q4 quads per sub-layer
+            # 可选：分层填充（每个子层使用单独的颜色）
+            # 将每个条带按层序体积分数细分，生成多个子Q4多边形
             if fill_layers and (not do_homog):
                 fracs = np.asarray(layer_fracs, dtype=float)
                 fracs = fracs / fracs.sum()
@@ -272,8 +307,10 @@ def draw_collector_seeded_band_mesh(
                 th_i = theta[i]
                 th_ip1 = theta[i + 1]
                 for j in range(len(fracs)):
+                    # 子层径向范围 [s_lo, s_hi]
                     s_lo = s_in + cum[j] * dr
                     s_hi = s_in + cum[j + 1] * dr
+                    # 四个角点坐标
                     x_lo_i, y_lo_i, _ = _arch_spiral(a + s_lo, b, np.array([th_i]))
                     x_hi_i, y_hi_i, _ = _arch_spiral(a + s_hi, b, np.array([th_i]))
                     x_lo_ip1, y_lo_ip1, _ = _arch_spiral(a + s_lo, b, np.array([th_ip1]))
@@ -286,7 +323,7 @@ def draw_collector_seeded_band_mesh(
                     ])
                     poly_fc.append(layer_colors[j % len(layer_colors)])
 
-            # Homogenized fill: one quad per cell (full thickness), single mixed color
+            # 均质化填充：每个单元一个Q4多边形（全厚度），使用混合颜色
             if do_homog:
                 th_i = theta[i]
                 th_ip1 = theta[i + 1]
@@ -302,33 +339,33 @@ def draw_collector_seeded_band_mesh(
                 ])
                 poly_fc.append(homog_color)
 
-        # Sparse node markers for visual clarity
+        # 稀疏节点标记（用于视觉清晰度）
         if node_stride > 0 and len(theta) > 0:
             sel = np.arange(0, len(theta), max(1, node_stride))
             ax.scatter(xin[sel], yin[sel], s=8, color="black", zorder=3)
             ax.scatter(xout[sel], yout[sel], s=8, color="black", zorder=3)
 
-    # Optional: show layered winding within each band using colored radial ticks
+    # 可选：使用彩色径向刻度线显示层序卷绕结构
     if show_layers and (not fill_layers) and len(theta) > 0:
-            # cumulative offsets from s_in
+            # 从条带内侧开始的累积偏移
             fracs = np.asarray(layer_fracs, dtype=float)
             fracs = fracs / fracs.sum()
-            cum = np.concatenate(([0.0], np.cumsum(fracs)))  # len = n_layers+1
-            # choose a subset of angular samples to draw ticks
+            cum = np.concatenate(([0.0], np.cumsum(fracs)))  # 长度 = 层数+1
+            # 选择角度采样点的子集来绘制刻度
             step = max(1, layer_tick_stride)
             for idx in range(0, len(theta), step):
                 th = theta[idx]
-                # draw a short colored segment for each layer along radial direction
+                # 沿径向为每一层绘制短彩色线段
                 for j in range(len(fracs)):
                     s_lo = s_in + cum[j] * dr
                     s_hi = s_in + cum[j + 1] * dr
-                    # points at this angle for inner/outer of the layer
+                    # 该角度处层的内外边界点
                     x_lo, y_lo, _ = _arch_spiral(a + s_lo, b, np.array([th]), center)
                     x_hi, y_hi, _ = _arch_spiral(a + s_hi, b, np.array([th]), center)
                     ax.plot([x_lo[0], x_hi[0]], [y_lo[0], y_hi[0]],
                             color=layer_colors[j % len(layer_colors)], lw=2.2, alpha=0.95, zorder=2)
 
-    # Overlay layered ticks only on a chosen band index (even when fill is enabled)
+    # 仅在指定条带索引上叠加层序刻度（即使启用填充也适用）
     if overlay_layers_band_index is not None and k == int(overlay_layers_band_index) and len(theta) > 0:
             fracs = np.asarray(layer_fracs, dtype=float)
             fracs = fracs / fracs.sum()
@@ -344,7 +381,7 @@ def draw_collector_seeded_band_mesh(
                     ax.plot([x_lo[0], x_hi[0]], [y_lo[0], y_hi[0]],
                             color=layer_colors[j % len(layer_colors)], lw=overlay_tick_lw, alpha=0.98, zorder=3)
 
-    # Add filled polygons if requested
+    # 添加填充多边形（如果请求）
     if (fill_layers or do_homog) and len(poly_verts) > 0:
         from matplotlib.collections import PolyCollection
         coll = PolyCollection(poly_verts, facecolors=poly_fc, edgecolors='none', alpha=fill_alpha, zorder=1)
@@ -352,19 +389,24 @@ def draw_collector_seeded_band_mesh(
 
 
 def draw_cylinder_panel(ax):
-    # Top view outer boundary
+    """
+    绘制圆柱体俯视图面板
+    
+    展示集流体导轨条带Q4网格的俯视图，用于论文插图。
+    """
+    # 顶视图外边界
     R = 2.3
     ax.add_patch(Circle((0, 0), R, fill=False, ec="black", lw=1.5))
 
-    # Collector-seeded band Q4 mesh (以直代曲)
+    # 集流体导轨条带Q4网格（以直代曲）
     draw_collector_seeded_band_mesh(
         ax,
         r_in=0.25,
         r_out=1.9,
         turns=3.2,
         nbands=6,
-    seg_per_turn=24,
-    phase=0.0,
+        seg_per_turn=24,
+        phase=0.0,
         rail_lw=1.0,
         edge_lw=0.6,
         rail_color="#B05300",
@@ -372,7 +414,7 @@ def draw_cylinder_panel(ax):
         node_stride=8,
     )
 
-    # Axes triad (x,y) on the top plane
+    # 平面坐标轴三联组 (x,y)
     ax.arrow(0, 0, 0.9, 0.0, head_width=0.08, head_length=0.12, fc="k", ec="k")
     ax.arrow(0, 0, 0.0, 0.9, head_width=0.08, head_length=0.12, fc="k", ec="k")
     ax.text(1.05, 0.0, "x", fontsize=10)
@@ -382,7 +424,7 @@ def draw_cylinder_panel(ax):
     ax.set_xlim(-2.7, 2.7)
     ax.set_ylim(-2.7, 2.7)
     ax.axis("off")
-    add_label(ax, (0, -2.95), "Collector-seeded band Q4 mesh (top view)", fontsize=11)
+    add_label(ax, (0, -2.95), "集流体导轨条带Q4网格（俯视图）", fontsize=11)
 
 
 def draw_resistor(ax, x, y, w=0.5, h=0.18, color="#1f77b4"):
@@ -570,19 +612,24 @@ def figure_topview_thermal_mesh(
     r_in=0.25, r_out=1.9, turns=3.2, nbands=6, seg_per_turn=24, phase=0.0,
     save=True
 ):
+    """
+    生成热网格俯视图（集流体导轨条带Q4网格，带层填充）
+    
+    展示完整的螺旋网格结构，包含层序颜色填充和图例。
+    """
     fig, ax = plt.subplots(1, 1, figsize=(6, 6))
-    # outer boundary
+    # 外边界圆
     R = 2.3
     ax.add_patch(Circle((0, 0), R, fill=False, ec="black", lw=1.5))
     draw_collector_seeded_band_mesh(
         ax,
         r_in=r_in, r_out=r_out, turns=turns, nbands=nbands,
         seg_per_turn=seg_per_turn, phase=phase,
-    rail_lw=1.0, edge_lw=0.6, rail_color="#B05300", edge_color="#555555",
-    node_stride=8, show_layers=False, fill_layers=True, fill_alpha=0.5,
-    overlay_layers_band_index=max(0, nbands//2 - 1), overlay_tick_stride=2,
+        rail_lw=1.0, edge_lw=0.6, rail_color="#B05300", edge_color="#555555",
+        node_stride=8, show_layers=False, fill_layers=True, fill_alpha=0.5,
+        overlay_layers_band_index=max(0, nbands//2 - 1), overlay_tick_stride=2,
     )
-    # axes triad
+    # 坐标轴三联组
     ax.arrow(0, 0, 0.9, 0.0, head_width=0.08, head_length=0.12, fc="k", ec="k")
     ax.arrow(0, 0, 0.0, 0.9, head_width=0.08, head_length=0.12, fc="k", ec="k")
     ax.text(1.05, 0.0, "x", fontsize=10)
@@ -591,11 +638,12 @@ def figure_topview_thermal_mesh(
     ax.set_xlim(-2.7, 2.7)
     ax.set_ylim(-2.7, 2.7)
     ax.axis("off")
-    add_label(ax, (0, -2.95), "Thermal mesh (collector-seeded band Q4; band fill)", fontsize=11)
-    # legend for layers (color meaning: layer colors or homogenized mix)
+    add_label(ax, (0, -2.95), "热网格 (集流体导轨条带Q4网格；层填充)", fontsize=11)
+    
+    # 层序图例（颜色含义：各层颜色或均质化混合色）
     from matplotlib.lines import Line2D
-    layer_names = ("NCC", "NE", "SP", "PE", "PCC")
-    layer_colors = ("#5B5B5B", "#1f77b4", "#7f7f7f", "#ff7f0e", "#8c564b")
+    layer_names = ("PCC", "PE", "SP", "NE", "NCC")
+    layer_colors = ("#8c564b", "#ff7f0e", "#7f7f7f", "#1f77b4", "#5B5B5B")
     handles = [Line2D([0], [0], color=c, lw=2.2, label=n) for n, c in zip(layer_names, layer_colors)]
     ax.legend(handles=handles, loc='upper left', bbox_to_anchor=(-0.02, 1.02), fontsize=8, frameon=True, framealpha=0.9, ncol=5)
     if save:
@@ -608,6 +656,11 @@ def figure_single_spiral_layered(
     r_in=0.25, r_out=1.9, turns=3.2, nbands=6, seg_per_turn=48, phase=0.0,
     band_index=None, save=True
 ):
+    """
+    生成单条螺旋带示意图（热单元）
+    
+    突出显示单个螺旋条带的结构，配合热边界条件标注。
+    """
     fig, ax = plt.subplots(1, 1, figsize=(6, 6))
     R = 2.3
     ax.add_patch(Circle((0, 0), R, fill=False, ec="black", lw=1.5))
@@ -622,7 +675,7 @@ def figure_single_spiral_layered(
         show_layers=False, fill_layers=False, fill_alpha=0.0, force_layered=False,
         only_band_index=band_index,
     )
-    # axes triad
+    # 坐标轴三联组
     ax.arrow(0, 0, 0.9, 0.0, head_width=0.08, head_length=0.12, fc="k", ec="k")
     ax.arrow(0, 0, 0.0, 0.9, head_width=0.08, head_length=0.12, fc="k", ec="k")
     ax.text(1.05, 0.0, "x", fontsize=10)
@@ -631,7 +684,7 @@ def figure_single_spiral_layered(
     ax.set_xlim(-2.7, 2.7)
     ax.set_ylim(-2.7, 2.7)
     ax.axis("off")
-    add_label(ax, (0, -2.95), "Single spiral band (thermal elements)", fontsize=11)
+    add_label(ax, (0, -2.95), "单条螺旋带（热单元）", fontsize=11)
 
     # Add thermal BC annotations (outer convection, inner adiabatic) + legend
     try:
