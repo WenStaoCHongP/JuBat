@@ -215,13 +215,18 @@ function Calstressdisp(electrode::Electrode, mesh::Mesh, cs::Array{Float64}, T::
 """
     diffusion_stress_2D(case, variables)
 
-计算宏观层面的扩散应力（2D平面应力问题）
+计算宏观层面的扩散应力（2D平面应力/应变问题）
 
 基于锂浓度（SOC）变化引起的体积膨胀，结合有限元方法求解应力场和位移场。
 
 # 输入
 - `case`: 案例对象，包含网格、参数等
 - `variables`: 包含温度场、SOC分布等的字典
+
+# 选项
+- `case.opt.plane_type`: 选择平面类型
+  - `:stress` (默认): 平面应力假设，适用于薄板结构
+  - `:strain`: 平面应变假设，适用于厚体结构或约束情况
 
 # 输出
 - 更新 `variables` 字典，添加以下场：
@@ -231,9 +236,12 @@ function Calstressdisp(electrode::Electrode, mesh::Mesh, cs::Array{Float64}, T::
   - `"diffusion stress vonMises"`: Von Mises等效应力 [Pa]
   - `"displacement x"`: x方向位移 [m]
   - `"displacement y"`: y方向位移 [m]
+  - `"diffusion stress zz"`: z方向正应力 [Pa] (仅平面应变)
 
 # 理论
-参见文档: docs/Diffusion_Stress_Macroscale_Theory.md
+参见文档: 
+- docs/Diffusion_Stress_Macroscale_Theory.md
+- docs/Plane_Stress_vs_Plane_Strain.md
 """
 function diffusion_stress_2D(case::Case, variables::Dict{String, Union{Array{Float64},Float64}})
     @assert haskey(case.mesh, "thermal2D") "thermal2D mesh is required for 2D diffusion stress"
@@ -243,6 +251,13 @@ function diffusion_stress_2D(case::Case, variables::Dict{String, Union{Array{Flo
     param = case.param
     Tref = param.scale.T_ref
     T0 = hasproperty(param.cell, :T0) ? param.cell.T0 : 298.0 / Tref
+    
+    # 确定平面类型（应力或应变）
+    plane_type = hasproperty(case.opt, :plane_type) ? case.opt.plane_type : :stress
+    if !(plane_type in [:stress, :strain])
+        @warn "未知的平面类型 $(plane_type)，使用默认值 :stress"
+        plane_type = :stress
+    end
     
     # 提取温度场和SOC分布
     T_nodes = haskey(variables, "T_nodes") ? variables["T_nodes"] : fill(T0, mesh.nlen)
@@ -255,13 +270,21 @@ function diffusion_stress_2D(case::Case, variables::Dict{String, Union{Array{Flo
     # 获取材料参数（按单元层权重加权）
     E_elem, nu_elem, alpha_elem, beta_c_elem, cs_max_elem = _get_mechanical_properties(case, variables, ne)
     
+    # 平面应变时检查泊松比
+    if plane_type == :strain
+        max_nu = maximum(nu_elem)
+        if max_nu > 0.45
+            @warn "平面应变模式下泊松比过大 (max=$(max_nu))，可能导致数值不稳定"
+        end
+    end
+    
     # 装配力学刚度矩阵
-    K_mech = _assemble_mechanical_stiffness_2D(mesh, E_elem, nu_elem)
+    K_mech = _assemble_mechanical_stiffness_2D(mesh, E_elem, nu_elem, plane_type)
     
     # 装配热-扩散载荷向量
     F_mech = _assemble_thermal_diffusion_load_2D(mesh, T_elem, SOC_elem, 
                                                   alpha_elem, beta_c_elem, cs_max_elem,
-                                                  E_elem, nu_elem, T0)
+                                                  E_elem, nu_elem, T0, plane_type)
     
     # 施加边界条件
     K_mech, F_mech = _apply_mechanical_BC_2D(K_mech, F_mech, mesh, case)
@@ -270,13 +293,20 @@ function diffusion_stress_2D(case::Case, variables::Dict{String, Union{Array{Flo
     U = _solve_mechanical_displacement_2D(K_mech, F_mech, mesh.nlen)
     
     # 恢复应力场
-    σ_xx, σ_yy, σ_xy, σ_vm = _recover_stress_2D(U, mesh, T_elem, SOC_elem,
-                                                  alpha_elem, beta_c_elem, cs_max_elem,
-                                                  E_elem, nu_elem, T0)
+    if plane_type == :stress
+        σ_xx, σ_yy, σ_xy, σ_vm = _recover_stress_2D(U, mesh, T_elem, SOC_elem,
+                                                      alpha_elem, beta_c_elem, cs_max_elem,
+                                                      E_elem, nu_elem, T0, plane_type)
+        σ_zz = nothing
+    else  # plane_type == :strain
+        σ_xx, σ_yy, σ_xy, σ_zz, σ_vm = _recover_stress_2D(U, mesh, T_elem, SOC_elem,
+                                                            alpha_elem, beta_c_elem, cs_max_elem,
+                                                            E_elem, nu_elem, T0, plane_type)
+    end
     
     # 写入结果（转换为有量纲）
     L_ref = hasproperty(param.scale, :L_th) ? param.scale.L_th : 1.0
-    _write_mechanical_results!(variables, U, σ_xx, σ_yy, σ_xy, σ_vm, L_ref)
+    _write_mechanical_results!(variables, U, σ_xx, σ_yy, σ_xy, σ_vm, L_ref, σ_zz, plane_type)
     
     return variables
 end
@@ -412,7 +442,7 @@ function _get_mechanical_properties(case, variables, ne)
 end
 
 """装配2D力学刚度矩阵"""
-function _assemble_mechanical_stiffness_2D(mesh, E_elem, nu_elem)
+function _assemble_mechanical_stiffness_2D(mesh, E_elem, nu_elem, plane_type::Symbol=:stress)
     nnode = mesh.nlen
     ne = size(mesh.element, 1)
     ndof = 2 * nnode  # 每个节点2个自由度
@@ -427,19 +457,33 @@ function _assemble_mechanical_stiffness_2D(mesh, E_elem, nu_elem)
     ngs = length(wJ)
     
     # 计算每个高斯点的弹性矩阵
-    # 平面应力：D = E/(1-ν²) * [1 ν 0; ν 1 0; 0 0 (1-ν)/2]
     D11 = zeros(Float64, ngs)
     D12 = zeros(Float64, ngs)
     D33 = zeros(Float64, ngs)
     
-    @inbounds for g in 1:ngs
-        e = ele_of_gp[g]
-        E = E_elem[e]
-        ν = nu_elem[e]
-        factor = E / max(1.0 - ν^2, 1e-12)
-        D11[g] = factor
-        D12[g] = factor * ν
-        D33[g] = factor * (1.0 - ν) / 2.0
+    if plane_type == :stress
+        # 平面应力：D = E/(1-ν²) * [1 ν 0; ν 1 0; 0 0 (1-ν)/2]
+        @inbounds for g in 1:ngs
+            e = ele_of_gp[g]
+            E = E_elem[e]
+            ν = nu_elem[e]
+            factor = E / max(1.0 - ν^2, 1e-12)
+            D11[g] = factor
+            D12[g] = factor * ν
+            D33[g] = factor * (1.0 - ν) / 2.0
+        end
+    else  # plane_type == :strain
+        # 平面应变：D = E/((1+ν)(1-2ν)) * [1-ν ν 0; ν 1-ν 0; 0 0 (1-2ν)/2]
+        @inbounds for g in 1:ngs
+            e = ele_of_gp[g]
+            E = E_elem[e]
+            ν = nu_elem[e]
+            denom = max((1.0 + ν) * (1.0 - 2.0*ν), 1e-12)
+            factor = E / denom
+            D11[g] = factor * (1.0 - ν)
+            D12[g] = factor * ν
+            D33[g] = factor * (1.0 - 2.0*ν) / 2.0
+        end
     end
     
     # 构造应变-位移矩阵的索引
@@ -497,7 +541,7 @@ end
 """装配热-扩散载荷向量"""
 function _assemble_thermal_diffusion_load_2D(mesh, T_elem, SOC_elem, 
                                               alpha_elem, beta_c_elem, cs_max_elem,
-                                              E_elem, nu_elem, T0)
+                                              E_elem, nu_elem, T0, plane_type::Symbol=:stress)
     nnode = mesh.nlen
     ndof = 2 * nnode
     
@@ -521,20 +565,32 @@ function _assemble_thermal_diffusion_load_2D(mesh, T_elem, SOC_elem,
     
     # 计算载荷系数
     # F = ∫ B^T D ε_0 dΩ
-    # 其中 ε_0 = [ε_0, ε_0, 0]^T
-    # D * ε_0 = E/(1-ν²) * [ε_0*(1+ν), ε_0*(1+ν), 0]^T
-    
     coeff_u = zeros(Float64, ngs)
     coeff_v = zeros(Float64, ngs)
     
-    @inbounds for g in 1:ngs
-        e = ele_of_gp[g]
-        E = E_elem[e]
-        ν = nu_elem[e]
-        ε_0 = epsilon_0_elem[e]
-        factor = E / max(1.0 - ν^2, 1e-12) * ε_0 * (1.0 + ν) * wJ[g]
-        coeff_u[g] = factor
-        coeff_v[g] = factor
+    if plane_type == :stress
+        # 平面应力：D * ε_0 = E/(1-ν²) * [ε_0*(1+ν), ε_0*(1+ν), 0]^T
+        @inbounds for g in 1:ngs
+            e = ele_of_gp[g]
+            E = E_elem[e]
+            ν = nu_elem[e]
+            ε_0 = epsilon_0_elem[e]
+            factor = E / max(1.0 - ν^2, 1e-12) * ε_0 * (1.0 + ν) * wJ[g]
+            coeff_u[g] = factor
+            coeff_v[g] = factor
+        end
+    else  # plane_type == :strain
+        # 平面应变：D * ε_0 = E/((1+ν)(1-2ν)) * [ε_0*(1+2ν), ε_0*(1+2ν), 0]^T
+        @inbounds for g in 1:ngs
+            e = ele_of_gp[g]
+            E = E_elem[e]
+            ν = nu_elem[e]
+            ε_0 = epsilon_0_elem[e]
+            denom = max((1.0 + ν) * (1.0 - 2.0*ν), 1e-12)
+            factor = E / denom * ε_0 * (1.0 + 2.0*ν) * wJ[g]
+            coeff_u[g] = factor
+            coeff_v[g] = factor
+        end
     end
     
     # 构造DOF索引
@@ -638,13 +694,14 @@ end
 """恢复应力场"""
 function _recover_stress_2D(U, mesh, T_elem, SOC_elem,
                              alpha_elem, beta_c_elem, cs_max_elem,
-                             E_elem, nu_elem, T0)
+                             E_elem, nu_elem, T0, plane_type::Symbol=:stress)
     ne = size(mesh.element, 1)
     
     # 初始化应力数组
     σ_xx = zeros(Float64, ne)
     σ_yy = zeros(Float64, ne)
     σ_xy = zeros(Float64, ne)
+    σ_zz = plane_type == :strain ? zeros(Float64, ne) : nothing
     σ_vm = zeros(Float64, ne)
     
     # 计算每个单元的初始应变
@@ -694,24 +751,47 @@ function _recover_stress_2D(U, mesh, T_elem, SOC_elem,
         ε_elastic_yy = ε_yy - ε_0
         ε_elastic_xy = γ_xy  # 剪应变没有初始值
         
-        # 计算应力（平面应力）
+        # 计算应力
         E = E_elem[e]
         ν = nu_elem[e]
-        factor = E / max(1.0 - ν^2, 1e-12)
         
-        σ_xx[e] = factor * (ε_elastic_xx + ν * ε_elastic_yy)
-        σ_yy[e] = factor * (ε_elastic_yy + ν * ε_elastic_xx)
-        σ_xy[e] = factor * (1.0 - ν) / 2.0 * ε_elastic_xy
-        
-        # Von Mises应力
-        σ_vm[e] = sqrt(σ_xx[e]^2 + σ_yy[e]^2 - σ_xx[e]*σ_yy[e] + 3.0*σ_xy[e]^2)
+        if plane_type == :stress
+            # 平面应力
+            factor = E / max(1.0 - ν^2, 1e-12)
+            σ_xx[e] = factor * (ε_elastic_xx + ν * ε_elastic_yy)
+            σ_yy[e] = factor * (ε_elastic_yy + ν * ε_elastic_xx)
+            σ_xy[e] = factor * (1.0 - ν) / 2.0 * ε_elastic_xy
+            
+            # Von Mises应力（平面应力）
+            σ_vm[e] = sqrt(σ_xx[e]^2 + σ_yy[e]^2 - σ_xx[e]*σ_yy[e] + 3.0*σ_xy[e]^2)
+        else  # plane_type == :strain
+            # 平面应变
+            denom = max((1.0 + ν) * (1.0 - 2.0*ν), 1e-12)
+            factor = E / denom
+            σ_xx[e] = factor * ((1.0 - ν) * ε_elastic_xx + ν * ε_elastic_yy)
+            σ_yy[e] = factor * ((1.0 - ν) * ε_elastic_yy + ν * ε_elastic_xx)
+            σ_xy[e] = factor * (1.0 - 2.0*ν) / 2.0 * ε_elastic_xy
+            
+            # z方向应力（平面应变特有）
+            σ_zz[e] = factor * ν * (ε_elastic_xx + ε_elastic_yy)
+            
+            # Von Mises应力（平面应变，包含 σ_zz）
+            σ_vm[e] = sqrt(σ_xx[e]^2 + σ_yy[e]^2 + σ_zz[e]^2 - 
+                          σ_xx[e]*σ_yy[e] - σ_yy[e]*σ_zz[e] - σ_zz[e]*σ_xx[e] + 
+                          3.0*σ_xy[e]^2)
+        end
     end
     
-    return σ_xx, σ_yy, σ_xy, σ_vm
+    if plane_type == :stress
+        return σ_xx, σ_yy, σ_xy, σ_vm
+    else
+        return σ_xx, σ_yy, σ_xy, σ_zz, σ_vm
+    end
 end
 
 """写入力学计算结果"""
-function _write_mechanical_results!(variables, U, σ_xx, σ_yy, σ_xy, σ_vm, L_ref)
+function _write_mechanical_results!(variables, U, σ_xx, σ_yy, σ_xy, σ_vm, L_ref, 
+                                     σ_zz=nothing, plane_type::Symbol=:stress)
     nnode = length(U) ÷ 2
     
     # 提取位移
@@ -725,6 +805,14 @@ function _write_mechanical_results!(variables, U, σ_xx, σ_yy, σ_xy, σ_vm, L_
     variables["diffusion stress yy"] = σ_yy
     variables["diffusion stress xy"] = σ_xy
     variables["diffusion stress vonMises"] = σ_vm
+    
+    # 平面应变时，额外写入 z 方向应力
+    if plane_type == :strain && σ_zz !== nothing
+        variables["diffusion stress zz"] = σ_zz
+    end
+    
+    # 记录平面类型
+    variables["plane_type"] = String(plane_type)
     
     return nothing
 end
