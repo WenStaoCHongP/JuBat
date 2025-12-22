@@ -178,28 +178,34 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     soc_p_elem = variables["thermal2D element soc_p"]
     soc_ref_n = param.NE.cs0 
     soc_ref_p = param.PE.cs0
-    # 计算单元级别的温度和SOC
-    ne = size(mesh.element, 1)
-    @inbounds for e in 1:ne
-        nodes = mesh.element[e, :]
-        T_elem[e] = sum(T_nodes[nodes]) / length(nodes)
-        dT_e = T_elem[e] - T0
-        Δsoc_n = soc_n_elem[e] - soc_ref_n
-        Δsoc_p = soc_p_elem[e] - soc_ref_p
-    end
+    
     # 获取材料参数
     E_eff = (param.NE.E * param.NE.thickness + param.PE.E * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
     ν_eff = (param.NE.nu * param.NE.thickness + param.PE.nu * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
     α_eff = (param.NE.alphaT * param.NE.thickness + param.PE.alphaT * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
     β_n = param.NE.Omega / 3.0 
     β_p = param.PE.Omega / 3.0 
-
+    
+    # 计算单元级别的温度和SOC
+    ne = size(mesh.element, 1)
+    T_elem = zeros(Float64, ne)
+    dT_elem = zeros(Float64, ne)
+    Δsoc_n_elem = zeros(Float64, ne)
+    Δsoc_p_elem = zeros(Float64, ne)
+    
+    @inbounds for e in 1:ne
+        nodes = mesh.element[e, :]
+        T_elem[e] = sum(T_nodes[nodes]) / length(nodes)
+        dT_elem[e] = T_elem[e] - T0
+        Δsoc_n_elem[e] = soc_n_elem[e] - soc_ref_n
+        Δsoc_p_elem[e] = soc_p_elem[e] - soc_ref_p
+    end
     
     # 装配力学刚度矩阵
     K_mech = _assemble_mechanical_stiffness_2D(mesh, E_eff, ν_eff)
     
     # 装配热-扩散载荷向量
-    F_mech = _assemble_thermal_diffusion_load_2D(mesh,E_eff, ν_eff)
+    F_mech = _assemble_thermal_diffusion_load_2D(mesh, E_eff, ν_eff, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
     
     # 施加边界条件
     K_mech, F_mech = _apply_mechanical_BC_2D(K_mech, F_mech, mesh, case)
@@ -208,11 +214,11 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     U_M = _solve_mechanical_displacement_2D(K_mech, F_mech, mesh.nlen)
     
     # 恢复应力场
-    σ_xx, σ_yy, σ_xy, σ_vm = _recover_stress_2D(U, mesh, E_eff, ν_eff)
+    σ_xx, σ_yy, σ_xy, σ_vm = _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
     
     # 写入结果（转换为有量纲）
     L_ref = hasproperty(param.scale, :L_th) ? param.scale.L_th : 1.0
-    _write_mechanical_results!(variables, U, σ_xx, σ_yy, σ_xy, σ_vm, L_ref)
+    _write_mechanical_results!(variables, U_M, σ_xx, σ_yy, σ_xy, σ_vm, L_ref)
     
     return variables
 end
@@ -300,17 +306,17 @@ function _assemble_mechanical_stiffness_2D(mesh, E_eff, ν_eff)
 end
 
 """装配热-扩散载荷向量"""
-function _assemble_thermal_diffusion_load_2D(mesh,E_eff, ν_eff)
+function _assemble_thermal_diffusion_load_2D(mesh, E_eff, ν_eff, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
     nnode = mesh.nlen
     ndof = 2 * nnode
     E = E_eff
     ν = ν_eff
     # 计算每个单元的初始应变 ε_0 = α*ΔT + β_c*c_s_max*ΔSOC
-    ne = length(T_elem)
+    ne = length(dT_elem)
     epsilon_0_elem = zeros(Float64, ne)
     
     @inbounds for e in 1:ne
-        epsilon_0_elem[e] = α_eff * dT_e + β_n * Δsoc_n + β_p * Δsoc_p
+        epsilon_0_elem[e] = α_eff * dT_elem[e] + β_n * Δsoc_n_elem[e] + β_p * Δsoc_p_elem[e]
     end
     
     # 高斯积分点数据
@@ -379,21 +385,21 @@ function _apply_mechanical_BC_2D(K_M, F_M, mesh, case)
         if bc_type == :fixed_x
             # 固定x方向位移
             dof = 2 * node - 1
-            K[dof, dof] += penalty
-            F[dof] = 0.0
+            K_M[dof, dof] += penalty
+            F_M[dof] = 0.0
         elseif bc_type == :fixed_y
             # 固定y方向位移
             dof = 2 * node
-            K[dof, dof] += penalty
-            F[dof] = 0.0
+            K_M[dof, dof] += penalty
+            F_M[dof] = 0.0
         elseif bc_type == :fixed_xy
             # 固定x和y方向位移
             dof_x = 2 * node - 1
             dof_y = 2 * node
-            K[dof_x, dof_x] += penalty
-            K[dof_y, dof_y] += penalty
-            F[dof_x] = 0.0
-            F[dof_y] = 0.0
+            K_M[dof_x, dof_x] += penalty
+            K_M[dof_y, dof_y] += penalty
+            F_M[dof_x] = 0.0
+            F_M[dof_y] = 0.0
         end
     end
     
@@ -436,7 +442,7 @@ function _solve_mechanical_displacement_2D(K_M, F_M, nnode)
 end
 
 """恢复应力场"""
-function _recover_stress_2D(U_M, mesh,E_eff, ν_eff)
+function _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
     ne = size(mesh.element, 1)
     E = E_eff
     ν = ν_eff
@@ -449,7 +455,7 @@ function _recover_stress_2D(U_M, mesh,E_eff, ν_eff)
     # 计算每个单元的初始应变
     epsilon_0_elem = zeros(Float64, ne)
     @inbounds for e in 1:ne
-        epsilon_0_elem[e] = α_eff * dT_e + β_n * Δsoc_n + β_p * Δsoc_p
+        epsilon_0_elem[e] = α_eff * dT_elem[e] + β_n * Δsoc_n_elem[e] + β_p * Δsoc_p_elem[e]
     end
     
     # 在单元中心恢复应力
@@ -481,9 +487,9 @@ function _recover_stress_2D(U_M, mesh,E_eff, ν_eff)
         dNdy = [(-J21 * dNdxi[i] + J11 * dNdeta[i]) * invdetJ for i in 1:4]
         
         # 计算应变
-        ε_xx = sum(dNdx[i] * U[2*nodes[i]-1] for i in 1:4)
-        ε_yy = sum(dNdy[i] * U[2*nodes[i]] for i in 1:4)
-        γ_xy = sum(dNdy[i] * U[2*nodes[i]-1] + dNdx[i] * U[2*nodes[i]] for i in 1:4)
+        ε_xx = sum(dNdx[i] * U_M[2*nodes[i]-1] for i in 1:4)
+        ε_yy = sum(dNdy[i] * U_M[2*nodes[i]] for i in 1:4)
+        γ_xy = sum(dNdy[i] * U_M[2*nodes[i]-1] + dNdx[i] * U_M[2*nodes[i]] for i in 1:4)
         
         # 弹性应变
         ε_0 = epsilon_0_elem[e]

@@ -417,6 +417,22 @@ try
     else
         @warn "未找到温度场数据 'thermal2D T_nodes [K]'"
     end
+    
+    # 从 result 中提取 SOC 数据
+    if haskey(result, "thermal2D element soc_n")
+        variables["thermal2D element soc_n"] = result["thermal2D element soc_n"][:, end]
+        println("  ✓ 负极SOC数据已加载")
+    else
+        @warn "未找到负极SOC数据 'thermal2D element soc_n'"
+    end
+    
+    if haskey(result, "thermal2D element soc_p")
+        variables["thermal2D element soc_p"] = result["thermal2D element soc_p"][:, end]
+        println("  ✓ 正极SOC数据已加载")
+    else
+        @warn "未找到正极SOC数据 'thermal2D element soc_p'"
+    end
+    
     variables = JuBat.thermal_diffusion_stress_2D(case, variables)
     
     println("✓ 应力场计算完成")
