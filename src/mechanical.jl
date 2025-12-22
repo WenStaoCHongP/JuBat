@@ -431,11 +431,11 @@ function _solve_mechanical_displacement_2D(K_M, F_M, nnode)
     ndof = 2 * nnode
     
     # 求解线性方程组 K*U = F
-    try
-        U_M = K_M \ F_M
+    U_M = try
+        K_M \ F_M
     catch e
         @warn "Mechanical solve failed, using zero displacement" e
-        U_M = zeros(Float64, ndof)
+        zeros(Float64, ndof)
     end
     
     return U_M
