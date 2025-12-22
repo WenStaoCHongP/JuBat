@@ -57,12 +57,18 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
     mesh_th = case.mesh["thermal2D"]
     ne = size(mesh_th.element, 1)
     I_total_nd = case.opt.Current(t * case.param.scale.t0) / case.param.scale.I_typ
-    Q_layers = try
+    Q_layers_ec = try
         _compute_layer_heat_sources(case, variables_chem, T_avg_nd, I_total_nd)
     catch err
         @warn "_compute_layer_heat_sources 失败，热源将置零" err
         zeros(Float64, 5)
     end
+    
+    q_ec_scale = case.param_dim.scale.I_typ * case.param_dim.scale.phi / case.param_dim.cell.volume
+    q_ref = case.param_dim.scale.q_th  # 傅里叶尺度
+    
+    # 转换: 电化学无量纲 → 物理值 → 傅里叶无量纲
+    Q_layers = Q_layers_ec .* (q_ec_scale / q_ref)
 
     layer_weights = try
         jellyroll_get_layer_weights(mesh_th)
@@ -83,7 +89,6 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
         fill!(q_elem, q_mean)
     end
 
-    q_ref = case.param_dim.scale.q_th
     if q_ref <= 0
         @warn "simple coupling heat scaling fallback" q_ref=q_ref
         q_ref = 1.0
@@ -138,8 +143,9 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
         println("  Q_total = $(total_heat_W) W")
         println("  q_avg = $(q_avg_Wm3) W/m^3")
         Vc_val = begin
-            Vc = variables_chem["cell voltage"]
-            isa(Vc, AbstractArray) ? (length(Vc) > 0 ? Vc[1] : 0.0) : Vc
+            Vc_nd = variables_chem["cell voltage"]  # 无量纲电压
+            Vc_nd_scalar = isa(Vc_nd, AbstractArray) ? (length(Vc_nd) > 0 ? Vc_nd[1] : 0.0) : Vc_nd
+            Vc_nd_scalar * case.param.scale.phi  # 转换为有量纲 [V]
         end
         println("  V_cell = $(Vc_val) V")
     end

@@ -113,7 +113,37 @@ function main()
     # ========================================================================
     println("\n[3/5] 运行简化耦合求解器...")
     println("  这将使用单SPMe计算总热源，然后求解2D热传导")
-    
+    # 诊断初始状态
+    println("\n[诊断] 初始状态分析:")
+
+    # 获取初始化的状态向量
+    if case.opt.per_element_spme
+        # 多SPMe模式
+        y0 = ModelInitialisation_MultiSPMe(case)
+    else
+        # 简化耦合模式
+        y0 = ModelInitialisation_SimpleCoupling(case)
+    end
+
+    # 提取颗粒浓度
+    Nrn = case.mesh["negative particle"].nlen
+    Nrp = case.mesh["positive particle"].nlen
+
+    csn_init = y0[1:Nrn]  # 负极浓度（归一化）
+    csp_init = y0[(Nrn+1):(Nrn+Nrp)]  # 正极浓度（归一化）
+
+    theta_n = mean(csn_init)
+    theta_p = mean(csp_init)
+
+    @printf("  负极 theta = %.4f (cs0 = %.4f)\n", theta_n, case.param.NE.cs0)
+    @printf("  正极 theta = %.4f (cs0 = %.4f)\n", theta_p, case.param.PE.cs0)
+
+    # 计算理论 OCV
+    # 调用参数闭包需通过 invokelatest，避免 world-age 错误
+    U_p = Base.invokelatest(case.param_dim.PE.U, theta_p)
+    U_n = Base.invokelatest(case.param_dim.NE.U, theta_n)
+    OCV = U_p - U_n
+    @printf("  理论 OCV = %.4f V\n", OCV)
     try
         result = JuBat.Solve(case)
         println("✓ 求解完成")

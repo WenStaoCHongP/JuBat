@@ -96,7 +96,7 @@ tab.theta_neg = []
 cell = Cell()    
 cell.Rout = 0.021/2
 cell.Rin = 1.92e-3
-cell.length = 2.10   # Using outer diameter proxy (not used by scaling below)
+cell.length = 1.50   # Using outer diameter proxy (not used by scaling below)
 cell.width = 7e-2
 cell.wrapper = 0
 cell.I1C = 5
@@ -113,7 +113,7 @@ cell.volume = pi * ( (cell.Rout)^2 - (cell.Rin)^2 ) * cell.width  # π (R_out^2 
 cell.mass = 8.521789028721335e-01
 cell.rho = cell.mass / cell.volume
 cell.alphaT = 0.
-cell.h = 150.      # 对流换热系数 (W/m²/K)
+cell.h = 10.      # 对流换热系数 (W/m²/K)
 cell.T0 = 298      # 初始温度 (K)
 cell.T_amb = cell.T0
 

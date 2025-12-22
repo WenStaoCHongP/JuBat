@@ -135,8 +135,6 @@ function Solve(case::Case)
                 @warn "Failed to set layer_weights: $err"
             end
         end
-    # 计算初始热应力（仅二维分布热）
-        variables = thermal_stress(case, variables)
     end
     # 持久化热场（跨 CallModel 迭代携带）
     T_nodes_carry = if haskey(variables, "T_nodes") && isa(variables["T_nodes"], Array{Float64}) && !isempty(variables["T_nodes"])
@@ -206,7 +204,6 @@ function Solve(case::Case)
                 T_nodes = y_c[(end - nT + 1):end]
                 variables["T_nodes"] = T_nodes
                 T_nodes_carry = T_nodes
-                variables = thermal_stress(case, variables)
             end
         end
         error_y = ErrorEstimation(case, y_old, y_new, dt_min/dt) 
@@ -464,7 +461,8 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     eta_p_e = zeros(Float64, ne)
     dUdT_n_e = zeros(Float64, ne)
     dUdT_p_e = zeros(Float64, ne)
-    
+    soc_n_elem = zeros(Float64, ne)
+    soc_p_elem = zeros(Float64, ne)
     L_th = case.param_dim.scale.L_th
     
     # 获取 layer_weights（如果存在）
@@ -526,7 +524,21 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         Q_NCC = I_e_local^2 / (3.0 * param.NCC.sig) 
         # 按层权重聚合
         q_elem[e] = fks[e,1]*Q_NE + fks[e,2]*Q_SP + fks[e,3]*Q_PE + fks[e,4]*Q_PCC + fks[e,5]*Q_NCC
+        csn_data = get(vars_e, "negative particle lithium concentration", nothing)
+        csp_data = get(vars_e, "positive particle lithium concentration", nothing)
+        if csn_data !== nothing && !isempty(csn_data)
+            soc_n_elem[e] = mean(vec(csn_data))
+        else
+            soc_n_elem[e] = param.NE.cs0
+        end
+        if csp_data !== nothing && !isempty(csp_data)
+            soc_p_elem[e] = mean(vec(csp_data))
+        else
+            soc_p_elem[e] = param.PE.cs0
+        end
     end
+    variables["thermal2D element soc_n"] = soc_n_elem
+    variables["thermal2D element soc_p"] = soc_p_elem
     # 写入逐单元变量到 variables（用于调试和后处理）
     variables["thermal2D element current"] = I_e
     variables["thermal2D eta_n_e"] = eta_n_e
@@ -539,8 +551,12 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         variables["heat_source_fields"] = q_elem
         variables["heat_source_units_code"] = 1.0
     else
-        q_ref = case.param_dim.scale.q_th
-        variables["heat_source_fields"] = q_elem ./ q_ref
+        q_ec_scale = case.param_dim.scale.I_typ * case.param_dim.scale.phi / case.param_dim.cell.volume
+        q_elem_physical = q_elem .* q_ec_scale  # 物理热源 [W/m³]
+        
+        # 用傅里叶尺度归一化
+        q_ref = case.param_dim.scale.q_th  # 傅里叶尺度
+        variables["heat_source_fields"] = q_elem_physical ./ q_ref
         variables["heat_source_units_code"] = 0.0
     end
     

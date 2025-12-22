@@ -110,6 +110,11 @@ function StandardVariables(case::Case, num::Int64)
         variables["thermal2D dUdT_n_e"] = zeros(Float64, ne, num)
         variables["thermal2D dUdT_p_e"] = zeros(Float64, ne, num)
         variables["thermal2D element voltages"] = zeros(Float64, ne, num)
+        variables["thermal2D element thermal stress"] = zeros(Float64, ne, num)
+        variables["thermal2D element diffusion stress"] = zeros(Float64, ne, num)
+        variables["thermal2D element total stress"] = zeros(Float64, ne, num)
+        variables["thermal2D element diffusion strain"] = zeros(Float64, ne, num)
+        variables["thermal2D element thermal strain"] = zeros(Float64, ne, num)
     end
     
     # Phase C: 简化耦合模式的变量历史记录
@@ -128,6 +133,12 @@ function StandardVariables(case::Case, num::Int64)
     if case.opt.thermalmodel == "lumped"
         variables["thermal lumped internal heat"] = zeros(Float64, 1, num)
         variables["thermal lumped internal heat [W]"] = zeros(Float64, 1, num)
+    end
+
+    if case.opt.thermalmodel == "distributed2D" && haskey(case.mesh, "thermal2D")
+        nT = case.mesh["thermal2D"].nlen
+        variables["thermal2D displacement x"] = zeros(Float64, nT, num)
+        variables["thermal2D displacement y"] = zeros(Float64, nT, num)
     end
 
     return variables

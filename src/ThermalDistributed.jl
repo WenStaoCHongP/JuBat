@@ -192,9 +192,9 @@ function _assemble_stiffness_matrix(case, variables, mesh, ne, Vi, Vj, dNdx, dNd
     use_aniso = _should_use_anisotropic(case, variables, mesh)
     
     if use_aniso
-        return _assemble_anisotropic_stiffness(case, variables, mesh, ne, Vi, Vj, dNdx, dNdy, wJ, k_ref, nnode)
+        return _assemble_anisotropic_stiffness(case, variables, mesh, ne, Vi, Vj, dNdx, dNdy, wJ, k_ref, L_th, nnode)
     else
-        return _assemble_isotropic_stiffness(case, mesh, Vi, Vj, dNdx, dNdy, wJ, k_ref, nnode)
+        return _assemble_isotropic_stiffness(case, mesh, Vi, Vj, dNdx, dNdy, wJ, k_ref, L_th, nnode)
     end
 end
 
@@ -219,7 +219,7 @@ function _should_use_anisotropic(case, variables, mesh)
 end
 
 """装配各向异性刚度矩阵"""
-function _assemble_anisotropic_stiffness(case, variables, mesh, ne, Vi, Vj, dNdx, dNdy, wJ, k_ref, nnode)
+function _assemble_anisotropic_stiffness(case, variables, mesh, ne, Vi, Vj, dNdx, dNdy, wJ, k_ref, L_th, nnode)
     # 计算各元素的等效热导率
     lam_r_e, lam_t_e = _compute_effective_conductivity(case, variables, ne, k_ref)
     
@@ -239,7 +239,7 @@ function _assemble_anisotropic_stiffness(case, variables, mesh, ne, Vi, Vj, dNdx
     end
     
     # 加负号与电化学约定统一
-    cxx, cxy, cyy = -Kxx .* wJ, -Kxy .* wJ, -Kyy .* wJ
+    cxx, cxy, cyy = -Kxx .* (wJ ./ L_th^2), -Kxy .* (wJ ./ L_th^2), -Kyy .* (wJ ./ L_th^2)
     
     # 组装
     KT_xx = Assemble(Vi, Vj, dNdx, dNdx, cxx, nnode)
@@ -278,7 +278,7 @@ function _compute_effective_conductivity(case, variables, ne, k_ref)
 end
 
 """装配各向同性刚度矩阵"""
-function _assemble_isotropic_stiffness(case, mesh, Vi, Vj, dNdx, dNdy, wJ, k_ref, nnode)
+function _assemble_isotropic_stiffness(case, mesh, Vi, Vj, dNdx, dNdy, wJ, k_ref, L_th, nnode)
     # 计算各向同性热导率
     pgeo = jellyroll_spiral_params(case.param_dim)
     λ_iso_nd = if pgeo.λ_r_eff > 0 && pgeo.λ_t_eff > 0
@@ -288,7 +288,7 @@ function _assemble_isotropic_stiffness(case, mesh, Vi, Vj, dNdx, dNdy, wJ, k_ref
     end
     
     # 加负号与电化学约定统一
-    weights = -λ_iso_nd .* wJ
+    weights = -λ_iso_nd .* (wJ ./ L_th^2)
     KT_x = Assemble(Vi, Vj, dNdx, dNdx, weights, nnode)
     KT_y = Assemble(Vi, Vj, dNdy, dNdy, weights, nnode)
     

@@ -59,7 +59,7 @@ function main()
     # 热应力时间序列
     stress_mean_hist = Float64[]  # [Pa]
     # 自定义平均体积热源设置
-    q_user = try parse(Float64, get(ENV, "SPME_Q", "1000")) catch; 1000 end
+    q_user = try parse(Float64, get(ENV, "SPME_Q", "1e-9")) catch; 1e-9 end
     q_units = get(ENV, "SPME_Q_UNITS", "SI")  # "SI" | "nd"
     istep = 0
     while t <= Tend + 1e-12

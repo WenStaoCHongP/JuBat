@@ -39,5 +39,5 @@ export jellyroll_tab_node_indices, edge_boundary
 export jellyroll_element_centers, jellyroll_effective_K_at
 export ThermalDistributed1D, ThermalDistributed2D, ThermalDistributed_BC, heatQ_Source, solve_branch_currents_newton
 export ThermalModel, ThermalLumpedModel, ThermalDistributed1DModel, ThermalDistributed2DModel
-export thermal_stress
+export thermal_diffusion_stress_2D
 end

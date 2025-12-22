@@ -21,7 +21,7 @@ for i in eachindex(Crates)
         opt.dt = [1 10] / Crates[i] / 4
     end
     opt.time = [0 3600/Crates[i]]
-    opt.model = "SPMe" # choose model, other options are "SPM" or "SPMe"
+    opt.model = "P2D" # choose model, other options are "SPM" or "SPMe"
     case1 = JuBat.SetCase(param_dim, opt)
     result = JuBat.Solve(case1)
     plot!(pV, result["time [s]"]/3600*Crates[i]*5, result["cell voltage [V]"], label=string(Crates[i]) * "C (JuBat)", linecolor=colors[i])
