@@ -149,8 +149,11 @@ function Calstressdisp(electrode::Electrode, mesh::Mesh, cs::Array{Float64}, T::
 基于锂浓度（SOC）变化引起的体积膨胀，结合有限元方法求解应力场和位移场。
 
 # 输入
+- `case`: 案例对象，包含网格、参数等
+- `variables`: 包含温度场、SOC分布等的字典
 
 # 输出
+- 更新 `variables` 字典，添加以下场：
   - `"diffusion stress xx"`: x方向正应力 [Pa]
   - `"diffusion stress yy"`: y方向正应力 [Pa]
   - `"diffusion stress xy"`: 剪应力 [Pa]
@@ -159,178 +162,60 @@ function Calstressdisp(electrode::Electrode, mesh::Mesh, cs::Array{Float64}, T::
   - `"displacement y"`: y方向位移 [m]
 
 """
-
-"""
-    thermal_stress(case, variables)
-
-基于热场更新逐单元热应变与热应力。默认假设热网格可用且温度以
-无量纲形式存储在 `variables["T_nodes"]` 中。
-"""
-function thermal_stress(case::Case, variables::Dict{String, Union{Array{Float64},Float64}})
-    if !case.opt.thermal_enabled || case.opt.thermalmodel != "distributed2D" || !haskey(case.mesh, "thermal2D")
-        return variables
-    end
-
+function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{Array{Float64},Float64}})
+    @assert haskey(case.mesh, "thermal2D") "thermal2D mesh is required for 2D diffusion stress"
     mesh = case.mesh["thermal2D"]
+    @assert mesh.type == "Q4" "diffusion_stress_2D requires Q4 mesh"
+    
+    param = case.param
+    Tref = param.scale.T_ref
+    T0 = hasproperty(param.cell, :T0) ? param.cell.T0 : 298.0 / Tref
+    
+    # 提取温度场和SOC分布
+    T_nodes = haskey(variables, "T_nodes") ? variables["T_nodes"] : fill(T0, mesh.nlen)
+    T_nodes = isa(T_nodes, AbstractVector) ? T_nodes : T_nodes[:, end]
+    soc_n_elem = variables["thermal2D element soc_n"]
+    soc_p_elem = variables["thermal2D element soc_p"]
+    soc_ref_n = param.NE.cs0 
+    soc_ref_p = param.PE.cs0
+    # 计算单元级别的温度和SOC
     ne = size(mesh.element, 1)
-    ne == 0 && return variables
-
-    T_nodes_any = get(variables, "T_nodes", nothing)
-    if T_nodes_any === nothing
-        return variables
-    end
-
-    T_nodes_vec = if T_nodes_any isa AbstractVector
-        T_nodes_any
-    elseif T_nodes_any isa AbstractMatrix && size(T_nodes_any, 1) == mesh.nlen
-        T_nodes_any[:, end]
-    else
-        return variables
-    end
-
-    if length(T_nodes_vec) != mesh.nlen
-        return variables
-    end
-
-    param_dim = case.param_dim
-    T_scale = param_dim.scale.T_ref
-    T0 = param_dim.cell.T0
-
-    th_n = param_dim.NE.thickness
-    th_p = param_dim.PE.thickness
-    thickness_tot = th_n + th_p
-    thickness_tot <= 0 && return variables
-
-    α_eff = (param_dim.NE.alphaT * th_n + param_dim.PE.alphaT * th_p) / thickness_tot
-    E_eff = (param_dim.NE.E * th_n + param_dim.PE.E * th_p) / thickness_tot
-    ν_eff = (param_dim.NE.nu * th_n + param_dim.PE.nu * th_p) / thickness_tot
-
-    thermal_strain = zeros(Float64, ne)
-    thermal_stress = zeros(Float64, ne)
-    T_elem = zeros(Float64, ne)
-
     @inbounds for e in 1:ne
         nodes = mesh.element[e, :]
-        T_nd = mean(T_nodes_vec[nodes])
-        T_K = T_nd * T_scale
-        T_elem[e] = T_K
-        ΔT = T_K - T0
-        ε_th = α_eff * ΔT
-        thermal_strain[e] = ε_th
-        thermal_stress[e] = -E_eff / (1.0 - ν_eff) * ε_th
+        T_elem[e] = sum(T_nodes[nodes]) / length(nodes)
+        dT_e = T_elem[e] - T0
+        Δsoc_n = soc_n_elem[e] - soc_ref_n
+        Δsoc_p = soc_p_elem[e] - soc_ref_p
     end
+    # 获取材料参数
+    E_eff = (param.NE.E * param.NE.thickness + param.PE.E * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
+    ν_eff = (param.NE.nu * param.NE.thickness + param.PE.nu * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
+    α_eff = (param.NE.alphaT * param.NE.thickness + param.PE.alphaT * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
+    β_n = param.NE.Omega / 3.0 
+    β_p = param.PE.Omega / 3.0 
 
-    variables["thermal2D element temperature [K]"] = T_elem
-    variables["thermal2D element thermal strain"] = thermal_strain
-    variables["thermal2D element thermal stress"] = thermal_stress
+    
+    # 装配力学刚度矩阵
+    K_mech = _assemble_mechanical_stiffness_2D(mesh, E_eff, ν_eff)
+    
+    # 装配热-扩散载荷向量
+    F_mech = _assemble_thermal_diffusion_load_2D(mesh,E_eff, ν_eff)
+    
+    # 施加边界条件
+    K_mech, F_mech = _apply_mechanical_BC_2D(K_mech, F_mech, mesh, case)
+    
+    # 求解位移场
+    U_M = _solve_mechanical_displacement_2D(K_mech, F_mech, mesh.nlen)
+    
+    # 恢复应力场
+    σ_xx, σ_yy, σ_xy, σ_vm = _recover_stress_2D(U, mesh, E_eff, ν_eff)
+    
+    # 写入结果（转换为有量纲）
+    L_ref = hasproperty(param.scale, :L_th) ? param.scale.L_th : 1.0
+    _write_mechanical_results!(variables, U, σ_xx, σ_yy, σ_xy, σ_vm, L_ref)
+    
     return variables
 end
-
-"""
-    thermal_diffusion_stress_2D(case, variables; compute_displacement::Bool=true)
-
-计算宏观层面的热/扩散应变及应力，采用厚度加权的体积膨胀近似模型。
-当 `compute_displacement=false` 时，仅更新逐单元量以便时间历史记录。
-"""
-function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{Array{Float64},Float64}}; compute_displacement::Bool=true)
-    if !case.opt.thermal_enabled || case.opt.thermalmodel != "distributed2D" || !haskey(case.mesh, "thermal2D")
-        return variables
-    end
-    if !hasproperty(case.opt, :mechanicalmodel) || isempty(case.opt.mechanicalmodel)
-        return variables
-    end
-
-    mesh = case.mesh["thermal2D"]
-    ne = size(mesh.element, 1)
-    ne == 0 && return variables
-
-    variables = thermal_stress(case, variables)
-    thermal_strain = get(variables, "thermal2D element thermal strain", zeros(Float64, ne))
-
-    param = case.param
-    param_dim = case.param_dim
-
-    th_n = param_dim.NE.thickness
-    th_p = param_dim.PE.thickness
-    thickness_tot = th_n + th_p
-    thickness_tot <= 0 && return variables
-
-    β_n = param_dim.NE.Omega / 3.0
-    β_p = param_dim.PE.Omega / 3.0
-    cs_max_n = param_dim.NE.cs_max
-    cs_max_p = param_dim.PE.cs_max
-    cs0_n_nd = param.NE.cs0
-    cs0_p_nd = param.PE.cs0
-
-    soc_n = get(variables, "thermal2D element soc_n", fill(cs0_n_nd, ne))
-    soc_p = get(variables, "thermal2D element soc_p", fill(cs0_p_nd, ne))
-
-    diffusion_strain = zeros(Float64, ne)
-    @inbounds for e in 1:ne
-        Δcs_n = (soc_n[e] - cs0_n_nd) * cs_max_n
-        Δcs_p = (soc_p[e] - cs0_p_nd) * cs_max_p
-        ε_diff = (β_n * Δcs_n * th_n + β_p * Δcs_p * th_p) / thickness_tot
-        diffusion_strain[e] = ε_diff
-    end
-
-    thermal_stress_elem = get(variables, "thermal2D element thermal stress", zeros(Float64, ne))
-
-    E_eff = (param_dim.NE.E * th_n + param_dim.PE.E * th_p) / thickness_tot
-    ν_eff = (param_dim.NE.nu * th_n + param_dim.PE.nu * th_p) / thickness_tot
-    prefactor = -E_eff / (1.0 - ν_eff)
-
-    diffusion_stress = prefactor .* diffusion_strain
-    total_strain = thermal_strain .+ diffusion_strain
-    total_stress = prefactor .* total_strain
-
-    variables["thermal2D element diffusion strain"] = diffusion_strain
-    variables["thermal2D element diffusion stress"] = diffusion_stress
-    variables["thermal2D element total stress"] = total_stress
-
-    σ_xx = total_stress
-    σ_yy = total_stress
-    σ_xy = zeros(Float64, ne)
-    σ_vm = abs.(total_stress)
-
-    variables["diffusion stress xx"] = σ_xx
-    variables["diffusion stress yy"] = σ_yy
-    variables["diffusion stress xy"] = σ_xy
-    variables["diffusion stress vonMises"] = σ_vm
-
-    if compute_displacement
-        nnode = mesh.nlen
-        eps_node_sum = zeros(Float64, nnode)
-        eps_node_cnt = zeros(Int, nnode)
-        @inbounds for e in 1:ne
-            ε_tot = total_strain[e]
-            nodes = mesh.element[e, :]
-            for node in nodes
-                eps_node_sum[node] += ε_tot
-                eps_node_cnt[node] += 1
-            end
-        end
-        u_x = zeros(Float64, nnode)
-        u_y = zeros(Float64, nnode)
-        @inbounds for node in 1:nnode
-            if eps_node_cnt[node] > 0
-                ε_avg = eps_node_sum[node] / eps_node_cnt[node]
-                u_x[node] = ε_avg * mesh.node[node, 1]
-                u_y[node] = ε_avg * mesh.node[node, 2]
-            end
-        end
-
-        variables["displacement x"] = u_x
-        variables["displacement y"] = u_y
-        variables["thermal2D displacement x"] = reshape(u_x, :, 1)
-        variables["thermal2D displacement y"] = reshape(u_y, :, 1)
-    end
-
-    # 统一热/扩散贡献，确保热应力数组与总应力一致
-    variables["thermal2D element thermal stress"] = thermal_stress_elem
-
-    return variables
-end
-
 
 
 """装配2D力学刚度矩阵"""

@@ -405,6 +405,18 @@ println("="^70)
 
 # 调用宏观应力计算函数
 try
+    variables = Dict{String, Union{Array{Float64},Float64}}()
+    
+    # 从 result 中提取温度场并转换为无量纲形式
+    if haskey(result, "thermal2D T_nodes [K]")
+        T_nodes_K = result["thermal2D T_nodes [K]"]
+        T_ref = case.param_dim.scale.T_ref
+        T_nodes = T_nodes_K ./ T_ref  # 转换为无量纲
+        variables["T_nodes"] = T_nodes
+        println("  ✓ 温度场数据已加载")
+    else
+        @warn "未找到温度场数据 'thermal2D T_nodes [K]'"
+    end
     variables = JuBat.thermal_diffusion_stress_2D(case, variables)
     
     println("✓ 应力场计算完成")
@@ -503,19 +515,25 @@ try
     
     # 温度场
     T_elem_plot = zeros(Float64, ne)
-    for e in 1:ne
-        nodes = mesh_th.element[e, :]
-        T_elem_plot[e] = mean(T_nodes[nodes]) * T_ref
+    if haskey(variables, "T_nodes")
+        T_nodes_nd = variables["T_nodes"]
+        T_ref_scale = case.param_dim.scale.T_ref
+        for e in 1:ne
+            nodes = mesh_th.element[e, :]
+            T_elem_plot[e] = mean(T_nodes_nd[nodes]) * T_ref_scale
+        end
+        
+        p8 = scatter(x_elem, y_elem, marker_z=T_elem_plot,
+                     color=:hot, markersize=3,
+                     xlabel="x [m]", ylabel="y [m]",
+                     title="Temperature [K]", colorbar=true,
+                     aspect_ratio=:equal)
+        
+        savefig(p8, "output/thermal_field.png")
+        println("✓ 温度场图保存至: output/thermal_field.png")
+    else
+        println("⚠ 无法绘制温度场: T_nodes 数据不可用")
     end
-    
-    p8 = scatter(x_elem, y_elem, marker_z=T_elem_plot,
-                 color=:hot, markersize=3,
-                 xlabel="x [m]", ylabel="y [m]",
-                 title="Temperature [K]", colorbar=true,
-                 aspect_ratio=:equal)
-    
-    savefig(p8, "output/thermal_field.png")
-    println("✓ 温度场图保存至: output/thermal_field.png")
     
 catch e
     println("❌ 应力计算失败:")
