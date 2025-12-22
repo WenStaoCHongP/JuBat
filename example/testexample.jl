@@ -405,7 +405,7 @@ println("="^70)
 
 # 调用宏观应力计算函数
 try
-    # 构建 variables 字典，包含温度场和浓度数据
+    # 构建 variables 字典，包含温度场数据
     variables = Dict{String, Union{Array{Float64},Float64}}()
     
     # 从 result 中提取温度场并转换为无量纲形式
@@ -419,16 +419,8 @@ try
         @warn "未找到温度场数据 'thermal2D T_nodes [K]'"
     end
     
-    # 提取SOC数据（如果可用）
-    if haskey(result, "thermal2D element soc_n")
-        variables["thermal2D element soc_n"] = result["thermal2D element soc_n"][:, end]
-        println("  ✓ 负极SOC数据已加载")
-    end
-    
-    if haskey(result, "thermal2D element soc_p")
-        variables["thermal2D element soc_p"] = result["thermal2D element soc_p"][:, end]
-        println("  ✓ 正极SOC数据已加载")
-    end
+    # 注意：SOC 数据会在 thermal_diffusion_stress_2D 函数内部使用默认值
+    # (cs0_n 和 cs0_p)，因为 result 中不包含逐单元 SOC 历史数据
     
     # 调用应力计算函数
     variables = JuBat.thermal_diffusion_stress_2D(case, variables)
