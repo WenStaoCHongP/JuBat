@@ -407,6 +407,14 @@ println("="^70)
 try
     variables = Dict{String, Union{Array{Float64},Float64}}()
     
+    # 调试：打印 result 中的所有键
+    println("\n[调试] result 字典中的键:")
+    for key in sort(collect(keys(result)))
+        if occursin("thermal2D", key) || occursin("soc", lowercase(key))
+            println("  - $key")
+        end
+    end
+    
     # 从 result 中提取温度场并转换为无量纲形式
     if haskey(result, "thermal2D T_nodes [K]")
         T_nodes_K = result["thermal2D T_nodes [K]"]
@@ -419,18 +427,23 @@ try
     end
     
     # 从 result 中提取 SOC 数据
+    ne = size(case.mesh["thermal2D"].element, 1)
     if haskey(result, "thermal2D element soc_n")
         variables["thermal2D element soc_n"] = result["thermal2D element soc_n"][:, end]
         println("  ✓ 负极SOC数据已加载")
     else
-        @warn "未找到负极SOC数据 'thermal2D element soc_n'"
+        @warn "未找到负极SOC数据 'thermal2D element soc_n'，使用初始SOC"
+        # 使用初始 SOC 作为回退
+        variables["thermal2D element soc_n"] = fill(case.param.NE.cs0, ne)
     end
     
     if haskey(result, "thermal2D element soc_p")
         variables["thermal2D element soc_p"] = result["thermal2D element soc_p"][:, end]
         println("  ✓ 正极SOC数据已加载")
     else
-        @warn "未找到正极SOC数据 'thermal2D element soc_p'"
+        @warn "未找到正极SOC数据 'thermal2D element soc_p'，使用初始SOC"
+        # 使用初始 SOC 作为回退
+        variables["thermal2D element soc_p"] = fill(case.param.PE.cs0, ne)
     end
     
     variables = JuBat.thermal_diffusion_stress_2D(case, variables)

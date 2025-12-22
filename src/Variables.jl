@@ -175,13 +175,27 @@ function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Floa
                     col = ndims(val) == 1 ? val : val[:,1]
                     if length(col) == nrows
                         variables_hist[k][:, v] = col
+                        # 调试：记录SOC数据的更新
+                        if occursin("soc", lowercase(k)) && v <= 3
+                            println("[DEBUG Variable_update!] 步骤 $v: 更新 $k, 长度=$(length(col)), nrows=$nrows")
+                        end
                     elseif nrows == 1 && length(col) >= 1
                         variables_hist[k][1, v] = col[1]
+                    else
+                        # 调试：尺寸不匹配
+                        if occursin("soc", lowercase(k))
+                            @warn "变量 $k 尺寸不匹配: col长度=$(length(col)), nrows=$nrows"
+                        end
                     end
                 elseif isa(val, Float64)
                     if nrows == 1
                         variables_hist[k][1, v] = val
                     end
+                end
+            else
+                # 调试：键不存在
+                if occursin("soc", lowercase(k)) && v <= 3
+                    println("[DEBUG Variable_update!] 步骤 $v: 键 $k 在 variables 中不存在")
                 end
             end
         elseif isa(variables_hist[k], Float64)
