@@ -406,22 +406,55 @@ function _apply_mechanical_BC_2D(K_M, F_M, mesh, case)
     return K_M, F_M
 end
 
-"""识别需要施加边界条件的节点"""
+"""识别需要施加边界条件的节点（内外螺旋边界固定）"""
 function _identify_mechanical_bc_nodes(mesh, case)
     nnode = mesh.nlen
     bc_nodes = Dict{Int, Symbol}()
+    param_dim = case.param_dim
     
-    # 简单策略：固定一个节点防止刚体位移
-    # 选择最接近原点的节点
-    x = mesh.node[:, 1]
-    y = mesh.node[:, 2]
-    r = hypot.(x, y)
-    fixed_node = argmin(r)
+    # 获取螺旋参数
+    pgeo = jellyroll_spiral_params(param_dim)
+    s_in = 0.0
+    s_out = pgeo.t_repeat
+    bval = max(pgeo.b, 1e-12)
+    θ0_mesh = max(0.0, (pgeo.Rin - pgeo.a - s_in) / bval)
+    θ1_mesh = min((pgeo.Rout - pgeo.a - s_out) / bval, (pgeo.Rout - pgeo.a) / bval)
     
-    bc_nodes[fixed_node] = :fixed_xy
+    # 获取配置（如果有的话）
+    opt = case.opt
+    θ_in_range = hasproperty(opt, :boundary_inner_theta) ? opt.boundary_inner_theta : (θ0_mesh, min(θ0_mesh + 2.0*π, θ1_mesh))
+    θ_out_range = hasproperty(opt, :boundary_outer_theta) ? opt.boundary_outer_theta : (max(θ1_mesh - 2.0*π, θ0_mesh), θ1_mesh)
+    tol = hasproperty(opt, :boundary_tol) ? opt.boundary_tol : 1e-4
     
-    # 可选：添加对称边界条件等
-    # 这里采用最小约束，只固定一个点
+    # 识别内边界节点（第一圈）
+    inner_count = 0
+    for i in 1:nnode
+        if edge_boundary(mesh, i, param_dim; which=:inner, theta_range=θ_in_range, tol=tol)
+            bc_nodes[i] = :fixed_xy
+            inner_count += 1
+        end
+    end
+    
+    # 识别外边界节点（最后一圈）
+    outer_count = 0
+    for i in 1:nnode
+        if edge_boundary(mesh, i, param_dim; which=:outer, theta_range=θ_out_range, tol=tol)
+            bc_nodes[i] = :fixed_xy
+            outer_count += 1
+        end
+    end
+    
+    println("  [力学边界条件] 内边界固定节点: $inner_count, 外边界固定节点: $outer_count")
+    
+    # 如果没有找到边界节点，回退到简单策略
+    if isempty(bc_nodes)
+        @warn "未找到内外边界节点，回退到固定一个节点"
+        x = mesh.node[:, 1]
+        y = mesh.node[:, 2]
+        r = hypot.(x, y)
+        fixed_node = argmin(r)
+        bc_nodes[fixed_node] = :fixed_xy
+    end
     
     return bc_nodes
 end
