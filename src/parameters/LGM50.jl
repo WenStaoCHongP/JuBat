@@ -33,6 +33,8 @@ PE.dUdT = x-> 0 * x
 PE.E = 375000000000.0
 PE.nu = 0.2
 PE.Omega = -7.28e-7
+PE.alphaT = 1.0e-5  # 热膨胀系数 [1/K]
+PE.beta_c = 0.01    # 浓度膨胀系数（体积应变/单位浓度变化）[-]
 
 
 # Negative Electrode
@@ -60,6 +62,8 @@ NE.dUdT = x-> 0 * x
 NE.E = 15000000000.0
 NE.nu = 0.3
 NE.Omega = 3.1e-6
+NE.alphaT = 1.5e-5  # 热膨胀系数 [1/K]
+NE.beta_c = 0.03    # 浓度膨胀系数（石墨体积变化约10%）[-]
 
 
 # Electrolyte
@@ -81,6 +85,9 @@ SP.heat_Q = 700
 SP.eps = 0.47
 SP.eps_fi = 0.
 SP.brugg = 1.5
+SP.E = 1.0e9      # 弹性模量 [Pa]
+SP.nu = 0.3       # 泊松比 [-]
+SP.alphaT = 1.0e-5  # 热膨胀系数 [1/K]
 
 # Cell
 cell = Cell()    
