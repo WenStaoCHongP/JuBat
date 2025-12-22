@@ -495,59 +495,103 @@ try
         y_elem[e] = mean(mesh_th.node[nodes, 2])
     end
     
-    # 创建图形
+    # 创建图形（改进可视化）
+    # 使用百分位数设置更好的颜色范围
+    function get_clims_percentile(data, plow=5, phigh=95)
+        valid_data = data[isfinite.(data)]
+        if isempty(valid_data)
+            return (0.0, 1.0)
+        end
+        vmin = percentile(valid_data, plow)
+        vmax = percentile(valid_data, phigh)
+        if abs(vmax - vmin) < 1e-10
+            # 如果范围太小，使用全范围
+            vmin, vmax = extrema(valid_data)
+        end
+        return (vmin, vmax)
+    end
+    
+    # 计算合理的颜色范围
+    clim_xx = get_clims_percentile(σ_xx./1e6, 2, 98)
+    clim_yy = get_clims_percentile(σ_yy./1e6, 2, 98)
+    clim_xy = get_clims_percentile(σ_xy./1e6, 2, 98)
+    clim_vm = get_clims_percentile(σ_vm./1e6, 2, 98)
+    
+    println("\n应力颜色范围 [MPa]:")
+    println("  σxx: [$(round(clim_xx[1], digits=2)), $(round(clim_xx[2], digits=2))]")
+    println("  σyy: [$(round(clim_yy[1], digits=2)), $(round(clim_yy[2], digits=2))]")
+    println("  σxy: [$(round(clim_xy[1], digits=2)), $(round(clim_xy[2], digits=2))]")
+    println("  σvm: [$(round(clim_vm[1], digits=2)), $(round(clim_vm[2], digits=2))]")
+    
     p1 = scatter(x_elem, y_elem, marker_z=σ_xx./1e6, 
-                 color=:viridis, markersize=3,
+                 color=:RdBu_r, markersize=4, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="σxx [MPa]", colorbar=true,
+                 clims=clim_xx,
                  aspect_ratio=:equal)
     
     p2 = scatter(x_elem, y_elem, marker_z=σ_yy./1e6,
-                 color=:viridis, markersize=3,
+                 color=:RdBu_r, markersize=4, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="σyy [MPa]", colorbar=true,
+                 clims=clim_yy,
                  aspect_ratio=:equal)
     
     p3 = scatter(x_elem, y_elem, marker_z=σ_xy./1e6,
-                 color=:viridis, markersize=3,
+                 color=:RdBu_r, markersize=4, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="σxy [MPa]", colorbar=true,
+                 clims=clim_xy,
                  aspect_ratio=:equal)
     
     p4 = scatter(x_elem, y_elem, marker_z=σ_vm./1e6,
-                 color=:plasma, markersize=3,
+                 color=:plasma, markersize=4, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="Von Mises Stress [MPa]", colorbar=true,
+                 clims=clim_vm,
                  aspect_ratio=:equal)
     
-    plot_stress = plot(p1, p2, p3, p4, layout=(2,2), size=(1200, 1000))
+    plot_stress = plot(p1, p2, p3, p4, layout=(2,2), size=(1400, 1200))
     savefig(plot_stress, "output/thermal_diffusion_stress_field.png")
     println("✓ 应力场图保存至: output/thermal_diffusion_stress_field.png")
     
-    # 位移场
+    # 位移场（改进可视化）
+    # 计算合理的颜色范围
+    clim_ux = get_clims_percentile(u_x.*1e6, 2, 98)
+    clim_uy = get_clims_percentile(u_y.*1e6, 2, 98)
+    u_mag = hypot.(u_x, u_y)
+    clim_umag = get_clims_percentile(u_mag.*1e6, 2, 98)
+    
+    println("\n位移颜色范围 [μm]:")
+    println("  u_x: [$(round(clim_ux[1], digits=3)), $(round(clim_ux[2], digits=3))]")
+    println("  u_y: [$(round(clim_uy[1], digits=3)), $(round(clim_uy[2], digits=3))]")
+    println("  |u|: [$(round(clim_umag[1], digits=3)), $(round(clim_umag[2], digits=3))]")
+    
     p5 = scatter(mesh_th.node[:, 1], mesh_th.node[:, 2], 
                  marker_z=u_x.*1e6, 
-                 color=:viridis, markersize=2,
+                 color=:RdBu_r, markersize=2.5, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="Displacement u_x [μm]", colorbar=true,
+                 clims=clim_ux,
                  aspect_ratio=:equal)
     
     p6 = scatter(mesh_th.node[:, 1], mesh_th.node[:, 2],
                  marker_z=u_y.*1e6,
-                 color=:viridis, markersize=2,
+                 color=:RdBu_r, markersize=2.5, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="Displacement u_y [μm]", colorbar=true,
+                 clims=clim_uy,
                  aspect_ratio=:equal)
     
-    u_mag = hypot.(u_x, u_y)
     p7 = scatter(mesh_th.node[:, 1], mesh_th.node[:, 2],
                  marker_z=u_mag.*1e6,
-                 color=:plasma, markersize=2,
+                 color=:plasma, markersize=2.5, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="Displacement Magnitude [μm]", colorbar=true,
+                 clims=clim_umag,
                  aspect_ratio=:equal)
     
-    plot_disp = plot(p5, p6, p7, layout=(1,3), size=(1800, 500))
+    plot_disp = plot(p5, p6, p7, layout=(1,3), size=(2100, 600))
     savefig(plot_disp, "output/thermal_diffusion_displacement_field.png")
     println("✓ 位移场图保存至: output/thermal_diffusion_displacement_field.png")
     
