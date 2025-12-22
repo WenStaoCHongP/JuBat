@@ -264,7 +264,7 @@ function Solve(case::Case)
     result = PostProcessing(case, variables_hist, v) 
      # 附加热相关历史数据
     try
-        for key in ["thermal2D element current", "thermal2D eta_n_e", "thermal2D eta_p_e"]
+        for key in ["thermal2D element current", "thermal2D eta_n_e", "thermal2D eta_p_e", "thermal2D element soc_n", "thermal2D element soc_p"]
             haskey(variables_hist, key) && (result[key] = variables_hist[key][:, 1:v])
         end
         if haskey(variables_hist, "heat_source_fields") && size(variables_hist["heat_source_fields"], 1) > 0
