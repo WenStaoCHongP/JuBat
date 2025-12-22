@@ -15,8 +15,17 @@
 """
 
 using LinearAlgebra, SparseArrays, Statistics, Plots, Printf
+
+# 强制重新加载模块（避免缓存问题）
+if isdefined(Main, :JuBat)
+    println("检测到已加载的 JuBat 模块，强制重新加载...")
+    @eval Main JuBat = nothing
+    GC.gc()  # 触发垃圾回收
+end
+
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
+println("✓ JuBat 模块加载完成")
 
 function main()
     println("="^80)
