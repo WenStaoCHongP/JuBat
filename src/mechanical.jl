@@ -564,13 +564,17 @@ function _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n_eff, β_p_eff
         # Von Mises应力
         σ_vm[e] = sqrt(σ_xx[e]^2 + σ_yy[e]^2 - σ_xx[e]*σ_yy[e] + 3.0*σ_xy[e]^2)
         
-        # 分离计算热应力和扩散应力（简化：仅基于初始应变比例）
-        if abs(epsilon_0_elem[e]) > 1e-15
-            ratio_thermal = epsilon_thermal_elem[e] / epsilon_0_elem[e]
-            ratio_diffusion = epsilon_diffusion_elem[e] / epsilon_0_elem[e]
-            σ_thermal_vm[e] = abs(ratio_thermal) * σ_vm[e]
-            σ_diffusion_vm[e] = abs(ratio_diffusion) * σ_vm[e]
+        # 分离计算热应力和扩散应力（基于初始应变比例）
+        ε_total_abs = abs(epsilon_thermal_elem[e]) + abs(epsilon_diffusion_elem[e])
+        
+        if ε_total_abs > 1e-15
+            # 按绝对值比例分配（因为应变可能有正负）
+            ratio_thermal = abs(epsilon_thermal_elem[e]) / ε_total_abs
+            ratio_diffusion = abs(epsilon_diffusion_elem[e]) / ε_total_abs
+            σ_thermal_vm[e] = ratio_thermal * σ_vm[e]
+            σ_diffusion_vm[e] = ratio_diffusion * σ_vm[e]
         else
+            # 如果总应变很小，应力也应该很小
             σ_thermal_vm[e] = 0.0
             σ_diffusion_vm[e] = 0.0
         end

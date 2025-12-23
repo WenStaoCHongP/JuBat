@@ -213,11 +213,45 @@ function main()
     stress_total_max_hist = zeros(Float64, num_steps)
     
     # 获取SOC和温度历史
-    if haskey(result, "thermal2D element soc_n") && haskey(result, "thermal2D T_nodes [K]")
+    if haskey(result, "thermal2D element soc_n")
         soc_n_hist = result["thermal2D element soc_n"]
         soc_p_hist = result["thermal2D element soc_p"]
         
+        # 检查温度场历史
+        has_T_hist = haskey(result, "thermal2D temperature [K]") || haskey(result, "temperature [K]")
+        
+        if has_T_hist
+            println("  ✓ 找到温度场历史数据")
+        else
+            println("  ⚠️  未找到完整温度场历史，将使用线性插值估算")
+        end
+        
+        # 获取初始和最终温度
+        T_ref = case.param_dim.scale.T_ref
+        T0_K = case.param_dim.cell.T0  # 初始温度 [K]
+        
+        if haskey(result, "thermal2D T_nodes [K]")
+            T_final_nodes_K = result["thermal2D T_nodes [K]"]
+        else
+            @warn "未找到最终温度场，使用初始温度"
+            T_final_nodes_K = fill(T0_K, case.mesh["thermal2D"].nlen)
+        end
+        
+        # 获取平均温度历史（用于插值）
+        if haskey(result, "temperature [K]")
+            T_avg_hist = result["temperature [K]"]
+        elseif haskey(result, "average temperature [K]")
+            T_avg_hist = result["average temperature [K]"]
+        else
+            # 线性插值：从T0到最终温度
+            T_final_avg = mean(T_final_nodes_K)
+            T_avg_hist = range(T0_K, T_final_avg, length=num_steps) |> collect
+            println("  使用线性插值：T0=$(round(T0_K,digits=2)) K → Tf=$(round(T_final_avg,digits=2)) K")
+        end
+        
         println("  计算$(num_steps)个时间步的应力场...")
+        println("  温度范围: $(round(minimum(T_avg_hist),digits=2)) - $(round(maximum(T_avg_hist),digits=2)) K")
+        println("  温升: $(round(maximum(T_avg_hist)-minimum(T_avg_hist),digits=2)) K")
         
         for step in 1:num_steps
             if step % max(1, div(num_steps, 10)) == 0 || step == num_steps
@@ -228,10 +262,13 @@ function main()
                 # 准备当前时刻的变量
                 variables_step = Dict{String, Union{Array{Float64},Float64}}()
                 
-                # 温度场
-                T_nodes_K = result["thermal2D T_nodes [K]"]
-                T_ref = case.param_dim.scale.T_ref
-                variables_step["T_nodes"] = T_nodes_K ./ T_ref
+                # 温度场：使用插值
+                # 假设温度场的空间分布保持相似，只是幅度随时间变化
+                T_avg_step = T_avg_hist[step]
+                T_ratio = (T_avg_step - T0_K) / max(mean(T_final_nodes_K) - T0_K, 1e-6)
+                T_nodes_step_K = T0_K .+ T_ratio .* (T_final_nodes_K .- T0_K)
+                
+                variables_step["T_nodes"] = T_nodes_step_K ./ T_ref
                 
                 # SOC数据
                 variables_step["thermal2D element soc_n"] = soc_n_hist[:, step]
@@ -257,15 +294,37 @@ function main()
         end
         println("\n  ✓ 应力历史计算完成")
         
-        @printf("  热应力峰值范围: [%.2f, %.2f] MPa\n", 
-                minimum(filter(!isnan, stress_thermal_max_hist)), 
-                maximum(filter(!isnan, stress_thermal_max_hist)))
-        @printf("  扩散应力峰值范围: [%.2f, %.2f] MPa\n", 
-                minimum(filter(!isnan, stress_diffusion_max_hist)), 
-                maximum(filter(!isnan, stress_diffusion_max_hist)))
-        @printf("  总应力峰值范围: [%.2f, %.2f] MPa\n", 
-                minimum(filter(!isnan, stress_total_max_hist)), 
-                maximum(filter(!isnan, stress_total_max_hist)))
+        # 过滤有效数据
+        valid_thermal = filter(!isnan, stress_thermal_max_hist)
+        valid_diffusion = filter(!isnan, stress_diffusion_max_hist)
+        valid_total = filter(!isnan, stress_total_max_hist)
+        
+        if !isempty(valid_thermal)
+            @printf("  热应力峰值范围: [%.2f, %.2f] MPa\n", 
+                    minimum(valid_thermal), maximum(valid_thermal))
+        else
+            println("  ⚠️  热应力数据全为NaN或0")
+        end
+        
+        if !isempty(valid_diffusion)
+            @printf("  扩散应力峰值范围: [%.2f, %.2f] MPa\n", 
+                    minimum(valid_diffusion), maximum(valid_diffusion))
+        else
+            println("  ⚠️  扩散应力数据全为NaN或0")
+        end
+        
+        if !isempty(valid_total)
+            @printf("  总应力峰值范围: [%.2f, %.2f] MPa\n", 
+                    minimum(valid_total), maximum(valid_total))
+        else
+            println("  ⚠️  总应力数据全为NaN或0")
+        end
+        
+        # 额外诊断
+        if !isempty(valid_thermal) && maximum(valid_thermal) < 0.1
+            @warn "热应力异常小（< 0.1 MPa），可能温度变化很小"
+            println("  检查：温升 = $(round(maximum(T_avg_hist)-minimum(T_avg_hist),digits=2)) K")
+        end
     else
         @warn "未找到SOC或温度历史数据，跳过时间历程应力计算"
     end
