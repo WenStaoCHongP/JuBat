@@ -51,7 +51,7 @@ function main()
     opt.mechanicalmodel = "full"
     
     # 时间设置
-    opt.time = [0.0, 60]  # 仿真时间 (s)
+    opt.time = [0.0, 3600]  # 仿真时间 (s)
     opt.dt = [0.5, 10]    # 时间步长范围 [dt_min, dt_max] (s)
     opt.dtType = "auto"     # 自动时间步长
     opt.jacobi = "update"
@@ -192,7 +192,73 @@ function main()
     @printf("  初始电压: %.4f V\n", V[1])
     @printf("  最终电压: %.4f V\n", V[end])
     @printf("  电压降: %.4f V\n", V[1] - V[end])
+     # ========================================================================
+    # 4.5. 计算每个时间步的应力场
+    # ========================================================================
+    println("\n[4.5/7] 计算时间历程应力场...")
     
+    # 初始化应力历史数组
+    stress_thermal_max_hist = zeros(Float64, num_steps)
+    stress_diffusion_max_hist = zeros(Float64, num_steps)
+    stress_total_max_hist = zeros(Float64, num_steps)
+    
+    # 获取SOC和温度历史
+    if haskey(result, "thermal2D element soc_n") && haskey(result, "thermal2D T_nodes [K]")
+        soc_n_hist = result["thermal2D element soc_n"]
+        soc_p_hist = result["thermal2D element soc_p"]
+        
+        println("  计算$(num_steps)个时间步的应力场...")
+        
+        for step in 1:num_steps
+            if step % max(1, div(num_steps, 10)) == 0 || step == num_steps
+                print("\r  进度: $(round(Int, 100*step/num_steps))%")
+            end
+            
+            try
+                # 准备当前时刻的变量
+                variables_step = Dict{String, Union{Array{Float64},Float64}}()
+                
+                # 温度场
+                T_nodes_K = result["thermal2D T_nodes [K]"]
+                T_ref = case.param_dim.scale.T_ref
+                variables_step["T_nodes"] = T_nodes_K ./ T_ref
+                
+                # SOC数据
+                variables_step["thermal2D element soc_n"] = soc_n_hist[:, step]
+                variables_step["thermal2D element soc_p"] = soc_p_hist[:, step]
+                
+                # 计算应力
+                variables_step = JuBat.thermal_diffusion_stress_2D(case, variables_step)
+                
+                # 提取峰值应力
+                σ_thermal = variables_step["thermal stress vonMises"]
+                σ_diffusion = variables_step["diffusion stress vonMises only"]
+                σ_total = variables_step["diffusion stress vonMises"]
+                
+                stress_thermal_max_hist[step] = maximum(σ_thermal)   # MPa
+                stress_diffusion_max_hist[step] = maximum(σ_diffusion)   # MPa
+                stress_total_max_hist[step] = maximum(σ_total)   # MPa
+            catch e
+                @warn "时间步 $step 应力计算失败: $e"
+                stress_thermal_max_hist[step] = NaN
+                stress_diffusion_max_hist[step] = NaN
+                stress_total_max_hist[step] = NaN
+            end
+        end
+        println("\n  ✓ 应力历史计算完成")
+        
+        @printf("  热应力峰值范围: [%.2f, %.2f] MPa\n", 
+                minimum(filter(!isnan, stress_thermal_max_hist)), 
+                maximum(filter(!isnan, stress_thermal_max_hist)))
+        @printf("  扩散应力峰值范围: [%.2f, %.2f] MPa\n", 
+                minimum(filter(!isnan, stress_diffusion_max_hist)), 
+                maximum(filter(!isnan, stress_diffusion_max_hist)))
+        @printf("  总应力峰值范围: [%.2f, %.2f] MPa\n", 
+                minimum(filter(!isnan, stress_total_max_hist)), 
+                maximum(filter(!isnan, stress_total_max_hist)))
+    else
+        @warn "未找到SOC或温度历史数据，跳过时间历程应力计算"
+    end
     # 温度
     if haskey(result, "temperature [K]")
         T_mean = result["temperature [K]"]
@@ -272,6 +338,51 @@ function main()
     end
     
     # 图3：逐单元电流演化（热图）
+    if !all(isnan.(stress_total_max_hist))
+        p3 = plot(xlabel="Time (s)", ylabel="Stress (MPa)", 
+                  title="Peak Stress Evolution",
+                  size=(800, 600), linewidth=2.5,
+                  legend=:bottomright)
+        
+        # 热应力
+        plot!(p3, t, stress_thermal_max_hist, 
+              label="Thermal Stress (max)", 
+              color=:red, linestyle=:dash, linewidth=2)
+        
+        # 扩散应力
+        plot!(p3, t, stress_diffusion_max_hist, 
+              label="Diffusion Stress (max)", 
+              color=:blue, linestyle=:dash, linewidth=2)
+        
+        # 总应力
+        plot!(p3, t, stress_total_max_hist, 
+              label="Total Stress (max)", 
+              color=:black, linewidth=3)
+        
+        savefig(p3, "testexample_stress_evolution.png")
+        println("  ✓ 保存: testexample_stress_evolution.png")
+        
+        # 应力分量占比
+        p3b = plot(xlabel="Time (s)", ylabel="Stress Ratio (%)", 
+                   title="Stress Component Ratio",
+                   size=(800, 600), linewidth=2.5,
+                   legend=:right)
+        
+        # 计算占比
+        thermal_ratio = 100 .* stress_thermal_max_hist ./ (stress_thermal_max_hist .+ stress_diffusion_max_hist)
+        diffusion_ratio = 100 .* stress_diffusion_max_hist ./ (stress_thermal_max_hist .+ stress_diffusion_max_hist)
+        
+        plot!(p3b, t, thermal_ratio, 
+              label="Thermal %", 
+              color=:red, linewidth=2.5, fillrange=0, fillalpha=0.3)
+        plot!(p3b, t, diffusion_ratio, 
+              label="Diffusion %", 
+              color=:blue, linewidth=2.5)
+        
+        savefig(p3b, "testexample_stress_ratio.png")
+        println("  ✓ 保存: testexample_stress_ratio.png")
+    end
+
     if haskey(result, "thermal2D element current")
         I_e_hist = result["thermal2D element current"]
         
@@ -279,12 +390,12 @@ function main()
         n_snapshots = min(5, num_steps)
         idx_snapshots = round.(Int, range(1, num_steps, length=n_snapshots))
         
-        p3 = plot(layout=(1, n_snapshots), size=(400*n_snapshots, 400))
+        p4 = plot(layout=(1, n_snapshots), size=(400*n_snapshots, 400))
         for (i, idx) in enumerate(idx_snapshots)
             I_e_snap = I_e_hist[:, idx]
             
             # 绘制径向-角度分布
-            scatter!(p3[i], θ_centers, r_centers, 
+            scatter!(p4[i], θ_centers, r_centers, 
                      marker_z=I_e_snap, 
                      markersize=4,
                      xlabel="θ (rad)", ylabel="r (m)",
@@ -293,16 +404,16 @@ function main()
                      colorbar=(i == n_snapshots),
                      legend=false)
         end
-        plot!(p3, plot_title="Element Current Distribution")
-        savefig(p3, "testexample_current_snapshots.png")
+        plot!(p4, plot_title="Element Current Distribution")
+        savefig(p4, "testexample_current_snapshots.png")
         println("  ✓ 保存: testexample_current_snapshots.png")
         
         # 绘制电流变异系数演化（异质性指标）
         cv_I = [std(I_e_hist[:, i]) / mean(I_e_hist[:, i]) for i in 1:num_steps]
-        p4 = plot(t, cv_I .* 100, xlabel="Time (s)", ylabel="CV of Current (%)", 
+        p5 = plot(t, cv_I .* 100, xlabel="Time (s)", ylabel="CV of Current (%)", 
                   label="Heterogeneity", linewidth=2, 
                   title="Current Distribution Heterogeneity")
-        savefig(p4, "testexample_current_heterogeneity.png")
+        savefig(p5, "testexample_current_heterogeneity.png")
         println("  ✓ 保存: testexample_current_heterogeneity.png")
     end
     
@@ -447,10 +558,10 @@ try
     
     # 统计信息
     println("\n应力统计 [MPa]:")
-    println("  σ_xx: min=$(minimum(σ_xx)/1e6), max=$(maximum(σ_xx)/1e6), mean=$(mean(σ_xx)/1e6)")
-    println("  σ_yy: min=$(minimum(σ_yy)/1e6), max=$(maximum(σ_yy)/1e6), mean=$(mean(σ_yy)/1e6)")
-    println("  σ_xy: min=$(minimum(σ_xy)/1e6), max=$(maximum(σ_xy)/1e6), mean=$(mean(σ_xy)/1e6)")
-    println("  σ_vm: min=$(minimum(σ_vm)/1e6), max=$(maximum(σ_vm)/1e6), mean=$(mean(σ_vm)/1e6)")
+    println("  σ_xx: min=$(minimum(σ_xx)), max=$(maximum(σ_xx)), mean=$(mean(σ_xx))")
+    println("  σ_yy: min=$(minimum(σ_yy)), max=$(maximum(σ_yy)), mean=$(mean(σ_yy))")
+    println("  σ_xy: min=$(minimum(σ_xy)), max=$(maximum(σ_xy)), mean=$(mean(σ_xy))")
+    println("  σ_vm: min=$(minimum(σ_vm)), max=$(maximum(σ_vm)), mean=$(mean(σ_vm))")
     
     println("\n位移统计 [μm]:")
     println("  u_x: min=$(minimum(u_x)*1e6), max=$(maximum(u_x)*1e6), mean=$(mean(u_x)*1e6)")
@@ -472,60 +583,88 @@ try
         x_elem[e] = mean(mesh_th.node[nodes, 1])
         y_elem[e] = mean(mesh_th.node[nodes, 2])
     end
-    
+    percentile(data, p) = quantile(data, clamp(p / 100, 0.0, 1.0))
+    function get_clims_percentile(data, plow=5, phigh=95)
+        valid_data = data[isfinite.(data)]
+        if isempty(valid_data)
+            return (0.0, 1.0)
+        end
+        vmin = percentile(valid_data, plow)
+        vmax = percentile(valid_data, phigh)
+        if abs(vmax - vmin) < 1e-10
+            # 如果范围太小，使用全范围
+            vmin, vmax = extrema(valid_data)
+        end
+        return (vmin, vmax)
+    end
+    palette_div = cgrad(:RdBu, rev=true)
+    clim_xx = get_clims_percentile(σ_xx, 2, 98)
+    clim_yy = get_clims_percentile(σ_yy, 2, 98)
+    clim_xy = get_clims_percentile(σ_xy, 2, 98)
+    clim_vm = get_clims_percentile(σ_vm, 2, 98)
     # 创建图形
-    p1 = scatter(x_elem, y_elem, marker_z=σ_xx./1e6, 
-                 color=:viridis, markersize=3,
+    p1 = scatter(x_elem, y_elem, marker_z=σ_xx, 
+                 color=palette_div, markersize=4, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="σxx [MPa]", colorbar=true,
+                 clims=clim_xx,
                  aspect_ratio=:equal)
     
-    p2 = scatter(x_elem, y_elem, marker_z=σ_yy./1e6,
-                 color=:viridis, markersize=3,
+    p2 = scatter(x_elem, y_elem, marker_z=σ_yy,
+                 color=palette_div, markersize=4, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="σyy [MPa]", colorbar=true,
+                 clims=clim_yy,
                  aspect_ratio=:equal)
     
-    p3 = scatter(x_elem, y_elem, marker_z=σ_xy./1e6,
-                 color=:viridis, markersize=3,
+    p3 = scatter(x_elem, y_elem, marker_z=σ_xy,
+                 color=palette_div, markersize=4, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="σxy [MPa]", colorbar=true,
+                 clims=clim_xy,
                  aspect_ratio=:equal)
     
-    p4 = scatter(x_elem, y_elem, marker_z=σ_vm./1e6,
-                 color=:plasma, markersize=3,
+    p4 = scatter(x_elem, y_elem, marker_z=σ_vm,
+                 color=palette_div, markersize=4, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="Von Mises Stress [MPa]", colorbar=true,
+                 clims=clim_vm,
                  aspect_ratio=:equal)
     
-    plot_stress = plot(p1, p2, p3, p4, layout=(2,2), size=(1200, 1000))
+    plot_stress = plot(p1, p2, p3, p4, layout=(2,2), size=(1400, 1200))
     savefig(plot_stress, "output/thermal_diffusion_stress_field.png")
     println("✓ 应力场图保存至: output/thermal_diffusion_stress_field.png")
-    
+    clim_ux = get_clims_percentile(u_x.*1e6, 2, 98)
+    clim_uy = get_clims_percentile(u_y.*1e6, 2, 98)
+    u_mag = hypot.(u_x, u_y)
+    clim_umag = get_clims_percentile(u_mag.*1e6, 2, 98)
     # 位移场
     p5 = scatter(mesh_th.node[:, 1], mesh_th.node[:, 2], 
                  marker_z=u_x.*1e6, 
-                 color=:viridis, markersize=2,
+                 color=palette_div, markersize=4, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="Displacement u_x [μm]", colorbar=true,
+                 clims=clim_ux,
                  aspect_ratio=:equal)
     
     p6 = scatter(mesh_th.node[:, 1], mesh_th.node[:, 2],
                  marker_z=u_y.*1e6,
-                 color=:viridis, markersize=2,
+                 color=palette_div, markersize=4, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="Displacement u_y [μm]", colorbar=true,
+                 clims=clim_uy,
                  aspect_ratio=:equal)
     
     u_mag = hypot.(u_x, u_y)
     p7 = scatter(mesh_th.node[:, 1], mesh_th.node[:, 2],
                  marker_z=u_mag.*1e6,
-                 color=:plasma, markersize=2,
+                 color=:plasma, markersize=2.5, markerstrokewidth=0,
                  xlabel="x [m]", ylabel="y [m]",
                  title="Displacement Magnitude [μm]", colorbar=true,
+                 clims=clim_umag,
                  aspect_ratio=:equal)
     
-    plot_disp = plot(p5, p6, p7, layout=(1,3), size=(1800, 500))
+    plot_disp = plot(p5, p6, p7, layout=(1,3), size=(2100, 600))
     savefig(plot_disp, "output/thermal_diffusion_displacement_field.png")
     println("✓ 位移场图保存至: output/thermal_diffusion_displacement_field.png")
     

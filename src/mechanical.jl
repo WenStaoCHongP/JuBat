@@ -213,11 +213,11 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     U_M = _solve_mechanical_displacement_2D(K_mech, F_mech, mesh.nlen)
     
     # 恢复应力场
-    σ_xx, σ_yy, σ_xy, σ_vm = _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+    σ_xx, σ_yy, σ_xy, σ_vm, σ_thermal, σ_diffusion = _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n, β_p, Tref, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
     
     # 写入结果（转换为有量纲）
     L_ref = hasproperty(param.scale, :L_th) ? param.scale.L_th : 1.0
-    _write_mechanical_results!(variables, U_M, σ_xx, σ_yy, σ_xy, σ_vm, L_ref)
+    _write_mechanical_results!(variables, U_M, σ_xx, σ_yy, σ_xy, σ_vm, σ_thermal, σ_diffusion, L_ref)
     
     return variables
 end
@@ -409,19 +409,36 @@ end
 function _identify_mechanical_bc_nodes(mesh, case)
     nnode = mesh.nlen
     bc_nodes = Dict{Int, Symbol}()
-    
-    # 简单策略：固定一个节点防止刚体位移
-    # 选择最接近原点的节点
-    x = mesh.node[:, 1]
-    y = mesh.node[:, 2]
-    r = hypot.(x, y)
-    fixed_node = argmin(r)
-    
-    bc_nodes[fixed_node] = :fixed_xy
-    
-    # 可选：添加对称边界条件等
-    # 这里采用最小约束，只固定一个点
-    
+    param_dim = case.param_dim
+    # 获取螺旋参数
+    pgeo = jellyroll_spiral_params(param_dim)
+    s_in = 0.0
+    s_out = pgeo.t_repeat
+    bval = max(pgeo.b, 1e-12)
+    θ0_mesh = max(0.0, (pgeo.Rin - pgeo.a - s_in) / bval)
+    θ1_mesh = min((pgeo.Rout - pgeo.a - s_out) / bval, (pgeo.Rout - pgeo.a) / bval)
+    # 获取配置（如果有的话）
+    opt = case.opt
+    θ_in_range = hasproperty(opt, :boundary_inner_theta) ? opt.boundary_inner_theta : (θ0_mesh, min(θ0_mesh + 2.0*π, θ1_mesh))
+    θ_out_range = hasproperty(opt, :boundary_outer_theta) ? opt.boundary_outer_theta : (max(θ1_mesh - 2.0*π, θ0_mesh), θ1_mesh)
+    tol = hasproperty(opt, :boundary_tol) ? opt.boundary_tol : 1e-4
+    # 识别内边界节点（第一圈）
+    inner_count = 0
+    for i in 1:nnode
+        if edge_boundary(mesh, i, param_dim; which=:inner, theta_range=θ_in_range, tol=tol)
+            bc_nodes[i] = :fixed_xy
+            inner_count += 1
+        end
+    end
+    # 识别外边界节点（最后一圈）
+    outer_count = 0
+    for i in 1:nnode
+        if edge_boundary(mesh, i, param_dim; which=:outer, theta_range=θ_out_range, tol=tol)
+            bc_nodes[i] = :fixed_xy
+            outer_count += 1
+        end
+    end
+    println("  [力学边界条件] 内边界固定节点: $inner_count, 外边界固定节点: $outer_count")
     return bc_nodes
 end
 
@@ -441,7 +458,7 @@ function _solve_mechanical_displacement_2D(K_M::SparseMatrixCSC{Float64,Int}, F_
 end
 
 """恢复应力场"""
-function _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+function _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n, β_p, Tref, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
     ne = size(mesh.element, 1)
     E = E_eff
     ν = ν_eff
@@ -450,11 +467,20 @@ function _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n, β_p, dT_ele
     σ_yy = zeros(Float64, ne)
     σ_xy = zeros(Float64, ne)
     σ_vm = zeros(Float64, ne)
-    
+    σ_thermal_vm = zeros(Float64, ne)   # 热应力Von Mises
+    σ_diffusion_vm = zeros(Float64, ne) # 扩散应力Von Mises
     # 计算每个单元的初始应变
     epsilon_0_elem = zeros(Float64, ne)
+    epsilon_thermal_elem = zeros(Float64, ne)
+    epsilon_diffusion_elem = zeros(Float64, ne)
     @inbounds for e in 1:ne
-        epsilon_0_elem[e] = α_eff * dT_elem[e] + β_n * Δsoc_n_elem[e] + β_p * Δsoc_p_elem[e]
+        ε_thermal = α_eff * dT_elem[e]
+        ε_diff_n = β_n * Δsoc_n_elem[e]
+        ε_diff_p = β_p * Δsoc_p_elem[e]
+        
+        epsilon_thermal_elem[e] = ε_thermal
+        epsilon_diffusion_elem[e] = ε_diff_n + ε_diff_p
+        epsilon_0_elem[e] = ε_thermal + ε_diff_n + ε_diff_p
     end
     
     # 在单元中心恢复应力
@@ -505,13 +531,22 @@ function _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n, β_p, dT_ele
         
         # Von Mises应力
         σ_vm[e] = sqrt(σ_xx[e]^2 + σ_yy[e]^2 - σ_xx[e]*σ_yy[e] + 3.0*σ_xy[e]^2)
+        if abs(epsilon_0_elem[e]) > 1e-15
+            ratio_thermal = epsilon_thermal_elem[e] / epsilon_0_elem[e]
+            ratio_diffusion = epsilon_diffusion_elem[e] / epsilon_0_elem[e]
+            σ_thermal_vm[e] = abs(ratio_thermal) * σ_vm[e]
+            σ_diffusion_vm[e] = abs(ratio_diffusion) * σ_vm[e]
+        else
+            σ_thermal_vm[e] = 0.0
+            σ_diffusion_vm[e] = 0.0
+        end
     end
     
-    return σ_xx, σ_yy, σ_xy, σ_vm
+    return σ_xx, σ_yy, σ_xy, σ_vm, σ_thermal_vm, σ_diffusion_vm
 end
 
 """写入力学计算结果"""
-function _write_mechanical_results!(variables, U_M, σ_xx, σ_yy, σ_xy, σ_vm, L_ref)
+function _write_mechanical_results!(variables, U_M, σ_xx, σ_yy, σ_xy, σ_vm, σ_thermal, σ_diffusion, L_ref)
     nnode = length(U_M) ÷ 2
     
     # 提取位移
@@ -525,6 +560,8 @@ function _write_mechanical_results!(variables, U_M, σ_xx, σ_yy, σ_xy, σ_vm, 
     variables["diffusion stress yy"] = σ_yy
     variables["diffusion stress xy"] = σ_xy
     variables["diffusion stress vonMises"] = σ_vm
+    variables["thermal stress vonMises"] = σ_thermal
+    variables["diffusion stress vonMises only"] = σ_diffusion
     
     return nothing
 end

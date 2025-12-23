@@ -295,7 +295,7 @@ function NormaliseParam(param_dim::Params)
     # copy mechanical/thermal expansion properties without scaling (kept in SI)
     param.PE.E = param_dim.PE.E / param_dim.scale.E_p
     param.PE.nu = param_dim.PE.nu
-    param.PE.alphaT = param_dim.PE.alphaT
+    param.PE.alphaT = param_dim.PE.alphaT* param.scale.T_ref
     param.PE.Omega = param_dim.PE.Omega * param_dim.PE.cs_max
     param.PE.U = x-> Base.invokelatest(param_dim.PE.U, x) / param.scale.phi
     param.PE.dUdT = x-> Base.invokelatest(param_dim.PE.dUdT, x) / param.scale.phi * param.scale.T_ref
@@ -318,7 +318,7 @@ function NormaliseParam(param_dim::Params)
     # copy mechanical/thermal expansion properties without scaling (kept in SI)
     param.NE.E = param_dim.NE.E / param_dim.scale.E_n
     param.NE.nu = param_dim.NE.nu
-    param.NE.alphaT = param_dim.NE.alphaT
+    param.NE.alphaT = param_dim.NE.alphaT * param.scale.T_ref
     param.NE.Omega = param_dim.NE.Omega * param_dim.NE.cs_max
     param.NE.U = x-> Base.invokelatest(param_dim.NE.U, x) / param.scale.phi
     param.NE.dUdT = x-> Base.invokelatest(param_dim.NE.dUdT, x) / param.scale.phi * param.scale.T_ref
