@@ -194,13 +194,81 @@ function main()
     t = result["time [s]"]
     V = result["cell voltage [V]"]
     I_total = result["cell current [A]"]
-    
     num_steps = length(t)
+    
     println("✓ 结果提取完成")
     @printf("  总时间步数: %d\n", num_steps)
     @printf("  初始电压: %.4f V\n", V[1])
     @printf("  最终电压: %.4f V\n", V[end])
     @printf("  电压降: %.4f V\n", V[1] - V[end])
+    
+    # ========================================================================
+    # 4.5. 计算每个时间步的应力场
+    # ========================================================================
+    println("\n[4.5/7] 计算时间历程应力场...")
+    
+    # 初始化应力历史数组
+    stress_thermal_max_hist = zeros(Float64, num_steps)
+    stress_diffusion_max_hist = zeros(Float64, num_steps)
+    stress_total_max_hist = zeros(Float64, num_steps)
+    
+    # 获取SOC和温度历史
+    if haskey(result, "thermal2D element soc_n") && haskey(result, "thermal2D T_nodes [K]")
+        soc_n_hist = result["thermal2D element soc_n"]
+        soc_p_hist = result["thermal2D element soc_p"]
+        
+        println("  计算$(num_steps)个时间步的应力场...")
+        
+        for step in 1:num_steps
+            if step % max(1, div(num_steps, 10)) == 0 || step == num_steps
+                print("\r  进度: $(round(Int, 100*step/num_steps))%")
+            end
+            
+            try
+                # 准备当前时刻的变量
+                variables_step = Dict{String, Union{Array{Float64},Float64}}()
+                
+                # 温度场
+                T_nodes_K = result["thermal2D T_nodes [K]"]
+                T_ref = case.param_dim.scale.T_ref
+                variables_step["T_nodes"] = T_nodes_K ./ T_ref
+                
+                # SOC数据
+                variables_step["thermal2D element soc_n"] = soc_n_hist[:, step]
+                variables_step["thermal2D element soc_p"] = soc_p_hist[:, step]
+                
+                # 计算应力
+                variables_step = JuBat.thermal_diffusion_stress_2D(case, variables_step)
+                
+                # 提取峰值应力
+                σ_thermal = variables_step["thermal stress vonMises"]
+                σ_diffusion = variables_step["diffusion stress vonMises only"]
+                σ_total = variables_step["diffusion stress vonMises"]
+                
+                stress_thermal_max_hist[step] = maximum(σ_thermal) / 1e6  # MPa
+                stress_diffusion_max_hist[step] = maximum(σ_diffusion) / 1e6  # MPa
+                stress_total_max_hist[step] = maximum(σ_total) / 1e6  # MPa
+            catch e
+                @warn "时间步 $step 应力计算失败: $e"
+                stress_thermal_max_hist[step] = NaN
+                stress_diffusion_max_hist[step] = NaN
+                stress_total_max_hist[step] = NaN
+            end
+        end
+        println("\n  ✓ 应力历史计算完成")
+        
+        @printf("  热应力峰值范围: [%.2f, %.2f] MPa\n", 
+                minimum(filter(!isnan, stress_thermal_max_hist)), 
+                maximum(filter(!isnan, stress_thermal_max_hist)))
+        @printf("  扩散应力峰值范围: [%.2f, %.2f] MPa\n", 
+                minimum(filter(!isnan, stress_diffusion_max_hist)), 
+                maximum(filter(!isnan, stress_diffusion_max_hist)))
+        @printf("  总应力峰值范围: [%.2f, %.2f] MPa\n", 
+                minimum(filter(!isnan, stress_total_max_hist)), 
+                maximum(filter(!isnan, stress_total_max_hist)))
+    else
+        @warn "未找到SOC或温度历史数据，跳过时间历程应力计算"
+    end
     
     # 温度
     if haskey(result, "temperature [K]")
@@ -280,7 +348,53 @@ function main()
         println("  ✓ 保存: testexample_temperature.png")
     end
     
-    # 图3：逐单元电流演化（热图）
+    # 图3：应力峰值随时间演化
+    if !all(isnan.(stress_total_max_hist))
+        p3 = plot(xlabel="Time (s)", ylabel="Stress (MPa)", 
+                  title="Peak Stress Evolution",
+                  size=(800, 600), linewidth=2.5,
+                  legend=:bottomright)
+        
+        # 热应力
+        plot!(p3, t, stress_thermal_max_hist, 
+              label="Thermal Stress (max)", 
+              color=:red, linestyle=:dash, linewidth=2)
+        
+        # 扩散应力
+        plot!(p3, t, stress_diffusion_max_hist, 
+              label="Diffusion Stress (max)", 
+              color=:blue, linestyle=:dash, linewidth=2)
+        
+        # 总应力
+        plot!(p3, t, stress_total_max_hist, 
+              label="Total Stress (max)", 
+              color=:black, linewidth=3)
+        
+        savefig(p3, "testexample_stress_evolution.png")
+        println("  ✓ 保存: testexample_stress_evolution.png")
+        
+        # 应力分量占比
+        p3b = plot(xlabel="Time (s)", ylabel="Stress Ratio (%)", 
+                   title="Stress Component Ratio",
+                   size=(800, 600), linewidth=2.5,
+                   legend=:right)
+        
+        # 计算占比
+        thermal_ratio = 100 .* stress_thermal_max_hist ./ (stress_thermal_max_hist .+ stress_diffusion_max_hist)
+        diffusion_ratio = 100 .* stress_diffusion_max_hist ./ (stress_thermal_max_hist .+ stress_diffusion_max_hist)
+        
+        plot!(p3b, t, thermal_ratio, 
+              label="Thermal %", 
+              color=:red, linewidth=2.5, fillrange=0, fillalpha=0.3)
+        plot!(p3b, t, diffusion_ratio, 
+              label="Diffusion %", 
+              color=:blue, linewidth=2.5)
+        
+        savefig(p3b, "testexample_stress_ratio.png")
+        println("  ✓ 保存: testexample_stress_ratio.png")
+    end
+    
+    # 图4：逐单元电流演化（热图）
     if haskey(result, "thermal2D element current")
         I_e_hist = result["thermal2D element current"]
         
@@ -288,12 +402,12 @@ function main()
         n_snapshots = min(5, num_steps)
         idx_snapshots = round.(Int, range(1, num_steps, length=n_snapshots))
         
-        p3 = plot(layout=(1, n_snapshots), size=(400*n_snapshots, 400))
+        p4 = plot(layout=(1, n_snapshots), size=(400*n_snapshots, 400))
         for (i, idx) in enumerate(idx_snapshots)
             I_e_snap = I_e_hist[:, idx]
             
             # 绘制径向-角度分布
-            scatter!(p3[i], θ_centers, r_centers, 
+            scatter!(p4[i], θ_centers, r_centers, 
                      marker_z=I_e_snap, 
                      markersize=4,
                      xlabel="θ (rad)", ylabel="r (m)",
@@ -302,16 +416,16 @@ function main()
                      colorbar=(i == n_snapshots),
                      legend=false)
         end
-        plot!(p3, plot_title="Element Current Distribution")
-        savefig(p3, "testexample_current_snapshots.png")
+        plot!(p4, plot_title="Element Current Distribution")
+        savefig(p4, "testexample_current_snapshots.png")
         println("  ✓ 保存: testexample_current_snapshots.png")
         
         # 绘制电流变异系数演化（异质性指标）
         cv_I = [std(I_e_hist[:, i]) / mean(I_e_hist[:, i]) for i in 1:num_steps]
-        p4 = plot(t, cv_I .* 100, xlabel="Time (s)", ylabel="CV of Current (%)", 
+        p5 = plot(t, cv_I .* 100, xlabel="Time (s)", ylabel="CV of Current (%)", 
                   label="Heterogeneity", linewidth=2, 
                   title="Current Distribution Heterogeneity")
-        savefig(p4, "testexample_current_heterogeneity.png")
+        savefig(p5, "testexample_current_heterogeneity.png")
         println("  ✓ 保存: testexample_current_heterogeneity.png")
     end
     
@@ -655,16 +769,33 @@ end
         """)
     end
     
+    # 应力统计
+    if !all(isnan.(stress_total_max_hist))
+        stress_thermal_final = stress_thermal_max_hist[end]
+        stress_diffusion_final = stress_diffusion_max_hist[end]
+        stress_total_final = stress_total_max_hist[end]
+        stress_total_peak = maximum(filter(!isnan, stress_total_max_hist))
+        
+        println("""
+      - 最终热应力峰值: $(round(stress_thermal_final, digits=2)) MPa
+      - 最终扩散应力峰值: $(round(stress_diffusion_final, digits=2)) MPa
+      - 最终总应力峰值: $(round(stress_total_final, digits=2)) MPa
+      - 总应力最大峰值: $(round(stress_total_peak, digits=2)) MPa
+        """)
+    end
+    
     println("""
     生成的图像：
       1. testexample_voltage.png - 放电曲线
       2. testexample_temperature.png - 温度演化
-      3. testexample_current_snapshots.png - 逐单元电流分布快照
-      4. testexample_current_heterogeneity.png - 电流异质性演化
-      5. testexample_Tfield.png - 最终温度场
-      6. testexample_Tfield.svg - 最终温度场（矢量图）
-      7. testexample_stress_maps.png - 热/扩散应力分布
-      8. testexample_total_stress.png - 合成应力分布
+      3. testexample_stress_evolution.png - 应力峰值时间演化 ⭐
+      4. testexample_stress_ratio.png - 应力分量占比演化 ⭐
+      5. testexample_current_snapshots.png - 逐单元电流分布快照
+      6. testexample_current_heterogeneity.png - 电流异质性演化
+      7. testexample_Tfield.png - 最终温度场
+      8. testexample_Tfield.svg - 最终温度场（矢量图）
+      9. output/thermal_diffusion_stress_field.png - 最终应力场分布
+     10. output/thermal_diffusion_displacement_field.png - 最终位移场分布
     
     多SPMe并行架构验证：
       ✓ 每个热单元对应独立SPMe模型

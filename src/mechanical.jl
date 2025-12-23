@@ -220,12 +220,12 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     # 求解位移场
     U_M = _solve_mechanical_displacement_2D(K_mech, F_mech, mesh.nlen)
     
-    # 恢复应力场
-    σ_xx, σ_yy, σ_xy, σ_vm = _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n_eff, β_p_eff, Tref, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+    # 恢复应力场（分离热应力和扩散应力）
+    σ_xx, σ_yy, σ_xy, σ_vm, σ_thermal, σ_diffusion = _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n_eff, β_p_eff, Tref, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
     
     # 写入结果（转换为有量纲）
     L_ref = hasproperty(param.scale, :L_th) ? param.scale.L_th : 1.0
-    _write_mechanical_results!(variables, U_M, σ_xx, σ_yy, σ_xy, σ_vm, L_ref)
+    _write_mechanical_results!(variables, U_M, σ_xx, σ_yy, σ_xy, σ_vm, σ_thermal, σ_diffusion, L_ref)
     
     return variables
 end
@@ -485,7 +485,7 @@ function _solve_mechanical_displacement_2D(K_M, F_M, nnode)
     return U_M
 end
 
-"""恢复应力场"""
+"""恢复应力场（分离热应力和扩散应力）"""
 function _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n_eff, β_p_eff, Tref, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
     ne = size(mesh.element, 1)
     E = E_eff
@@ -496,12 +496,22 @@ function _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n_eff, β_p_eff
     σ_xy = zeros(Float64, ne)
     σ_vm = zeros(Float64, ne)
     
+    # 初始化分离的应力数组
+    σ_thermal_vm = zeros(Float64, ne)   # 热应力Von Mises
+    σ_diffusion_vm = zeros(Float64, ne) # 扩散应力Von Mises
+    
     # 计算每个单元的初始应变（单位正确）
     epsilon_0_elem = zeros(Float64, ne)
+    epsilon_thermal_elem = zeros(Float64, ne)
+    epsilon_diffusion_elem = zeros(Float64, ne)
+    
     @inbounds for e in 1:ne
         ε_thermal = α_eff * dT_elem[e] * Tref  # [1/K] × [无量纲] × [K] = [无量纲]
         ε_diff_n = β_n_eff * Δsoc_n_elem[e]    # [无量纲] × [无量纲] = [无量纲]
         ε_diff_p = β_p_eff * Δsoc_p_elem[e]    # [无量纲] × [无量纲] = [无量纲]
+        
+        epsilon_thermal_elem[e] = ε_thermal
+        epsilon_diffusion_elem[e] = ε_diff_n + ε_diff_p
         epsilon_0_elem[e] = ε_thermal + ε_diff_n + ε_diff_p
     end
     
@@ -553,13 +563,24 @@ function _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n_eff, β_p_eff
         
         # Von Mises应力
         σ_vm[e] = sqrt(σ_xx[e]^2 + σ_yy[e]^2 - σ_xx[e]*σ_yy[e] + 3.0*σ_xy[e]^2)
+        
+        # 分离计算热应力和扩散应力（简化：仅基于初始应变比例）
+        if abs(epsilon_0_elem[e]) > 1e-15
+            ratio_thermal = epsilon_thermal_elem[e] / epsilon_0_elem[e]
+            ratio_diffusion = epsilon_diffusion_elem[e] / epsilon_0_elem[e]
+            σ_thermal_vm[e] = abs(ratio_thermal) * σ_vm[e]
+            σ_diffusion_vm[e] = abs(ratio_diffusion) * σ_vm[e]
+        else
+            σ_thermal_vm[e] = 0.0
+            σ_diffusion_vm[e] = 0.0
+        end
     end
     
-    return σ_xx, σ_yy, σ_xy, σ_vm
+    return σ_xx, σ_yy, σ_xy, σ_vm, σ_thermal_vm, σ_diffusion_vm
 end
 
 """写入力学计算结果"""
-function _write_mechanical_results!(variables, U_M, σ_xx, σ_yy, σ_xy, σ_vm, L_ref)
+function _write_mechanical_results!(variables, U_M, σ_xx, σ_yy, σ_xy, σ_vm, σ_thermal, σ_diffusion, L_ref)
     nnode = length(U_M) ÷ 2
     
     # 提取位移
@@ -573,6 +594,8 @@ function _write_mechanical_results!(variables, U_M, σ_xx, σ_yy, σ_xy, σ_vm, 
     variables["diffusion stress yy"] = σ_yy
     variables["diffusion stress xy"] = σ_xy
     variables["diffusion stress vonMises"] = σ_vm
+    variables["thermal stress vonMises"] = σ_thermal
+    variables["diffusion stress vonMises only"] = σ_diffusion
     
     return nothing
 end
