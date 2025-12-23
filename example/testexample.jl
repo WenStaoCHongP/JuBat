@@ -217,41 +217,62 @@ function main()
         soc_n_hist = result["thermal2D element soc_n"]
         soc_p_hist = result["thermal2D element soc_p"]
         
-        # 检查温度场历史
-        has_T_hist = haskey(result, "thermal2D temperature [K]") || haskey(result, "temperature [K]")
+        # ✅ 检查是否有完整的节点温度场历史（方案2）
+        has_T_nodes_hist = haskey(result, "thermal2D T_nodes history [K]")
         
-        if has_T_hist
-            println("  ✓ 找到温度场历史数据")
-        else
-            println("  ⚠️  未找到完整温度场历史，将使用线性插值估算")
-        end
-        
-        # 获取初始和最终温度
         T_ref = case.param_dim.scale.T_ref
         T0_K = case.param_dim.cell.T0  # 初始温度 [K]
         
-        if haskey(result, "thermal2D T_nodes [K]")
-            T_final_nodes_K = result["thermal2D T_nodes [K]"]
+        if has_T_nodes_hist
+            # 方案2：使用完整保存的温度场历史 ✅
+            T_nodes_hist_K = result["thermal2D T_nodes history [K]"]
+            n_nodes_T, n_steps_T = size(T_nodes_hist_K)
+            
+            println("  ✅ 使用完整温度场历史数据（方案2）")
+            println("  节点数: $(n_nodes_T), 时间步: $(n_steps_T)")
+            
+            # 检查尺寸一致性
+            if n_steps_T < num_steps
+                @warn "温度场历史步数($n_steps_T) < 总步数($num_steps)，将使用前$n_steps_T步"
+                num_steps = n_steps_T
+            end
+            
+            # 计算温度统计信息
+            T_min = minimum(T_nodes_hist_K)
+            T_max = maximum(T_nodes_hist_K)
+            T_initial_avg = mean(T_nodes_hist_K[:, 1])
+            T_final_avg = mean(T_nodes_hist_K[:, end])
+            
+            println("  温度范围: $(round(T_min, digits=2)) - $(round(T_max, digits=2)) K")
+            println("  平均温升: $(round(T_final_avg - T_initial_avg, digits=2)) K")
+            
         else
-            @warn "未找到最终温度场，使用初始温度"
-            T_final_nodes_K = fill(T0_K, case.mesh["thermal2D"].nlen)
-        end
-        
-        # 获取平均温度历史（用于插值）
-        if haskey(result, "temperature [K]")
-            T_avg_hist = result["temperature [K]"]
-        elseif haskey(result, "average temperature [K]")
-            T_avg_hist = result["average temperature [K]"]
-        else
-            # 线性插值：从T0到最终温度
-            T_final_avg = mean(T_final_nodes_K)
-            T_avg_hist = range(T0_K, T_final_avg, length=num_steps) |> collect
-            println("  使用线性插值：T0=$(round(T0_K,digits=2)) K → Tf=$(round(T_final_avg,digits=2)) K")
+            # 方案1（备选）：插值方法
+            println("  ⚠️  未找到完整温度场历史，使用线性插值估算（方案1）")
+            
+            if haskey(result, "thermal2D T_nodes [K]")
+                T_final_nodes_K = result["thermal2D T_nodes [K]"]
+            else
+                @warn "未找到最终温度场，使用初始温度"
+                T_final_nodes_K = fill(T0_K, case.mesh["thermal2D"].nlen)
+            end
+            
+            # 获取平均温度历史（用于插值）
+            if haskey(result, "temperature [K]")
+                T_avg_hist = result["temperature [K]"]
+            elseif haskey(result, "average temperature [K]")
+                T_avg_hist = result["average temperature [K]"]
+            else
+                T_final_avg = mean(T_final_nodes_K)
+                T_avg_hist = range(T0_K, T_final_avg, length=num_steps) |> collect
+                println("  使用线性插值：T0=$(round(T0_K,digits=2)) K → Tf=$(round(T_final_avg,digits=2)) K")
+            end
+            
+            println("  温度范围: $(round(minimum(T_avg_hist),digits=2)) - $(round(maximum(T_avg_hist),digits=2)) K")
+            println("  温升: $(round(maximum(T_avg_hist)-minimum(T_avg_hist),digits=2)) K")
         end
         
         println("  计算$(num_steps)个时间步的应力场...")
-        println("  温度范围: $(round(minimum(T_avg_hist),digits=2)) - $(round(maximum(T_avg_hist),digits=2)) K")
-        println("  温升: $(round(maximum(T_avg_hist)-minimum(T_avg_hist),digits=2)) K")
         
         for step in 1:num_steps
             if step % max(1, div(num_steps, 10)) == 0 || step == num_steps
@@ -262,13 +283,18 @@ function main()
                 # 准备当前时刻的变量
                 variables_step = Dict{String, Union{Array{Float64},Float64}}()
                 
-                # 温度场：使用插值
-                # 假设温度场的空间分布保持相似，只是幅度随时间变化
-                T_avg_step = T_avg_hist[step]
-                T_ratio = (T_avg_step - T0_K) / max(mean(T_final_nodes_K) - T0_K, 1e-6)
-                T_nodes_step_K = T0_K .+ T_ratio .* (T_final_nodes_K .- T0_K)
-                
-                variables_step["T_nodes"] = T_nodes_step_K ./ T_ref
+                # 温度场：根据数据可用性选择方法
+                if has_T_nodes_hist
+                    # ✅ 方案2：直接使用保存的温度场历史
+                    T_nodes_step_K = T_nodes_hist_K[:, step]
+                    variables_step["T_nodes"] = T_nodes_step_K ./ T_ref
+                else
+                    # 方案1：使用插值
+                    T_avg_step = T_avg_hist[step]
+                    T_ratio = (T_avg_step - T0_K) / max(mean(T_final_nodes_K) - T0_K, 1e-6)
+                    T_nodes_step_K = T0_K .+ T_ratio .* (T_final_nodes_K .- T0_K)
+                    variables_step["T_nodes"] = T_nodes_step_K ./ T_ref
+                end
                 
                 # SOC数据
                 variables_step["thermal2D element soc_n"] = soc_n_hist[:, step]
@@ -598,14 +624,21 @@ try
     end
     
     # 从 result 中提取温度场并转换为无量纲形式
-    if haskey(result, "thermal2D T_nodes [K]")
+    # 优先使用历史数据的最后一步，其次使用最终快照
+    if haskey(result, "thermal2D T_nodes history [K]")
+        T_nodes_K = result["thermal2D T_nodes history [K]"][:, end]  # 使用历史的最后一步
+        T_ref = case.param_dim.scale.T_ref
+        T_nodes = T_nodes_K ./ T_ref
+        variables["T_nodes"] = T_nodes
+        println("  ✓ 温度场数据已加载（从历史数据）")
+    elseif haskey(result, "thermal2D T_nodes [K]")
         T_nodes_K = result["thermal2D T_nodes [K]"]
         T_ref = case.param_dim.scale.T_ref
-        T_nodes = T_nodes_K ./ T_ref  # 转换为无量纲
+        T_nodes = T_nodes_K ./ T_ref
         variables["T_nodes"] = T_nodes
-        println("  ✓ 温度场数据已加载")
+        println("  ✓ 温度场数据已加载（从最终快照）")
     else
-        @warn "未找到温度场数据 'thermal2D T_nodes [K]'"
+        @warn "未找到温度场数据"
     end
     
     # 从 result 中提取 SOC 数据

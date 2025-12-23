@@ -279,6 +279,14 @@ function Solve(case::Case)
         if haskey(variables_hist, "thermal2D temperature") && size(variables_hist["thermal2D temperature"], 2) >= v
             result["thermal2D temperature [K]"] = variables_hist["thermal2D temperature"][:, 1:v]
         end
+        
+        # ✅ 新增：保存完整的节点温度场历史（per_element_spme模式）
+        if haskey(variables_hist, "thermal2D T_nodes history") && size(variables_hist["thermal2D T_nodes history"], 2) >= v
+            Tref = case.param_dim.scale.T_ref
+            result["thermal2D T_nodes history [K]"] = variables_hist["thermal2D T_nodes history"][:, 1:v] .* Tref
+            println("  [Solve] 已保存温度场历史: $(size(result["thermal2D T_nodes history [K]"])) (节点×时间步)")
+        end
+        
         if case.opt.thermal_enabled && haskey(case.mesh, "thermal2D")
             if isa(T_nodes_carry, Array{Float64}) && length(T_nodes_carry) == case.mesh["thermal2D"].nlen
                 Tref = case.param_dim.scale.T_ref

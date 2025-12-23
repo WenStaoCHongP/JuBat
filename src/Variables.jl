@@ -102,6 +102,8 @@ function StandardVariables(case::Case, num::Int64)
     if hasproperty(case.opt, :per_element_spme) && case.opt.per_element_spme && 
        case.opt.thermalmodel == "distributed2D" && haskey(case.mesh, "thermal2D")
         ne = size(case.mesh["thermal2D"].element, 1)
+        nT = case.mesh["thermal2D"].nlen  # 节点数
+        
         # 覆盖热源历史为逐单元尺寸
         variables["heat_source_fields"] = zeros(Float64, ne, num)
         variables["thermal2D element current"] = zeros(Float64, ne, num)
@@ -117,6 +119,10 @@ function StandardVariables(case::Case, num::Int64)
         variables["thermal2D element total stress"] = zeros(Float64, ne, num)
         variables["thermal2D element diffusion strain"] = zeros(Float64, ne, num)
         variables["thermal2D element thermal strain"] = zeros(Float64, ne, num)
+        
+        # ✅ 新增：保存节点温度场的完整时间历史
+        variables["thermal2D T_nodes history"] = zeros(Float64, nT, num)
+        println("  [Variables] 已预分配温度场历史: $(nT) 节点 × $(num) 时间步")
     end
     
     # Phase C: 简化耦合模式的变量历史记录
@@ -168,6 +174,16 @@ function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Floa
         if isa(variables_hist[k], Array{Float64})
             # 目标历史为矩阵 (nrows x num)
             nrows = size(variables_hist[k], 1)
+            
+            # ✅ 特殊处理：thermal2D T_nodes history 从 T_nodes 读取
+            if k == "thermal2D T_nodes history" && haskey(variables, "T_nodes")
+                val = variables["T_nodes"]
+                if isa(val, Array{Float64}) && length(val) == nrows && length(val) > 0
+                    variables_hist[k][:, v] = val
+                end
+                continue
+            end
+            
             if haskey(variables, k)
                 val = variables[k]
                 if isa(val, Array{Float64})
