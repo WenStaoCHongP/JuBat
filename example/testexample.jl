@@ -203,11 +203,29 @@ function main()
     stress_total_max_hist = zeros(Float64, num_steps)
     
     # 获取SOC和温度历史
-    if haskey(result, "thermal2D element soc_n") && haskey(result, "thermal2D T_nodes [K]")
+    if haskey(result, "thermal2D element soc_n") && 
+       (haskey(result, "thermal2D temperature [K]") || haskey(result, "thermal2D T_nodes [K]"))
         soc_n_hist = result["thermal2D element soc_n"]
         soc_p_hist = result["thermal2D element soc_p"]
         
+        # 获取温度历史（优先使用完整历史）
+        T_nodes_hist_K = if haskey(result, "thermal2D temperature [K]")
+            result["thermal2D temperature [K]"]  # (nT × num_steps)
+        else
+            # 后备方案：使用最终温度（所有时间步相同）
+            T_final = result["thermal2D T_nodes [K]"]
+            repeat(T_final, 1, num_steps)
+        end
+        
+        # 检查温度历史维度
+        if size(T_nodes_hist_K, 2) < num_steps
+            @warn "温度历史步数 $(size(T_nodes_hist_K, 2)) 少于SOC历史步数 $num_steps，将重复使用最后一帧"
+            T_last = T_nodes_hist_K[:, end]
+            T_nodes_hist_K = hcat(T_nodes_hist_K, repeat(T_last, 1, num_steps - size(T_nodes_hist_K, 2)))
+        end
+        
         println("  计算$(num_steps)个时间步的应力场...")
+        println("  温度历史维度: $(size(T_nodes_hist_K))")
         
         for step in 1:num_steps
             if step % max(1, div(num_steps, 10)) == 0 || step == num_steps
@@ -218,8 +236,8 @@ function main()
                 # 准备当前时刻的变量
                 variables_step = Dict{String, Union{Array{Float64},Float64}}()
                 
-                # 温度场
-                T_nodes_K = result["thermal2D T_nodes [K]"]
+                # 温度场（使用当前时间步的温度）
+                T_nodes_K = T_nodes_hist_K[:, step]
                 T_ref = case.param_dim.scale.T_ref
                 variables_step["T_nodes"] = T_nodes_K ./ T_ref
                 

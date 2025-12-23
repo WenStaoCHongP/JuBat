@@ -212,7 +212,7 @@ function main()
         # Update variables with latest T for thermal stress post-processing and record mean stress
         variables["T_nodes"] = T
         try
-            variables = JuBat.thermal_stress(case, variables)
+            variables = JuBat.thermal_diffusion_stress_2D(case, variables)
             if haskey(variables, "thermal2D element thermal stress")
                 σe = variables["thermal2D element thermal stress"]
                 push!(stress_mean_hist, mean(σe))

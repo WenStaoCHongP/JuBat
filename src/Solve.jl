@@ -204,6 +204,11 @@ function Solve(case::Case)
                 T_nodes = y_c[(end - nT + 1):end]
                 variables["T_nodes"] = T_nodes
                 T_nodes_carry = T_nodes
+                # 将温度场复制到 thermal2D temperature 以便记录历史（用于热应力计算）
+                if haskey(variables_hist, "thermal2D temperature")
+                    Tref = case.param_dim.scale.T_ref
+                    variables["thermal2D temperature"] = T_nodes .* Tref
+                end
             end
         end
         error_y = ErrorEstimation(case, y_old, y_new, dt_min/dt) 

@@ -29,9 +29,9 @@ function main()
     variables["temperature"] = mean(T_nodes)
 
     # compute thermal stress (per-element)
-    variables = JuBat.thermal_stress(case, variables)
+    variables = JuBat.thermal_diffusion_stress_2D(case, variables)
     if !haskey(variables, "thermal2D element thermal stress")
-        println("thermal2D element thermal stress not computed by thermal_stress")
+        println("thermal2D element thermal stress not computed by thermal_diffusion_stress_2D")
         return
     end
     σ_elem = variables["thermal2D element thermal stress"]
