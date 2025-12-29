@@ -332,19 +332,52 @@ end
 1. 外边界对流：-k ∂T/∂n = h (T - T_amb)
 2. 内边界绝热（默认）
 3. 极耳强制温度（惩罚法）
+
+⚠️ 重要：极耳节点从外边界中排除，避免边界条件冲突
 """
 function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64=0.0)
     @assert haskey(case.mesh, "thermal2D") "thermal2D mesh is missing"
     mesh = case.mesh["thermal2D"]
     @assert mesh.type == "Q4" && mesh.dimension == 2 "BC requires Q4/2D mesh"
     
-    # 识别边界节点
+    # 1. 识别边界节点
     is_inner, is_outer = _identify_boundary_nodes(mesh, case.param_dim, case.opt)
     
-    # 应用外边界对流
-    _apply_convection_bc!(KT, FT, mesh, is_outer, case)
+    # 2. 识别极耳节点并从外边界中排除（避免边界条件冲突）
+    is_outer_no_tab = is_outer
+    try
+        pos_idx, neg_idx = jellyroll_tab_node_indices(mesh, case.param_dim)
+        tab_nodes_set = Set(vcat(pos_idx, neg_idx))
+        
+        if !isempty(tab_nodes_set)
+            # 从外边界中排除极耳节点
+            is_outer_no_tab = copy(is_outer)
+            n_overlap = 0
+            for n in tab_nodes_set
+                if is_outer[n]
+                    is_outer_no_tab[n] = false
+                    n_overlap += 1
+                end
+            end
+            
+            # 调试信息
+            if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
+                if n_overlap > 0
+                    @info "[thermal BC] 从外边界排除极耳节点，避免BC冲突" excluded=n_overlap total_tab=length(tab_nodes_set)
+                end
+            end
+        end
+    catch err
+        # 极耳识别失败时，使用原始外边界（向后兼容）
+        if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
+            @warn "[thermal BC] 极耳节点识别失败，使用原始外边界" exception=err
+        end
+    end
     
-    # 应用极耳边界条件
+    # 3. 应用外边界对流（已排除极耳）
+    _apply_convection_bc!(KT, FT, mesh, is_outer_no_tab, case)
+    
+    # 4. 应用极耳边界条件（独立，不冲突）
     _apply_tab_bc!(KT, FT, mesh, case, t)
     
     return nothing
