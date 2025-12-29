@@ -182,8 +182,13 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     E_eff = (param.NE.E * param.NE.thickness + param.PE.E * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
     ν_eff = (param.NE.nu * param.NE.thickness + param.PE.nu * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
     α_eff = (param.NE.alphaT * param.NE.thickness + param.PE.alphaT * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
-    β_n = param.NE.Omega / 3.0 
-    β_p = param.PE.Omega / 3.0 
+    
+    # 化学膨胀系数（含固相体积分数修正）
+    # 理论：宏观应变 = 颗粒应变 × 体积分数
+    # ε_macro = (Ω/3) × eps_s × ΔSOC
+    # 参考：Christensen & Newman (2006), Bower et al. (2011)
+    β_n = param.NE.Omega / 3.0 * param.NE.eps_s  # 负极化学膨胀系数
+    β_p = param.PE.Omega / 3.0 * param.PE.eps_s  # 正极化学膨胀系数 
 
     # 计算单元级别的温度和SOC
     ne = size(mesh.element, 1)
