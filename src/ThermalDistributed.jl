@@ -481,9 +481,21 @@ function _apply_tab_bc!(KT, FT, mesh, case, t)
             T_tab_nd = clamp(T_tab_nd, T_min_nd, T_max_nd)
         end
         
-        # 3. 应用消元法（简化版）
+        # 3. 应用消元法（稀疏矩阵安全版）
+        nn = size(KT, 1)
+        tab_set = Set(tab_nodes)  # 用Set加速查找
+        
+        # 步骤1：清零约束节点所在的行（逐列遍历，对稀疏矩阵友好）
+        for col in 1:nn
+            for row in tab_set
+                if col != row
+                    KT[row, col] = 0.0  # 清零 KT[row, col]（非对角）
+                end
+            end
+        end
+        
+        # 步骤2：设置对角元和载荷
         for n in tab_nodes
-            # 保存原对角元（保持矩阵数值尺度）
             K_diag = KT[n, n]
             
             # 如果对角元异常，使用默认值
@@ -491,17 +503,18 @@ function _apply_tab_bc!(KT, FT, mesh, case, t)
                 K_diag = 1.0
             end
             
-            # 替换第n行为：K[n,n]×T[n] = K[n,n]×T_tab
-            KT[n, :] .= 0.0              # 清零整行
-            KT[n, n] = K_diag            # 恢复对角元
-            FT[n] = K_diag * T_tab_nd    # 右端项
+            KT[n, n] = K_diag
+            FT[n] = K_diag * T_tab_nd
         end
+        
+        # 步骤3：清理稀疏矩阵中的显式零（提升性能）
+        dropzeros!(KT)
         
         # 调试输出
         if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
             T_tab_phys = T_tab_nd * scale.T_ref
             @info "[tab BC applied - 消元法]" T_tab_K=round(T_tab_phys, digits=2) 
-                                            nodes=length(tab_nodes) method="elimination"
+                                            nodes=length(tab_nodes) method="elimination_sparse_safe"
         end
         
     catch err
