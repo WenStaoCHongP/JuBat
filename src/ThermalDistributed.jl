@@ -442,9 +442,19 @@ function _apply_convection_bc!(KT, FT, mesh, is_outer, case)
     end
 end
 
-"""应用极耳边界条件（惩罚法强制温度）"""
+"""
+应用极耳边界条件（简化消元法）
+
+使用直接消元法而非罚函数法，避免矩阵病态和数值不稳定。
+消元法精确满足温度约束，不会导致j0和电压计算出现NaN。
+
+原理：
+- 将约束节点的方程替换为：K[n,n]×T[n] = K[n,n]×T_prescribed
+- 保持矩阵数值尺度，不引入大数（penalty）
+"""
 function _apply_tab_bc!(KT, FT, mesh, case, t)
     try
+        # 1. 识别极耳节点
         pos_idx, neg_idx = jellyroll_tab_node_indices(mesh, case.param_dim)
         tab_nodes = unique(vcat(pos_idx, neg_idx))
         
@@ -452,24 +462,50 @@ function _apply_tab_bc!(KT, FT, mesh, case, t)
         
         # 调试信息
         if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
-            @info "[thermal BC] tab nodes" pos=length(pos_idx) neg=length(neg_idx)
+            @info "[thermal BC] tab nodes (消元法)" pos=length(pos_idx) neg=length(neg_idx)
         end
         
-        # 极耳温度：线性升温
+        # 2. 计算约束温度
         rate_Ks = hasproperty(case.opt, :tab_heating_rate) ? case.opt.tab_heating_rate : 0.1
-        penalty = hasproperty(case.opt, :tab_penalty) ? case.opt.tab_penalty : 1e12
         
         scale = case.param_dim.scale
         T_amb_nd = case.param_dim.cell.T_amb / scale.T_ref
         T_tab_nd = T_amb_nd + (rate_Ks * t) / scale.T_ref
         
-        # 惩罚法
-        for n in tab_nodes
-            KT[n, n] += penalty
-            FT[n] += penalty * T_tab_nd
+        # 温度合理性检查
+        T_min_nd = 200.0 / scale.T_ref
+        T_max_nd = 400.0 / scale.T_ref
+        if T_tab_nd < T_min_nd || T_tab_nd > T_max_nd
+            T_tab_phys = T_tab_nd * scale.T_ref
+            @warn "极耳温度超出合理范围，已截断" T_tab=T_tab_phys T_min=200 T_max=400
+            T_tab_nd = clamp(T_tab_nd, T_min_nd, T_max_nd)
         end
+        
+        # 3. 应用消元法（简化版）
+        for n in tab_nodes
+            # 保存原对角元（保持矩阵数值尺度）
+            K_diag = KT[n, n]
+            
+            # 如果对角元异常，使用默认值
+            if !isfinite(K_diag) || abs(K_diag) < 1e-12
+                K_diag = 1.0
+            end
+            
+            # 替换第n行为：K[n,n]×T[n] = K[n,n]×T_tab
+            KT[n, :] .= 0.0              # 清零整行
+            KT[n, n] = K_diag            # 恢复对角元
+            FT[n] = K_diag * T_tab_nd    # 右端项
+        end
+        
+        # 调试输出
+        if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
+            T_tab_phys = T_tab_nd * scale.T_ref
+            @info "[tab BC applied - 消元法]" T_tab_K=round(T_tab_phys, digits=2) 
+                                            nodes=length(tab_nodes) method="elimination"
+        end
+        
     catch err
-        @warn "Tab BC failed" err
+        @warn "Tab BC (elimination) failed" exception=(err, catch_backtrace())
     end
 end
 
