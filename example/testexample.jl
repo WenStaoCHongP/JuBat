@@ -203,10 +203,10 @@ function main()
     stress_total_max_hist = zeros(Float64, num_steps)
     
     # 获取SOC和温度历史
-    if haskey(result, "thermal2D element soc_n") && haskey(result, "thermal2D T_nodes [K]")
+    if haskey(result, "thermal2D element soc_n") && (haskey(result, "thermal2D temperature [K]") || haskey(result, "thermal2D T_nodes [K]"))
         soc_n_hist = result["thermal2D element soc_n"]
         soc_p_hist = result["thermal2D element soc_p"]
-        
+        T_nodes_hist_K = result["thermal2D temperature [K]"] 
         println("  计算$(num_steps)个时间步的应力场...")
         
         for step in 1:num_steps
@@ -219,7 +219,7 @@ function main()
                 variables_step = Dict{String, Union{Array{Float64},Float64}}()
                 
                 # 温度场
-                T_nodes_K = result["thermal2D T_nodes [K]"]
+                T_nodes_K = T_nodes_hist_K[:, step]
                 T_ref = case.param_dim.scale.T_ref
                 variables_step["T_nodes"] = T_nodes_K ./ T_ref
                 
