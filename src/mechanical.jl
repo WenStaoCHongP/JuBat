@@ -11,6 +11,12 @@ function Mechanicaloutput(case::Case, variables::Dict{String, Union{Array{Float6
         T = variables["temperature"]
         stress_rn_center,stress_theta_n_surf,disp_surf_n,theta_Mn,csn_gs = Calstressdisp(param.NE, mesh_n, c_n, T)
         stress_rp_center,stress_theta_p_surf,disp_surf_p,theta_Mp,csp_gs = Calstressdisp(param.PE, mesh_p, c_p, T)
+        
+        # ✨ 新增：从颗粒位移计算体积应变（新路线）
+        # 理论：球形颗粒体积应变 = 3 * 表面径向位移 / 半径
+        volumetric_strain_n = 3.0 * disp_surf_n / param.NE.rs
+        volumetric_strain_p = 3.0 * disp_surf_p / param.PE.rs
+        
         eta_p_new = eta_p - (2/3) * stress_theta_p_surf * param.PE.Omega 
         eta_n_new = eta_n - (2/3) * stress_theta_n_surf * param.NE.Omega
         V_cell_new = V_cell  - (2/3) * stress_theta_p_surf * param.PE.Omega + (2/3) * stress_theta_n_surf * param.NE.Omega
@@ -24,6 +30,10 @@ function Mechanicaloutput(case::Case, variables::Dict{String, Union{Array{Float6
         variables["positive particle concentration at gauss point"] = csp_gs
         variables["negative particle stress coupling diffusion coefficient"] = theta_Mn
         variables["positive particle stress coupling diffusion coefficient"] = theta_Mp
+        
+        # ✨ 新增：存储颗粒体积应变（用于宏观应力计算）
+        variables["negative particle volumetric strain"] = volumetric_strain_n
+        variables["positive particle volumetric strain"] = volumetric_strain_p
         variables["negative electrode overpotential"] = eta_n_new
         variables["positive electrode overpotential"] = eta_p_new
         variables["cell voltage"] = V_cell_new[1]
@@ -64,15 +74,25 @@ function Mechanicaloutput(case::Case, variables::Dict{String, Union{Array{Float6
         meshnum_perparticle_p = (mesh_p.nlen/ mesh_pe.nlen)-1
         n_n_gs = (mesh_ne.nlen-1) * mesh_ne.gs.order
         n_p_gs = (mesh_pe.nlen-1) * mesh_pe.gs.order
+        # ✨ 新增：初始化体积应变数组
+        volumetric_strain_n = zeros(Float64, mesh_ne.nlen)
+        volumetric_strain_p = zeros(Float64, mesh_pe.nlen)
+        
         for i = 1:mesh_ne.nlen
             mesh = PickElement(mesh_n, Int64.(collect((i-1)*meshnum_perparticle_n .+ (1:meshnum_perparticle_n))) )
             cs = cs_n[(i-1)* mesh.nlen .+ (1:mesh.nlen)]
             stress_rn_center[i],stress_theta_n_surf[i],disp_surf_n[i],theta_Mn[i],csn_gs[(i-1)*n_n_gs+1: i*n_n_gs]= Calstressdisp(param.NE, mesh, cs, T)
+            
+            # ✨ 新增：计算体积应变
+            volumetric_strain_n[i] = 3.0 * disp_surf_n[i] / param.NE.rs
         end
         for i = 1:mesh_pe.nlen 
             mesh = PickElement(mesh_p, Int64.(collect((i-1)*meshnum_perparticle_p .+ (1:meshnum_perparticle_p))))
             cs = cs_p[(i-1)* mesh.nlen .+ (1:mesh.nlen)]
             stress_rp_center[i],stress_theta_p_surf[i],disp_surf_p[i],theta_Mp[i],csp_gs[(i-1)*n_p_gs+1: i*n_p_gs] = Calstressdisp(param.PE, mesh, cs, T)
+            
+            # ✨ 新增：计算体积应变
+            volumetric_strain_p[i] = 3.0 * disp_surf_p[i] / param.PE.rs
         end
         eta_p_new = eta_p .- (2/3) * stress_theta_p_surf * param.PE.Omega  
         eta_n_new = eta_n .- (2/3) * stress_theta_n_surf * param.NE.Omega
@@ -104,6 +124,10 @@ function Mechanicaloutput(case::Case, variables::Dict{String, Union{Array{Float6
         variables["positive particle concentration at gauss point"] = csp_gs
         variables["negative particle stress coupling diffusion coefficient"] = theta_Mn
         variables["positive particle stress coupling diffusion coefficient"] = theta_Mp
+        
+        # ✨ 新增：存储颗粒体积应变（P2D模式）
+        variables["negative particle volumetric strain"] = volumetric_strain_n
+        variables["positive particle volumetric strain"] = volumetric_strain_p
 
     end
     return variables
@@ -171,45 +195,111 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     Tref = param.scale.T_ref
     T0 = hasproperty(param.cell, :T0) ? param.cell.T0 : 298.0 / Tref
     
-    # 提取温度场和SOC分布
+    # 提取温度场
     T_nodes = haskey(variables, "T_nodes") ? variables["T_nodes"] : fill(T0, mesh.nlen)
     T_nodes = isa(T_nodes, AbstractVector) ? T_nodes : T_nodes[:, end]
-    soc_n_elem = variables["thermal2D element soc_n"]
-    soc_p_elem = variables["thermal2D element soc_p"]
-    soc_ref_n = param.NE.cs0 
-    soc_ref_p = param.PE.cs0
+    
     # 获取材料参数
     E_eff = (param.NE.E * param.NE.thickness + param.PE.E * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
     ν_eff = (param.NE.nu * param.NE.thickness + param.PE.nu * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
     α_eff = (param.NE.alphaT * param.NE.thickness + param.PE.alphaT * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
+    eps_s_n = param.NE.eps_s
+    eps_s_p = param.PE.eps_s
     
-    # 化学膨胀系数（含固相体积分数修正）
-    # 理论：宏观应变 = 颗粒应变 × 体积分数
-    # ε_macro = (Ω/3) × eps_s × ΔSOC
-    # 参考：Christensen & Newman (2006), Bower et al. (2011)
-    β_n = param.NE.Omega / 3.0 * param.NE.eps_s  # 负极化学膨胀系数
-    β_p = param.PE.Omega / 3.0 * param.PE.eps_s  # 正极化学膨胀系数 
-
-    # 计算单元级别的温度和SOC
+    # 计算单元级别的温度
     ne = size(mesh.element, 1)
     T_elem = zeros(Float64, ne)
     dT_elem = zeros(Float64, ne)
-    Δsoc_n_elem = zeros(Float64, ne)
-    Δsoc_p_elem = zeros(Float64, ne)
     
     @inbounds for e in 1:ne
         nodes = mesh.element[e, :]
         T_elem[e] = sum(T_nodes[nodes]) / length(nodes)
         dT_elem[e] = T_elem[e] - T0
-        Δsoc_n_elem[e] = soc_n_elem[e] - soc_ref_n
-        Δsoc_p_elem[e] = soc_p_elem[e] - soc_ref_p
+    end
+    
+    # ═══════════════════════════════════════════════════════════════
+    # 化学应变计算：双路径逻辑
+    # ═══════════════════════════════════════════════════════════════
+    ε_chem_n_elem = zeros(Float64, ne)
+    ε_chem_p_elem = zeros(Float64, ne)
+    
+    if haskey(variables, "negative particle volumetric strain") && 
+       haskey(variables, "positive particle volumetric strain")
+        
+        # ═══════════════════════════════════════════════════════════════
+        # 路径1：颗粒体积膨胀法（新路线，基于disp_surf）
+        # ═══════════════════════════════════════════════════════════════
+        println("  [化学应变] 使用颗粒体积膨胀法（基于真实位移）")
+        
+        ε_particle_n = variables["negative particle volumetric strain"]
+        ε_particle_p = variables["positive particle volumetric strain"]
+        
+        # 映射到热单元（处理不同模型的数据格式）
+        if isa(ε_particle_n, Number)
+            # 标量：所有单元相同（单SPMe模式）
+            ε_particle_n_elem = fill(ε_particle_n, ne)
+            ε_particle_p_elem = fill(ε_particle_p, ne)
+        elseif length(ε_particle_n) == ne
+            # 向量且长度匹配：直接使用（多SPMe模式）
+            ε_particle_n_elem = ε_particle_n
+            ε_particle_p_elem = ε_particle_p
+        else
+            # P2D模式：需要从1D节点映射到2D单元
+            # 简化处理：使用平均值（精确映射需要空间插值）
+            ε_particle_n_elem = fill(mean(ε_particle_n), ne)
+            ε_particle_p_elem = fill(mean(ε_particle_p), ne)
+            println("    注：P2D模式使用平均值映射")
+        end
+        
+        # 均质化：宏观应变 = 固相体积分数 × 颗粒体积应变
+        @inbounds for e in 1:ne
+            ε_chem_n_elem[e] = eps_s_n * ε_particle_n_elem[e]
+            ε_chem_p_elem[e] = eps_s_p * ε_particle_p_elem[e]
+        end
+        
+    elseif haskey(variables, "thermal2D element soc_n") && 
+           haskey(variables, "thermal2D element soc_p")
+        
+        # ═══════════════════════════════════════════════════════════════
+        # 路径2：SOC代理法（旧路线，向后兼容）
+        # ═══════════════════════════════════════════════════════════════
+        println("  [化学应变] 使用SOC代理法（向后兼容）")
+        
+        soc_n_elem = variables["thermal2D element soc_n"]
+        soc_p_elem = variables["thermal2D element soc_p"]
+        soc_ref_n = param.NE.cs0 
+        soc_ref_p = param.PE.cs0
+        
+        # 化学膨胀系数（含固相体积分数修正）
+        β_n = param.NE.Omega / 3.0 * eps_s_n
+        β_p = param.PE.Omega / 3.0 * eps_s_p
+        
+        # 计算化学应变
+        @inbounds for e in 1:ne
+            Δsoc_n = soc_n_elem[e] - soc_ref_n
+            Δsoc_p = soc_p_elem[e] - soc_ref_p
+            ε_chem_n_elem[e] = β_n * Δsoc_n
+            ε_chem_p_elem[e] = β_p * Δsoc_p
+        end
+        
+    else
+        error("无法计算化学应变：缺少颗粒体积应变或SOC数据")
+    end
+    
+    # ═══════════════════════════════════════════════════════════════
+    # 计算总初始应变（热 + 化学）
+    # ═══════════════════════════════════════════════════════════════
+    epsilon_0_elem = zeros(Float64, ne)
+    
+    @inbounds for e in 1:ne
+        epsilon_0_elem[e] = α_eff * dT_elem[e] + ε_chem_n_elem[e] + ε_chem_p_elem[e]
     end
 
     # 装配力学刚度矩阵
     K_mech = _assemble_mechanical_stiffness_2D(mesh, E_eff, ν_eff)
     
-    # 装配热-扩散载荷向量
-    F_mech = _assemble_thermal_diffusion_load_2D(mesh, E_eff, ν_eff, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+    # 装配热-扩散载荷向量（现在直接使用化学应变）
+    F_mech = _assemble_thermal_diffusion_load_2D(mesh, E_eff, ν_eff, α_eff, 1.0, 1.0, dT_elem, ε_chem_n_elem, ε_chem_p_elem)
     
     # 施加边界条件
     K_mech, F_mech = _apply_mechanical_BC_2D(K_mech, F_mech, mesh, case)
@@ -217,8 +307,8 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     # 求解位移场
     U_M = _solve_mechanical_displacement_2D(K_mech, F_mech, mesh.nlen)
     
-    # 恢复应力场
-    σ_xx, σ_yy, σ_xy, σ_vm, σ_thermal, σ_diffusion = _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n, β_p, Tref, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+    # 恢复应力场（现在直接使用化学应变）
+    σ_xx, σ_yy, σ_xy, σ_vm, σ_thermal, σ_diffusion = _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, 1.0, 1.0, Tref, dT_elem, ε_chem_n_elem, ε_chem_p_elem)
     
     # 写入结果（转换为有量纲）
     L_ref = hasproperty(param.scale, :L_th) ? param.scale.L_th : 1.0
@@ -310,17 +400,18 @@ function _assemble_mechanical_stiffness_2D(mesh, E_eff, ν_eff)
 end
 
 """装配热-扩散载荷向量"""
-function _assemble_thermal_diffusion_load_2D(mesh, E_eff, ν_eff, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+function _assemble_thermal_diffusion_load_2D(mesh, E_eff, ν_eff, α_eff, β_n_dummy, β_p_dummy, dT_elem, ε_chem_n_elem, ε_chem_p_elem)
+    # 注：β_n_dummy, β_p_dummy 保留用于接口兼容，但已不使用（现在直接传入化学应变）
     nnode = mesh.nlen
     ndof = 2 * nnode
     E = E_eff
     ν = ν_eff
-    # 计算每个单元的初始应变 ε_0 = α*ΔT + β_c*c_s_max*ΔSOC
+    # 计算每个单元的总初始应变 ε_0 = ε_thermal + ε_chem_n + ε_chem_p
     ne = length(dT_elem)
     epsilon_0_elem = zeros(Float64, ne)
     
     @inbounds for e in 1:ne
-        epsilon_0_elem[e] = α_eff * dT_elem[e] + β_n * Δsoc_n_elem[e] + β_p * Δsoc_p_elem[e]
+        epsilon_0_elem[e] = α_eff * dT_elem[e] + ε_chem_n_elem[e] + ε_chem_p_elem[e]
     end
     
     # 高斯积分点数据
@@ -463,7 +554,8 @@ function _solve_mechanical_displacement_2D(K_M::SparseMatrixCSC{Float64,Int}, F_
 end
 
 """恢复应力场"""
-function _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n, β_p, Tref, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+function _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n_dummy, β_p_dummy, Tref, dT_elem, ε_chem_n_elem, ε_chem_p_elem)
+    # 注：β_n_dummy, β_p_dummy 保留用于接口兼容，但已不使用（现在直接传入化学应变）
     ne = size(mesh.element, 1)
     E = E_eff
     ν = ν_eff
@@ -480,12 +572,11 @@ function _recover_stress_2D(U_M, mesh, E_eff, ν_eff, α_eff, β_n, β_p, Tref, 
     epsilon_diffusion_elem = zeros(Float64, ne)
     @inbounds for e in 1:ne
         ε_thermal = α_eff * dT_elem[e]
-        ε_diff_n = β_n * Δsoc_n_elem[e]
-        ε_diff_p = β_p * Δsoc_p_elem[e]
+        ε_diff = ε_chem_n_elem[e] + ε_chem_p_elem[e]
         
         epsilon_thermal_elem[e] = ε_thermal
-        epsilon_diffusion_elem[e] = ε_diff_n + ε_diff_p
-        epsilon_0_elem[e] = ε_thermal + ε_diff_n + ε_diff_p
+        epsilon_diffusion_elem[e] = ε_diff
+        epsilon_0_elem[e] = ε_thermal + ε_diff
     end
     
     # 在单元中心恢复应力
