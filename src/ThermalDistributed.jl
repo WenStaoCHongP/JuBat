@@ -410,119 +410,30 @@ function _apply_convection_bc!(KT, FT, mesh, is_outer, case)
 end
 
 """
-极耳边界条件模块（新版）
+Z方向冷却模块（cool_method）
 
-提供三种边界处理方式：
-1. 惩罚法（penalty）：强制温度，数值不稳定（不推荐）
-2. 一般表面散热（surface_convection）：模拟整体z方向冷却
-3. 极耳强化散热（tab_convection）：模拟极耳区域局部强化冷却
+物理机制：
+2D模型中，z方向（上下表面）的对流散热以"体积热汇"形式贡献到xy平面热传导方程：
+    q_vol = 2h(T - T_amb) / H
+
+对刚度矩阵和载荷向量的贡献：
+    K_ij += ∫ (2h/H) N_i N_j dA   （xy平面面积分）
+    F_i  += ∫ (2h/H) T_amb N_i dA
+
+提供两种冷却方式：
+1. surface：整体表面冷却（整个xy域）
+2. tab：极耳强化冷却（仅极耳节点邻域）
 """
 
 # ========================================================================
-# 方式1：惩罚法（传统方法，不推荐）
+# 辅助函数：计算节点影响面积
 # ========================================================================
 
-"""应用极耳边界条件：惩罚法（传统方法，数值不稳定）"""
-function _apply_tab_bc_penalty!(KT, FT, mesh, case, t)
-    try
-        pos_idx, neg_idx = jellyroll_tab_node_indices(mesh, case.param_dim)
-        tab_nodes = unique(vcat(pos_idx, neg_idx))
-        
-        isempty(tab_nodes) && return
-        
-        # 参数
-        rate_Ks = hasproperty(case.opt, :tab_heating_rate) ? case.opt.tab_heating_rate : 0.1
-        penalty = hasproperty(case.opt, :tab_penalty) ? case.opt.tab_penalty : 1e6  # 降低默认值
-        
-        scale = case.param_dim.scale
-        T_amb_nd = case.param_dim.cell.T_amb / scale.T_ref
-        T_tab_nd = T_amb_nd + (rate_Ks * t) / scale.T_ref
-        
-        # 惩罚法
-        for n in tab_nodes
-            KT[n, n] += penalty
-            FT[n] += penalty * T_tab_nd
-        end
-        
-        # 警告
-        if penalty > 1e8
-            @warn "惩罚值过大，可能导致数值不稳定" penalty=penalty
-        end
-        
-    catch err
-        @warn "惩罚法边界条件失败" exception=(err, catch_backtrace())
-    end
-end
+"""
+计算每个节点的影响面积（Voronoi分割或单元平均）
 
-# ========================================================================
-# 方式2：一般表面散热（推荐）
-# ========================================================================
-
-"""应用极耳边界条件：一般表面散热（模拟z方向整体冷却）"""
-function _apply_surface_convection_bc!(KT, FT, mesh, case, t)
-    try
-        # 获取参数
-        h_surface = hasproperty(case.opt, :h_surface) ? case.opt.h_surface : 10.0  # W/(m²·K)
-        H = hasproperty(case.param_dim.cell, :height) ? case.param_dim.cell.height : case.param_dim.cell.width
-        
-        scale = case.param_dim.scale
-        k_th = scale.k_th
-        L_th = scale.L_th
-        T_ref = scale.T_ref
-        T_amb_nd = case.param_dim.cell.T_amb / T_ref
-        
-        # Biot数（无量纲）
-        Bi_z = h_surface * H / k_th
-        
-        # 尺度因子：conv_factor = Bi_z * H / L_th³
-        conv_factor = Bi_z * H / L_th^3
-        
-        if conv_factor < 1e-12
-            return  # 对流可忽略
-        end
-        
-        # 高斯积分数据
-        ngs = length(mesh.gs.detJ)
-        Ni = mesh.gs.Ni
-        wJ = mesh.gs.weight .* mesh.gs.detJ
-        ele = mesh.gs.ele
-        
-        nn_per_elem = size(mesh.element, 2)
-        
-        # 装配对流项到所有节点
-        for g in 1:ngs
-            e = ele[g]
-            nodes = mesh.element[e, :]
-            wt = conv_factor * wJ[g]
-            
-            for i in 1:nn_per_elem
-                ni = nodes[i]
-                Ni_g = Ni[g, i]
-                
-                for j in 1:nn_per_elem
-                    nj = nodes[j]
-                    Nj_g = Ni[g, j]
-                    KT[ni, nj] += wt * Ni_g * Nj_g
-                end
-                
-                FT[ni] += wt * T_amb_nd * Ni_g
-            end
-        end
-        
-        if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
-            @info "[surface_convection] 应用整体表面散热" h=h_surface Bi_z=Bi_z H=H
-        end
-        
-    catch err
-        @warn "表面对流边界条件失败" exception=(err, catch_backtrace())
-    end
-end
-
-# ========================================================================
-# 方式3：极耳强化散热（推荐）
-# ========================================================================
-
-"""计算节点影响面积"""
+用于极耳节点的体积散热项计算
+"""
 function _compute_node_areas(mesh)
     nnode = mesh.nlen
     ne = size(mesh.element, 1)
@@ -532,13 +443,13 @@ function _compute_node_areas(mesh)
     elem_areas = zeros(Float64, ne)
     ngs = length(mesh.gs.detJ)
     
-    # 计算单元面积
+    # 计算单元面积（高斯积分求和）
     for g in 1:ngs
         e = mesh.gs.ele[g]
         elem_areas[e] += mesh.gs.weight[g] * mesh.gs.detJ[g]
     end
     
-    # 分配给节点
+    # 平均分配给节点（以直代曲思想）
     for e in 1:ne
         A_e = elem_areas[e]
         A_per_node = A_e / nn_per_elem
@@ -552,10 +463,116 @@ function _compute_node_areas(mesh)
     return node_areas
 end
 
-"""应用极耳边界条件：极耳强化散热（仅极耳节点增强冷却）"""
-function _apply_tab_convection_bc!(KT, FT, mesh, case, t)
+# ========================================================================
+# 方式1：整体表面冷却（surface）
+# ========================================================================
+
+"""
+应用整体表面冷却（cool_method = "surface"）
+
+物理模型：
+整个电池上下表面（z方向）与环境对流换热，转换为xy平面的体积热汇。
+
+单位体积散热率：q_vol = 2h_surface(T - T_amb) / H
+
+刚度矩阵贡献：K_ij += ∫_Ω (2h/H) N_i N_j dA
+载荷向量贡献：F_i  += ∫_Ω (2h/H) T_amb N_i dA
+
+无量纲化：Bi_z = 2h*L_th^2 / (H*k_th)
+"""
+function _apply_cool_surface!(KT, FT, mesh, case, t)
     try
-        # 识别极耳节点
+        # 获取参数
+        h_surface = hasproperty(case.opt, :h_surface) ? case.opt.h_surface : 10.0  # W/(m²·K)
+        H = hasproperty(case.param_dim.cell, :height) ? case.param_dim.cell.height : case.param_dim.cell.width
+        
+        scale = case.param_dim.scale
+        k_th = scale.k_th
+        L_th = scale.L_th
+        T_ref = scale.T_ref
+        T_amb_nd = case.param_dim.cell.T_amb / T_ref
+        
+        # 体积散热系数：2h/H
+        vol_coeff = 2.0 * h_surface / H
+        
+        # 无量纲Biot数：Bi_z = 2h*L_th^2 / (H*k_th)
+        Bi_z = vol_coeff * L_th^2 / k_th
+        
+        if Bi_z < 1e-12
+            return  # 对流可忽略
+        end
+        
+        # 尺度因子（转换到无量纲刚度矩阵）
+        # K* += ∫ Bi_z N_i N_j dΩ*, 其中 dΩ* = dΩ / L_th^2
+        # 实际积分：∫ (Bi_z / L_th^2) N_i N_j dΩ
+        conv_factor = Bi_z / L_th^2
+        
+        # 高斯积分数据
+        ngs = length(mesh.gs.detJ)
+        Ni = mesh.gs.Ni
+        wJ = mesh.gs.weight .* mesh.gs.detJ  # 包含雅可比行列式
+        ele = mesh.gs.ele
+        
+        nn_per_elem = size(mesh.element, 2)
+        
+        # 对所有单元进行高斯积分
+        for g in 1:ngs
+            e = ele[g]
+            nodes = mesh.element[e, :]
+            wt = conv_factor * wJ[g]  # 高斯点权重
+            
+            # 装配刚度矩阵和载荷向量
+            for i in 1:nn_per_elem
+                ni = nodes[i]
+                Ni_g = Ni[g, i]
+                
+                for j in 1:nn_per_elem
+                    nj = nodes[j]
+                    Nj_g = Ni[g, j]
+                    
+                    # K_ij += wt * N_i * N_j （体积散热贡献）
+                    KT[ni, nj] += wt * Ni_g * Nj_g
+                end
+                
+                # F_i += wt * T_amb * N_i （环境温度驱动）
+                FT[ni] += wt * T_amb_nd * Ni_g
+            end
+        end
+        
+        # 调试信息
+        if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
+            @info "[cool_surface] 应用整体表面冷却" h=h_surface H=H Bi_z=Bi_z vol_coeff=vol_coeff
+        end
+        
+    catch err
+        @warn "整体表面冷却失败" exception=(err, catch_backtrace())
+    end
+end
+
+# ========================================================================
+# 方式2：极耳强化冷却（tab）
+# ========================================================================
+
+"""
+应用极耳强化冷却（cool_method = "tab"）
+
+物理模型：
+仅在极耳节点邻域施加增强的z方向对流散热（h_tab >> h_surface）。
+
+极耳节点识别：
+通过 jellyroll_tab_node_indices 识别螺旋线上的离散节点（以直代曲）。
+
+节点体积散热：
+每个极耳节点的影响面积为 A_node（通过单元面积平均分配）。
+
+刚度矩阵贡献：K_ii += (2h_tab/H) * A_node / L_th^2
+载荷向量贡献：F_i  += (2h_tab/H) * T_amb * A_node / L_th^2
+
+无量纲化：Bi_z,tab = 2h_tab*L_th^2 / (H*k_th)
+"""
+function _apply_cool_tab!(KT, FT, mesh, case, t)
+    try
+        # 识别极耳节点（螺旋线离散点）
         pos_idx, neg_idx = jellyroll_tab_node_indices(mesh, case.param_dim)
         tab_nodes = unique(vcat(pos_idx, neg_idx))
         
@@ -571,27 +588,37 @@ function _apply_tab_convection_bc!(KT, FT, mesh, case, t)
         T_ref = scale.T_ref
         T_amb_nd = case.param_dim.cell.T_amb / T_ref
         
-        # Biot数
-        Bi_z_tab = h_tab * H / k_th
+        # 体积散热系数：2h_tab/H
+        vol_coeff_tab = 2.0 * h_tab / H
         
-        # 计算节点面积
+        # 无量纲Biot数
+        Bi_z_tab = vol_coeff_tab * L_th^2 / k_th
+        
+        # 计算每个节点的影响面积（以直代曲）
         node_areas = _compute_node_areas(mesh)
         
-        # 对每个极耳节点施加对流边界条件
+        # 对每个极耳节点施加体积散热
         for n in tab_nodes
-            A_node = node_areas[n]
-            A_z_nd = A_node * H / L_th^2
+            A_node = node_areas[n]  # xy平面面积
             
-            KT[n, n] += Bi_z_tab * A_z_nd
-            FT[n] += Bi_z_tab * T_amb_nd * A_z_nd
+            # 无量纲面积
+            A_nd = A_node / L_th^2
+            
+            # 刚度矩阵贡献：K[n,n] += Bi_z * A_nd
+            KT[n, n] += Bi_z_tab * A_nd
+            
+            # 载荷向量贡献：F[n] += Bi_z * T_amb * A_nd
+            FT[n] += Bi_z_tab * T_amb_nd * A_nd
         end
         
+        # 调试信息
         if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
-            @info "[tab_convection] 应用极耳强化散热" h_tab=h_tab Bi_z=Bi_z_tab n_nodes=length(tab_nodes)
+            total_area = sum(node_areas[tab_nodes])
+            @info "[cool_tab] 应用极耳强化冷却" h_tab=h_tab H=H Bi_z=Bi_z_tab n_nodes=length(tab_nodes) total_area=total_area vol_coeff=vol_coeff_tab
         end
         
     catch err
-        @warn "极耳对流边界条件失败" exception=(err, catch_backtrace())
+        @warn "极耳强化冷却失败" exception=(err, catch_backtrace())
     end
 end
 
@@ -600,31 +627,51 @@ end
 # ========================================================================
 
 """
-应用极耳边界条件（统一接口）
+应用z方向冷却（统一接口）
 
-根据 opt.tab_bc_type 选择边界类型：
-- "surface_convection": 整体表面散热
-- "tab_convection": 极耳强化散热  
-- "penalty": 惩罚法（不推荐）
+根据 opt.cool_method 选择冷却方式：
+- "surface": 整体表面冷却（整个xy域）
+- "tab": 极耳强化冷却（仅极耳节点邻域）
 
-默认：如果设置了 h_tab，使用 tab_convection；否则使用 penalty
+参数：
+- opt.h_surface: 表面对流换热系数 [W/(m²·K)]，典型值：5-50
+- opt.h_tab: 极耳对流换热系数 [W/(m²·K)]，典型值：50-500
+
+使用示例：
+```julia
+opt.cool_method = "tab"
+opt.h_tab = 100.0
+```
+
+物理机制：
+z方向对流散热转换为xy平面的体积热汇 q_vol = 2h(T-T_amb)/H
 """
 function _apply_tab_bc!(KT, FT, mesh, case, t)
-    bc_type = if hasproperty(case.opt, :tab_bc_type)
-        case.opt.tab_bc_type
+    # 确定冷却方式
+    cool_method = if hasproperty(case.opt, :cool_method)
+        case.opt.cool_method
     else
-        hasproperty(case.opt, :h_tab) ? "tab_convection" : "penalty"
+        # 向后兼容：检查是否设置了相关参数
+        if hasproperty(case.opt, :h_tab)
+            "tab"
+        elseif hasproperty(case.opt, :h_surface)
+            "surface"
+        else
+            # 默认不施加冷却（或者可以给出警告）
+            if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
+                @info "未设置 cool_method，跳过z方向冷却"
+            end
+            return
+        end
     end
     
-    if bc_type == "surface_convection"
-        _apply_surface_convection_bc!(KT, FT, mesh, case, t)
-    elseif bc_type == "tab_convection"
-        _apply_tab_convection_bc!(KT, FT, mesh, case, t)
-    elseif bc_type == "penalty"
-        _apply_tab_bc_penalty!(KT, FT, mesh, case, t)
+    # 调用对应的冷却函数
+    if cool_method == "surface"
+        _apply_cool_surface!(KT, FT, mesh, case, t)
+    elseif cool_method == "tab"
+        _apply_cool_tab!(KT, FT, mesh, case, t)
     else
-        @warn "未知的极耳边界类型，使用默认惩罚法" bc_type=bc_type
-        _apply_tab_bc_penalty!(KT, FT, mesh, case, t)
+        @warn "未知的冷却方式" cool_method=cool_method
     end
 end
 
