@@ -429,9 +429,52 @@ Z方向冷却模块（cool_method）
 # 辅助函数：计算节点影响面积
 # ========================================================================
 
-# 注：_compute_node_areas 函数已删除（V3修正）
-# 原因：极耳节点是螺旋线上的离散点（0维），没有xy平面面积
-# 极耳冷却采用均匀分配策略，不需要计算"节点面积"
+"""
+计算极耳节点代表的弧长（以直代曲）
+
+物理机制：
+极耳节点是螺旋线上的离散点，相邻节点间有一段弧长。
+每个节点"代表"一段螺旋弧，应按弧长权重分配散热功率。
+
+方法：
+对于节点i，其代表的弧长为与前后相邻节点的直线距离平均（以直代曲）。
+
+返回：
+arc_lengths[i] = 节点 i 代表的弧长 [m]
+"""
+function _compute_tab_node_arc_lengths(mesh, tab_nodes)
+    n_nodes = length(tab_nodes)
+    arc_lengths = zeros(Float64, n_nodes)
+    
+    if n_nodes == 0
+        return arc_lengths
+    elseif n_nodes == 1
+        # 单个节点：假设代表整个极耳宽度
+        arc_lengths[1] = 1.0  # 相对权重=1
+        return arc_lengths
+    end
+    
+    # 节点坐标
+    coords = [mesh.node[n, :] for n in tab_nodes]
+    
+    # 计算每个节点代表的弧长（相邻节点间距的平均）
+    for i in 1:n_nodes
+        if i == 1
+            # 第一个节点：到下一个节点的距离
+            arc_lengths[i] = norm(coords[2] - coords[1])
+        elseif i == n_nodes
+            # 最后一个节点：到前一个节点的距离
+            arc_lengths[i] = norm(coords[i] - coords[i-1])
+        else
+            # 中间节点：前后距离的平均
+            dist_prev = norm(coords[i] - coords[i-1])
+            dist_next = norm(coords[i+1] - coords[i])
+            arc_lengths[i] = (dist_prev + dist_next) / 2.0
+        end
+    end
+    
+    return arc_lengths
+end
 
 # ========================================================================
 # 方式1：整体表面冷却（surface）
@@ -531,18 +574,20 @@ end
 
 关键理解：
 1. 散热面积 = tab.area（在 Jellyroll.jl 中定义）
-2. 极耳节点 = 螺旋线上的离散点（不是2D区域，没有xy平面面积）
-3. jellyroll_tab_node_indices 识别这些离散节点的位置
+2. 极耳节点 = 螺旋线上的离散点（1D线上的0D点）
+3. 每个节点代表一段弧长（相邻节点间距）
 
 总散热功率：Q_total = h_tab * tab.area * (T - T_amb)
 
 分配策略：
-均匀分配到所有极耳节点（螺旋线离散点）。
+按节点代表的弧长权重分配（以直代曲）。
+- 外层节点间距大 → 代表弧长长 → 分配更多散热
+- 内层节点间距小 → 代表弧长短 → 分配更少散热
 
-刚度矩阵贡献：K_ii += (h_tab * tab.area) / (n_nodes * H * k_th * L_th)
-载荷向量贡献：F_i  += (h_tab * tab.area * T_amb) / (n_nodes * H * k_th * L_th)
+权重：w_i = arc_length_i / sum(arc_length)
 
-其中 n_nodes = length(tab_nodes)
+刚度矩阵贡献：K_ii += (h_tab * tab.area * w_i) / (H * k_th * L_th)
+载荷向量贡献：F_i  += (h_tab * tab.area * w_i * T_amb) / (H * k_th * L_th)
 """
 function _apply_cool_tab!(KT, FT, mesh, case, t)
     try
@@ -563,25 +608,36 @@ function _apply_cool_tab!(KT, FT, mesh, case, t)
         T_ref = scale.T_ref
         T_amb_nd = case.param_dim.cell.T_amb / T_ref
         
-        # 节点数（螺旋线上的离散点数）
-        n_nodes = length(tab_nodes)
+        # 计算节点代表的弧长（以直代曲）
+        arc_lengths = _compute_tab_node_arc_lengths(mesh, tab_nodes)
+        total_arc_length = sum(arc_lengths)
         
-        # 均匀分配：每个节点的无量纲散热系数
-        # 物理量：h_tab * tab_area / (n_nodes * H) [W/(m·K)]
-        # 无量纲化：除以 (k_th * L_th)
-        coeff_per_node = h_tab * tab_area / (n_nodes * H * k_th * L_th)
+        if total_arc_length < 1e-12
+            @warn "极耳节点总弧长过小，跳过极耳冷却" total_arc_length=total_arc_length
+            return
+        end
         
-        # 对每个极耳节点施加相同的散热贡献
-        for n in tab_nodes
-            KT[n, n] += coeff_per_node
-            FT[n] += coeff_per_node * T_amb_nd
+        # 按弧长权重分配散热功率
+        for (i, n) in enumerate(tab_nodes)
+            # 节点弧长权重
+            weight = arc_lengths[i] / total_arc_length
+            
+            # 无量纲散热系数
+            # 物理量：h_tab * tab_area * weight / H [W/(m·K)]
+            # 无量纲化：除以 (k_th * L_th)
+            coeff = h_tab * tab_area * weight / (H * k_th * L_th)
+            
+            KT[n, n] += coeff
+            FT[n] += coeff * T_amb_nd
         end
         
         # 调试信息
         if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
-            # 等效Biot数（基于实际极耳面积）
+            n_nodes = length(tab_nodes)
             Bi_z_tab_equiv = h_tab * tab_area * L_th / (H * k_th)
-            @info "[cool_tab] 应用极耳强化冷却" h_tab=h_tab tab_area=tab_area H=H n_nodes=n_nodes Bi_z_equiv=Bi_z_tab_equiv coeff_per_node=coeff_per_node
+            min_weight = minimum(arc_lengths) / total_arc_length
+            max_weight = maximum(arc_lengths) / total_arc_length
+            @info "[cool_tab] 应用极耳强化冷却（弧长权重）" h_tab=h_tab tab_area=tab_area H=H n_nodes=n_nodes total_arc_length=total_arc_length Bi_z_equiv=Bi_z_tab_equiv weight_range=(min_weight, max_weight)
         end
         
     catch err
