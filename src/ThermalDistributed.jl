@@ -429,39 +429,9 @@ Z方向冷却模块（cool_method）
 # 辅助函数：计算节点影响面积
 # ========================================================================
 
-"""
-计算每个节点的影响面积（Voronoi分割或单元平均）
-
-用于极耳节点的体积散热项计算
-"""
-function _compute_node_areas(mesh)
-    nnode = mesh.nlen
-    ne = size(mesh.element, 1)
-    nn_per_elem = size(mesh.element, 2)
-    
-    node_areas = zeros(Float64, nnode)
-    elem_areas = zeros(Float64, ne)
-    ngs = length(mesh.gs.detJ)
-    
-    # 计算单元面积（高斯积分求和）
-    for g in 1:ngs
-        e = mesh.gs.ele[g]
-        elem_areas[e] += mesh.gs.weight[g] * mesh.gs.detJ[g]
-    end
-    
-    # 平均分配给节点（以直代曲思想）
-    for e in 1:ne
-        A_e = elem_areas[e]
-        A_per_node = A_e / nn_per_elem
-        
-        for i in 1:nn_per_elem
-            n = mesh.element[e, i]
-            node_areas[n] += A_per_node
-        end
-    end
-    
-    return node_areas
-end
+# 注：_compute_node_areas 函数已删除（V3修正）
+# 原因：极耳节点是螺旋线上的离散点（0维），没有xy平面面积
+# 极耳冷却采用均匀分配策略，不需要计算"节点面积"
 
 # ========================================================================
 # 方式1：整体表面冷却（surface）
@@ -560,23 +530,23 @@ end
 极耳与外界（如冷板）接触，通过实际接触面积 tab.area 散热。
 
 关键理解：
-1. 散热面积 = tab.area（在 Jellyroll.jl 中定义的实际极耳面积）
-2. jellyroll_tab_node_indices 识别受影响的节点（不是计算散热面积）
-3. 将总散热功率按权重分配到受影响的节点
+1. 散热面积 = tab.area（在 Jellyroll.jl 中定义）
+2. 极耳节点 = 螺旋线上的离散点（不是2D区域，没有xy平面面积）
+3. jellyroll_tab_node_indices 识别这些离散节点的位置
 
 总散热功率：Q_total = h_tab * tab.area * (T - T_amb)
 
 分配策略：
-按节点的xy平面面积权重分配，使得散热更集中在面积较大的节点。
+均匀分配到所有极耳节点（螺旋线离散点）。
 
-刚度矩阵贡献：K_ii += (h_tab * tab.area * weight_i) / (H * L_th^2)
-载荷向量贡献：F_i  += (h_tab * tab.area * weight_i * T_amb) / (H * L_th^2)
+刚度矩阵贡献：K_ii += (h_tab * tab.area) / (n_nodes * H * k_th * L_th)
+载荷向量贡献：F_i  += (h_tab * tab.area * T_amb) / (n_nodes * H * k_th * L_th)
 
-其中 weight_i = A_node[i] / sum(A_node[tab_nodes])
+其中 n_nodes = length(tab_nodes)
 """
 function _apply_cool_tab!(KT, FT, mesh, case, t)
     try
-        # 识别受极耳冷却影响的节点（螺旋线离散点）
+        # 识别极耳节点（螺旋线上的离散点）
         pos_idx, neg_idx = jellyroll_tab_node_indices(mesh, case.param_dim)
         tab_nodes = unique(vcat(pos_idx, neg_idx))
         
@@ -593,44 +563,25 @@ function _apply_cool_tab!(KT, FT, mesh, case, t)
         T_ref = scale.T_ref
         T_amb_nd = case.param_dim.cell.T_amb / T_ref
         
-        # 计算节点的xy平面面积（用于权重分配）
-        node_areas = _compute_node_areas(mesh)
+        # 节点数（螺旋线上的离散点数）
+        n_nodes = length(tab_nodes)
         
-        # 受影响节点的总面积
-        total_node_area = sum(node_areas[tab_nodes])
+        # 均匀分配：每个节点的无量纲散热系数
+        # 物理量：h_tab * tab_area / (n_nodes * H) [W/(m·K)]
+        # 无量纲化：除以 (k_th * L_th)
+        coeff_per_node = h_tab * tab_area / (n_nodes * H * k_th * L_th)
         
-        if total_node_area < 1e-12
-            @warn "极耳节点总面积过小，跳过极耳冷却" total_area=total_node_area
-            return
-        end
-        
-        # 对每个极耳节点，按面积权重分配散热功率
+        # 对每个极耳节点施加相同的散热贡献
         for n in tab_nodes
-            # 节点面积权重
-            weight = node_areas[n] / total_node_area
-            
-            # 该节点分配到的散热面积
-            A_node_eff = tab_area * weight  # [m²]
-            
-            # 体积散热系数：h * A_eff / H
-            # 注意：这里不是 2h/H，因为 tab.area 已经是单侧面积
-            vol_coeff_node = h_tab * A_node_eff / H  # [W/K]
-            
-            # 无量纲化：除以 (k_th * L_th)
-            coeff_nd = vol_coeff_node / (k_th * L_th)
-            
-            # 刚度矩阵贡献：K[n,n] += coeff_nd
-            KT[n, n] += coeff_nd
-            
-            # 载荷向量贡献：F[n] += coeff_nd * T_amb
-            FT[n] += coeff_nd * T_amb_nd
+            KT[n, n] += coeff_per_node
+            FT[n] += coeff_per_node * T_amb_nd
         end
         
         # 调试信息
         if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
             # 等效Biot数（基于实际极耳面积）
-            Bi_z_tab = h_tab * tab_area * L_th / (H * k_th)
-            @info "[cool_tab] 应用极耳强化冷却" h_tab=h_tab tab_area=tab_area H=H Bi_z_equiv=Bi_z_tab n_nodes=length(tab_nodes) total_node_area=total_node_area
+            Bi_z_tab_equiv = h_tab * tab_area * L_th / (H * k_th)
+            @info "[cool_tab] 应用极耳强化冷却" h_tab=h_tab tab_area=tab_area H=H n_nodes=n_nodes Bi_z_equiv=Bi_z_tab_equiv coeff_per_node=coeff_per_node
         end
         
     catch err
