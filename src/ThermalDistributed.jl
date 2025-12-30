@@ -457,16 +457,16 @@ function _compute_tab_node_arc_lengths(mesh, tab_nodes)
     # 节点坐标
     coords = [mesh.node[n, :] for n in tab_nodes]
     
-    # 计算每个节点代表的弧长（相邻节点间距的平均）
+    # 计算每个节点代表的弧长（Voronoi分割）
     for i in 1:n_nodes
         if i == 1
-            # 第一个节点：到下一个节点的距离
-            arc_lengths[i] = norm(coords[2] - coords[1])
+            # 起点节点：只代表半个单元（到相邻节点中点）
+            arc_lengths[i] = norm(coords[2] - coords[1]) / 2.0
         elseif i == n_nodes
-            # 最后一个节点：到前一个节点的距离
-            arc_lengths[i] = norm(coords[i] - coords[i-1])
+            # 终点节点：只代表半个单元（到相邻节点中点）
+            arc_lengths[i] = norm(coords[i] - coords[i-1]) / 2.0
         else
-            # 中间节点：前后距离的平均
+            # 中间节点：代表前后两个半单元
             dist_prev = norm(coords[i] - coords[i-1])
             dist_next = norm(coords[i+1] - coords[i])
             arc_lengths[i] = (dist_prev + dist_next) / 2.0
