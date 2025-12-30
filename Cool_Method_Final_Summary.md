@@ -75,27 +75,34 @@ end
 
 #### 方式2：极耳强化冷却（tab）
 
-**物理机制**：仅极耳节点邻域的体积散热
+**物理机制**：极耳通过实际接触面积 `tab.area` 散热
 
-**极耳识别**：螺旋线上的离散点（以直代曲）
+**关键理解**：
+- 散热面积 = `tab.area`（在 Jellyroll.jl 中定义）
+- 节点识别 = 受影响的节点（不是计算散热面积）
+- 分配策略 = 按节点面积权重分配 `tab.area`
 
-**实现**：节点面积法（简化）
+**实现**：权重分配法
 ```julia
 function _apply_cool_tab!(KT, FT, mesh, case, t)
-    # 识别极耳节点（螺旋线离散点）
+    # 识别受影响的节点（螺旋线离散点）
     tab_nodes = jellyroll_tab_node_indices(...)
     
-    # 计算节点影响面积（以直代曲）
+    # 使用实际极耳散热面积
+    tab_area = case.param_dim.tab.area  # ✅ 关键
+    
+    # 计算节点面积权重
     node_areas = compute_node_areas(mesh)
+    total_node_area = sum(node_areas[tab_nodes])
     
-    vol_coeff = 2.0 * h_tab / H
-    Bi_z = vol_coeff * L_th^2 / k_th
-    
-    # 仅对极耳节点施加
+    # 按权重分配散热功率
     for n in tab_nodes
-        A_nd = node_areas[n] / L_th^2
-        KT[n,n] += Bi_z * A_nd
-        FT[n] += Bi_z * T_amb * A_nd
+        weight = node_areas[n] / total_node_area
+        A_eff = tab_area * weight
+        
+        coeff = h_tab * A_eff / (H * k_th * L_th)
+        KT[n,n] += coeff
+        FT[n] += coeff * T_amb
     end
 end
 ```
@@ -206,12 +213,12 @@ $$
 在xy平面域内的面积分：∫_Ω (2h/H)(T - T_amb) dA
 ```
 
-### 2. 极耳节点 = 螺旋线离散点
+### 2. 极耳冷却的散热面积
 
-- 通过 `jellyroll_tab_node_indices` 识别
-- 螺旋线上的离散采样
-- 使用"以直代曲"思想
-- 每个节点代表一段螺旋弧
+- ✅ 散热面积 = `tab.area`（在 Jellyroll.jl 中定义）
+- ✅ `jellyroll_tab_node_indices` 识别受影响的节点（不是计算散热面积）
+- ✅ 按节点面积权重分配 `tab.area` 对应的散热功率
+- ✅ 物理意义：极耳与外界（如冷板）的实际接触面积
 
 ### 3. 物理图景
 
