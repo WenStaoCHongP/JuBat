@@ -543,8 +543,8 @@ function _apply_cool_surface!(KT, FT, mesh, case, t)
                     nj = nodes[j]
                     Nj_g = Ni[g, j]
                     
-                    # K_ij += wt * N_i * N_j （体积散热贡献）
-                    KT[ni, nj] += wt * Ni_g * Nj_g
+                    # K_ij -= wt * N_i * N_j （体积散热贡献，负号与代码约定统一）
+                    KT[ni, nj] -= wt * Ni_g * Nj_g
                 end
                 
                 # F_i += wt * T_amb * N_i （环境温度驱动）
@@ -627,7 +627,8 @@ function _apply_cool_tab!(KT, FT, mesh, case, t)
             # 无量纲化：除以 (k_th * L_th)
             coeff = h_tab * tab_area * weight / (H * k_th * L_th)
             
-            KT[n, n] += coeff
+            # 负号与代码约定统一（KT 已包含负号）
+            KT[n, n] -= coeff
             FT[n] += coeff * T_amb_nd
         end
         
