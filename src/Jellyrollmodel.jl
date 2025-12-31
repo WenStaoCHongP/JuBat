@@ -1,4 +1,4 @@
-# Jellyrollmodel.jl - 重构版
+# Jellyrollmodel.jl
 # 果冻卷（卷绕电池）物理建模工具
 # 
 # 结构组织：
@@ -44,12 +44,8 @@ function jellyroll_spiral_params(param_dim)
     layers = [:PCC, :PE, :SP, :NE, :NCC]
     
     # 获取各层厚度和热导率
-    widths = NamedTuple{Tuple(layers)}(
-        getfield(getfield(param_dim, layer), :thickness) for layer in layers
-    )
-    lambdas = NamedTuple{Tuple(layers)}(
-        getfield(getfield(param_dim, layer), :lambda) for layer in layers
-    )
+    widths = NamedTuple{Tuple(layers)}(getfield(getfield(param_dim, layer), :thickness) for layer in layers)
+    lambdas = NamedTuple{Tuple(layers)}(getfield(getfield(param_dim, layer), :lambda) for layer in layers)
     
     # 计算总厚度和体积分数
     t_repeat = sum(widths)
@@ -70,11 +66,7 @@ function jellyroll_spiral_params(param_dim)
     b = t_repeat / (2π)
     n_wind = Int(floor((Rout - Rin) / t_repeat))
     
-    return (; 
-        a, b, t_repeat, n_wind, 
-        fracs, names=layers, widths, order, boundaries,
-        λ_r_eff, λ_t_eff, Rin, Rout
-    )
+    return (; a, b, t_repeat, n_wind, fracs, names=layers, widths, order, boundaries, λ_r_eff, λ_t_eff, Rin, Rout)
 end
 
 """
@@ -282,10 +274,7 @@ is_inner = edge_boundary(mesh, i, param_dim; which=:inner)
 is_outer = edge_boundary(mesh, i, param_dim; which=:outer)
 ```
 """
-function edge_boundary(mesh, nidx::Int, param_dim; 
-                       which::Symbol=:inner, 
-                       theta_range::Union{Tuple{Float64,Float64},Nothing}=nothing, 
-                       tol::Float64=1e-4)
+function edge_boundary(mesh, nidx::Int, param_dim; which::Symbol=:inner, theta_range::Union{Tuple{Float64,Float64},Nothing}=nothing, tol::Float64=1e-4)
     # 获取螺旋参数和偏移
     p = jellyroll_spiral_params(param_dim)
     offset = if which === :inner
@@ -366,8 +355,7 @@ function jellyroll_tab_node_indices(mesh, param_dim)
     p = jellyroll_spiral_params(param_dim)
     a, b = p.a, p.b
     Rin, Rout = p.Rin, p.Rout
-    tab = param_dim.tab
-    tw = hasproperty(tab, :width) ? tab.width : 0.0
+    tw = param_dim.tab.width
     
     # 预计算所有节点的累计角度
     nn = size(mesh.node, 1)
@@ -378,18 +366,10 @@ function jellyroll_tab_node_indices(mesh, param_dim)
     delta_theta_fn = (θ, w) -> _delta_theta_from_width(a, b, θ, w)
     
     # 正极耳（内螺旋）
-    pos_idx = _find_tab_nodes(
-        mesh, tab.theta_pos, θ_cum_in, 
-        (minimum(θ_cum_in), maximum(θ_cum_in)),
-        delta_theta_fn, tw, Rin, Rout
-    )
+    pos_idx = _find_tab_nodes(mesh, param_dim.tab.theta_pos, θ_cum_in, (minimum(θ_cum_in), maximum(θ_cum_in)),delta_theta_fn, tw, Rin, Rout)
     
     # 负极耳（外螺旋，角度范围反向）
-    neg_idx = _find_tab_nodes(
-        mesh, tab.theta_neg, θ_cum_out,
-        (minimum(θ_cum_out), maximum(θ_cum_out)),
-        delta_theta_fn, tw, Rin, Rout; reverse_range=true
-    )
+    neg_idx = _find_tab_nodes(mesh, param_dim.tab.theta_neg, θ_cum_out,(minimum(θ_cum_out), maximum(θ_cum_out)),delta_theta_fn, tw, Rin, Rout; reverse_range=true)
     
     return pos_idx, neg_idx
 end
@@ -514,21 +494,18 @@ end
 # 返回
 - `Vector{Int}`: 节点索引列表
 """
-function _find_tab_nodes(mesh, tab_angles, θ_cum_nodes, θ_cum_range, 
-                         delta_theta_fn, tw, Rin, Rout; reverse_range=false)
-    isempty(tab_angles) && return Int[]
+function _find_tab_nodes(mesh, tab_angles, θ_cum_nodes, θ_cum_range, delta_theta_fn, tw, Rin, Rout; reverse_range=false) isempty(tab_angles) && return Int[]
     
     idx = Int[]
     θc_min, θc_max = θ_cum_range
-    twoπ = 2.0*π
     nn = length(θ_cum_nodes)
     
     for θ0_orig in tab_angles
         θ0 = Float64(θ0_orig)
         
         # 归一化到节点覆盖范围
-        while θ0 > θc_max; θ0 -= twoπ; end
-        while θ0 < θc_min; θ0 += twoπ; end
+        while θ0 > θc_max; θ0 -= 2.0*π; end
+        while θ0 < θc_min; θ0 += 2.0*π; end
         
         # 计算角度增量
         Δθ = delta_theta_fn(θ0, tw)
@@ -590,101 +567,3 @@ function _delta_theta_from_width(a::Float64, b::Float64, θ0::Float64, width::Fl
     
     return 0.5 * (lo + hi)
 end
-
-# ========================================================================
-# 模块说明
-# ========================================================================
-
-"""
-# Jellyrollmodel 模块
-
-果冻卷（卷绕电池）几何建模工具。
-
-## 主要功能
-
-### 1. 参数计算
-- `jellyroll_spiral_params`: 计算螺旋参数、层厚度、等效热导率
-- `material_at`: 判断给定位置的材料层
-
-### 2. 网格生成
-- `jellyroll_collector_seed_mesh`: 基于集流体导轨的条带网格生成器（推荐）
-- `jellyroll_get_layer_weights`: 获取网格的层权重矩阵
-
-### 3. 边界识别
-- `edge_boundary`: 基于螺旋方程的精确边界节点识别
-
-### 4. 极耳处理
-- `jellyroll_tab_node_indices`: 识别受极耳影响的节点
-
-### 5. 辅助工具
-- `cart2pol`: 坐标变换
-- `jellyroll_element_centers`: 计算单元中心
-- `jellyroll_effective_K_at`: 计算各向异性导热张量
-
-## 使用示例
-
-```julia
-# 1. 计算螺旋参数
-p = jellyroll_spiral_params(param_dim)
-
-# 2. 生成网格
-mesh = jellyroll_collector_seed_mesh(param_dim; nθ=160)
-
-# 3. 获取层权重
-f_k = jellyroll_get_layer_weights(mesh)  # (ne×5) [NE, SP, PE, PCC, NCC]
-
-# 4. 识别边界节点
-is_inner = edge_boundary(mesh, node_idx, param_dim; which=:inner)
-is_outer = edge_boundary(mesh, node_idx, param_dim; which=:outer)
-
-# 5. 识别极耳节点
-pos_nodes, neg_nodes = jellyroll_tab_node_indices(mesh, param_dim)
-```
-
-## 网格生成建议
-
-**推荐使用 `jellyroll_collector_seed_mesh`**，原因：
-- ✅ 每个单元包含完整层序（NE, SP, PE, PCC, NCC）
-- ✅ 适合"每单元=子电池"的电化学-热耦合模型
-- ✅ 自动生成精确的层权重
-- ✅ 覆盖整个螺旋（多圈），物理意义明确
-- ✅ 计算效率高（"以直代曲"近似）
-
-## 理论基础
-
-### 阿基米德螺旋
-- 方程：r(θ) = a + bθ
-- 参数：a ≈ Rin, b ≈ t_repeat/(2π)
-- 层序：PCC → PE → SP → NE → NCC（从内到外）
-
-### 等效热导率
-- 径向（串联）：调和平均 λ_r = 1 / Σ(f_k / λ_k)
-- 切向（并联）：算术平均 λ_t = Σ(f_k * λ_k)
-
-### 各向异性导热张量
-K(θ) = λ_r * e_r⊗e_r + λ_t * e_θ⊗e_θ
-
-其中 e_r、e_θ 为径向和切向单位向量。
-
-## 代码重构说明
-
-### v2.0 重构要点
-1. **结构重组**：按功能模块清晰分组
-2. **精简代码**：消除重复逻辑（减少 ~25%）
-3. **统一接口**：只保留 collector_seed_mesh 网格生成
-4. **优化性能**：向量化计算、提取辅助函数
-5. **改进文档**：详细的函数说明和使用示例
-
-### 删除的功能
-- `jellyroll_Q4_mesh` 的其他模式（:inscribed, :center）
-- `pol2cart` 函数（未使用）
-- `jellyroll_element_layer_weights` 采样计算（被缓存方案替代）
-- `Plots` 导入（未使用）
-
-### 新增改进
-- ✅ 更清晰的代码组织
-- ✅ 更高效的计算（向量化）
-- ✅ 更精确的层权重（直接从几何）
-- ✅ 更简洁的接口（单一网格生成方法）
-
-"""

@@ -134,6 +134,7 @@ end
     length::Float64 = 0
     width::Float64 = 0
     area::Float64 = 0
+    h::Float64 = 0
     theta_pos::Vector{Float64} = Float64[]
     theta_neg::Vector{Float64} = Float64[]
 end
@@ -209,8 +210,6 @@ function ChooseCell(CellType::String="LG M50")
         include("../src/parameters/Enertech.jl") # pathof(JuBat)
     elseif CellType == "Jellyroll"
         include(joinpath(@__DIR__, "parameters", "Jellyroll.jl"))
-    elseif CellType == "ThermalMinimal"
-        include(joinpath(@__DIR__, "parameters", "ThermalMinimal.jl"))
     end
     param_dim.PE.eps_s = 1 - param_dim.PE.eps - param_dim.PE.eps_fi
     param_dim.NE.eps_s = 1 - param_dim.NE.eps - param_dim.NE.eps_fi
@@ -253,21 +252,14 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.k_p = param_dim.scale.j / param_dim.PE.cs_max / sqrt(param_dim.EL.ce0)
     param_dim.scale.k_n = param_dim.scale.j / param_dim.NE.cs_max / sqrt(param_dim.EL.ce0)
     param_dim.scale.R_cell = param_dim.scale.phi / param_dim.scale.I_typ
+    #Thermal scaling
+    param_dim.scale.L_th = param_dim.cell.Rout
+    param_dim.scale.k_th = param_dim.PE.lambda > 0 ? param_dim.PE.lambda : (param_dim.NE.lambda > 0 ? param_dim.NE.lambda : 1.0)
+    param_dim.scale.rho_c_th = param_dim.cell.rho * param_dim.cell.heat_Q
+    param_dim.scale.q_th = param_dim.scale.k_th * param_dim.scale.T_ref / param_dim.scale.L_th^2
+    param_dim.scale.t_th = param_dim.scale.rho_c_th * param_dim.scale.L_th^2 / param_dim.scale.k_th
+    param_dim.scale.h_th = param_dim.cell.h * param_dim.scale.L_th / param_dim.scale.k_th  # Biot number
 
-    # ---------------- Thermal scaling (Scheme B) ----------------
-    # Characteristic thermal length: use outer radius if available, else max(length,width) or L
-    L_th = param_dim.cell.Rout
-    k_ref = param_dim.PE.lambda > 0 ? param_dim.PE.lambda : (param_dim.NE.lambda > 0 ? param_dim.NE.lambda : 1.0)
-    rho_c_ref = param_dim.cell.rho * param_dim.cell.heat_Q
-    q_ref = k_ref * param_dim.scale.T_ref / L_th^2
-    t_th = rho_c_ref * L_th^2 / k_ref
-    h_ref = param_dim.cell.h * L_th / k_ref  # Biot number (dimensionless h)
-    param_dim.scale.L_th = L_th
-    param_dim.scale.k_th = k_ref
-    param_dim.scale.rho_c_th = rho_c_ref
-    param_dim.scale.q_th = q_ref
-    param_dim.scale.t_th = t_th
-    param_dim.scale.h_th = h_ref
     return param_dim
 end
 
@@ -357,6 +349,12 @@ function NormaliseParam(param_dim::Params)
     param.cell.area = param_dim.cell.area / param_dim.cell.area
     param.cell.volume = param_dim.cell.volume / param_dim.scale.L^3
 
+    #tab
+    param.tab.length = param_dim.tab.length / param.scale.L
+    param.tab.width = param_dim.tab.width / param.scale.L
+    param.tab.area = param_dim.tab.area / param.scale.L^2
+    param.tab.h = param_dim.tab.h * param.scale.T_ref / param.scale.phi / param.scale.I_typ
+    
     return param
 end
 

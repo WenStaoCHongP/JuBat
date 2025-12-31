@@ -91,10 +91,8 @@ function _identify_boundary_nodes(mesh, param_dim, opt)
     tol = hasproperty(opt, :boundary_tol) ? opt.boundary_tol : 1e-4
     
     # 向量化识别
-    is_inner = [edge_boundary(mesh, i, param_dim; which=:inner, theta_range=θ_in_range, tol=tol) 
-                for i in 1:nnode]
-    is_outer = [edge_boundary(mesh, i, param_dim; which=:outer, theta_range=θ_out_range, tol=tol) 
-                for i in 1:nnode]
+    is_inner = [edge_boundary(mesh, i, param_dim; which=:inner, theta_range=θ_in_range, tol=tol) for i in 1:nnode]
+    is_outer = [edge_boundary(mesh, i, param_dim; which=:outer, theta_range=θ_out_range, tol=tol) for i in 1:nnode]
     
     return is_inner, is_outer
 end
@@ -140,7 +138,7 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Flo
     @assert haskey(case.mesh, "thermal2D") "thermal2D mesh is missing"
     mesh = case.mesh["thermal2D"]
     @assert mesh.type == "Q4" "ThermalDistributed2D currently assumes Q4 mesh"
-    
+    param = case.param
     # 提取尺度和基本几何
     scale = case.param_dim.scale
     ρc_ref, k_ref, q_ref, L_th = scale.rho_c_th, scale.k_th, scale.q_th, scale.L_th
@@ -173,8 +171,7 @@ function _assemble_mass_matrix(case, variables, ne, Vi, Vj, Ni, wJ, ele_of_gp, �
         ρc_layers = _compute_layer_rho_c(case.param_dim, ρc_ref)
         ρc_e = zeros(Float64, ne)
         @inbounds for e in 1:ne
-            ρc_e[e] = fks[e,1]*ρc_layers.NE + fks[e,2]*ρc_layers.SP + 
-                      fks[e,3]*ρc_layers.PE + fks[e,4]*ρc_layers.PCC + fks[e,5]*ρc_layers.NCC
+            ρc_e[e] = fks[e,1]*ρc_layers.NE + fks[e,2]*ρc_layers.SP + fks[e,3]*ρc_layers.PE + fks[e,4]*ρc_layers.PCC + fks[e,5]*ρc_layers.NCC
         end
         ρc_weights = ρc_e[ele_of_gp] .* (wJ ./ L_th^2)
     else
@@ -331,7 +328,7 @@ end
 应用热边界条件：
 1. 外边界对流：-k ∂T/∂n = h (T - T_amb)
 2. 内边界绝热（默认）
-3. 极耳强制温度（惩罚法）
+3. 冷却策略
 """
 function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64=0.0)
     @assert haskey(case.mesh, "thermal2D") "thermal2D mesh is missing"
@@ -344,8 +341,8 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64=0.0)
     # 应用外边界对流
     _apply_convection_bc!(KT, FT, mesh, is_outer, case)
     
-    # 应用极耳边界条件
-    _apply_tab_bc!(KT, FT, mesh, case, t)
+    # 应用冷却策略
+    _apply_cool_method!(KT, FT, mesh, case, t)
     
     return nothing
 end
@@ -409,34 +406,249 @@ function _apply_convection_bc!(KT, FT, mesh, is_outer, case)
     end
 end
 
-"""应用极耳边界条件（惩罚法强制温度）"""
-function _apply_tab_bc!(KT, FT, mesh, case, t)
+"""
+Z方向冷却模块（cool_method）
+
+物理机制：
+2D模型中，z方向（上下表面）的对流散热以"体积热汇"形式贡献到xy平面热传导方程：
+    q_vol = 2h(T - T_amb) / H
+
+对刚度矩阵和载荷向量的贡献：
+    K_ij += ∫ (2h/H) N_i N_j dA   （xy平面面积分）
+    F_i  += ∫ (2h/H) T_amb N_i dA
+
+提供两种冷却方式：
+1. surface：整体表面冷却（整个xy域）
+2. tab：极耳强化冷却（仅极耳节点邻域）
+"""
+
+# ========================================================================
+# 辅助函数：计算节点影响面积
+# ========================================================================
+
+"""
+计算极耳节点代表的弧长（以直代曲）
+
+物理机制：
+极耳节点是螺旋线上的离散点，相邻节点间有一段弧长。
+每个节点"代表"一段螺旋弧，应按弧长权重分配散热功率。
+
+方法：
+对于节点i，其代表的弧长为与前后相邻节点的直线距离平均（以直代曲）。
+
+返回：
+arc_lengths[i] = 节点 i 代表的弧长 [m]
+"""
+function _compute_tab_node_arc_lengths(mesh, tab_nodes)
+    n_nodes = length(tab_nodes)
+    arc_lengths = zeros(Float64, n_nodes)
+    
+    if n_nodes == 0
+        return arc_lengths
+    elseif n_nodes == 1
+        # 单个节点：假设代表整个极耳宽度
+        arc_lengths[1] = 1.0  # 相对权重=1
+        return arc_lengths
+    end
+    
+    # 节点坐标
+    coords = [mesh.node[n, :] for n in tab_nodes]
+    
+    # 计算每个节点代表的弧长（Voronoi分割）
+    for i in 1:n_nodes
+        if i == 1
+            # 起点节点：只代表半个单元（到相邻节点中点）
+            arc_lengths[i] = norm(coords[2] - coords[1]) / 2.0
+        elseif i == n_nodes
+            # 终点节点：只代表半个单元（到相邻节点中点）
+            arc_lengths[i] = norm(coords[i] - coords[i-1]) / 2.0
+        else
+            # 中间节点：代表前后两个半单元
+            dist_prev = norm(coords[i] - coords[i-1])
+            dist_next = norm(coords[i+1] - coords[i])
+            arc_lengths[i] = (dist_prev + dist_next) / 2.0
+        end
+    end
+    
+    return arc_lengths
+end
+
+# ========================================================================
+# 方式1：整体表面冷却（surface）
+# ========================================================================
+
+"""
+应用整体表面冷却（cool_method = "surface"）
+
+物理模型：
+整个电池上下表面（z方向）与环境对流换热，转换为xy平面的体积热汇。
+
+单位体积散热率：q_vol = 2h_surface(T - T_amb) / H
+
+刚度矩阵贡献：K_ij += ∫_Ω (2h/H) N_i N_j dA
+载荷向量贡献：F_i  += ∫_Ω (2h/H) T_amb N_i dA
+
+无量纲化：Bi_z = 2h*L_th^2 / (H*k_th)
+"""
+function _apply_cool_surface!(KT, FT, mesh, case, t)
     try
+        # 获取参数
+        h_surface = case.param_dim.cell.h  # W/(m²·K)
+        H = case.param_dim.cell.width
+        scale = case.param_dim.scale
+        k_th = scale.k_th
+        L_th = scale.L_th
+        T_ref = scale.T_ref
+        T_amb_nd = case.param_dim.cell.T_amb / T_ref
+        
+        conv_factor = 2.0 * h_surface / (H * k_th * L_th)
+        
+        # 高斯积分数据
+        ngs = length(mesh.gs.detJ)
+        Ni = mesh.gs.Ni
+        wJ = mesh.gs.weight .* mesh.gs.detJ  # 包含雅可比行列式
+        ele = mesh.gs.ele
+        
+        nn_per_elem = size(mesh.element, 2)
+        
+        # 对所有单元进行高斯积分
+        for g in 1:ngs
+            e = ele[g]
+            nodes = mesh.element[e, :]
+            wt = conv_factor * wJ[g]  # 高斯点权重
+            
+            # 装配刚度矩阵和载荷向量
+            for i in 1:nn_per_elem
+                ni = nodes[i]
+                Ni_g = Ni[g, i]
+                
+                for j in 1:nn_per_elem
+                    nj = nodes[j]
+                    Nj_g = Ni[g, j]
+                    
+                    # K_ij += wt * N_i * N_j （体积散热贡献）
+                    KT[ni, nj] -= wt * Ni_g * Nj_g
+                end
+                
+                # F_i += wt * T_amb * N_i （环境温度驱动）
+                FT[ni] += wt * T_amb_nd * Ni_g
+            end
+        end
+        # 调试信息
+        if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
+            @info "[cool_surface] 应用整体表面冷却" h=h_surface H=H Bi_z=Bi_z vol_coeff=vol_coeff
+        end
+        
+    catch err
+        @warn "整体表面冷却失败" exception=(err, catch_backtrace())
+    end
+end
+
+# ========================================================================
+# 方式2：极耳强化冷却（tab）
+# ========================================================================
+
+"""
+应用极耳强化冷却（cool_method = "tab"）
+
+物理模型：
+极耳与外界（如冷板）接触，通过实际接触面积 tab.area 散热。
+
+关键理解：
+1. 散热面积 = tab.area（在 Jellyroll.jl 中定义）
+2. 极耳节点 = 螺旋线上的离散点（1D线上的0D点）
+3. 每个节点代表一段弧长（相邻节点间距）
+
+总散热功率：Q_total = h_tab * tab.area * (T - T_amb)
+
+分配策略：
+按节点代表的弧长权重分配（以直代曲）。
+- 外层节点间距大 → 代表弧长长 → 分配更多散热
+- 内层节点间距小 → 代表弧长短 → 分配更少散热
+
+权重：w_i = arc_length_i / sum(arc_length)
+
+刚度矩阵贡献：K_ii += (h_tab * tab.area * w_i) / (H * k_th * L_th)
+载荷向量贡献：F_i  += (h_tab * tab.area * w_i * T_amb) / (H * k_th * L_th)
+"""
+function _apply_cool_tab!(KT, FT, mesh, case, t)
+    try
+        # 识别极耳节点（螺旋线上的离散点）
         pos_idx, neg_idx = jellyroll_tab_node_indices(mesh, case.param_dim)
         tab_nodes = unique(vcat(pos_idx, neg_idx))
         
         isempty(tab_nodes) && return
         
-        # 调试信息
-        if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
-            @info "[thermal BC] tab nodes" pos=length(pos_idx) neg=length(neg_idx)
-        end
-        
-        # 极耳温度：线性升温
-        rate_Ks = hasproperty(case.opt, :tab_heating_rate) ? case.opt.tab_heating_rate : 0.1
-        penalty = hasproperty(case.opt, :tab_penalty) ? case.opt.tab_penalty : 1e12
+        # 获取参数
+        h_tab = case.param_dim.tab.h  # W/(m²·K)
+        tab_area = case.param_dim.tab.area  # 实际极耳散热面积 [m²]
+        H = case.param_dim.cell.width
         
         scale = case.param_dim.scale
-        T_amb_nd = case.param_dim.cell.T_amb / scale.T_ref
-        T_tab_nd = T_amb_nd + (rate_Ks * t) / scale.T_ref
+        k_th = scale.k_th
+        L_th = scale.L_th
+        T_ref = scale.T_ref
+        T_amb_nd = case.param_dim.cell.T_amb / T_ref
         
-        # 惩罚法
-        for n in tab_nodes
-            KT[n, n] += penalty
-            FT[n] += penalty * T_tab_nd
+        # 计算节点代表的弧长（以直代曲）
+        arc_lengths = _compute_tab_node_arc_lengths(mesh, tab_nodes)
+        total_arc_length = sum(arc_lengths)
+        
+        if total_arc_length < 1e-12
+            @warn "极耳节点总弧长过小，跳过极耳冷却" total_arc_length=total_arc_length
+            return
         end
+        
+        # 按弧长权重分配散热功率
+        for (i, n) in enumerate(tab_nodes)
+            # 节点弧长权重
+            weight = arc_lengths[i] / total_arc_length
+            
+            # 无量纲散热系数
+            # 物理量：h_tab * tab_area * weight / H [W/(m·K)]
+            # 无量纲化：除以 (k_th * L_th)
+            coeff = h_tab * tab_area * weight / (H * k_th * L_th)
+            
+            KT[n, n] -= coeff
+            FT[n] += coeff * T_amb_nd
+        end
+        
+        # 调试信息
+        if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
+            n_nodes = length(tab_nodes)
+            Bi_z_tab_equiv = h_tab * tab_area * L_th / (H * k_th)
+            min_weight = minimum(arc_lengths) / total_arc_length
+            max_weight = maximum(arc_lengths) / total_arc_length
+            @info "[cool_tab] 应用极耳强化冷却（弧长权重）" h_tab=h_tab tab_area=tab_area H=H n_nodes=n_nodes total_arc_length=total_arc_length Bi_z_equiv=Bi_z_tab_equiv weight_range=(min_weight, max_weight)
+        end
+        
     catch err
-        @warn "Tab BC failed" err
+        @warn "极耳强化冷却失败" exception=(err, catch_backtrace())
+    end
+end
+
+"""
+应用z方向冷却（统一接口）
+
+根据 opt.cool_method 选择冷却方式：
+- "surface": 整体表面冷却（整个xy域）
+- "tab": 极耳强化冷却（仅极耳节点邻域）
+物理机制：
+z方向对流散热转换为xy平面的体积热汇 q_vol = 2h(T-T_amb)/H
+"""
+function _apply_cool_method!(KT, FT, mesh, case, t)
+    # 确定冷却方式
+    cool_method = if hasproperty(case.opt, :cool_method)
+        case.opt.cool_method
+    end
+    
+    # 调用对应的冷却函数
+    if cool_method == "surface"
+        _apply_cool_surface!(KT, FT, mesh, case, t)
+    elseif cool_method == "tab"
+        _apply_cool_tab!(KT, FT, mesh, case, t)
+    else
+        @warn "未知的冷却方式" cool_method=cool_method
     end
 end
 
@@ -465,8 +677,7 @@ function heatQ_Source(case::Case, variables::Dict{String,Union{Array{Float64},Fl
     
     # 预处理：获取必要数据
     areas = _compute_element_areas!(variables, mesh)
-    T_nodes = haskey(variables, "T_nodes") ? variables["T_nodes"] : 
-              fill(case.param.cell.T0, mesh.nlen)
+    T_nodes = haskey(variables, "T_nodes") ? variables["T_nodes"] : fill(case.param.cell.T0, mesh.nlen)
     T_e = _compute_element_temperatures(T_nodes, mesh.element)
     I_e = variables["thermal2D element current"]
     fks = _get_layer_weights(variables, ne)
@@ -522,19 +733,11 @@ function _compute_layer_heat_sources(case, variables, T_e, I_e)
     kappa_sp = param.EL.kappa(param.EL.ce0, T_e) * param.SP.eps^param.SP.brugg
     
     # 负极
-    Q_NE = (as_n * abs(j_n) * abs(eta_n) +                    # 反应热
-            as_n * j_n * T_e * param.NE.dUdT(csn_surf) +      # 可逆热
-            I_e^2 / (3.0 * sig_n_eff) +                       # 固相欧姆热
-            I_e^2 / (3.0 * kappa_ne))                         # 液相欧姆热
-    
+    Q_NE = (as_n * abs(j_n) * abs(eta_n) + as_n * j_n * T_e * param.NE.dUdT(csn_surf) + I_e^2 / (3.0 * sig_n_eff) + I_e^2 / (3.0 * kappa_ne))
     # 隔膜
     Q_SP = I_e^2 / kappa_sp
-    
     # 正极
-    Q_PE = (as_p * abs(j_p) * abs(eta_p) +
-            as_p * j_p * T_e * param.PE.dUdT(csp_surf) +
-            I_e^2 / (3.0 * sig_p_eff) +
-            I_e^2 / (3.0 * kappa_pe))
+    Q_PE = (as_p * abs(j_p) * abs(eta_p) + as_p * j_p * T_e * param.PE.dUdT(csp_surf) + I_e^2 / (3.0 * sig_p_eff) +I_e^2 / (3.0 * kappa_pe))
     
     # 集流体
     σ_PCC = hasproperty(param, :PCC) && hasproperty(param.PCC, :sig) ? 

@@ -214,7 +214,7 @@ end
 function solve_thermal2D_simple_coupling(case, variables, t)
     vars_local = copy(variables)
     M_T, K_T, F_T = ThermalDistributed2D(case, vars_local)
-    t_ratio = case.param_dim.scale.t0 / max(case.param_dim.scale.t_th, eps())
+    t_ratio = case.param_dim.scale.t0 / case.param_dim.scale.t_th
     M_T = M_T .* t_ratio
     ThermalDistributed2D_BC(K_T, F_T, case, t)
     return M_T, K_T, F_T, vars_local

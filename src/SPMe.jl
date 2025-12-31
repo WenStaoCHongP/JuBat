@@ -392,24 +392,21 @@ function _compute_element_coefficients(e, T_e, param, prefactors, T_ref, debug_m
     # 交换电流密度
     arr_n = Arrhenius(param.NE.Eac_k, T_e)
     arr_p = Arrhenius(param.PE.Eac_k, T_e)
-    j0_n = max(param.NE.k * arr_n * prefactors.prefactor_n, 1e-16)
-    j0_p = max(param.NE.k * arr_p * prefactors.prefactor_p, 1e-16)
+    j0_n = param.NE.k * arr_n * prefactors.prefactor_n
+    j0_p = param.PE.k * arr_p * prefactors.prefactor_p
     
     # 电解液电导率
-    kappa_ne = max(param.EL.kappa(param.EL.ce0, T_e) * param.NE.eps^param.NE.brugg, 1e-16)
-    kappa_pe = max(param.EL.kappa(param.EL.ce0, T_e) * param.PE.eps^param.PE.brugg, 1e-16)
-    kappa_sp = max(param.EL.kappa(param.EL.ce0, T_e) * param.SP.eps^param.SP.brugg, 1e-16)
-    R_EL = param.NE.thickness / (3.0 * kappa_ne) + 
-           param.SP.thickness / kappa_sp + 
-           param.PE.thickness / (3.0 * kappa_pe)
+    kappa_ne = param.EL.kappa(param.EL.ce0, T_e) * param.NE.eps^param.NE.brugg
+    kappa_pe = param.EL.kappa(param.EL.ce0, T_e) * param.PE.eps^param.PE.brugg
+    kappa_sp = param.EL.kappa(param.EL.ce0, T_e) * param.SP.eps^param.SP.brugg
+    R_EL = param.NE.thickness / (3.0 * kappa_ne) + param.SP.thickness / kappa_sp + param.PE.thickness / (3.0 * kappa_pe)
     
     # 开路电位（温度相关）
     u_n = prefactors.u_n_ref_val + (T_e - T_ref) * prefactors.du_n_dT_val
     u_p = prefactors.u_p_ref_val + (T_e - T_ref) * prefactors.du_p_dT_val
     
     # 计算系数
-    C1 = (u_p - u_n) + 2.0 * T_e * (1.0 - param.EL.tplus) * 
-         (prefactors.csp_av - prefactors.csn_av) / param.EL.ce0
+    C1 = (u_p - u_n) + 2.0 * T_e * (1.0 - param.EL.tplus) * (prefactors.csp_av - prefactors.csn_av) / param.EL.ce0
     C2 = 2.0 * T_e
     alpha_p = -1.0 / (2.0 * j0_p * param.PE.as * param.PE.thickness)
     alpha_n = 1.0 / (2.0 * j0_n * param.NE.as * param.NE.thickness)
@@ -417,8 +414,7 @@ function _compute_element_coefficients(e, T_e, param, prefactors, T_ref, debug_m
     
     # 调试检查（仅第一个异常单元）
     if debug_mode
-        _debug_check_coefficients(e, false, C1, C2, alpha_p, alpha_n, C5, 
-                                  T_e, j0_n, j0_p, u_n, u_p)
+        _debug_check_coefficients(e, false, C1, C2, alpha_p, alpha_n, C5, T_e, j0_n, j0_p, u_n, u_p)
     end
     
     return (C1=C1, C2=C2, alpha_p=alpha_p, alpha_n=alpha_n, C5=C5)
@@ -565,40 +561,6 @@ function _line_search(I_e, V, ΔI, ΔV, I_trial, ne; max_attempts=12)
     return 0.0, V  # 失败
 end
 
-# 特殊情况处理
-"""无热网格时的回退解法：按面积均匀分配"""
-function _fallback_solution(variables, areas, I_total, I_typ)
-    A_tot = sum(areas)
-    w = areas ./ A_tot
-    I_e = w .* I_total
-    
-    variables["thermal2D element current"] = I_e
-    variables["thermal2D element current A"] = I_typ .* I_e
-    variables["thermal2D common voltage"] = 0.0
-    variables["thermal2D Vsolve status"] = 1.0
-    variables["thermal2D Vsolve iters"] = 0.0
-    variables["thermal2D Vsolve converged"] = 0.0
-    
-    return variables, I_e, 0.0
-end
-
-"""零电流特殊解法"""
-function _zero_current_solution(variables, coeffs, ne, V_MIN, V_MAX, phi_scale, w)
-    I_e = zeros(Float64, ne)
-    V = sum(coeffs[e].C1 for e in 1:ne) / ne
-    
-    # 边界检查
-    _check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, 0.0, w, I_e, " at zero-current")
-    
-    variables["thermal2D element current"] = I_e
-    variables["thermal2D common voltage"] = V
-    variables["thermal2D Vsolve status"] = 0.5
-    variables["thermal2D Vsolve iters"] = 0.0
-    variables["thermal2D Vsolve converged"] = 1.0
-    
-    return variables, I_e, V
-end
-
 # ========================================================================
 # 主函数：solve_branch_currents_newton（精简版）
 # ========================================================================
@@ -627,18 +589,8 @@ end
 - `I_e`: 各单元电流
 - `V`: 公共端电压
 """
-function solve_branch_currents_newton(case::Case, 
-                                     variables::Dict{String,Union{Array{Float64},Float64}}, 
-                                     yt::Array{Float64}, t::Float64, I_total::Float64, 
-                                     areas::Vector{Float64}, Te_prev::Vector{Float64}, 
-                                     x_prev::Union{Nothing,Vector{Float64}}=nothing)
-    
-    # 1. 快速退出：无热网格时按面积分配
-    if !haskey(case.mesh, "thermal2D")
-        return _fallback_solution(variables, areas, I_total, case.param.scale.I_typ)
-    end
-    
-    # 2. 初始化
+function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, yt::Array{Float64}, t::Float64, I_total::Float64, areas::Vector{Float64}, Te_prev::Vector{Float64}, x_prev::Union{Nothing,Vector{Float64}}=nothing)
+    # 1. 初始化
     ne = length(areas)
     A_global = sum(areas)
     w = areas ./ A_global  # 面积权重
@@ -646,7 +598,7 @@ function solve_branch_currents_newton(case::Case,
     V_MIN = hasproperty(case.param_dim.cell, :v_l) ? case.param_dim.cell.v_l / phi_scale : -Inf
     V_MAX = hasproperty(case.param_dim.cell, :v_h) ? case.param_dim.cell.v_h / phi_scale : Inf
     
-    # 3. 计算电化学预因子
+    # 2. 计算电化学预因子
     param = case.param
     mesh_ne = case.mesh["negative electrode"]
     mesh_pe = case.mesh["positive electrode"]
@@ -664,16 +616,12 @@ function solve_branch_currents_newton(case::Case,
         prefactors.ce_n_gs, prefactors.ce_p_gs
     )
     
-    # 4. 计算各单元系数
+    # 3. 计算各单元系数
     T_ref = case.param.cell.T0
     coeffs = _compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref, debug_mode)
     
-    # 5. 零电流特殊处理
-    if abs(I_total) <= 1e-14
-        return _zero_current_solution(variables, coeffs, ne, V_MIN, V_MAX, phi_scale, w)
-    end
     
-    # 6. 初始化电流猜测
+    # 4. 初始化电流猜测
     I_e = _initialize_currents(ne, w, I_total, x_prev)
     
     # 计算初始电压
@@ -683,25 +631,19 @@ function solve_branch_currents_newton(case::Case,
     # 调试：检查初始电压
     _debug_check_initial_voltage(has_nan_prefactor, V, V_branches, I_e, coeffs, I_total, ne)
     
-    # 7. 牛顿迭代求解
+    # 5. 牛顿迭代求解
     V, converged, last_iter = _newton_iteration!(I_e, V, ne, w, I_total, coeffs)
     
-    # 8. 未收敛时回退到面积分配
-    if !converged
-        I_e .= w .* I_total
-        V = sum(coeffs[e].C1 for e in 1:ne) / ne
-    end
-    
-    # 9. 归一化确保总电流约束
+    # 6. 归一化确保总电流约束
     sx = sum(w .* I_e)
     if sx != 0.0
         I_e .*= (I_total / sx)
     end
     
-    # 10. 边界检查
+    # 7. 边界检查
     _check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e)
     
-    # 11. 写入结果
+    # 8. 写入结果
     variables["thermal2D element current"] = I_e
     variables["thermal2D element current A"] = case.param.scale.I_typ .* I_e
     variables["thermal2D common voltage"] = V

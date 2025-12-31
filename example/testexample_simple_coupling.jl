@@ -14,8 +14,6 @@
 - 温度场：保留 ✓
 - 电流分布：无（假设均匀）
 
-作者：AI Assistant
-日期：2025-12-02
 """
 
 using LinearAlgebra, SparseArrays, Statistics, Plots, Printf

@@ -85,12 +85,13 @@ SP.brugg = 1.5           # Chen2020 electrolyte Bruggeman for separator
 
 # Tab
 tab = Tab()
-tab.width = 40e-3
-tab.length = 0.75 * 99.06e-3
+tab.width = 4e-3
+tab.length = 0.75 * 9.9e-3
 tab.area = tab.width * tab.length * 2
+tab.h = 10. 
 # specify tab angles on circumference (radians)
-tab.theta_pos = []
-tab.theta_neg = []
+tab.theta_pos = [15π]  #none or [1，... ,15π...]
+tab.theta_neg = [44π]
 
 # Cell parameters for thermal model
 cell = Cell()    
@@ -141,10 +142,8 @@ binder = Binder()
 # binder.rho = 
 
 # Now that PCC/NCC are defined, compute effective thermal conductivities
-cell.lambda_r = (NE.thickness + SP.thickness + PE.thickness + PCC.thickness + NCC.thickness) /
-                    (NE.thickness/NE.lambda + SP.thickness/SP.lambda + PE.thickness/PE.lambda + PCC.thickness/PCC.lambda + NCC.thickness/NCC.lambda)
-cell.lambda_t = (NE.thickness*NE.lambda + SP.thickness*SP.lambda + PE.thickness*PE.lambda + PCC.thickness*PCC.lambda + NCC.thickness*NCC.lambda) /
-                    (NE.thickness + SP.thickness + PE.thickness + PCC.thickness + NCC.thickness)
+cell.lambda_r = (NE.thickness + SP.thickness + PE.thickness + PCC.thickness + NCC.thickness) /(NE.thickness/NE.lambda + SP.thickness/SP.lambda + PE.thickness/PE.lambda + PCC.thickness/PCC.lambda + NCC.thickness/NCC.lambda)
+cell.lambda_t = (NE.thickness*NE.lambda + SP.thickness*SP.lambda + PE.thickness*PE.lambda + PCC.thickness*PCC.lambda + NCC.thickness*NCC.lambda) /(NE.thickness + SP.thickness + PE.thickness + PCC.thickness + NCC.thickness)
 
 # Scale
 scale = Scale()

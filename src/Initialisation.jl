@@ -36,8 +36,7 @@ function ModelInitialisation(case::Case)
             # 预留：若未来加入 1D 分布式热网格，可在此追加 DOF
             # 当前无实现
         elseif case.opt.thermalmodel == "distributed2D"
-            # 将二维分布式热的节点温度自由度追加到主状态向量，
-            # 以便在时间推进中与电化学自由度一起求解（与 lumped 一致）。
+            # 将二维分布式热的节点温度自由度追加到主状态向量
             if haskey(case.mesh, "thermal2D")
                 nT = case.mesh["thermal2D"].nlen
                 T0_nodes = fill(case.param.cell.T0, nT)
@@ -112,8 +111,6 @@ y0 = [
 
 # 注意事项
 1. **内存占用**: 状态向量长度为 `ne × n_chem + nT`
-   - ne=100: 约 6000 + 200 = 6200 自由度（约50KB）
-   - ne=1000: 约 60000 + 2000 = 62000 自由度（约500KB）
 2. **初始化策略**: 默认简单复制单个单元的初始化到所有单元
    - 未来可扩展支持空间变化的初始条件（如温度梯度、SOC分布）
 3. **与单SPMe兼容**: 单SPMe模式仍使用 `ModelInitialisation`，不受影响

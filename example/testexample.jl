@@ -1,5 +1,5 @@
 """
-测试案例：Jellyroll电池多SPMe并行电化学-热耦合仿真
+测试案例：Jellyroll电池多SPMe并行电化学-热-力耦合仿真
 
 功能：
 - 使用最新的多SPMe并行架构（每个热单元对应独立的SPMe模型）
@@ -10,8 +10,7 @@
 - 保留详细调试信息
 - 启用力学耦合，提取热/扩散应力分布
 
-作者：AI Assistant
-日期：2025-11-17
+日期：2025-12-31
 """
 
 using LinearAlgebra, SparseArrays, Statistics, Plots, Printf
@@ -51,7 +50,7 @@ function main()
     opt.mechanicalmodel = "full"
     
     # 时间设置
-    opt.time = [0.0, 3600]  # 仿真时间 (s)
+    opt.time = [0.0, 60]  # 仿真时间 (s)
     opt.dt = [0.5, 10]    # 时间步长范围 [dt_min, dt_max] (s)
     opt.dtType = "auto"     # 自动时间步长
     opt.jacobi = "update"
@@ -61,6 +60,7 @@ function main()
     opt.thermal_enabled = true
     opt.thermalmodel = "distributed2D"
     opt.thermal_dim = "2D"
+    opt.cool_method = "tab" #tab or surface
     
     # ✨ 关键：启用多SPMe并行模式
     opt.per_element_spme = true
@@ -210,10 +210,6 @@ function main()
         println("  计算$(num_steps)个时间步的应力场...")
         
         for step in 1:num_steps
-            if step % max(1, div(num_steps, 10)) == 0 || step == num_steps
-                print("\r  进度: $(round(Int, 100*step/num_steps))%")
-            end
-            
             try
                 # 准备当前时刻的变量
                 variables_step = Dict{String, Union{Array{Float64},Float64}}()

@@ -375,8 +375,7 @@ function _apply_mechanical_BC_2D(K_M, F_M, mesh, case)
     ndof = 2 * nnode
     
     # 识别边界节点
-    bc_nodes = _identify_mechanical_bc_nodes(mesh, case)
-    
+    bc_nodes, inner_count, outer_count = _identify_mechanical_bc_nodes(mesh, case)
     # 施加固定约束（惩罚法）
     penalty = 1e12
     
@@ -438,8 +437,7 @@ function _identify_mechanical_bc_nodes(mesh, case)
             outer_count += 1
         end
     end
-    println("  [力学边界条件] 内边界固定节点: $inner_count, 外边界固定节点: $outer_count")
-    return bc_nodes
+    return bc_nodes, inner_count, outer_count
 end
 
 """求解位移场"""

@@ -30,6 +30,7 @@ using Parameters
     thermal_enabled::Bool = false      # whether thermal module is active
     thermal_dim::String = "1D"        # "1D" or "2D" for distributed models
     thermalmeshType::String = "L2"    # 1D: L2/L3; 2D: Q4 (default)
+    cool_method::String = "tab"      # "tab" or "surface"
     # --- New coupling/parallel options (default keep legacy behavior) ---
     collector_seeded::Bool = false     # use collector-seeded band mesh semantics (layer_weights)
     per_element_spme::Bool = false     # allow passing per-element I_app and T to SPMe
