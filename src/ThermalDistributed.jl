@@ -495,8 +495,10 @@ end
 """
 function _apply_cool_surface!(KT, FT, mesh, case, t)
     try
-        # 获取参数
-        h_surface = hasproperty(case.opt, :h_surface) ? case.opt.h_surface : 10.0  # W/(m²·K)
+        # 获取参数（从param_dim.cell读取，与外边界对流一致）
+        h_surface = hasproperty(case.param_dim.cell, :h_surface) ?
+                    case.param_dim.cell.h_surface :
+                    case.param_dim.cell.h  # 回退到外边界的h [W/(m²·K)]
         H = hasproperty(case.param_dim.cell, :height) ? case.param_dim.cell.height : case.param_dim.cell.width
         
         scale = case.param_dim.scale
@@ -505,7 +507,7 @@ function _apply_cool_surface!(KT, FT, mesh, case, t)
         T_ref = scale.T_ref
         T_amb_nd = case.param_dim.cell.T_amb / T_ref
         
-        # 体积散热系数：2h/H
+        # 体积散热系数：2h/H [W/(m³·K)]
         vol_coeff = 2.0 * h_surface / H
         
         # 无量纲Biot数：Bi_z = 2h*L_th^2 / (H*k_th)
@@ -597,8 +599,12 @@ function _apply_cool_tab!(KT, FT, mesh, case, t)
         
         isempty(tab_nodes) && return
         
-        # 获取参数
-        h_tab = hasproperty(case.opt, :h_tab) ? case.opt.h_tab : 100.0  # W/(m²·K)
+        # 获取参数（从param_dim读取，与外边界对流一致）
+        h_tab = hasproperty(case.param_dim.tab, :h) ?
+                case.param_dim.tab.h :
+                (hasproperty(case.param_dim.cell, :h_tab) ?
+                 case.param_dim.cell.h_tab :
+                 case.param_dim.cell.h)  # 回退到外边界的h [W/(m²·K)]
         tab_area = case.param_dim.tab.area  # 实际极耳散热面积 [m²]
         H = hasproperty(case.param_dim.cell, :height) ? case.param_dim.cell.height : case.param_dim.cell.width
         
