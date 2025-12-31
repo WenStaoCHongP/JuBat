@@ -502,39 +502,26 @@ function _apply_cool_surface!(KT, FT, mesh, case, t)
         H = hasproperty(case.param_dim.cell, :height) ? case.param_dim.cell.height : case.param_dim.cell.width
         
         scale = case.param_dim.scale
-        k_th = scale.k_th
-        L_th = scale.L_th
-        T_ref = scale.T_ref
-        T_amb_nd = case.param_dim.cell.T_amb / T_ref
+        k_th, L_th = scale.k_th, scale.L_th
+        T_amb_nd = case.param_dim.cell.T_amb / scale.T_ref
         
-        # 体积散热系数：2h/H [W/(m³·K)]
-        vol_coeff = 2.0 * h_surface / H
-        
-        # 无量纲Biot数：Bi_z = 2h*L_th^2 / (H*k_th)
-        Bi_z = vol_coeff * L_th^2 / k_th
-        
-        if Bi_z < 1e-12
-            return  # 对流可忽略
-        end
-        
-        # 尺度因子（转换到无量纲刚度矩阵）
-        # K* += ∫ Bi_z N_i N_j dΩ*, 其中 dΩ* = dΩ / L_th^2
-        # 实际积分：∫ (Bi_z / L_th^2) N_i N_j dΩ
-        conv_factor = Bi_z / L_th^2
+        # 计算无量纲系数（与tab风格一致）
+        # 物理：q_vol = 2h(T-T_amb)/H，无量纲化后系数为 2h/(H*k_th*L_th)
+        coeff = 2.0 * h_surface / (H * k_th * L_th)  # [1/m]
         
         # 高斯积分数据
         ngs = length(mesh.gs.detJ)
         Ni = mesh.gs.Ni
-        wJ = mesh.gs.weight .* mesh.gs.detJ  # 包含雅可比行列式
-        ele = mesh.gs.ele
-        
+        wJ = mesh.gs.weight .* mesh.gs.detJ  # [m²]
         nn_per_elem = size(mesh.element, 2)
         
         # 对所有单元进行高斯积分
         for g in 1:ngs
-            e = ele[g]
+            e = mesh.gs.ele[g]
             nodes = mesh.element[e, :]
-            wt = conv_factor * wJ[g]  # 高斯点权重
+            
+            # 无量纲权重：coeff * wJ[g] / L_th
+            wt = coeff * wJ[g] / L_th  # [无量纲]
             
             # 装配刚度矩阵和载荷向量
             for i in 1:nn_per_elem
@@ -556,7 +543,8 @@ function _apply_cool_surface!(KT, FT, mesh, case, t)
         
         # 调试信息
         if hasproperty(case.opt, :debug_coupling) && case.opt.debug_coupling
-            @info "[cool_surface] 应用整体表面冷却" h=h_surface H=H Bi_z=Bi_z vol_coeff=vol_coeff
+            Bi_z = 2.0 * h_surface * L_th^2 / (H * k_th)  # 等效Biot数（仅用于调试输出）
+            @info "[cool_surface] 应用整体表面冷却" h=h_surface H=H Bi_z=Bi_z
         end
         
     catch err
@@ -623,15 +611,13 @@ function _apply_cool_tab!(KT, FT, mesh, case, t)
             return
         end
         
+        # 计算基础系数（提取公共计算，避免重复）
+        base_coeff = h_tab * tab_area / (H * k_th * L_th * total_arc_length)
+        
         # 按弧长权重分配散热功率
         for (i, n) in enumerate(tab_nodes)
-            # 节点弧长权重
-            weight = arc_lengths[i] / total_arc_length
-            
-            # 无量纲散热系数
-            # 物理量：h_tab * tab_area * weight / H [W/(m·K)]
-            # 无量纲化：除以 (k_th * L_th)
-            coeff = h_tab * tab_area * weight / (H * k_th * L_th)
+            # 节点系数 = 基础系数 × 弧长
+            coeff = base_coeff * arc_lengths[i]
             
             # 负号与代码约定统一（KT 已包含负号）
             KT[n, n] -= coeff
