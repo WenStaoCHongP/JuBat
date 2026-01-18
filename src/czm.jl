@@ -1100,9 +1100,146 @@ function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff:
 end
 
 """
-    assemble_coupled_system(czm_mesh, u, E_eff, ν_eff, cohesive_params)
+    assemble_thermal_chemical_load(czm_mesh, E_eff, ν_eff, α_eff, β_n, β_p, 
+                                   dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+
+组装热应变和化学应变引起的载荷向量。
+
+# 物理原理
+初始应变（无应力状态下的自由膨胀/收缩）：
+    ε_0 = α * ΔT + β_n * Δsoc_n + β_p * Δsoc_p
+
+其中：
+- α: 热膨胀系数 [1/K]
+- ΔT: 温度变化 [K]
+- β_n, β_p: 扩散应变系数 = Ω/3（部分摩尔体积/3）
+- Δsoc_n, Δsoc_p: SOC变化
+
+# 载荷向量计算
+    F = ∫ B^T D ε_0 dΩ
+
+对于平面应力，ε_0 = [ε_0, ε_0, 0]^T（各向同性膨胀）
+    D ε_0 = E/(1-ν²) * [ε_0*(1+ν), ε_0*(1+ν), 0]^T
+
+# 参数
+- `czm_mesh`: 内聚力网格
+- `E_eff, ν_eff`: 有效弹性参数
+- `α_eff`: 有效热膨胀系数 [1/K]
+- `β_n, β_p`: 扩散应变系数 [-]
+- `dT_elem`: 每个单元的温度变化 [K]
+- `Δsoc_n_elem, Δsoc_p_elem`: 每个单元的SOC变化
+
+# 返回
+- `F_thermo_chem`: 热-化学载荷向量 (ndof,)
+"""
+function assemble_thermal_chemical_load(czm_mesh::CohesiveMesh, 
+                                        E_eff::Float64, ν_eff::Float64,
+                                        α_eff::Float64, β_n::Float64, β_p::Float64,
+                                        dT_elem::Vector{Float64}, 
+                                        Δsoc_n_elem::Vector{Float64}, 
+                                        Δsoc_p_elem::Vector{Float64})
+    nnode = czm_mesh.nnode
+    ndof = 2 * nnode
+    element = czm_mesh.bulk_element
+    node = czm_mesh.node
+    ne = size(element, 1)
+    
+    E = E_eff
+    ν = ν_eff
+    
+    # 计算每个单元的初始应变
+    # ε_0 = α*ΔT + β_n*Δsoc_n + β_p*Δsoc_p
+    epsilon_0_elem = zeros(Float64, ne)
+    @inbounds for e in 1:ne
+        epsilon_0_elem[e] = α_eff * dT_elem[e] + β_n * Δsoc_n_elem[e] + β_p * Δsoc_p_elem[e]
+    end
+    
+    # 高斯积分点
+    gauss_pts = [-1.0/sqrt(3.0), 1.0/sqrt(3.0)]
+    gauss_wts = [1.0, 1.0]
+    
+    # 载荷向量
+    F_thermo_chem = zeros(Float64, ndof)
+    
+    for e in 1:ne
+        elem_nodes = element[e, :]
+        x_e = node[elem_nodes, 1]
+        y_e = node[elem_nodes, 2]
+        ε_0 = epsilon_0_elem[e]
+        
+        # 单元载荷向量
+        f_e = zeros(Float64, 8)
+        
+        for (ξ, wξ) in zip(gauss_pts, gauss_wts)
+            for (η, wη) in zip(gauss_pts, gauss_wts)
+                # Q4形函数导数
+                dNdxi = 0.25 * [-(1-η), (1-η), (1+η), -(1+η)]
+                dNdeta = 0.25 * [-(1-ξ), -(1+ξ), (1+ξ), (1-ξ)]
+                
+                # 雅可比矩阵
+                J11 = sum(dNdxi .* x_e)
+                J12 = sum(dNdxi .* y_e)
+                J21 = sum(dNdeta .* x_e)
+                J22 = sum(dNdeta .* y_e)
+                
+                detJ = J11 * J22 - J12 * J21
+                
+                if abs(detJ) < 1e-15
+                    continue
+                end
+                
+                # 物理导数
+                invJ = [J22 -J12; -J21 J11] / detJ
+                dNdx = invJ[1,1] * dNdxi + invJ[1,2] * dNdeta
+                dNdy = invJ[2,1] * dNdxi + invJ[2,2] * dNdeta
+                
+                # 载荷贡献
+                # F = ∫ B^T D ε_0 dΩ
+                # D ε_0 = E/(1-ν²) * [ε_0*(1+ν), ε_0*(1+ν), 0]^T
+                factor = E / (1.0 - ν^2) * ε_0 * (1.0 + ν) * wξ * wη * detJ
+                
+                for i in 1:4
+                    # F_ux = ∫ dN/dx * σ_xx dΩ = ∫ dN/dx * D11 * ε_0 dΩ
+                    f_e[2*i - 1] += dNdx[i] * factor
+                    # F_uy = ∫ dN/dy * σ_yy dΩ = ∫ dN/dy * D11 * ε_0 dΩ  
+                    f_e[2*i] += dNdy[i] * factor
+                end
+            end
+        end
+        
+        # 组装到全局
+        for i in 1:4
+            n = elem_nodes[i]
+            F_thermo_chem[2*n - 1] += f_e[2*i - 1]
+            F_thermo_chem[2*n] += f_e[2*i]
+        end
+    end
+    
+    return F_thermo_chem
+end
+
+"""
+    assemble_coupled_system(czm_mesh, u, E_eff, ν_eff, cohesive_params;
+                           F_ext=nothing, F_thermo_chem=nothing)
 
 组装耦合的固体-内聚力系统。
+
+# 系统平衡方程
+    K_total * u = F_ext + F_thermo_chem - F_int_coh
+
+其中：
+- K_total = K_bulk + K_coh（总刚度 = 固体刚度 + 内聚力刚度）
+- F_ext: 外部载荷
+- F_thermo_chem: 热应变和化学应变引起的等效节点力
+- F_int_coh: 内聚力单元的内力
+
+# 参数
+- `czm_mesh`: 内聚力网格
+- `u`: 当前位移向量
+- `E_eff, ν_eff`: 有效弹性参数
+- `cohesive_params`: 内聚力参数
+- `F_ext`: 外部载荷（可选）
+- `F_thermo_chem`: 热-化学载荷（可选）
 
 # 返回
 - `K_total`: 总刚度矩阵
@@ -1112,22 +1249,85 @@ end
 """
 function assemble_coupled_system(czm_mesh::CohesiveMesh, u::Vector{Float64},
                                 E_eff::Float64, ν_eff::Float64, 
-                                cohesive_params::Cohesive)
+                                cohesive_params::Cohesive;
+                                F_ext::Union{Vector{Float64}, Nothing}=nothing,
+                                F_thermo_chem::Union{Vector{Float64}, Nothing}=nothing)
+    ndof = 2 * czm_mesh.nnode
+    
     # 固体刚度
     K_bulk = assemble_bulk_stiffness(czm_mesh, E_eff, ν_eff)
     
-    # 内聚力刚度
+    # 内聚力刚度和内力
     K_coh, f_int_coh, separations, tractions = assemble_czm_system(
         czm_mesh, u, cohesive_params)
     
-    # 固体内力（线性弹性）
+    # 固体内力（线性弹性：f_int = K * u）
     f_int_bulk = K_bulk * u
     
-    # 总系统
+    # 总刚度矩阵
     K_total = K_bulk + K_coh
+    
+    # 总内力 = 固体内力 + 内聚力内力
     f_int_total = f_int_bulk + f_int_coh
     
+    # 如果提供了热-化学载荷，从内力中减去（因为它是等效外力）
+    # 这样残差 R = F_ext + F_thermo_chem - f_int_total 才正确
+    # 但为了保持接口一致，我们在这里不修改 f_int_total
+    # 而是在求解器中处理
+    
     return K_total, f_int_total, separations, tractions
+end
+
+"""
+    assemble_coupled_system_full(czm_mesh, u, E_eff, ν_eff, α_eff, β_n, β_p,
+                                 cohesive_params, dT_elem, Δsoc_n_elem, Δsoc_p_elem;
+                                 F_ext=nothing)
+
+组装完整的耦合系统，包括热应变和化学应变。
+
+# 系统平衡
+    R = F_ext + F_thermo_chem - F_int = 0
+
+其中：
+- F_thermo_chem = ∫ B^T D ε_0 dΩ（热-化学载荷）
+- F_int = K_bulk * u + F_coh（内力）
+
+# 参数
+- `dT_elem`: 每个单元的温度变化
+- `Δsoc_n_elem, Δsoc_p_elem`: 每个单元的SOC变化
+
+# 返回
+- `K_total`: 总刚度矩阵
+- `R`: 残差向量
+- `F_thermo_chem`: 热-化学载荷
+- `separations, tractions`: 内聚力状态
+"""
+function assemble_coupled_system_full(czm_mesh::CohesiveMesh, u::Vector{Float64},
+                                      E_eff::Float64, ν_eff::Float64,
+                                      α_eff::Float64, β_n::Float64, β_p::Float64,
+                                      cohesive_params::Cohesive,
+                                      dT_elem::Vector{Float64},
+                                      Δsoc_n_elem::Vector{Float64},
+                                      Δsoc_p_elem::Vector{Float64};
+                                      F_ext::Union{Vector{Float64}, Nothing}=nothing)
+    ndof = 2 * czm_mesh.nnode
+    
+    # 组装基本系统
+    K_total, f_int_total, separations, tractions = assemble_coupled_system(
+        czm_mesh, u, E_eff, ν_eff, cohesive_params)
+    
+    # 热-化学载荷
+    F_thermo_chem = assemble_thermal_chemical_load(czm_mesh, E_eff, ν_eff, 
+                                                    α_eff, β_n, β_p,
+                                                    dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+    
+    # 外部载荷
+    F_external = F_ext === nothing ? zeros(Float64, ndof) : F_ext
+    
+    # 残差 = 外力 + 热化学力 - 内力
+    R = F_external + F_thermo_chem - f_int_total
+    
+    return K_total, R, F_thermo_chem, separations, tractions
 end
 
 
@@ -1199,17 +1399,32 @@ export newton_raphson_czm, solve_czm_step
 
 """
     newton_raphson_czm(czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param_dim;
+                       α_eff=0.0, β_n=0.0, β_p=0.0,
+                       dT_elem=nothing, Δsoc_n_elem=nothing, Δsoc_p_elem=nothing,
                        max_iter=50, tol=1e-8, u0=nothing)
 
-牛顿-拉弗森非线性求解。
+牛顿-拉弗森非线性求解，支持热应变和化学应变。
+
+# 平衡方程
+    R = F_ext + F_thermo_chem - F_int(u) = 0
+
+其中：
+- F_ext: 外部机械载荷
+- F_thermo_chem: 热应变和化学应变引起的等效节点力
+  F_thermo_chem = ∫ B^T D ε_0 dΩ
+  ε_0 = α*ΔT + β_n*Δsoc_n + β_p*Δsoc_p
+- F_int: 内力 = K_bulk*u + F_coh
 
 # 参数
 - `czm_mesh`: 内聚力网格
 - `F_ext`: 外力向量
-- `E_eff`: 有效杨氏模量
-- `ν_eff`: 有效泊松比
+- `E_eff, ν_eff`: 有效弹性参数
 - `cohesive_params`: 内聚力参数
 - `param_dim`: 参数对象
+- `α_eff`: 有效热膨胀系数 [1/K]
+- `β_n, β_p`: 负极/正极扩散应变系数（= Ω/3）
+- `dT_elem`: 每个单元的温度变化 [K]
+- `Δsoc_n_elem, Δsoc_p_elem`: 每个单元的SOC变化
 - `max_iter`: 最大迭代次数
 - `tol`: 收敛容差
 - `u0`: 初始位移（可选）
@@ -1220,6 +1435,10 @@ export newton_raphson_czm, solve_czm_step
 function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
                            E_eff::Float64, ν_eff::Float64,
                            cohesive_params::Cohesive, param_dim;
+                           α_eff::Float64=0.0, β_n::Float64=0.0, β_p::Float64=0.0,
+                           dT_elem::Union{Vector{Float64}, Nothing}=nothing,
+                           Δsoc_n_elem::Union{Vector{Float64}, Nothing}=nothing,
+                           Δsoc_p_elem::Union{Vector{Float64}, Nothing}=nothing,
                            max_iter::Int=50, tol::Float64=1e-8,
                            u0::Union{Vector{Float64},Nothing}=nothing)
     
@@ -1253,14 +1472,28 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
         end
     end
     
+    # 计算热-化学载荷（如果提供了相关参数）
+    ne = size(czm_mesh.bulk_element, 1)
+    has_thermo_chem = (α_eff != 0.0 || β_n != 0.0 || β_p != 0.0) && 
+                      dT_elem !== nothing && Δsoc_n_elem !== nothing && Δsoc_p_elem !== nothing
+    
+    F_thermo_chem = if has_thermo_chem
+        assemble_thermal_chemical_load(czm_mesh, E_eff, ν_eff, α_eff, β_n, β_p,
+                                       dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+    else
+        zeros(Float64, ndof)
+    end
+    
     # 牛顿-拉弗森迭代
+    R_norm_0 = 1.0
     for iter in 1:max_iter
         # 组装系统
         K_total, f_int_total, separations, tractions = assemble_coupled_system(
             czm_mesh, u, E_eff, ν_eff, cohesive_params)
         
-        # 残差
-        R = F_ext - f_int_total
+        # 残差 = 外力 + 热化学力 - 内力
+        # R = F_ext + F_thermo_chem - f_int_total
+        R = F_ext + F_thermo_chem - f_int_total
         
         # 应用边界条件到残差
         for (dof, val) in zip(bc_dofs, bc_vals)
@@ -1326,15 +1559,24 @@ end
 
 """
     solve_czm_step(czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param_dim, u_prev;
+                   α_eff=0.0, β_n=0.0, β_p=0.0,
+                   dT_elem=nothing, Δsoc_n_elem=nothing, Δsoc_p_elem=nothing,
                    max_iter=50, tol=1e-8)
 
-求解单个时间步的内聚力问题。
+求解单个时间步的内聚力问题，支持热-化学耦合。
 保持损伤历史的连续性。
+
+# 平衡方程
+    R = F_ext + F_thermo_chem - F_int(u) = 0
 
 # 参数
 - `czm_mesh`: 内聚力网格（损伤状态会被更新）
 - `F_ext`: 外力向量
 - `u_prev`: 上一步的位移
+- `α_eff`: 有效热膨胀系数 [1/K]
+- `β_n, β_p`: 扩散应变系数（= Ω/3）
+- `dT_elem`: 每个单元的温度变化
+- `Δsoc_n_elem, Δsoc_p_elem`: 每个单元的SOC变化
 
 # 返回
 - `result`: CZMResult
@@ -1343,10 +1585,16 @@ function solve_czm_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
                        E_eff::Float64, ν_eff::Float64,
                        cohesive_params::Cohesive, param_dim,
                        u_prev::Vector{Float64};
+                       α_eff::Float64=0.0, β_n::Float64=0.0, β_p::Float64=0.0,
+                       dT_elem::Union{Vector{Float64}, Nothing}=nothing,
+                       Δsoc_n_elem::Union{Vector{Float64}, Nothing}=nothing,
+                       Δsoc_p_elem::Union{Vector{Float64}, Nothing}=nothing,
                        max_iter::Int=50, tol::Float64=1e-8)
     
     # 使用上一步位移作为初始猜测
     result = newton_raphson_czm(czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param_dim;
+                                α_eff=α_eff, β_n=β_n, β_p=β_p,
+                                dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
                                 max_iter=max_iter, tol=tol, u0=u_prev)
     
     return result

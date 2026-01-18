@@ -43,10 +43,11 @@ export ThermalModel, ThermalLumpedModel, ThermalDistributed1DModel, ThermalDistr
 export thermal_diffusion_stress_2D
 # CZM exports
 export CohesiveElement, CohesiveMesh, DamageState, CZMResult
-export create_czm_mesh, identify_layer_interfaces
+export create_czm_mesh, identify_interface_node_pairs
 export bilinear_traction, bilinear_tangent, update_damage!
 export cohesive_element_matrices, compute_separation
 export assemble_czm_system, assemble_coupled_system, assemble_bulk_stiffness
+export assemble_thermal_chemical_load, assemble_coupled_system_full
 export apply_bc_czm!, identify_bc_nodes_czm
 export newton_raphson_czm, solve_czm_step
 export get_damage_statistics, check_fracture_criterion, reset_damage_states!, accumulate_cycle_damage!
