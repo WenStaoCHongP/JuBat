@@ -141,6 +141,30 @@ NCC.sig = 5.96e7
 binder = Binder()
 # binder.rho = 
 
+# Cohesive zone model parameters for interlayer interface
+# 用于描述相邻卷绕圈之间的界面脱粘行为
+cohesive = Cohesive()
+
+# 法向参数 (Mode I - 张开模式)
+# 典型值参考：电极-隔膜界面粘结性能
+cohesive.σ_max_n = 50e6       # 最大法向牵引力 [Pa] (50 MPa)
+cohesive.δ_0_n = 1e-6         # 损伤起始分离位移 [m] (1 μm)
+cohesive.δ_c_n = 10e-6        # 临界分离位移 [m] (10 μm)
+# 断裂能由双线性本构关系计算: G_c = 0.5 * σ_max * δ_c
+cohesive.G_c_n = 0.5 * cohesive.σ_max_n * cohesive.δ_c_n  # [J/m²]
+# 初始刚度（惩罚刚度）: K = σ_max / δ_0
+cohesive.K_n = cohesive.σ_max_n / cohesive.δ_0_n  # [Pa/m]
+
+# 切向参数 (Mode II - 剪切模式)
+cohesive.τ_max_t = 30e6       # 最大切向牵引力 [Pa] (30 MPa)
+cohesive.δ_0_t = 1e-6         # 损伤起始切向位移 [m] (1 μm)
+cohesive.δ_c_t = 15e-6        # 临界切向位移 [m] (15 μm)
+cohesive.G_c_t = 0.5 * cohesive.τ_max_t * cohesive.δ_c_t  # [J/m²]
+cohesive.K_t = cohesive.τ_max_t / cohesive.δ_0_t  # [Pa/m]
+
+# 混合模式参数
+cohesive.eta = 1.45           # BK准则指数（Benzeggagh-Kenane）[-]
+
 # Now that PCC/NCC are defined, compute effective thermal conductivities
 cell.lambda_r = (NE.thickness + SP.thickness + PE.thickness + PCC.thickness + NCC.thickness) /(NE.thickness/NE.lambda + SP.thickness/SP.lambda + PE.thickness/PE.lambda + PCC.thickness/PCC.lambda + NCC.thickness/NCC.lambda)
 cell.lambda_t = (NE.thickness*NE.lambda + SP.thickness*SP.lambda + PE.thickness*PE.lambda + PCC.thickness*PCC.lambda + NCC.thickness*NCC.lambda) /(NE.thickness + SP.thickness + PE.thickness + PCC.thickness + NCC.thickness)
@@ -149,4 +173,4 @@ cell.lambda_t = (NE.thickness*NE.lambda + SP.thickness*SP.lambda + PE.thickness*
 scale = Scale()
 
 # assemble to "param_dim"
-param_dim = Params(PE, NE, EL, SP, cell, NCC, PCC, tab, binder, scale)
+param_dim = Params(PE, NE, EL, SP, cell, NCC, PCC, tab, binder, scale, cohesive)

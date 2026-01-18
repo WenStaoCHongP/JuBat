@@ -22,6 +22,7 @@ include("Variables.jl")
 include("Initialisation.jl")
 include("mechanical.jl")
 include("Jellyrollmodel.jl")
+include("czm.jl")  # 内聚力区域模型
 include("ModelInitialisation_SimpleCoupling.jl")
 include("CallModel_SimpleCoupling.jl")
 
@@ -40,4 +41,14 @@ export jellyroll_element_centers, jellyroll_effective_K_at
 export ThermalDistributed1D, ThermalDistributed2D, ThermalDistributed_BC, heatQ_Source, solve_branch_currents_newton
 export ThermalModel, ThermalLumpedModel, ThermalDistributed1DModel, ThermalDistributed2DModel
 export thermal_diffusion_stress_2D
+# CZM exports
+export CohesiveElement, CohesiveMesh, DamageState, CZMResult
+export create_czm_mesh, identify_layer_interfaces
+export bilinear_traction, bilinear_tangent, update_damage!
+export cohesive_element_matrices, compute_separation
+export assemble_czm_system, assemble_coupled_system, assemble_bulk_stiffness
+export apply_bc_czm!, identify_bc_nodes_czm
+export newton_raphson_czm, solve_czm_step
+export get_damage_statistics, check_fracture_criterion, reset_damage_states!, accumulate_cycle_damage!
+export czm_output_to_variables
 end
