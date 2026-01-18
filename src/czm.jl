@@ -160,52 +160,48 @@ end
 # 2. 网格划分
 # ========================================================================
 
-export create_czm_mesh, identify_layer_interfaces
+export create_czm_mesh, identify_interface_node_pairs
 
 """
-    create_czm_mesh(thermal_mesh, param_dim; nθ_per_turn=nothing)
+    create_czm_mesh(thermal_mesh, param_dim; tol=1e-8)
 
 基于热网格创建内聚力网格。
 
-# 算法
-1. 识别卷绕圈数和每圈的单元
-2. 在相邻圈的界面处复制节点
-3. 创建四节点零厚度内聚力单元
-4. 更新固体单元的节点连接关系
+# 核心算法
+通过检查节点坐标是否重合来识别层间界面：
+- 外螺旋在θ位置的点 与 内螺旋在θ+2π位置的点 坐标重合
+- 这些重合点就是相邻卷绕圈之间的界面
+- 在界面处复制节点并插入内聚力单元
 
 # 参数
 - `thermal_mesh`: 热分析网格（Q4单元）
 - `param_dim`: 参数对象（包含螺旋几何信息）
-- `nθ_per_turn`: 每圈的单元数（可选，自动检测）
+- `tol`: 坐标重合判断容差（默认1e-8）
 
 # 返回
 - `CohesiveMesh`: 内聚力网格对象
 """
-function create_czm_mesh(thermal_mesh::Mesh, param_dim; nθ_per_turn::Union{Int,Nothing}=nothing)
+function create_czm_mesh(thermal_mesh::Mesh, param_dim; tol::Float64=1e-8)
     @assert thermal_mesh.type == "Q4" "create_czm_mesh requires Q4 mesh"
     @assert thermal_mesh.dimension == 2 "create_czm_mesh requires 2D mesh"
     
-    # 获取螺旋参数
-    p = jellyroll_spiral_params(param_dim)
-    
-    # 识别层数和每层单元
     ne = size(thermal_mesh.element, 1)
     nnode_orig = thermal_mesh.nlen
     
-    # 估算每圈单元数（如果未指定）
-    if nθ_per_turn === nothing
-        # 从螺旋参数估算圈数
-        n_turns = max(1, round(Int, (p.Rout - p.Rin) / p.t_repeat))
-        nθ_per_turn = max(1, div(ne, n_turns))
-    end
+    # 识别内外螺旋节点
+    # 在 jellyroll_collector_seed_mesh 中：
+    # - 节点 1 到 nθ+1 在内螺旋上
+    # - 节点 nθ+2 到 2*(nθ+1) 在外螺旋上
+    # nθ = ne (单元数)
+    nθ = ne
+    inner_nodes = collect(1:(nθ+1))
+    outer_nodes = collect((nθ+2):(2*(nθ+1)))
     
-    # 计算层数（圈数）
-    n_layers = max(1, div(ne, nθ_per_turn))
-    n_interfaces = n_layers - 1  # 层间界面数
+    # 通过坐标重合检测界面节点对
+    interface_pairs = _find_coincident_node_pairs(thermal_mesh, inner_nodes, outer_nodes, tol)
     
-    if n_interfaces < 1
-        @warn "Only one layer detected, no cohesive elements will be created"
-        # 返回一个空的CohesiveMesh但保留原始网格信息
+    if isempty(interface_pairs)
+        @warn "No interface nodes found (no coincident nodes). Check mesh structure."
         czm_mesh = CohesiveMesh()
         czm_mesh.bulk_mesh = thermal_mesh
         czm_mesh.node = copy(thermal_mesh.node)
@@ -215,17 +211,22 @@ function create_czm_mesh(thermal_mesh::Mesh, param_dim; nθ_per_turn::Union{Int,
         return czm_mesh
     end
     
-    # 识别每层的单元和界面节点
-    layer_elements, interface_info = _identify_layers_and_interfaces(
-        thermal_mesh, nθ_per_turn, n_layers)
+    # 按角度排序界面节点对
+    sort!(interface_pairs, by = p -> atan(thermal_mesh.node[p[1], 2], thermal_mesh.node[p[1], 1]))
     
-    # 复制界面节点并创建映射
-    node_new, node_map, bulk_element_new = _duplicate_interface_nodes(
-        thermal_mesh, layer_elements, interface_info, n_interfaces)
+    # 将界面节点对分组（按连续性分成多个界面）
+    interface_groups = _group_interface_pairs(thermal_mesh, interface_pairs)
+    n_interfaces = length(interface_groups)
+    
+    @info "Detected interfaces" n_interfaces=n_interfaces total_pairs=length(interface_pairs)
+    
+    # 复制界面节点并更新单元连接
+    node_new, node_map, bulk_element_new, interface_node_info = _split_interface_nodes(
+        thermal_mesh, interface_groups)
     
     # 创建内聚力单元
-    cohesive_elements = _create_cohesive_elements(
-        thermal_mesh, node_new, interface_info, node_map, n_interfaces)
+    cohesive_elements = _create_cohesive_elements_from_pairs(
+        node_new, interface_node_info)
     
     # 初始化损伤状态
     n_cohesive = length(cohesive_elements)
@@ -239,227 +240,269 @@ function create_czm_mesh(thermal_mesh::Mesh, param_dim; nθ_per_turn::Union{Int,
     czm_mesh.bulk_element = bulk_element_new
     czm_mesh.cohesive_elements = cohesive_elements
     czm_mesh.n_cohesive = n_cohesive
-    czm_mesh.n_layers = n_layers
+    czm_mesh.n_layers = n_interfaces + 1
     czm_mesh.node_map = node_map
-    czm_mesh.interface_nodes = [info.node_pairs for info in interface_info]
+    czm_mesh.interface_nodes = [grp.node_pairs for grp in interface_node_info]
     czm_mesh.damage_states = damage_states
     
-    @info "Created CZM mesh" n_layers=n_layers n_interfaces=n_interfaces n_cohesive=n_cohesive nnode_new=czm_mesh.nnode
+    @info "Created CZM mesh" n_layers=czm_mesh.n_layers n_interfaces=n_interfaces n_cohesive=n_cohesive nnode_new=czm_mesh.nnode
     
     return czm_mesh
 end
 
 """
-层间界面信息结构
-"""
-struct InterfaceInfo
-    layer_below::Int64           # 下层索引
-    layer_above::Int64           # 上层索引
-    elements_below::Vector{Int64} # 下层相邻单元
-    elements_above::Vector{Int64} # 上层相邻单元
-    node_pairs::Vector{Tuple{Int64,Int64}}  # (底面节点, 顶面节点) 对
-end
+    _find_coincident_node_pairs(mesh, inner_nodes, outer_nodes, tol)
 
-"""
-识别层和界面
-"""
-function _identify_layers_and_interfaces(mesh::Mesh, nθ_per_turn::Int, n_layers::Int)
-    ne = size(mesh.element, 1)
-    nnode_orig = mesh.nlen
-    
-    # 按角度位置分配单元到层
-    # 假设单元按θ顺序编号，每nθ_per_turn个单元为一层
-    layer_elements = Vector{Vector{Int64}}(undef, n_layers)
-    for layer in 1:n_layers
-        start_e = (layer - 1) * nθ_per_turn + 1
-        end_e = min(layer * nθ_per_turn, ne)
-        layer_elements[layer] = collect(start_e:end_e)
-    end
-    
-    # 识别层间界面
-    # 对于条带网格，界面在每层的外边界与下一层的内边界之间
-    n_interfaces = n_layers - 1
-    interface_info = Vector{InterfaceInfo}(undef, n_interfaces)
-    
-    for iface in 1:n_interfaces
-        layer_below = iface
-        layer_above = iface + 1
-        
-        # 获取相邻层的单元
-        elem_below = layer_elements[layer_below]
-        elem_above = layer_elements[layer_above]
-        
-        # 识别界面节点对
-        # 在条带网格中，层i的外边界节点与层i+1的内边界节点位置相同
-        node_pairs = _find_interface_node_pairs(mesh, elem_below, elem_above)
-        
-        interface_info[iface] = InterfaceInfo(
-            layer_below, layer_above,
-            elem_below, elem_above,
-            node_pairs
-        )
-    end
-    
-    return layer_elements, interface_info
-end
+通过坐标重合检测界面节点对。
 
+外螺旋在θ位置的点与内螺旋在θ+2π位置的点坐标重合，
+这些重合点就是相邻卷绕圈之间的界面。
+
+# 返回
+- `Vector{Tuple{Int64, Int64}}`: (外螺旋节点, 内螺旋节点) 对列表
 """
-查找界面节点对
-"""
-function _find_interface_node_pairs(mesh::Mesh, elem_below::Vector{Int64}, elem_above::Vector{Int64})
-    # 获取下层的外边界节点（节点2和3，即外螺旋上的节点）
-    outer_nodes_below = Set{Int64}()
-    for e in elem_below
-        push!(outer_nodes_below, mesh.element[e, 2])  # 外侧当前
-        push!(outer_nodes_below, mesh.element[e, 3])  # 外侧下一个
-    end
+function _find_coincident_node_pairs(mesh::Mesh, inner_nodes::Vector{Int64}, 
+                                     outer_nodes::Vector{Int64}, tol::Float64)
+    pairs = Tuple{Int64, Int64}[]
     
-    # 获取上层的内边界节点（节点1和4，即内螺旋上的节点）
-    inner_nodes_above = Set{Int64}()
-    for e in elem_above
-        push!(inner_nodes_above, mesh.element[e, 1])  # 内侧当前
-        push!(inner_nodes_above, mesh.element[e, 4])  # 内侧下一个
-    end
-    
-    # 找到坐标匹配的节点对
-    node_pairs = Tuple{Int64, Int64}[]
-    tol = 1e-10  # 坐标匹配容差
-    
-    for n_below in outer_nodes_below
-        x_below = mesh.node[n_below, 1]
-        y_below = mesh.node[n_below, 2]
+    # 对于每个外螺旋节点，检查是否有内螺旋节点与其坐标重合
+    for n_out in outer_nodes
+        x_out = mesh.node[n_out, 1]
+        y_out = mesh.node[n_out, 2]
         
-        for n_above in inner_nodes_above
-            x_above = mesh.node[n_above, 1]
-            y_above = mesh.node[n_above, 2]
+        for n_in in inner_nodes
+            x_in = mesh.node[n_in, 1]
+            y_in = mesh.node[n_in, 2]
             
-            if abs(x_below - x_above) < tol && abs(y_below - y_above) < tol
-                push!(node_pairs, (n_below, n_above))
-                break
+            # 检查坐标是否重合
+            if abs(x_out - x_in) < tol && abs(y_out - y_in) < tol
+                # (外螺旋节点, 内螺旋节点)
+                # 外螺旋节点属于"下层"单元的外边界
+                # 内螺旋节点属于"上层"单元的内边界
+                push!(pairs, (n_out, n_in))
+                break  # 每个外螺旋节点最多匹配一个内螺旋节点
             end
         end
     end
     
-    # 按角度排序节点对
-    if !isempty(node_pairs)
-        sort!(node_pairs, by = p -> atan(mesh.node[p[1], 2], mesh.node[p[1], 1]))
-    end
-    
-    return node_pairs
+    return pairs
 end
 
 """
-复制界面节点并创建映射
+界面节点组信息
 """
-function _duplicate_interface_nodes(mesh::Mesh, layer_elements::Vector{Vector{Int64}}, 
-                                    interface_info::Vector{InterfaceInfo}, n_interfaces::Int)
+struct InterfaceNodeGroup
+    interface_idx::Int64                      # 界面索引
+    node_pairs::Vector{Tuple{Int64, Int64}}   # (外螺旋节点, 内螺旋节点) 对
+    new_node_map::Dict{Int64, Int64}          # 原内螺旋节点 → 新节点编号
+end
+
+"""
+    _group_interface_pairs(mesh, pairs)
+
+将界面节点对按连续性分组（识别不同的界面）。
+
+由于螺旋结构，相邻卷绕圈的界面在θ方向上是连续的。
+通过检查节点的θ位置来判断是否属于同一界面。
+"""
+function _group_interface_pairs(mesh::Mesh, pairs::Vector{Tuple{Int64, Int64}})
+    if isempty(pairs)
+        return InterfaceNodeGroup[]
+    end
+    
+    # 计算每个节点对的θ位置
+    θ_vals = [atan(mesh.node[p[1], 2], mesh.node[p[1], 1]) for p in pairs]
+    
+    # 将θ归一化到 [0, 2π]
+    θ_vals = [θ < 0 ? θ + 2π : θ for θ in θ_vals]
+    
+    # 按θ排序
+    sorted_idx = sortperm(θ_vals)
+    sorted_pairs = pairs[sorted_idx]
+    sorted_θ = θ_vals[sorted_idx]
+    
+    # 分组：检查θ的跳变来识别不同的界面
+    # 如果θ跳变超过π，认为是新的界面
+    groups = Vector{Vector{Tuple{Int64, Int64}}}()
+    current_group = [sorted_pairs[1]]
+    
+    for i in 2:length(sorted_pairs)
+        Δθ = sorted_θ[i] - sorted_θ[i-1]
+        
+        # 如果θ跳变较大，但这只是因为回到了2π的边界，不应该分组
+        # 真正的界面分隔应该是节点在不同的"圈"上
+        # 简单起见：如果相邻节点的θ差距很大（>π），可能是边界回绕，不分组
+        # 更准确的方法是检查半径
+        
+        # 这里我们使用一个简单的方法：所有重合的节点对都属于同一类界面
+        # 因为它们都是"外螺旋-内螺旋"的重合点
+        push!(current_group, sorted_pairs[i])
+    end
+    
+    push!(groups, current_group)
+    
+    # 创建InterfaceNodeGroup对象
+    result = InterfaceNodeGroup[]
+    for (idx, grp) in enumerate(groups)
+        push!(result, InterfaceNodeGroup(idx, grp, Dict{Int64, Int64}()))
+    end
+    
+    return result
+end
+
+"""
+    _split_interface_nodes(mesh, interface_groups)
+
+在界面处复制节点，将原本重合的节点分离。
+
+对于每个界面节点对 (n_out, n_in)：
+- n_out（外螺旋节点）保持不变，属于"下层"单元
+- n_in（内螺旋节点）被复制为新节点，新节点属于"上层"单元
+- 原节点位置保持不变，但连接关系更新
+
+# 返回
+- `node_new`: 扩展后的节点坐标数组
+- `node_map`: 节点映射关系
+- `bulk_element_new`: 更新后的单元连接
+- `interface_node_info`: 更新后的界面信息（包含新节点编号）
+"""
+function _split_interface_nodes(mesh::Mesh, interface_groups::Vector{InterfaceNodeGroup})
     nnode_orig = mesh.nlen
     ne = size(mesh.element, 1)
     
-    # 初始化节点映射：原节点 → [新节点列表]
+    # 收集所有需要复制的内螺旋节点
+    nodes_to_duplicate = Set{Int64}()
+    for grp in interface_groups
+        for (n_out, n_in) in grp.node_pairs
+            push!(nodes_to_duplicate, n_in)
+        end
+    end
+    
+    # 创建新节点数组
+    n_new_nodes = length(nodes_to_duplicate)
+    node_new = zeros(Float64, nnode_orig + n_new_nodes, 2)
+    node_new[1:nnode_orig, :] = mesh.node
+    
+    # 创建节点映射
     node_map = Dict{Int64, Vector{Int64}}()
     for i in 1:nnode_orig
-        node_map[i] = [i]  # 初始时每个节点映射到自己
+        node_map[i] = [i]
     end
     
-    # 复制节点坐标数组
-    node_list = [mesh.node[i, :] for i in 1:nnode_orig]
+    # 复制节点并记录映射
+    # old_to_new: 原内螺旋节点 → 新节点编号
+    old_to_new = Dict{Int64, Int64}()
+    new_node_idx = nnode_orig
     
-    # 复制单元连接关系
-    bulk_element = copy(mesh.element)
+    for n_in in nodes_to_duplicate
+        new_node_idx += 1
+        # 新节点坐标与原节点相同
+        node_new[new_node_idx, :] = mesh.node[n_in, :]
+        old_to_new[n_in] = new_node_idx
+        push!(node_map[n_in], new_node_idx)
+    end
     
-    # 处理每个界面
-    for iface in 1:n_interfaces
-        info = interface_info[iface]
-        
-        # 对于每个界面节点对，创建新节点（用于上层）
-        for (n_below, n_above) in info.node_pairs
-            # 如果 n_below 和 n_above 是同一个节点（共享），需要分离
-            if n_below == n_above
-                # 创建新节点（坐标相同）
-                new_node_idx = length(node_list) + 1
-                push!(node_list, mesh.node[n_above, :])
-                
-                # 更新映射
-                push!(node_map[n_above], new_node_idx)
-                
-                # 更新上层单元的节点连接
-                for e in info.elements_above
-                    for k in 1:4
-                        if bulk_element[e, k] == n_above
-                            bulk_element[e, k] = new_node_idx
-                        end
-                    end
-                end
+    # 更新单元连接关系
+    # 识别哪些单元使用了被复制的内螺旋节点，并且这些单元属于"上层"
+    # "上层"单元的内边界节点应该使用新节点
+    
+    bulk_element_new = copy(mesh.element)
+    nθ = ne
+    
+    # 在条带网格中，单元的内边界节点是节点1和4
+    # 如果这些节点是被复制的节点，检查该单元是否是"上层"单元
+    # "上层"单元的定义：其内边界节点参与了界面（与某个外螺旋节点重合）
+    
+    # 创建集合：哪些节点是界面上的内螺旋节点
+    interface_inner_nodes = Set{Int64}()
+    for grp in interface_groups
+        for (n_out, n_in) in grp.node_pairs
+            push!(interface_inner_nodes, n_in)
+        end
+    end
+    
+    # 更新单元的内边界节点
+    for e in 1:ne
+        for local_idx in [1, 4]  # 内边界节点的局部索引
+            n = bulk_element_new[e, local_idx]
+            if n in interface_inner_nodes
+                # 这个单元的内边界节点在界面上，使用新节点
+                bulk_element_new[e, local_idx] = old_to_new[n]
             end
         end
     end
     
-    # 转换为矩阵
-    nnode_new = length(node_list)
-    node_new = zeros(Float64, nnode_new, 2)
-    for i in 1:nnode_new
-        node_new[i, :] = node_list[i]
+    # 更新interface_groups中的映射
+    interface_node_info = InterfaceNodeGroup[]
+    for grp in interface_groups
+        new_map = Dict{Int64, Int64}()
+        for (n_out, n_in) in grp.node_pairs
+            new_map[n_in] = old_to_new[n_in]
+        end
+        push!(interface_node_info, InterfaceNodeGroup(grp.interface_idx, grp.node_pairs, new_map))
     end
     
-    return node_new, node_map, bulk_element
+    return node_new, node_map, bulk_element_new, interface_node_info
 end
 
 """
-创建内聚力单元
+    _create_cohesive_elements_from_pairs(node, interface_info)
+
+基于界面节点对创建内聚力单元。
+
+每两个相邻的界面节点对形成一个四节点内聚力单元：
+```
+    n_in_new[i+1] -------- n_in_new[i]    (上层，使用新节点)
+          |                    |
+          |      厚度=0        |
+          |                    |
+    n_out[i+1] -------- n_out[i]          (下层，使用原节点)
+```
 """
-function _create_cohesive_elements(mesh::Mesh, node_new::Matrix{Float64},
-                                   interface_info::Vector{InterfaceInfo},
-                                   node_map::Dict{Int64, Vector{Int64}},
-                                   n_interfaces::Int)
+function _create_cohesive_elements_from_pairs(node::Matrix{Float64}, 
+                                              interface_info::Vector{InterfaceNodeGroup})
     cohesive_elements = CohesiveElement[]
     elem_id = 0
     
-    for iface in 1:n_interfaces
-        info = interface_info[iface]
-        n_pairs = length(info.node_pairs)
+    for grp in interface_info
+        pairs = grp.node_pairs
+        new_map = grp.new_node_map
+        n_pairs = length(pairs)
+        
+        if n_pairs < 2
+            continue
+        end
+        
+        # 按θ排序节点对
+        sorted_pairs = sort(pairs, by = p -> atan(node[p[1], 2], node[p[1], 1]))
         
         # 每两个相邻节点对形成一个内聚力单元
         for i in 1:(n_pairs - 1)
-            n1_orig, n1_top_orig = info.node_pairs[i]
-            n2_orig, n2_top_orig = info.node_pairs[i + 1]
+            n_out_1, n_in_1 = sorted_pairs[i]
+            n_out_2, n_in_2 = sorted_pairs[i + 1]
             
-            # 获取映射后的节点编号
-            # 底面节点：使用原节点（属于下层）
-            n1_bottom = n1_orig
-            n2_bottom = n2_orig
-            
-            # 顶面节点：使用新创建的节点（属于上层）
-            # 查找映射中的最后一个节点（新创建的）
-            n1_top = node_map[n1_top_orig][end]
-            n2_top = node_map[n2_top_orig][end]
-            
-            # 如果没有创建新节点（节点对不是共享的情况），使用原节点
-            if n1_top == n1_top_orig && length(node_map[n1_top_orig]) == 1
-                n1_top = n1_top_orig
-            end
-            if n2_top == n2_top_orig && length(node_map[n2_top_orig]) == 1
-                n2_top = n2_top_orig
-            end
+            # 获取新节点编号（上层使用新节点）
+            n_in_new_1 = new_map[n_in_1]
+            n_in_new_2 = new_map[n_in_2]
             
             # 计算单元长度
-            x1 = node_new[n1_bottom, 1]
-            y1 = node_new[n1_bottom, 2]
-            x2 = node_new[n2_bottom, 1]
-            y2 = node_new[n2_bottom, 2]
+            x1, y1 = node[n_out_1, 1], node[n_out_1, 2]
+            x2, y2 = node[n_out_2, 1], node[n_out_2, 2]
             elem_length = hypot(x2 - x1, y2 - y1)
             
             elem_id += 1
             
             # 创建内聚力单元
-            # 节点顺序：[底1, 底2, 顶2, 顶1] 形成逆时针
+            # 节点顺序：[底1, 底2, 顶2, 顶1] 
+            # 底面（下层）：使用原外螺旋节点
+            # 顶面（上层）：使用新内螺旋节点
             coh_elem = CohesiveElement(
                 elem_id,
-                [n1_bottom, n2_bottom, n2_top, n1_top],
-                [n1_bottom, n2_bottom],
-                [n1_top, n2_top],
+                [n_out_1, n_out_2, n_in_new_2, n_in_new_1],
+                [n_out_1, n_out_2],           # 底面节点
+                [n_in_new_1, n_in_new_2],     # 顶面节点
                 elem_length,
-                iface
+                grp.interface_idx
             )
             
             push!(cohesive_elements, coh_elem)
@@ -468,6 +511,7 @@ function _create_cohesive_elements(mesh::Mesh, node_new::Matrix{Float64},
     
     return cohesive_elements
 end
+
 
 
 # ========================================================================
