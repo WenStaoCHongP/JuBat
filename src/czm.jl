@@ -1335,12 +1335,53 @@ end
 # 6. 边界条件
 # ========================================================================
 
-export apply_bc_czm!
+export apply_bc_czm!, identify_bc_nodes_czm
+
+"""
+    apply_bc_czm!(K, F, bc_nodes)
+
+应用位移边界条件（惩罚法）。
+与 mechanical.jl 中的 _apply_mechanical_BC_2D 保持一致。
+
+# 参数
+- `K`: 刚度矩阵（会被修改）
+- `F`: 载荷向量（会被修改）
+- `bc_nodes`: Dict{Int, Symbol}，节点 → 边界类型
+"""
+function apply_bc_czm!(K::SparseMatrixCSC{Float64,Int64}, F::Vector{Float64},
+                      bc_nodes::Dict{Int64, Symbol})
+    # 使用与 mechanical.jl 相同的惩罚系数
+    penalty = 1e12
+    
+    for (node, bc_type) in bc_nodes
+        if bc_type == :fixed_x
+            # 固定x方向位移
+            dof = 2 * node - 1
+            K[dof, dof] += penalty
+            F[dof] = 0.0
+        elseif bc_type == :fixed_y
+            # 固定y方向位移
+            dof = 2 * node
+            K[dof, dof] += penalty
+            F[dof] = 0.0
+        elseif bc_type == :fixed_xy
+            # 固定x和y方向位移
+            dof_x = 2 * node - 1
+            dof_y = 2 * node
+            K[dof_x, dof_x] += penalty
+            K[dof_y, dof_y] += penalty
+            F[dof_x] = 0.0
+            F[dof_y] = 0.0
+        end
+    end
+    
+    return K, F
+end
 
 """
     apply_bc_czm!(K, f, bc_dofs, bc_vals)
 
-应用位移边界条件（惩罚法）。
+应用位移边界条件（惩罚法）- 基于DOF列表的版本。
 
 # 参数
 - `K`: 刚度矩阵（会被修改）
@@ -1350,7 +1391,7 @@ export apply_bc_czm!
 """
 function apply_bc_czm!(K::SparseMatrixCSC{Float64,Int64}, f::Vector{Float64},
                       bc_dofs::Vector{Int64}, bc_vals::Vector{Float64})
-    penalty = 1e20
+    penalty = 1e12  # 与 mechanical.jl 保持一致
     
     for (dof, val) in zip(bc_dofs, bc_vals)
         K[dof, dof] += penalty
@@ -1359,35 +1400,133 @@ function apply_bc_czm!(K::SparseMatrixCSC{Float64,Int64}, f::Vector{Float64},
 end
 
 """
-    identify_bc_nodes_czm(czm_mesh, param_dim)
+    identify_bc_nodes_czm(czm_mesh, param_dim; opt=nothing)
 
 识别需要施加边界条件的节点。
+与 mechanical.jl 中的 _identify_mechanical_bc_nodes 保持一致。
+
+使用 edge_boundary 函数精确识别螺旋网格的边界节点。
+
+# 边界条件策略
+- 内边界（第一圈内螺旋）：固定 xy
+- 外边界（最后一圈外螺旋）：固定 xy
+
+# 参数
+- `czm_mesh`: 内聚力网格
+- `param_dim`: 参数对象
+- `opt`: 选项对象（可选，用于自定义边界范围）
 
 # 返回
 - `bc_nodes`: Dict{Int, Symbol}，节点 → 边界类型
+- `inner_count`: 内边界节点数
+- `outer_count`: 外边界节点数
 """
-function identify_bc_nodes_czm(czm_mesh::CohesiveMesh, param_dim)
+function identify_bc_nodes_czm(czm_mesh::CohesiveMesh, param_dim; opt=nothing)
+    nnode = czm_mesh.nnode
     bc_nodes = Dict{Int64, Symbol}()
     
     # 获取螺旋参数
-    p = jellyroll_spiral_params(param_dim)
+    pgeo = jellyroll_spiral_params(param_dim)
+    s_in = 0.0
+    s_out = pgeo.t_repeat
+    bval = max(pgeo.b, 1e-12)
+    θ0_mesh = max(0.0, (pgeo.Rin - pgeo.a - s_in) / bval)
+    θ1_mesh = min((pgeo.Rout - pgeo.a - s_out) / bval, (pgeo.Rout - pgeo.a) / bval)
     
-    # 识别内外边界节点
-    tol = 1e-4
-    for i in 1:czm_mesh.nnode
-        x, y = czm_mesh.node[i, 1], czm_mesh.node[i, 2]
-        r = hypot(x, y)
-        
-        # 内边界：固定
-        if abs(r - p.Rin) < tol
-            bc_nodes[i] = :fixed_xy
-        end
-        
-        # 外边界：可以自由或施加载荷
-        # 默认不约束
+    # 获取配置（如果有的话）
+    if opt !== nothing
+        θ_in_range = hasproperty(opt, :boundary_inner_theta) ? opt.boundary_inner_theta : (θ0_mesh, min(θ0_mesh + 2.0*π, θ1_mesh))
+        θ_out_range = hasproperty(opt, :boundary_outer_theta) ? opt.boundary_outer_theta : (max(θ1_mesh - 2.0*π, θ0_mesh), θ1_mesh)
+        tol = hasproperty(opt, :boundary_tol) ? opt.boundary_tol : 1e-4
+    else
+        θ_in_range = (θ0_mesh, min(θ0_mesh + 2.0*π, θ1_mesh))
+        θ_out_range = (max(θ1_mesh - 2.0*π, θ0_mesh), θ1_mesh)
+        tol = 1e-4
     end
     
-    return bc_nodes
+    # 创建临时网格结构用于 edge_boundary 函数
+    # edge_boundary 需要 mesh.node 数组
+    temp_mesh = (node = czm_mesh.node, nlen = nnode, dimension = 2)
+    
+    # 识别内边界节点（第一圈）
+    inner_count = 0
+    for i in 1:nnode
+        if _is_inner_boundary(czm_mesh.node, i, param_dim, θ_in_range, tol)
+            bc_nodes[i] = :fixed_xy
+            inner_count += 1
+        end
+    end
+    
+    # 识别外边界节点（最后一圈）
+    outer_count = 0
+    for i in 1:nnode
+        if _is_outer_boundary(czm_mesh.node, i, param_dim, θ_out_range, tol)
+            bc_nodes[i] = :fixed_xy
+            outer_count += 1
+        end
+    end
+    
+    return bc_nodes, inner_count, outer_count
+end
+
+"""
+判断节点是否在内边界上（第一圈内螺旋）
+"""
+function _is_inner_boundary(node::Matrix{Float64}, nidx::Int, param_dim, theta_range, tol)
+    # 获取螺旋参数
+    p = jellyroll_spiral_params(param_dim)
+    offset = 0.0  # 内螺旋偏移
+    
+    # 获取节点坐标
+    x, y = node[nidx, 1], node[nidx, 2]
+    r = hypot(x, y)
+    bval = max(p.b, 1e-12)
+    
+    # 计算累计角度
+    θ_cum = (r - p.a - offset) / bval
+    θ_min, θ_max = theta_range
+    
+    if θ_cum < θ_min || θ_cum > θ_max
+        return false
+    end
+    
+    # 计算理论位置并验证距离
+    r_theo = p.a + p.b * θ_cum + offset
+    x_theo = r_theo * cos(θ_cum)
+    y_theo = r_theo * sin(θ_cum)
+    dist = hypot(x - x_theo, y - y_theo)
+    
+    return dist <= tol
+end
+
+"""
+判断节点是否在外边界上（最后一圈外螺旋）
+"""
+function _is_outer_boundary(node::Matrix{Float64}, nidx::Int, param_dim, theta_range, tol)
+    # 获取螺旋参数
+    p = jellyroll_spiral_params(param_dim)
+    offset = p.t_repeat  # 外螺旋偏移
+    
+    # 获取节点坐标
+    x, y = node[nidx, 1], node[nidx, 2]
+    r = hypot(x, y)
+    bval = max(p.b, 1e-12)
+    
+    # 计算累计角度
+    θ_cum = (r - p.a - offset) / bval
+    θ_min, θ_max = theta_range
+    
+    if θ_cum < θ_min || θ_cum > θ_max
+        return false
+    end
+    
+    # 计算理论位置并验证距离
+    r_theo = p.a + p.b * θ_cum + offset
+    x_theo = r_theo * cos(θ_cum)
+    y_theo = r_theo * sin(θ_cum)
+    dist = hypot(x - x_theo, y - y_theo)
+    
+    return dist <= tol
 end
 
 
@@ -1452,8 +1591,11 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
     # 初始位移
     u = u0 === nothing ? zeros(Float64, ndof) : copy(u0)
     
-    # 识别边界条件
-    bc_nodes = identify_bc_nodes_czm(czm_mesh, param_dim)
+    # 识别边界条件（与 mechanical.jl 保持一致）
+    bc_nodes, inner_count, outer_count = identify_bc_nodes_czm(czm_mesh, param_dim)
+    
+    @info "Boundary conditions identified" inner_nodes=inner_count outer_nodes=outer_count
+    
     bc_dofs = Int64[]
     bc_vals = Float64[]
     
