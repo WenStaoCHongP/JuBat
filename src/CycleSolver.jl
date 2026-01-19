@@ -292,12 +292,24 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     
     M_old, K_old, F_old, variables, y_phi = CallModel(case, y0, t, jacobi="update")
     
-    # 验证 M 矩阵大小与 y0 一致
+    # 验证 M 矩阵大小与 y0 一致（关键检查！）
     M_size = size(M_old, 1)
     y0_len = length(y0)
     if M_size != y0_len
         println("⚠️  [CycleSolver] M矩阵大小与y0不匹配: M_size=$M_size, y0_len=$y0_len, phase=$phase_type")
-        println("⚠️  [CycleSolver] 这可能导致求解错误！检查 multi_spme_layout: empty=$(isempty(case.multi_spme_layout))")
+        println("⚠️  [CycleSolver] multi_spme_layout: empty=$(isempty(case.multi_spme_layout))")
+        
+        # 尝试修复：如果布局为空，重新初始化
+        if multi_spme && isempty(case.multi_spme_layout)
+            println("⚠️  [CycleSolver] 尝试重新初始化布局...")
+            _ensure_multi_spme_layout!(case)
+        end
+        
+        # 如果仍然不匹配，报错
+        if M_size != y0_len
+            error("无法解决 M 矩阵与 y0 的维度不匹配问题。请检查 multi_spme_layout 是否正确设置。" *
+                  " M_size=$M_size, y0_len=$y0_len, layout_empty=$(isempty(case.multi_spme_layout))")
+        end
     end
     
     # 初始化变量

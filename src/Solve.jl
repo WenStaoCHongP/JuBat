@@ -606,14 +606,40 @@ function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
         return CallModel_SimpleCoupling(case, yt, t; jacobi=jacobi)
     end
     
-    # 判断是否启用多SPMe模式
-    multi_spme_enabled = (
+    # 判断是否应该启用多SPMe模式
+    should_use_multi_spme = (
         case.opt.model == "SPMe" &&
         hasproperty(case.opt, :per_element_spme) && case.opt.per_element_spme &&
         case.opt.thermalmodel == "distributed2D" &&
-        haskey(case.mesh, "thermal2D") &&
-        !isempty(case.multi_spme_layout)
+        haskey(case.mesh, "thermal2D")
     )
+    
+    # 如果应该使用多SPMe但布局为空，尝试从状态向量长度推断
+    if should_use_multi_spme && isempty(case.multi_spme_layout)
+        # 计算期望的布局
+        ne = size(case.mesh["thermal2D"].element, 1)
+        nT = case.mesh["thermal2D"].nlen
+        Nrn = case.mesh["negative particle"].nlen
+        Nrp = case.mesh["positive particle"].nlen
+        Nel = case.mesh["electrolyte"].nlen
+        n_chem = Nrn + Nrp + Nel
+        expected_multi_len = ne * n_chem + nT
+        
+        # 检查传入的状态向量长度
+        if length(yt) == expected_multi_len
+            # 状态向量是多SPMe格式，需要初始化布局
+            @warn "CallModel: multi_spme_layout 为空但状态向量长度匹配多SPMe格式，自动初始化布局"
+            case.multi_spme_layout["ne"] = ne
+            case.multi_spme_layout["n_chem"] = n_chem
+            case.multi_spme_layout["nT"] = nT
+            case.multi_spme_layout["n_total"] = expected_multi_len
+            case.multi_spme_layout["chem_range"] = 1:(ne * n_chem)
+            case.multi_spme_layout["thermal_range"] = (ne * n_chem + 1):(ne * n_chem + nT)
+        end
+    end
+    
+    # 最终判断
+    multi_spme_enabled = should_use_multi_spme && !isempty(case.multi_spme_layout)
     
     if multi_spme_enabled
         return CallModel_MultiSPMe(case, yt, t, jacobi=jacobi)
