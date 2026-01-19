@@ -23,6 +23,7 @@ include("Initialisation.jl")
 include("mechanical.jl")
 include("Jellyrollmodel.jl")
 include("czm.jl")  # 内聚力区域模型
+include("CycleSolver.jl")  # 充放电循环求解器
 include("ModelInitialisation_SimpleCoupling.jl")
 include("CallModel_SimpleCoupling.jl")
 
@@ -52,4 +53,8 @@ export apply_bc_czm!, identify_bc_nodes_czm
 export newton_raphson_czm, solve_czm_step
 export get_damage_statistics, check_fracture_criterion, reset_damage_states!, accumulate_cycle_damage!
 export czm_output_to_variables
+# Cycle solver exports
+export CycleOption, PhaseType, PHASE_CHARGE, PHASE_REST, PHASE_DISCHARGE
+export PhaseResult, CycleResult, CyclingResult
+export solve_phase, solve_cycling, plot_cycling_results
 end
