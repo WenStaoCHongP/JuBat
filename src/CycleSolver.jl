@@ -252,56 +252,6 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     terminated_by = :time
     t_actual = 0.0
     
-    # 电压容差（避免边界问题）
-    V_tolerance = 0.005  # 5mV 容差
-    
-    # 检查初始电压是否已达到截止条件
-    if phase_type == PHASE_CHARGE && V_current >= (V_limit - V_tolerance)
-        terminated_by = :voltage
-        t_actual = 0.0
-        return Dict(
-            "duration" => 0.0,
-            "V_end" => V_current,
-            "capacity" => 0.0,
-            "terminated_by" => :voltage,
-            "T_max" => T_max_phase,
-            "T_mean_end" => !isempty(T_nodes_carry) ? 
-                            mean(T_nodes_carry) * case.param_dim.scale.T_ref : 
-                            case.param_dim.cell.T0,
-            "D_max" => D_max_init,
-            "D_mean" => D_mean_init,
-            "ΔD_max" => 0.0,
-            "final_state" => Dict(
-                "y" => y_old,
-                "T_nodes" => T_nodes_carry,
-                "V" => V_current,
-                "t_global" => 0.0
-            )
-        )
-    elseif phase_type == PHASE_DISCHARGE && V_current <= (V_limit + V_tolerance)
-        terminated_by = :voltage
-        t_actual = 0.0
-        return Dict(
-            "duration" => 0.0,
-            "V_end" => V_current,
-            "capacity" => 0.0,
-            "terminated_by" => :voltage,
-            "T_max" => T_max_phase,
-            "T_mean_end" => !isempty(T_nodes_carry) ? 
-                            mean(T_nodes_carry) * case.param_dim.scale.T_ref : 
-                            case.param_dim.cell.T0,
-            "D_max" => D_max_init,
-            "D_mean" => D_mean_init,
-            "ΔD_max" => 0.0,
-            "final_state" => Dict(
-                "y" => y_old,
-                "T_nodes" => T_nodes_carry,
-                "V" => V_current,
-                "t_global" => 0.0
-            )
-        )
-    end
-    
     # 主循环
     while t < t_end_nd
         # 更新温度影响
@@ -309,35 +259,13 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
             case.param.cell.T0 = mean(T_nodes_carry)
         end
         
-        # 在调用 CallModel 前检查电压是否接近截止
-        if phase_type == PHASE_CHARGE && V_current >= (V_limit - V_tolerance)
-            terminated_by = :voltage
-            break
-        elseif phase_type == PHASE_DISCHARGE && V_current <= (V_limit + V_tolerance)
-            terminated_by = :voltage
-            break
-        end
-        
-        # 电化学步 - 使用 try-catch 捕获电压越界错误
-        local M_new, K_new, F_new, y_phi_new
-        try
-            M_new, K_new, F_new, variables, y_phi_new = CallModel(case, y_old, t, jacobi="update")
-        catch e
-            # 如果是电压越界错误，优雅终止
-            if occursin("voltage out of bounds", string(e)) || 
-               occursin("out of bounds", string(e))
-                terminated_by = :voltage
-                break
-            else
-                rethrow(e)
-            end
-        end
-        
+        # 电化学步
+        M_new, K_new, F_new, variables, y_phi = CallModel(case, y_old, t, jacobi="update")
         Mt = M_new - theta * K_new * dt
         Kt = (1 - theta) * K_old * dt + M_new
         Ft = theta * F_new * dt + (1 - theta) * F_old * dt
         y_c = convert(SparseMatrixCSC{Float64,Int}, Mt) \ (Kt * y_old[vc] + Ft)
-        y_new = vcat(y_c, y_phi_new)
+        y_new = vcat(y_c, y_phi)
         
         # 提取温度场
         if case.opt.thermal_enabled && haskey(case.mesh, "thermal2D")
@@ -354,18 +282,17 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
         dt_dim = dt * t0_scale
         capacity += abs(I_current) * dt_dim / 3600.0  # Ah
         
-        # 检查截止条件（带容差）
-        if phase_type == PHASE_CHARGE && V_current >= (V_limit - V_tolerance)
+        # 检查截止条件
+        if phase_type == PHASE_CHARGE && V_current >= V_limit
             terminated_by = :voltage
             break
-        elseif phase_type == PHASE_DISCHARGE && V_current <= (V_limit + V_tolerance)
+        elseif phase_type == PHASE_DISCHARGE && V_current <= V_limit
             terminated_by = :voltage
             break
         end
         
         # 更新状态
         y_old = y_new
-        y_phi = y_phi_new
         K_old = K_new
         F_old = F_new
         t += dt
@@ -451,10 +378,11 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
         println("开始充放电循环仿真")
         println("="^60)
         @printf("  循环次数: %d\n", n_cycles)
-        @printf("  充电: %.0fs (%.1fC), 截止 %.2fV\n", 
-                cycle_opt.t_charge, cycle_opt.I_charge/5.0, cycle_opt.V_upper)
+        println("  循环顺序: 放电 → 静置 → 充电 → 静置")
         @printf("  放电: %.0fs (%.1fC), 截止 %.2fV\n", 
                 cycle_opt.t_discharge, cycle_opt.I_discharge/5.0, cycle_opt.V_lower)
+        @printf("  充电: %.0fs (%.1fC), 截止 %.2fV\n", 
+                cycle_opt.t_charge, cycle_opt.I_charge/5.0, cycle_opt.V_upper)
         @printf("  静置: %.0fs + %.0fs\n", cycle_opt.t_rest1, cycle_opt.t_rest2)
     end
     
@@ -501,29 +429,31 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
         D_max_cycle_start = czm_mesh !== nothing ? 
                             maximum(s.D for s in czm_mesh.damage_states) : 0.0
         
-        # ============ 阶段1: 充电 ============
+        # ============ 阶段1: 放电 ============
+        # 循环顺序：放电 → 静置 → 充电 → 静置
+        # （适配Jellyroll参数的初始高SOC状态）
         if verbose
-            print("  [充电] ")
+            print("  [放电] ")
         end
         
-        charge_result = solve_phase(
-            case, PHASE_CHARGE, 
-            cycle_opt.t_charge,
-            -cycle_opt.I_charge,  # 负电流表示充电
-            cycle_opt.V_upper,
+        discharge_result = solve_phase(
+            case, PHASE_DISCHARGE,
+            cycle_opt.t_discharge,
+            cycle_opt.I_discharge,  # 正电流表示放电
+            cycle_opt.V_lower,
             current_state;
-            czm_mesh=czm_mesh, 
+            czm_mesh=czm_mesh,
             czm_params=czm_params,
             dt_range=cycle_opt.dt_cycle
         )
-        cycle_result.charge = charge_result
-        current_state = charge_result.final_state
+        cycle_result.discharge = discharge_result
+        current_state = discharge_result.final_state
         
         if verbose
             @printf("%.1fs, %.3fV→%.3fV, %.3fAh (%s)\n",
-                    charge_result.duration, charge_result.V_start, 
-                    charge_result.V_end, charge_result.capacity,
-                    charge_result.terminated_by)
+                    discharge_result.duration, discharge_result.V_start,
+                    discharge_result.V_end, discharge_result.capacity,
+                    discharge_result.terminated_by)
         end
         
         # ============ 阶段2: 静置1 ============
@@ -548,29 +478,29 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
             @printf("%.1fs, T_max=%.2fK\n", rest1_result.duration, rest1_result.T_max)
         end
         
-        # ============ 阶段3: 放电 ============
+        # ============ 阶段3: 充电 ============
         if verbose
-            print("  [放电] ")
+            print("  [充电] ")
         end
         
-        discharge_result = solve_phase(
-            case, PHASE_DISCHARGE,
-            cycle_opt.t_discharge,
-            cycle_opt.I_discharge,  # 正电流表示放电
-            cycle_opt.V_lower,
+        charge_result = solve_phase(
+            case, PHASE_CHARGE, 
+            cycle_opt.t_charge,
+            -cycle_opt.I_charge,  # 负电流表示充电
+            cycle_opt.V_upper,
             current_state;
-            czm_mesh=czm_mesh,
+            czm_mesh=czm_mesh, 
             czm_params=czm_params,
             dt_range=cycle_opt.dt_cycle
         )
-        cycle_result.discharge = discharge_result
-        current_state = discharge_result.final_state
+        cycle_result.charge = charge_result
+        current_state = charge_result.final_state
         
         if verbose
             @printf("%.1fs, %.3fV→%.3fV, %.3fAh (%s)\n",
-                    discharge_result.duration, discharge_result.V_start,
-                    discharge_result.V_end, discharge_result.capacity,
-                    discharge_result.terminated_by)
+                    charge_result.duration, charge_result.V_start, 
+                    charge_result.V_end, charge_result.capacity,
+                    charge_result.terminated_by)
         end
         
         # ============ 阶段4: 静置2 ============
