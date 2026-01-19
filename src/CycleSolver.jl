@@ -200,16 +200,52 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     dt_max = dt_range[2] / t0_scale
     t_end_nd = t_max / t0_scale
     
-    # 初始化
+    # 检测是否为多SPMe模式
+    multi_spme = case.opt.model == "SPMe" && 
+                 hasproperty(case.opt, :per_element_spme) && 
+                 case.opt.per_element_spme &&
+                 case.opt.thermalmodel == "distributed2D" &&
+                 haskey(case.mesh, "thermal2D")
+    
+    # 初始化或验证状态向量
     if y0 === nothing
         # 使用标准初始化
-        multi_spme = case.opt.model == "SPMe" && 
-                     hasproperty(case.opt, :per_element_spme) && 
-                     case.opt.per_element_spme
         if multi_spme
             y0 = ModelInitialisation_MultiSPMe(case)
         else
             y0 = ModelInitialisation(case)
+        end
+    else
+        # 状态向量从上一阶段传递
+        y0 = vec(y0)  # 确保是向量格式
+        
+        if multi_spme
+            # 确保多SPMe布局已初始化
+            if isempty(case.multi_spme_layout)
+                _ensure_multi_spme_layout!(case)
+            end
+            
+            # 验证状态向量长度
+            expected_len = case.multi_spme_layout["n_total"]
+            if length(y0) != expected_len
+                @warn "状态向量长度不匹配，重新初始化" got=length(y0) expected=expected_len phase=phase_type
+                y0 = ModelInitialisation_MultiSPMe(case)
+            end
+        else
+            # 非多SPMe模式：检查是否需要追加热场自由度
+            if case.opt.thermalmodel == "distributed2D" && haskey(case.mesh, "thermal2D")
+                nT = case.mesh["thermal2D"].nlen
+                # 基础电化学自由度（不含热场）
+                n_chem_base = case.mesh["negative particle"].nlen + 
+                              case.mesh["positive particle"].nlen + 
+                              case.mesh["electrolyte"].nlen
+                
+                if length(y0) == n_chem_base
+                    # 状态向量缺少热场自由度，需要追加
+                    T_init = T_nodes !== nothing ? T_nodes : fill(case.param.cell.T0, nT)
+                    y0 = [y0; T_init]
+                end
+            end
         end
     end
     
@@ -217,6 +253,19 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     if T_nodes !== nothing && haskey(case.mesh, "thermal2D")
         # 使用传入的温度场
         T_nodes_carry = copy(T_nodes)
+        
+        # 多SPMe模式：同步温度场到状态向量中
+        if multi_spme && !isempty(case.multi_spme_layout)
+            nT = case.multi_spme_layout["nT"]
+            if length(T_nodes_carry) == nT
+                thermal_range = case.multi_spme_layout["thermal_range"]
+                y0[thermal_range] .= T_nodes_carry
+            end
+        end
+    elseif multi_spme && !isempty(case.multi_spme_layout) && haskey(case.mesh, "thermal2D")
+        # 多SPMe模式：从状态向量提取温度场
+        thermal_range = case.multi_spme_layout["thermal_range"]
+        T_nodes_carry = y0[thermal_range]
     elseif haskey(case.mesh, "thermal2D")
         T_nodes_carry = fill(case.param.cell.T0, case.mesh["thermal2D"].nlen)
     else
@@ -230,7 +279,24 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     # 初始调用
     t = 0.0
     dt = dt_min
+    
+    # 调试：验证 CallModel 前的布局状态
+    if multi_spme
+        layout_empty = isempty(case.multi_spme_layout)
+        if layout_empty
+            @warn "CallModel 前布局为空，尝试初始化" phase=phase_type
+            _ensure_multi_spme_layout!(case)
+        end
+    end
+    
     M_old, K_old, F_old, variables, y_phi = CallModel(case, y0, t, jacobi="update")
+    
+    # 验证 M 矩阵大小与 y0 一致
+    M_size = size(M_old, 1)
+    y0_len = length(y0)
+    if M_size != y0_len
+        @warn "M矩阵大小与y0不匹配" M_size=M_size y0_len=y0_len phase=phase_type
+    end
     
     # 初始化变量
     V_current = variables["cell voltage"] * case.param.scale.phi
@@ -325,10 +391,16 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     end
     
     # 构建最终状态
-    final_state = Dict(
-        "y" => y_old,
-        "T_nodes" => T_nodes_carry,
-        "V" => V_current,
+    # 确保保存的是最新的电压值（从 variables 获取，如果有的话）
+    V_final = V_current
+    if haskey(variables, "cell voltage")
+        V_final = variables["cell voltage"] * case.param.scale.phi
+    end
+    
+    final_state = Dict{String, Any}(
+        "y" => copy(y_old),  # 使用 copy 避免引用问题
+        "T_nodes" => copy(T_nodes_carry),
+        "V" => V_final,
         "t_global" => t_actual
     )
     
@@ -477,6 +549,10 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
         # ============ 阶段3: 充电 ============
         if verbose
             print("  [充电] ")
+            # 调试：打印传入充电阶段的状态
+            y_in = get(current_state, "y", nothing)
+            V_in = get(current_state, "V", NaN)
+            @printf("(V_in=%.3fV, y_len=%d) ", V_in, y_in === nothing ? 0 : length(y_in))
         end
         
         charge_result = solve_phase(
@@ -594,6 +670,43 @@ end
 # ========================================================================
 # 4. 辅助函数
 # ========================================================================
+
+"""
+    _ensure_multi_spme_layout!(case::Case)
+
+确保多SPMe布局信息已初始化（不改变状态向量）。
+
+当状态向量从上一阶段传递时，case.multi_spme_layout 可能为空。
+此函数计算并设置必要的布局信息，使 CallModel_MultiSPMe 能正常工作。
+"""
+function _ensure_multi_spme_layout!(case::Case)
+    if !haskey(case.mesh, "thermal2D")
+        error("_ensure_multi_spme_layout! requires thermal2D mesh")
+    end
+    
+    # 获取维度信息
+    ne = size(case.mesh["thermal2D"].element, 1)
+    nT = case.mesh["thermal2D"].nlen
+    
+    # 计算单个单元的电化学自由度数
+    Nrn = case.mesh["negative particle"].nlen
+    Nrp = case.mesh["positive particle"].nlen
+    Nel = case.mesh["electrolyte"].nlen
+    n_chem = Nrn + Nrp + Nel
+    
+    # 设置布局信息
+    if isempty(case.multi_spme_layout)
+        empty!(case.multi_spme_layout)
+    end
+    case.multi_spme_layout["ne"] = ne
+    case.multi_spme_layout["n_chem"] = n_chem
+    case.multi_spme_layout["nT"] = nT
+    case.multi_spme_layout["n_total"] = ne * n_chem + nT
+    case.multi_spme_layout["chem_range"] = 1:(ne * n_chem)
+    case.multi_spme_layout["thermal_range"] = (ne * n_chem + 1):(ne * n_chem + nT)
+    
+    return nothing
+end
 
 """
     plot_cycling_results(result; save_path="output/")
