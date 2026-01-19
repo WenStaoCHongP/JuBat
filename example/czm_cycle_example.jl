@@ -298,5 +298,10 @@ end
 
 # 运行主函数
 if abspath(PROGRAM_FILE) == @__FILE__
-    result, czm_mesh = main()
+    ret = main()
+    if ret !== nothing
+        result, czm_mesh = ret
+    else
+        println("仿真未成功完成")
+    end
 end

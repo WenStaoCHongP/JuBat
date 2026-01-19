@@ -252,6 +252,56 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     terminated_by = :time
     t_actual = 0.0
     
+    # 电压容差（避免边界问题）
+    V_tolerance = 0.005  # 5mV 容差
+    
+    # 检查初始电压是否已达到截止条件
+    if phase_type == PHASE_CHARGE && V_current >= (V_limit - V_tolerance)
+        terminated_by = :voltage
+        t_actual = 0.0
+        return Dict(
+            "duration" => 0.0,
+            "V_end" => V_current,
+            "capacity" => 0.0,
+            "terminated_by" => :voltage,
+            "T_max" => T_max_phase,
+            "T_mean_end" => !isempty(T_nodes_carry) ? 
+                            mean(T_nodes_carry) * case.param_dim.scale.T_ref : 
+                            case.param_dim.cell.T0,
+            "D_max" => D_max_init,
+            "D_mean" => D_mean_init,
+            "ΔD_max" => 0.0,
+            "final_state" => Dict(
+                "y" => y_old,
+                "T_nodes" => T_nodes_carry,
+                "V" => V_current,
+                "t_global" => 0.0
+            )
+        )
+    elseif phase_type == PHASE_DISCHARGE && V_current <= (V_limit + V_tolerance)
+        terminated_by = :voltage
+        t_actual = 0.0
+        return Dict(
+            "duration" => 0.0,
+            "V_end" => V_current,
+            "capacity" => 0.0,
+            "terminated_by" => :voltage,
+            "T_max" => T_max_phase,
+            "T_mean_end" => !isempty(T_nodes_carry) ? 
+                            mean(T_nodes_carry) * case.param_dim.scale.T_ref : 
+                            case.param_dim.cell.T0,
+            "D_max" => D_max_init,
+            "D_mean" => D_mean_init,
+            "ΔD_max" => 0.0,
+            "final_state" => Dict(
+                "y" => y_old,
+                "T_nodes" => T_nodes_carry,
+                "V" => V_current,
+                "t_global" => 0.0
+            )
+        )
+    end
+    
     # 主循环
     while t < t_end_nd
         # 更新温度影响
@@ -259,13 +309,35 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
             case.param.cell.T0 = mean(T_nodes_carry)
         end
         
-        # 电化学步
-        M_new, K_new, F_new, variables, y_phi = CallModel(case, y_old, t, jacobi="update")
+        # 在调用 CallModel 前检查电压是否接近截止
+        if phase_type == PHASE_CHARGE && V_current >= (V_limit - V_tolerance)
+            terminated_by = :voltage
+            break
+        elseif phase_type == PHASE_DISCHARGE && V_current <= (V_limit + V_tolerance)
+            terminated_by = :voltage
+            break
+        end
+        
+        # 电化学步 - 使用 try-catch 捕获电压越界错误
+        local M_new, K_new, F_new, y_phi_new
+        try
+            M_new, K_new, F_new, variables, y_phi_new = CallModel(case, y_old, t, jacobi="update")
+        catch e
+            # 如果是电压越界错误，优雅终止
+            if occursin("voltage out of bounds", string(e)) || 
+               occursin("out of bounds", string(e))
+                terminated_by = :voltage
+                break
+            else
+                rethrow(e)
+            end
+        end
+        
         Mt = M_new - theta * K_new * dt
         Kt = (1 - theta) * K_old * dt + M_new
         Ft = theta * F_new * dt + (1 - theta) * F_old * dt
         y_c = convert(SparseMatrixCSC{Float64,Int}, Mt) \ (Kt * y_old[vc] + Ft)
-        y_new = vcat(y_c, y_phi)
+        y_new = vcat(y_c, y_phi_new)
         
         # 提取温度场
         if case.opt.thermal_enabled && haskey(case.mesh, "thermal2D")
@@ -282,17 +354,18 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
         dt_dim = dt * t0_scale
         capacity += abs(I_current) * dt_dim / 3600.0  # Ah
         
-        # 检查截止条件
-        if phase_type == PHASE_CHARGE && V_current >= V_limit
+        # 检查截止条件（带容差）
+        if phase_type == PHASE_CHARGE && V_current >= (V_limit - V_tolerance)
             terminated_by = :voltage
             break
-        elseif phase_type == PHASE_DISCHARGE && V_current <= V_limit
+        elseif phase_type == PHASE_DISCHARGE && V_current <= (V_limit + V_tolerance)
             terminated_by = :voltage
             break
         end
         
         # 更新状态
         y_old = y_new
+        y_phi = y_phi_new
         K_old = K_new
         F_old = F_new
         t += dt
