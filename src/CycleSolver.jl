@@ -230,10 +230,29 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     # 初始调用
     t = 0.0
     dt = dt_min
+    
+    # 调试：检查传入状态的锂浓度
+    if y0 !== nothing && !isempty(case.multi_spme_layout)
+        layout = case.multi_spme_layout
+        n_chem = layout["n_chem"]
+        ne = layout["ne"]
+        # 提取第一个单元的电化学状态
+        yt_e1 = y0[1:n_chem]
+        # 负极表面浓度索引（最后一个粒子节点）
+        Nrn = case.mesh["negative particle"].nlen
+        Nrp = case.mesh["positive particle"].nlen
+        cn_surf = yt_e1[Nrn]  # 负极表面浓度
+        cp_surf = yt_e1[Nrn + Nrp]  # 正极表面浓度
+        @info "阶段初始状态检查" phase=phase_type cn_surf=cn_surf cp_surf=cp_surf y0_length=length(y0) n_chem=n_chem ne=ne
+    end
+    
     M_old, K_old, F_old, variables, y_phi = CallModel(case, y0, t, jacobi="update")
     
     # 初始化变量
     V_current = variables["cell voltage"] * case.param.scale.phi
+    
+    # 调试：打印计算出的初始电压
+    @info "阶段初始电压" phase=phase_type V_current=V_current I_current=I_current
     capacity = 0.0
     T_max_phase = haskey(variables, "T_nodes") ? 
                   maximum(variables["T_nodes"]) * case.param_dim.scale.T_ref : 
@@ -498,6 +517,12 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
         cycle_result.discharge = discharge_result
         current_state = discharge_result.final_state
         
+        # 调试：检查放电结束后的状态
+        if current_state !== nothing && haskey(current_state, "y") && current_state["y"] !== nothing
+            y_end = current_state["y"]
+            @info "放电结束状态" V_end=discharge_result.V_end y_length=length(y_end) y_first_10=y_end[1:min(10, length(y_end))]
+        end
+        
         if verbose
             @printf("%.1fs, %.3fV→%.3fV, %.3fAh (%s)\n",
                     discharge_result.duration, discharge_result.V_start,
@@ -522,6 +547,12 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
         )
         cycle_result.rest1 = rest1_result
         current_state = rest1_result.final_state
+        
+        # 调试：检查静置结束后的状态
+        if current_state !== nothing && haskey(current_state, "y") && current_state["y"] !== nothing
+            y_end = current_state["y"]
+            @info "静置1结束状态" V_end=rest1_result.V_end y_length=length(y_end) y_first_10=y_end[1:min(10, length(y_end))]
+        end
         
         if verbose
             @printf("%.1fs, T_max=%.2fK\n", rest1_result.duration, rest1_result.T_max)
