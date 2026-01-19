@@ -547,7 +547,11 @@ function _detect_cutoff_elements(coeffs, ne::Int, V_MIN::Float64, V_MAX::Float64
     return active_mask, n_cutoff
 end
 
-"""牛顿迭代主循环（支持部分单元截止）"""
+"""牛顿迭代主循环（支持部分单元截止）
+
+当所有单元都活跃时（n_cutoff=0），行为与原实现完全一致。
+当有截止单元时，只对活跃单元求解，截止单元电流保持为 0。
+"""
 function _newton_iteration!(I_e, V, ne, w, I_total, coeffs; 
                            tol_V=1e-8, tol_I=1e-10, max_iters=25,
                            active_mask::Union{Nothing, BitVector}=nothing)
@@ -556,47 +560,46 @@ function _newton_iteration!(I_e, V, ne, w, I_total, coeffs;
     F = zeros(Float64, ne)
     dFdI = similar(F)
     I_trial = similar(I_e)
+    ΔI = similar(I_e)  # 预分配，避免每次迭代创建
     
     # 如果没有提供 active_mask，所有单元都是活跃的
     if active_mask === nothing
         active_mask = trues(ne)
     end
     
-    # 获取活跃单元索引
+    # 获取活跃单元索引和数量
     active_idx = findall(active_mask)
     n_active = length(active_idx)
+    all_active = (n_active == ne)  # 优化标志：所有单元都活跃
     
     # 如果没有活跃单元，直接返回
     if n_active == 0
         return V, true, 0
     end
     
-    # 计算活跃单元的权重和（用于归一化）
-    w_active_sum = sum(w[active_idx])
-    
     for iter in 1:max_iters
         last_iter = iter
         
-        # 计算残差和雅可比（只对活跃单元）
+        # 计算残差和雅可比
         for e in 1:ne
-            if active_mask[e]
-                V_e = _branch_voltage(coeffs[e], I_e[e])
-                F[e] = V_e - V
-                dFdI[e] = _branch_dVdI(coeffs[e], I_e[e])
-                
-                # 防止奇异雅可比
-                if abs(dFdI[e]) < 1e-12
-                    dFdI[e] = sign(dFdI[e]) != 0.0 ? sign(dFdI[e]) * 1e-12 : -coeffs[e].C5
-                end
-            else
-                # 非活跃单元：电流固定为 0，残差为 0
-                F[e] = 0.0
-                dFdI[e] = -1.0  # 任意非零值
+            V_e = _branch_voltage(coeffs[e], I_e[e])
+            F[e] = V_e - V
+            dFdI[e] = _branch_dVdI(coeffs[e], I_e[e])
+            
+            # 防止奇异雅可比
+            if abs(dFdI[e]) < 1e-12
+                dFdI[e] = sign(dFdI[e]) != 0.0 ? sign(dFdI[e]) * 1e-12 : -coeffs[e].C5
             end
         end
         
-        # 检查收敛（只检查活跃单元）
-        res_V = n_active > 0 ? maximum(abs.(F[active_idx])) : 0.0
+        # 检查收敛
+        if all_active
+            # 所有单元活跃：使用原始向量操作（保持兼容性）
+            res_V = maximum(abs.(F))
+        else
+            # 有截止单元：只检查活跃单元
+            res_V = maximum(abs.(F[active_idx]))
+        end
         res_I = sum(w .* I_e) - I_total
         
         if res_V <= tol_V && abs(res_I) <= tol_I
@@ -604,30 +607,44 @@ function _newton_iteration!(I_e, V, ne, w, I_total, coeffs;
             break
         end
         
-        # 牛顿步（只对活跃单元）
-        denom = sum(w[active_idx] ./ dFdI[active_idx])
-        abs(denom) < 1e-12 && break
-        
-        num = -res_I + sum(w[active_idx] .* F[active_idx] ./ dFdI[active_idx])
-        ΔV = num / denom
-        
-        # 计算电流增量
-        ΔI = zeros(Float64, ne)
-        for e in active_idx
-            ΔI[e] = ((-F[e]) + ΔV) / dFdI[e]
+        # 牛顿步
+        if all_active
+            # 所有单元活跃：使用原始向量操作
+            denom = sum(w ./ dFdI)
+            abs(denom) < 1e-12 && break
+            
+            num = -res_I + sum(w .* F ./ dFdI)
+            ΔV = num / denom
+            ΔI .= ((-F) .+ ΔV) ./ dFdI
+        else
+            # 有截止单元：只对活跃单元计算
+            denom = sum(w[active_idx] ./ dFdI[active_idx])
+            abs(denom) < 1e-12 && break
+            
+            num = -res_I + sum(w[active_idx] .* F[active_idx] ./ dFdI[active_idx])
+            ΔV = num / denom
+            
+            # 计算电流增量（只对活跃单元）
+            fill!(ΔI, 0.0)
+            for e in active_idx
+                ΔI[e] = ((-F[e]) + ΔV) / dFdI[e]
+            end
         end
-        # 非活跃单元的 ΔI 保持为 0
         
         # 线搜索
         λ, V_trial = _line_search(I_e, V, ΔI, ΔV, I_trial, ne)
         λ == 0.0 && break
         
-        # 更新（只更新活跃单元）
-        for e in 1:ne
-            if active_mask[e]
+        # 更新
+        if all_active
+            # 所有单元活跃：使用原始向量操作
+            I_e .= I_trial
+        else
+            # 有截止单元：只更新活跃单元
+            for e in active_idx
                 I_e[e] = I_trial[e]
             end
-            # 非活跃单元保持 I_e[e] = 0
+            # 非活跃单元保持 I_e[e] = 0（已经是 0）
         end
         V = V_trial
     end
@@ -727,16 +744,26 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
     # 5. 初始化电流猜测
     I_e = _initialize_currents(ne, w, I_total, x_prev)
     
-    # 将截止单元的电流设为 0
-    for e in 1:ne
-        if !active_mask[e]
-            I_e[e] = 0.0
+    # 活跃单元索引
+    active_idx = findall(active_mask)
+    all_active = (n_cutoff == 0)
+    
+    # 将截止单元的电流设为 0（仅当有截止单元时）
+    if !all_active
+        for e in 1:ne
+            if !active_mask[e]
+                I_e[e] = 0.0
+            end
         end
     end
     
-    # 计算初始电压（使用活跃单元的平均值）
-    active_idx = findall(active_mask)
-    if !isempty(active_idx)
+    # 计算初始电压
+    if all_active
+        # 所有单元活跃：使用原始逻辑（保持完全兼容）
+        V_branches = [_branch_voltage(coeffs[e], I_e[e]) for e in 1:ne]
+        V = sum(V_branches) / ne
+    elseif !isempty(active_idx)
+        # 有截止单元：使用活跃单元的平均值
         V_branches = [_branch_voltage(coeffs[e], I_e[e]) for e in active_idx]
         V = sum(V_branches) / length(active_idx)
     else
@@ -748,26 +775,38 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
     V_branches_all = [_branch_voltage(coeffs[e], I_e[e]) for e in 1:ne]
     _debug_check_initial_voltage(has_nan_prefactor, V, V_branches_all, I_e, coeffs, I_total, ne)
     
-    # 6. 牛顿迭代求解（只对活跃单元）
-    if !isempty(active_idx)
+    # 6. 牛顿迭代求解
+    if all_active
+        # 所有单元活跃：传入 nothing 使用原始逻辑
+        V, converged, last_iter = _newton_iteration!(I_e, V, ne, w, I_total, coeffs)
+    elseif !isempty(active_idx)
+        # 有截止单元：传入 active_mask
         V, converged, last_iter = _newton_iteration!(I_e, V, ne, w, I_total, coeffs; 
                                                      active_mask=active_mask)
     else
+        # 所有单元都截止
         converged = true
         last_iter = 0
     end
     
-    # 7. 归一化确保总电流约束（只对活跃单元）
-    if !isempty(active_idx)
-        sx = sum(w .* I_e)
+    # 7. 归一化确保总电流约束
+    all_active = (n_cutoff == 0)  # 所有单元都活跃
+    
+    sx = sum(w .* I_e)
+    if all_active
+        # 所有单元活跃：使用原始向量操作（保持完全兼容）
+        if sx != 0.0
+            I_e .*= (I_total / sx)
+        end
+    elseif !isempty(active_idx)
+        # 有截止单元：只调整活跃单元
         if abs(sx) > 1e-12
-            # 按比例调整活跃单元的电流
             scale_factor = I_total / sx
             for e in active_idx
                 I_e[e] *= scale_factor
             end
         elseif abs(I_total) > 1e-12
-            # sx ≈ 0 但 I_total ≠ 0：按面积权重分配
+            # sx ≈ 0 但 I_total ≠ 0：按面积权重分配给活跃单元
             w_active_sum = sum(w[active_idx])
             if w_active_sum > 0
                 for e in active_idx
@@ -776,6 +815,7 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
             end
         end
     end
+    # 当所有单元都截止时，I_e 全为 0，不需要归一化
     
     # 8. 边界检查（软边界，允许主循环处理截止条件）
     voltage_in_bounds = _check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e)
