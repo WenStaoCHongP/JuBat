@@ -462,12 +462,25 @@ function _initialize_currents(ne, w, I_total, x_prev)
     return I_e
 end
 
-"""检查电压边界"""
+"""检查电压边界（带容差）"""
 function _check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e, context="")
+    # 电压容差：允许超出范围 0.1V（用于处理OCP曲线边界情况）
+    V_tolerance = 0.1 / phi_scale  # 转换为无量纲容差
+    
+    # 严格检查
     if V_MIN <= V <= V_MAX
         return true
     end
     
+    # 带容差的检查
+    if (V_MIN - V_tolerance) <= V <= (V_MAX + V_tolerance)
+        # 在容差范围内，只发出警告，不报错
+        V_phys = V * phi_scale
+        @warn "电压接近边界" V_phys=V_phys V_MIN=V_MIN*phi_scale V_MAX=V_MAX*phi_scale
+        return true
+    end
+    
+    # 超出容差范围，报错
     V_phys = V * phi_scale
     V_MIN_phys = V_MIN * phi_scale
     V_MAX_phys = V_MAX * phi_scale

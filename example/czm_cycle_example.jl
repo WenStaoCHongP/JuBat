@@ -107,7 +107,8 @@ function main()
     # 创建循环选项
     # 注意：为了演示，这里设置较少的循环次数
     # 实际仿真可以设置 n_cycles = 50
-    # 循环顺序：放电 → 静置 → 充电 → 静置（适配Jellyroll初始高SOC状态）
+    # 循环顺序：放电 → 静置 → 充电 → 静置
+    # 初始SOC使用Jellyroll.jl参数文件中的设置
     cycle_opt = JuBat.CycleOption(
         n_cycles = 5,           # 演示用5次循环，实际可设50次
         t_discharge = 3600.0,   # 放电时长 (s)
@@ -118,7 +119,6 @@ function main()
         I_charge = 5.0,         # 充电电流 (A) - 1C
         V_lower = 2.5,          # 放电截止电压
         V_upper = 4.2,          # 充电截止电压
-        SOC_init = 0.8,         # 初始SOC（高SOC开始放电）
         reset_T_each_cycle = true,  # 每循环重置温度
         dt_cycle = [1.0, 10.0]  # 时间步长范围
     )
@@ -276,6 +276,7 @@ function quick_test()
     czm_mesh = JuBat.create_czm_mesh(mesh_th, param_dim; tol=1e-8)
     
     # 短循环测试（放电 → 静置 → 充电 → 静置）
+    # 使用Jellyroll参数的默认SOC设置
     cycle_opt = JuBat.CycleOption(
         n_cycles = 1,
         t_discharge = 60.0,   # 只放电60s
@@ -286,7 +287,6 @@ function quick_test()
         I_charge = 5.0,
         V_lower = 2.5,
         V_upper = 4.2,
-        SOC_init = 0.8,       # 从80%开始放电
         dt_cycle = [1.0, 5.0]
     )
     
@@ -299,5 +299,11 @@ end
 
 # 运行主函数
 if abspath(PROGRAM_FILE) == @__FILE__
-    result, czm_mesh = main()
+    ret = main()
+    if ret !== nothing
+        result, czm_mesh = ret
+        println("\n仿真成功完成")
+    else
+        println("\n仿真未成功完成")
+    end
 end

@@ -386,9 +386,8 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
         @printf("  静置: %.0fs + %.0fs\n", cycle_opt.t_rest1, cycle_opt.t_rest2)
     end
     
-    # 设置初始SOC
-    case.param.NE.cs0 = cycle_opt.SOC_init
-    case.param.PE.cs0 = 1.0 - cycle_opt.SOC_init  # 简化假设
+    # 注意：初始SOC使用参数文件（如Jellyroll.jl）中的设置
+    # 不在此处覆盖，以保持与参数文件的一致性
     
     # 初始状态
     current_state = Dict{String, Any}(
