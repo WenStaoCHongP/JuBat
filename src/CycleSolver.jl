@@ -573,29 +573,43 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
         end
         
         # ============ 阶段2: 静置1 ============
-        if verbose
-            print("  [静置1] ")
-        end
-        
-        rest1_result = solve_phase(
-            case, PHASE_REST,
-            cycle_opt.t_rest1,
-            0.0,  # 无电流
-            0.0,  # 无电压限制
-            current_state;
-            czm_mesh=czm_mesh,
-            czm_params=czm_params,
-            dt_range=cycle_opt.dt_cycle
-        )
-        cycle_result.rest1 = rest1_result
-        current_state = rest1_result.final_state
-        
-        if verbose
-            @printf("%.1fs, T_max=%.2fK\n", rest1_result.duration, rest1_result.T_max)
-            # 调试：打印静置1阶段后的状态信息
-            y_out = get(current_state, "y", nothing)
-            V_out = get(current_state, "V", NaN)
-            @printf("    → V_out=%.3fV, y_len=%d\n", V_out, y_out === nothing ? 0 : length(y_out))
+        if cycle_opt.t_rest1 > 0
+            # 静置时间 > 0：正常执行静置阶段
+            if verbose
+                print("  [静置1] ")
+            end
+            
+            rest1_result = solve_phase(
+                case, PHASE_REST,
+                cycle_opt.t_rest1,
+                0.0,  # 无电流
+                0.0,  # 无电压限制
+                current_state;
+                czm_mesh=czm_mesh,
+                czm_params=czm_params,
+                dt_range=cycle_opt.dt_cycle
+            )
+            cycle_result.rest1 = rest1_result
+            current_state = rest1_result.final_state
+            
+            if verbose
+                @printf("%.1fs, T_max=%.2fK\n", rest1_result.duration, rest1_result.T_max)
+                y_out = get(current_state, "y", nothing)
+                V_out = get(current_state, "V", NaN)
+                @printf("    → V_out=%.3fV, y_len=%d\n", V_out, y_out === nothing ? 0 : length(y_out))
+            end
+        else
+            # 静置时间 = 0：跳过静置阶段，直接继承上一阶段状态
+            cycle_result.rest1 = PhaseResult()
+            cycle_result.rest1.duration = 0.0
+            cycle_result.rest1.V_start = get(current_state, "V", NaN)
+            cycle_result.rest1.V_end = cycle_result.rest1.V_start
+            cycle_result.rest1.final_state = current_state
+            # current_state 保持不变
+            
+            if verbose
+                println("  [静置1] 跳过 (t=0)")
+            end
         end
         
         # ============ 阶段3: 充电 ============
@@ -637,25 +651,40 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
         end
         
         # ============ 阶段4: 静置2 ============
-        if verbose
-            print("  [静置2] ")
+        if cycle_opt.t_rest2 > 0
+            # 静置时间 > 0：正常执行静置阶段
+            if verbose
+                print("  [静置2] ")
+            end
+            
+            rest2_result = solve_phase(
+                case, PHASE_REST,
+                cycle_opt.t_rest2,
+                0.0,
+                0.0,
+                current_state;
+                czm_mesh=czm_mesh,
+                czm_params=czm_params,
+                dt_range=cycle_opt.dt_cycle
+            )
+            cycle_result.rest2 = rest2_result
+            current_state = rest2_result.final_state
+        else
+            # 静置时间 = 0：跳过静置阶段
+            cycle_result.rest2 = PhaseResult()
+            cycle_result.rest2.duration = 0.0
+            cycle_result.rest2.V_start = get(current_state, "V", NaN)
+            cycle_result.rest2.V_end = cycle_result.rest2.V_start
+            cycle_result.rest2.final_state = current_state
+            # current_state 保持不变
         end
         
-        rest2_result = solve_phase(
-            case, PHASE_REST,
-            cycle_opt.t_rest2,
-            0.0,
-            0.0,
-            current_state;
-            czm_mesh=czm_mesh,
-            czm_params=czm_params,
-            dt_range=cycle_opt.dt_cycle
-        )
-        cycle_result.rest2 = rest2_result
-        current_state = rest2_result.final_state
-        
         if verbose
-            @printf("%.1fs, T_max=%.2fK\n", rest2_result.duration, rest2_result.T_max)
+            if cycle_opt.t_rest2 > 0
+                @printf("%.1fs, T_max=%.2fK\n", rest2_result.duration, rest2_result.T_max)
+            else
+                println("  [静置2] 跳过 (t=0)")
+            end
         end
         
         # ============ 循环汇总 ============
