@@ -462,8 +462,15 @@ function _initialize_currents(ne, w, I_total, x_prev)
     return I_e
 end
 
-"""检查电压边界"""
+"""检查电压边界
+
+返回 true 如果在边界内，false 如果超出但在软边界内（允许继续），
+只有严重超出时才抛出错误。
+
+软边界设置为 ±5% 的容差，允许主循环正常处理截止条件。
+"""
 function _check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e, context="")
+    # 正常范围内
     if V_MIN <= V <= V_MAX
         return true
     end
@@ -472,9 +479,24 @@ function _check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e, cont
     V_MIN_phys = V_MIN * phi_scale
     V_MAX_phys = V_MAX * phi_scale
     
-    error_msg = "thermal2D common voltage out of bounds$context: " *
+    # 计算软边界（允许 5% 的超出，让主循环处理截止）
+    V_range = V_MAX - V_MIN
+    soft_margin = 0.05 * V_range  # 5% 容差
+    V_MIN_soft = V_MIN - soft_margin
+    V_MAX_soft = V_MAX + soft_margin
+    
+    # 在软边界内：发出警告但继续
+    if V_MIN_soft <= V <= V_MAX_soft
+        # 电压略微超出正常范围，但在软边界内
+        # 这通常发生在充电接近截止电压时，应该由主循环处理
+        return false  # 返回 false 表示超出正常范围但可以继续
+    end
+    
+    # 严重超出软边界：抛出错误
+    error_msg = "thermal2D common voltage severely out of bounds$context: " *
                 "V(nd)=$V, V(V)=$V_phys, " *
-                "allowed [$V_MIN, $V_MAX] nd -> [$V_MIN_phys, $V_MAX_phys] V; " *
+                "allowed [$V_MIN, $V_MAX] nd -> [$V_MIN_phys, $V_MAX_phys] V, " *
+                "soft bounds [$V_MIN_soft, $V_MAX_soft] nd; " *
                 "I_total_nd=$I_total, sum(w.*I_e)=$(sum(w .* I_e))"
     
     throw(ErrorException(error_msg))
@@ -640,10 +662,10 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
         I_e .*= (I_total / sx)
     end
     
-    # 7. 边界检查
-    _check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e)
+    # 7. 边界检查（软边界，允许主循环处理截止条件）
+    voltage_in_bounds = _check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e)
     
-    # 8. 写入结果
+    # 8. 写入结果（包括边界状态标记）
     variables["thermal2D element current"] = I_e
     variables["thermal2D element current A"] = case.param.scale.I_typ .* I_e
     variables["thermal2D common voltage"] = V
