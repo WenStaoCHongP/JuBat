@@ -228,7 +228,8 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
             # 验证状态向量长度
             expected_len = case.multi_spme_layout["n_total"]
             if length(y0) != expected_len
-                @warn "状态向量长度不匹配，重新初始化" got=length(y0) expected=expected_len phase=phase_type
+                println("⚠️  [CycleSolver] 状态向量长度不匹配: got=$(length(y0)), expected=$expected_len, phase=$phase_type")
+                println("⚠️  [CycleSolver] 状态将被重新初始化为初始SOC！")
                 y0 = ModelInitialisation_MultiSPMe(case)
             end
         else
@@ -284,7 +285,7 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     if multi_spme
         layout_empty = isempty(case.multi_spme_layout)
         if layout_empty
-            @warn "CallModel 前布局为空，尝试初始化" phase=phase_type
+            println("⚠️  [CycleSolver] CallModel 前布局为空，尝试初始化, phase=$phase_type")
             _ensure_multi_spme_layout!(case)
         end
     end
@@ -295,7 +296,8 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     M_size = size(M_old, 1)
     y0_len = length(y0)
     if M_size != y0_len
-        @warn "M矩阵大小与y0不匹配" M_size=M_size y0_len=y0_len phase=phase_type
+        println("⚠️  [CycleSolver] M矩阵大小与y0不匹配: M_size=$M_size, y0_len=$y0_len, phase=$phase_type")
+        println("⚠️  [CycleSolver] 这可能导致求解错误！检查 multi_spme_layout: empty=$(isempty(case.multi_spme_layout))")
     end
     
     # 初始化变量
@@ -522,6 +524,10 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
                     discharge_result.duration, discharge_result.V_start,
                     discharge_result.V_end, discharge_result.capacity,
                     discharge_result.terminated_by)
+            # 调试：打印放电阶段后的状态信息
+            y_out = get(current_state, "y", nothing)
+            V_out = get(current_state, "V", NaN)
+            @printf("    → V_out=%.3fV, y_len=%d\n", V_out, y_out === nothing ? 0 : length(y_out))
         end
         
         # ============ 阶段2: 静置1 ============
@@ -544,6 +550,10 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
         
         if verbose
             @printf("%.1fs, T_max=%.2fK\n", rest1_result.duration, rest1_result.T_max)
+            # 调试：打印静置1阶段后的状态信息
+            y_out = get(current_state, "y", nothing)
+            V_out = get(current_state, "V", NaN)
+            @printf("    → V_out=%.3fV, y_len=%d\n", V_out, y_out === nothing ? 0 : length(y_out))
         end
         
         # ============ 阶段3: 充电 ============
