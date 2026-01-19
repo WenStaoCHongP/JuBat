@@ -158,9 +158,10 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64,
     # 获取初始状态
     y0 = get(initial_state, "y", nothing)
     T_nodes = get(initial_state, "T_nodes", nothing)
-    V_init = get(initial_state, "V", 3.7)
+    V_init = get(initial_state, "V", nothing)  # 初始电压可能未知
     
-    result.V_start = V_init
+    # V_start 将在实际求解后更新
+    result.V_start = V_init !== nothing ? V_init : NaN
     
     # 根据模式选择求解
     # 简化：调用内部求解循环
@@ -171,6 +172,7 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64,
     # 填充结果
     result.t_end = result.t_start + phase_result_data["duration"]
     result.duration = phase_result_data["duration"]
+    result.V_start = phase_result_data["V_start"]  # 使用实际计算的初始电压
     result.V_end = phase_result_data["V_end"]
     result.capacity = phase_result_data["capacity"]
     result.terminated_by = phase_result_data["terminated_by"]
@@ -340,6 +342,7 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     
     # 初始化变量
     V_current = variables["cell voltage"] * case.param.scale.phi
+    V_start_actual = V_current  # 保存实际的初始电压
     capacity = 0.0
     T_max_phase = haskey(variables, "T_nodes") ? 
                   maximum(variables["T_nodes"]) * case.param_dim.scale.T_ref : 
@@ -446,6 +449,7 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     
     return Dict(
         "duration" => t_actual,
+        "V_start" => V_start_actual,  # 实际计算的初始电压
         "V_end" => V_current,
         "capacity" => capacity,
         "terminated_by" => terminated_by,
