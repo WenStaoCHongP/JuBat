@@ -198,54 +198,69 @@ function create_czm_mesh(thermal_mesh::Mesh, param_dim; tol::Float64=1e-8)
     outer_nodes = collect((nθ+2):(2*(nθ+1)))
     
     # 通过坐标重合检测界面节点对
+    # 返回 (外螺旋节点, 内螺旋节点) 对
     interface_pairs = _find_coincident_node_pairs(thermal_mesh, inner_nodes, outer_nodes, tol)
     
     if isempty(interface_pairs)
-        @warn "No interface nodes found (no coincident nodes). Check mesh structure."
+        @warn "No interface nodes found (no coincident nodes). Mesh may only span one turn."
         czm_mesh = CohesiveMesh()
         czm_mesh.bulk_mesh = thermal_mesh
         czm_mesh.node = copy(thermal_mesh.node)
         czm_mesh.nnode = nnode_orig
         czm_mesh.bulk_element = copy(thermal_mesh.element)
         czm_mesh.n_layers = 1
+        czm_mesh.node_map = Dict{Int64, Vector{Int64}}(i => [i] for i in 1:nnode_orig)
         return czm_mesh
     end
     
     # 按角度排序界面节点对
     sort!(interface_pairs, by = p -> atan(thermal_mesh.node[p[1], 2], thermal_mesh.node[p[1], 1]))
     
-    # 将界面节点对分组（按连续性分成多个界面）
-    interface_groups = _group_interface_pairs(thermal_mesh, interface_pairs)
-    n_interfaces = length(interface_groups)
+    @info "Found coincident node pairs" n_pairs=length(interface_pairs)
     
-    @info "Detected interfaces" n_interfaces=n_interfaces total_pairs=length(interface_pairs)
+    # 关键理解：在 jellyroll_collector_seed_mesh 生成的网格中，
+    # 外螺旋节点 (n_out) 和内螺旋节点 (n_in) 是不同的节点编号，
+    # 它们只是空间位置重合。因此：
+    # - 不需要复制节点
+    # - 不需要修改体积单元连接关系
+    # - 直接使用重合的节点对创建内聚力单元
     
-    # 复制界面节点并更新单元连接
-    node_new, node_map, bulk_element_new, interface_node_info = _split_interface_nodes(
-        thermal_mesh, interface_groups)
-    
-    # 创建内聚力单元
-    cohesive_elements = _create_cohesive_elements_from_pairs(
-        node_new, interface_node_info)
+    # 创建内聚力单元（直接使用原网格节点）
+    cohesive_elements = _create_cohesive_elements_direct(thermal_mesh, interface_pairs)
     
     # 初始化损伤状态
     n_cohesive = length(cohesive_elements)
     damage_states = [DamageState() for _ in 1:n_cohesive]
     
+    # 计算层数（基于检测到的界面数）
+    # 简化：假设所有重合节点属于同一个界面（相邻两圈之间）
+    n_interfaces = 1  # 简化处理
+    
+    # 节点映射（保持原样，因为没有复制节点）
+    node_map = Dict{Int64, Vector{Int64}}()
+    for i in 1:nnode_orig
+        node_map[i] = [i]
+    end
+    # 记录哪些节点在界面上
+    for (n_out, n_in) in interface_pairs
+        # 外螺旋节点和内螺旋节点在空间上重合
+        push!(node_map[n_out], n_in)
+    end
+    
     # 构建CohesiveMesh
     czm_mesh = CohesiveMesh()
     czm_mesh.bulk_mesh = thermal_mesh
-    czm_mesh.node = node_new
-    czm_mesh.nnode = size(node_new, 1)
-    czm_mesh.bulk_element = bulk_element_new
+    czm_mesh.node = copy(thermal_mesh.node)  # 直接使用原节点
+    czm_mesh.nnode = nnode_orig              # 节点数不变
+    czm_mesh.bulk_element = copy(thermal_mesh.element)  # 单元连接不变
     czm_mesh.cohesive_elements = cohesive_elements
     czm_mesh.n_cohesive = n_cohesive
     czm_mesh.n_layers = n_interfaces + 1
     czm_mesh.node_map = node_map
-    czm_mesh.interface_nodes = [grp.node_pairs for grp in interface_node_info]
+    czm_mesh.interface_nodes = [interface_pairs]
     czm_mesh.damage_states = damage_states
     
-    @info "Created CZM mesh" n_layers=czm_mesh.n_layers n_interfaces=n_interfaces n_cohesive=n_cohesive nnode_new=czm_mesh.nnode
+    @info "Created CZM mesh" n_layers=czm_mesh.n_layers n_cohesive=n_cohesive nnode=czm_mesh.nnode
     
     return czm_mesh
 end
@@ -446,9 +461,81 @@ function _split_interface_nodes(mesh::Mesh, interface_groups::Vector{InterfaceNo
 end
 
 """
+    _create_cohesive_elements_direct(mesh, interface_pairs)
+
+直接使用重合的节点对创建内聚力单元（不需要节点复制）。
+
+在 jellyroll_collector_seed_mesh 生成的网格中，外螺旋节点和内螺旋节点
+是独立的节点编号，它们只是空间位置重合。因此可以直接使用这些节点对
+创建内聚力单元。
+
+每两个相邻的界面节点对形成一个四节点内聚力单元：
+```
+    n_in[i+1] --------- n_in[i]      (上层，内螺旋节点)
+          |                |
+          |    厚度=0      |
+          |                |
+    n_out[i+1] -------- n_out[i]     (下层，外螺旋节点)
+```
+
+# 参数
+- `mesh`: 原始热网格
+- `interface_pairs`: 节点对列表 [(n_out, n_in), ...]
+
+# 返回
+- `Vector{CohesiveElement}`: 内聚力单元列表
+"""
+function _create_cohesive_elements_direct(mesh::Mesh, 
+                                          interface_pairs::Vector{Tuple{Int64, Int64}})
+    cohesive_elements = CohesiveElement[]
+    n_pairs = length(interface_pairs)
+    
+    if n_pairs < 2
+        @warn "Not enough interface pairs to create cohesive elements" n_pairs=n_pairs
+        return cohesive_elements
+    end
+    
+    # 按角度排序节点对
+    sorted_pairs = sort(interface_pairs, 
+                        by = p -> atan(mesh.node[p[1], 2], mesh.node[p[1], 1]))
+    
+    # 每两个相邻节点对形成一个内聚力单元
+    for i in 1:(n_pairs - 1)
+        n_out_1, n_in_1 = sorted_pairs[i]
+        n_out_2, n_in_2 = sorted_pairs[i + 1]
+        
+        # 计算单元长度
+        x1, y1 = mesh.node[n_out_1, 1], mesh.node[n_out_1, 2]
+        x2, y2 = mesh.node[n_out_2, 1], mesh.node[n_out_2, 2]
+        elem_length = hypot(x2 - x1, y2 - y1)
+        
+        # 创建内聚力单元
+        # 节点顺序：[底1, 底2, 顶2, 顶1] 
+        # 底面（下层）：外螺旋节点
+        # 顶面（上层）：内螺旋节点（与底面空间位置重合）
+        coh_elem = CohesiveElement(
+            i,  # elem_id
+            [n_out_1, n_out_2, n_in_2, n_in_1],  # 四节点
+            [n_out_1, n_out_2],       # 底面节点
+            [n_in_1, n_in_2],         # 顶面节点
+            elem_length,
+            1  # interface_id
+        )
+        
+        push!(cohesive_elements, coh_elem)
+    end
+    
+    @info "Created cohesive elements directly" n_elements=length(cohesive_elements)
+    
+    return cohesive_elements
+end
+
+
+"""
     _create_cohesive_elements_from_pairs(node, interface_info)
 
-基于界面节点对创建内聚力单元。
+[已废弃] 基于界面节点对创建内聚力单元（需要节点复制）。
+请使用 _create_cohesive_elements_direct 代替。
 
 每两个相邻的界面节点对形成一个四节点内聚力单元：
 ```

@@ -214,17 +214,21 @@ function main()
                         T_nodes_K = T_nodes_hist_K[:, step]
                     end
                     
-                    # 扩展温度到CZM网格节点
-                    # CZM网格的前nT个节点对应原热网格节点
-                    T_czm = zeros(Float64, czm_mesh.nnode)
-                    nT_actual = min(nT, length(T_nodes_K))
-                    T_czm[1:nT_actual] = T_nodes_K[1:nT_actual]
-                    # 复制的节点使用相同温度
-                    for (orig, new_nodes) in czm_mesh.node_map
-                        if orig <= nT_actual
-                            for new_n in new_nodes
-                                if new_n > nT_actual && new_n <= czm_mesh.nnode
-                                    T_czm[new_n] = T_nodes_K[orig]
+                    # 直接使用温度数据（新实现中节点数不变）
+                    # 如果CZM网格节点数与热网格相同，直接使用温度数据
+                    if czm_mesh.nnode == nT
+                        T_czm = T_nodes_K
+                    else
+                        # 兼容旧的节点复制实现
+                        T_czm = zeros(Float64, czm_mesh.nnode)
+                        nT_actual = min(nT, length(T_nodes_K))
+                        T_czm[1:nT_actual] = T_nodes_K[1:nT_actual]
+                        for (orig, new_nodes) in czm_mesh.node_map
+                            if orig <= nT_actual
+                                for new_n in new_nodes
+                                    if new_n > nT_actual && new_n <= czm_mesh.nnode
+                                        T_czm[new_n] = T_nodes_K[orig]
+                                    end
                                 end
                             end
                         end
