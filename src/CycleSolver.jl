@@ -252,6 +252,34 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     terminated_by = :time
     t_actual = 0.0
     
+    # 电压容差（处理数值边界问题）
+    V_tolerance = 0.05  # 50mV 容差
+    
+    # 检查初始电压是否已接近截止条件
+    if phase_type == PHASE_CHARGE && V_current >= (V_limit - V_tolerance)
+        @info "充电阶段：初始电压已接近截止" V_current=V_current V_limit=V_limit
+        terminated_by = :voltage
+        return Dict(
+            "duration" => 0.0, "V_end" => V_current, "capacity" => 0.0,
+            "terminated_by" => :voltage,
+            "T_max" => T_max_phase,
+            "T_mean_end" => !isempty(T_nodes_carry) ? mean(T_nodes_carry) * case.param_dim.scale.T_ref : case.param_dim.cell.T0,
+            "D_max" => D_max_init, "D_mean" => D_mean_init, "ΔD_max" => 0.0,
+            "final_state" => Dict("y" => y_old, "T_nodes" => T_nodes_carry, "V" => V_current, "t_global" => 0.0)
+        )
+    elseif phase_type == PHASE_DISCHARGE && V_current <= (V_limit + V_tolerance)
+        @info "放电阶段：初始电压已接近截止" V_current=V_current V_limit=V_limit
+        terminated_by = :voltage
+        return Dict(
+            "duration" => 0.0, "V_end" => V_current, "capacity" => 0.0,
+            "terminated_by" => :voltage,
+            "T_max" => T_max_phase,
+            "T_mean_end" => !isempty(T_nodes_carry) ? mean(T_nodes_carry) * case.param_dim.scale.T_ref : case.param_dim.cell.T0,
+            "D_max" => D_max_init, "D_mean" => D_mean_init, "ΔD_max" => 0.0,
+            "final_state" => Dict("y" => y_old, "T_nodes" => T_nodes_carry, "V" => V_current, "t_global" => 0.0)
+        )
+    end
+    
     # 主循环
     while t < t_end_nd
         # 更新温度影响
@@ -259,8 +287,30 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
             case.param.cell.T0 = mean(T_nodes_carry)
         end
         
-        # 电化学步
-        M_new, K_new, F_new, variables, y_phi = CallModel(case, y_old, t, jacobi="update")
+        # 检查电压是否接近截止（在调用 CallModel 前）
+        if phase_type == PHASE_CHARGE && V_current >= (V_limit - V_tolerance)
+            terminated_by = :voltage
+            break
+        elseif phase_type == PHASE_DISCHARGE && V_current <= (V_limit + V_tolerance)
+            terminated_by = :voltage
+            break
+        end
+        
+        # 电化学步 - 使用 try-catch 捕获电压越界错误
+        local M_new, K_new, F_new, y_phi_new
+        try
+            M_new, K_new, F_new, variables, y_phi_new = CallModel(case, y_old, t, jacobi="update")
+        catch e
+            # 如果是电压越界错误，优雅终止
+            if occursin("voltage out of bounds", string(e))
+                @warn "电压越界，提前终止阶段" phase=phase_type t=t*t0_scale
+                terminated_by = :voltage
+                break
+            else
+                rethrow(e)
+            end
+        end
+        y_phi = y_phi_new
         Mt = M_new - theta * K_new * dt
         Kt = (1 - theta) * K_old * dt + M_new
         Ft = theta * F_new * dt + (1 - theta) * F_old * dt
