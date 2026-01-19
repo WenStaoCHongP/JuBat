@@ -1715,13 +1715,14 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
     
     # 牛顿-拉弗森迭代
     R_norm_0 = 1.0
+    R_norm = 0.0  # 声明在循环外以便在未收敛时访问
+    
     for iter in 1:max_iter
         # 组装系统
         K_total, f_int_total, separations, tractions = assemble_coupled_system(
             czm_mesh, u, E_eff, ν_eff, cohesive_params)
         
         # 残差 = 外力 + 热化学力 - 内力
-        # R = F_ext + F_thermo_chem - f_int_total
         R = F_ext + F_thermo_chem - f_int_total
         
         # 应用边界条件到残差
@@ -1778,9 +1779,10 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
     end
     
     # 未收敛
-    @warn "Newton-Raphson did not converge" max_iter=max_iter residual=norm(R)
+    @warn "Newton-Raphson did not converge" max_iter=max_iter residual=R_norm
     result.converged = false
     result.iterations = max_iter
+    result.residual_norm = R_norm
     result.displacement = u
     
     return result
