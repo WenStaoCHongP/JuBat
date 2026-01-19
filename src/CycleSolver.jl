@@ -351,6 +351,9 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
         dt_dim = dt * t0_scale
         capacity += abs(I_current) * dt_dim / 3600.0  # Ah
         
+        # 更新状态（在检查截止条件之前更新，确保返回最新状态）
+        y_old = y_new
+        
         # 检查截止条件
         if phase_type == PHASE_CHARGE && V_current >= V_limit
             terminated_by = :voltage
@@ -359,9 +362,6 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
             terminated_by = :voltage
             break
         end
-        
-        # 更新状态
-        y_old = y_new
         K_old = K_new
         F_old = F_new
         t += dt
