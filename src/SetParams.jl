@@ -145,6 +145,65 @@ end
     rho::Float64 = 0
 end
 
+"""
+    Cohesive - 内聚力模型参数
+    
+    用于描述界面脱粘行为的双线性牵引力-分离本构关系。
+    支持法向（Mode I）和切向（Mode II）的混合模式断裂。
+    
+    # 法向参数 (Mode I - 张开模式)
+    - σ_max_n: 最大法向牵引力 [Pa]
+    - δ_0_n: 损伤起始分离位移 [m]
+    - δ_c_n: 临界（完全断裂）分离位移 [m]
+    - G_c_n: 法向断裂能 [J/m²]
+    - K_n: 法向初始刚度（惩罚刚度）[Pa/m]
+    
+    # 切向参数 (Mode II - 剪切模式)
+    - τ_max_t: 最大切向牵引力 [Pa]
+    - δ_0_t: 损伤起始切向位移 [m]
+    - δ_c_t: 临界切向位移 [m]
+    - G_c_t: 切向断裂能 [J/m²]
+    - K_t: 切向初始刚度 [Pa/m]
+    
+    # 混合模式参数
+    - eta: Benzeggagh-Kenane (BK) 准则指数 [-]
+    
+    # 双线性本构关系
+    ```
+         T (牵引力)
+         ^
+    T_max|     /\\
+         |    /  \\
+         |   /    \\
+         |  /      \\
+         | /        \\
+    -----+--+--------+------> δ (分离位移)
+         0  δ_0     δ_c
+    ```
+    
+    # 损伤演化
+    D = (δ_c * (δ_max - δ_0)) / (δ_max * (δ_c - δ_0))
+    其中 δ_max 是历史最大分离位移（用于加卸载判断）
+"""
+@with_kw mutable struct Cohesive
+    # 法向 (Mode I)
+    σ_max_n::Float64 = 0.0    # 最大法向牵引力 [Pa]
+    δ_0_n::Float64 = 0.0      # 损伤起始分离位移 [m]
+    δ_c_n::Float64 = 0.0      # 临界（完全断裂）分离位移 [m]
+    G_c_n::Float64 = 0.0      # 法向断裂能 [J/m²]
+    K_n::Float64 = 0.0        # 法向初始刚度（惩罚刚度）[Pa/m]
+    
+    # 切向 (Mode II)
+    τ_max_t::Float64 = 0.0    # 最大切向牵引力 [Pa]
+    δ_0_t::Float64 = 0.0      # 损伤起始切向位移 [m]
+    δ_c_t::Float64 = 0.0      # 临界切向位移 [m]
+    G_c_t::Float64 = 0.0      # 切向断裂能 [J/m²]
+    K_t::Float64 = 0.0        # 切向初始刚度 [Pa/m]
+    
+    # 混合模式参数
+    eta::Float64 = 1.0        # BK准则指数（Benzeggagh-Kenane）[-]
+end
+
 @with_kw mutable struct Scale
     L::Float64 = 1e-6
     r0::Float64 = 1e-6
@@ -179,6 +238,11 @@ end
     t_th::Float64 = 0          # thermal diffusion time scale rho_c_th L_th^2 / k_th
     q_th::Float64 = 0          # reference volumetric heat source k_th*T_ref/L_th^2
     h_th::Float64 = 0          # Biot number reference (h*L_th/k_th)
+    # --- Cohesive zone model scaling ---
+    σ_czm::Float64 = 0         # reference cohesive traction [Pa] (typically σ_max_n)
+    δ_czm::Float64 = 0         # reference separation displacement [m] (typically δ_c_n)
+    G_czm::Float64 = 0         # reference fracture energy [J/m²] (σ_czm * δ_czm)
+    K_czm::Float64 = 0         # reference cohesive stiffness [Pa/m] (σ_czm / δ_czm)
 end
 
 @with_kw mutable struct Params
@@ -192,6 +256,7 @@ end
     tab::Tab
     binder::Binder
     scale::Scale
+    cohesive::Cohesive = Cohesive()  # 内聚力模型参数（可选）
 end
 
 function ChooseCell(CellType::String="LG M50")
@@ -259,7 +324,13 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.q_th = param_dim.scale.k_th * param_dim.scale.T_ref / param_dim.scale.L_th^2
     param_dim.scale.t_th = param_dim.scale.rho_c_th * param_dim.scale.L_th^2 / param_dim.scale.k_th
     param_dim.scale.h_th = param_dim.cell.h * param_dim.scale.L_th / param_dim.scale.k_th  # Biot number
-
+    # Cohesive zone model scaling (if cohesive parameters are defined)
+    if param_dim.cohesive.σ_max_n > 0
+        param_dim.scale.σ_czm = param_dim.cohesive.σ_max_n
+        param_dim.scale.δ_czm = param_dim.cohesive.δ_c_n > 0 ? param_dim.cohesive.δ_c_n : 1e-6
+        param_dim.scale.G_czm = param_dim.scale.σ_czm * param_dim.scale.δ_czm
+        param_dim.scale.K_czm = param_dim.scale.σ_czm / param_dim.scale.δ_czm
+    end
     return param_dim
 end
 
@@ -354,6 +425,31 @@ function NormaliseParam(param_dim::Params)
     param.tab.width = param_dim.tab.width / param.scale.L
     param.tab.area = param_dim.tab.area / param.scale.L^2
     param.tab.h = param_dim.tab.h * param.scale.T_ref / param.scale.phi / param.scale.I_typ
+    
+    # cohesive zone model (normalize if parameters are defined)
+    if param_dim.cohesive.σ_max_n > 0 && param_dim.scale.σ_czm > 0
+        σ_ref = param_dim.scale.σ_czm
+        δ_ref = param_dim.scale.δ_czm
+        G_ref = param_dim.scale.G_czm
+        K_ref = param_dim.scale.K_czm
+        
+        # 法向参数归一化
+        param.cohesive.σ_max_n = param_dim.cohesive.σ_max_n / σ_ref
+        param.cohesive.δ_0_n = param_dim.cohesive.δ_0_n / δ_ref
+        param.cohesive.δ_c_n = param_dim.cohesive.δ_c_n / δ_ref
+        param.cohesive.G_c_n = param_dim.cohesive.G_c_n / G_ref
+        param.cohesive.K_n = param_dim.cohesive.K_n / K_ref
+        
+        # 切向参数归一化
+        param.cohesive.τ_max_t = param_dim.cohesive.τ_max_t / σ_ref
+        param.cohesive.δ_0_t = param_dim.cohesive.δ_0_t / δ_ref
+        param.cohesive.δ_c_t = param_dim.cohesive.δ_c_t / δ_ref
+        param.cohesive.G_c_t = param_dim.cohesive.G_c_t / G_ref
+        param.cohesive.K_t = param_dim.cohesive.K_t / K_ref
+        
+        # BK指数不需要归一化（无量纲）
+        param.cohesive.eta = param_dim.cohesive.eta
+    end
     
     return param
 end
