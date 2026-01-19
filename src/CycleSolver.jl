@@ -251,8 +251,12 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     end
     
     # 初始化温度场
+    # T_nodes 有三种情况：
+    # 1. 有效数组：使用传入的温度场
+    # 2. nothing 且 y0 包含热场：从 y0 中提取（继承）
+    # 3. nothing 且 y0 不包含热场（或显式要求重置）：使用初始温度
     if T_nodes !== nothing && haskey(case.mesh, "thermal2D")
-        # 使用传入的温度场
+        # 情况1：使用传入的温度场
         T_nodes_carry = copy(T_nodes)
         
         # 多SPMe模式：同步温度场到状态向量中
@@ -263,12 +267,34 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
                 y0[thermal_range] .= T_nodes_carry
             end
         end
-    elseif multi_spme && !isempty(case.multi_spme_layout) && haskey(case.mesh, "thermal2D")
-        # 多SPMe模式：从状态向量提取温度场
-        thermal_range = case.multi_spme_layout["thermal_range"]
-        T_nodes_carry = y0[thermal_range]
     elseif haskey(case.mesh, "thermal2D")
-        T_nodes_carry = fill(case.param.cell.T0, case.mesh["thermal2D"].nlen)
+        nT_mesh = case.mesh["thermal2D"].nlen
+        
+        # 检查是否应该重置温度场到初始温度
+        # 条件：T_nodes 被显式设为 nothing（通常表示用户请求重置）
+        # 且状态向量 y0 已经包含有效的温度场数据
+        should_reset_thermal = (T_nodes === nothing)
+        
+        if multi_spme && !isempty(case.multi_spme_layout)
+            # 多SPMe模式：检查状态向量是否包含温度场
+            thermal_range = case.multi_spme_layout["thermal_range"]
+            has_valid_thermal = (length(y0) >= thermal_range[end])
+            
+            if has_valid_thermal && should_reset_thermal
+                # 重置温度场到初始温度
+                T_nodes_carry = fill(case.param.cell.T0, nT_mesh)
+                y0[thermal_range] .= T_nodes_carry
+            elseif has_valid_thermal
+                # 从状态向量提取（继承）
+                T_nodes_carry = y0[thermal_range]
+            else
+                # 状态向量不包含温度场，使用初始温度
+                T_nodes_carry = fill(case.param.cell.T0, nT_mesh)
+            end
+        else
+            # 非多SPMe模式
+            T_nodes_carry = fill(case.param.cell.T0, nT_mesh)
+        end
     else
         T_nodes_carry = Float64[]
     end
@@ -569,6 +595,15 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
         end
         
         # ============ 阶段3: 充电 ============
+        # 充电前温度场重置（可选）
+        if hasproperty(cycle_opt, :reset_T_before_charge) && cycle_opt.reset_T_before_charge
+            # 重置温度场到初始温度，但保留电化学状态
+            current_state["T_nodes"] = nothing
+            if verbose
+                println("    (温度场已重置)")
+            end
+        end
+        
         if verbose
             print("  [充电] ")
             # 调试：打印传入充电阶段的状态

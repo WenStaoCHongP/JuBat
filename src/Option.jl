@@ -43,6 +43,7 @@ using Parameters
     
     # 温度重置
     reset_T_each_cycle::Bool = true         # 每循环重置温度
+    reset_T_before_charge::Bool = true      # 充电前重置温度（循环内）
     
     # 时间步长
     dt_cycle::Vector{Float64} = [1.0, 10.0] # [dt_min, dt_max]
