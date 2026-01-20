@@ -1,57 +1,59 @@
 """
-Cohesive Zone Model (CZM) Validation: Pure Mechanical Loading
+内聚力模型(CZM)验证示例：纯机械加载
 
-Features:
-- No electrochemical-thermal coupling
-- Periodic displacement loading to validate bilinear traction-separation law
-- Plot damage curves and traction-separation hysteresis loops
+功能：
+- 不启用电化学-热耦合模型
+- 给定周期性位移场，验证双线性本构模型
+- 绘制损伤曲线和牵引力-位移滞回环曲线
 
-Validation Tests:
-1. Monotonic loading: Validate bilinear traction-separation relationship
-2. Cyclic loading: Validate loading/unloading behavior and damage evolution
-3. Mixed-mode loading: Validate normal + tangential coupling (BK criterion)
-4. Sinusoidal displacement: Validate response under realistic cyclic loading
+验证内容：
+1. 单点本构测试：验证双线性牵引力-分离关系
+2. 滞回环测试：验证加卸载行为和损伤演化
+3. 混合模式测试：验证法向+切向耦合响应（BK准则）
+4. 正弦位移测试：模拟真实周期性加载工况
 
-Output Figures:
-- Figure 1: Normal traction-separation curve (loading/unloading hysteresis)
-- Figure 2: Tangential traction-separation curve (loading/unloading hysteresis)
-- Figure 3: Damage variable evolution vs maximum separation
-- Figure 4: Mixed-mode traction response
+输出图像：
+- 图1：法向/切向本构曲线和损伤演化
+- 图2：周期性加卸载滞回环
+- 图3：混合模式响应曲线
+- 图4：正弦位移加载响应
+- 图5：滞回环对比
+- 图6：双线性本构示意图
 
-Date: 2025
+日期：2025
 """
 
 using LinearAlgebra, Printf, Plots
 
-# Include JuBat module
+# 包含JuBat模块
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
 
 """
     create_czm_test_params()
 
-Create cohesive zone parameters for testing.
-Returns typical electrode-separator interface parameters.
+创建用于CZM测试的内聚力参数。
+返回典型的电极-隔膜界面参数。
 """
 function create_czm_test_params()
-    # Create cohesive parameters (typical electrode-separator interface)
+    # 创建内聚力参数（典型电极-隔膜界面）
     cohesive = JuBat.Cohesive()
     
-    # Normal (Mode I) parameters
-    cohesive.σ_max_n = 50e6       # Maximum normal traction [Pa] (50 MPa)
-    cohesive.δ_0_n = 1e-6         # Damage initiation separation [m] (1 μm)
-    cohesive.δ_c_n = 10e-6        # Critical separation [m] (10 μm)
-    cohesive.G_c_n = 0.5 * cohesive.σ_max_n * cohesive.δ_c_n  # Fracture energy [J/m²]
-    cohesive.K_n = cohesive.σ_max_n / cohesive.δ_0_n  # Initial stiffness [Pa/m]
+    # 法向参数 (Mode I - 张开模式)
+    cohesive.σ_max_n = 50e6       # 最大法向牵引力 [Pa] (50 MPa)
+    cohesive.δ_0_n = 1e-6         # 损伤起始分离位移 [m] (1 μm)
+    cohesive.δ_c_n = 10e-6        # 临界分离位移 [m] (10 μm)
+    cohesive.G_c_n = 0.5 * cohesive.σ_max_n * cohesive.δ_c_n  # 断裂能 [J/m²]
+    cohesive.K_n = cohesive.σ_max_n / cohesive.δ_0_n  # 初始刚度 [Pa/m]
     
-    # Tangential (Mode II) parameters
-    cohesive.τ_max_t = 30e6       # Maximum tangential traction [Pa] (30 MPa)
-    cohesive.δ_0_t = 1e-6         # Damage initiation separation [m] (1 μm)
-    cohesive.δ_c_t = 15e-6        # Critical separation [m] (15 μm)
-    cohesive.G_c_t = 0.5 * cohesive.τ_max_t * cohesive.δ_c_t  # Fracture energy [J/m²]
-    cohesive.K_t = cohesive.τ_max_t / cohesive.δ_0_t  # Initial stiffness [Pa/m]
+    # 切向参数 (Mode II - 剪切模式)
+    cohesive.τ_max_t = 30e6       # 最大切向牵引力 [Pa] (30 MPa)
+    cohesive.δ_0_t = 1e-6         # 损伤起始切向位移 [m] (1 μm)
+    cohesive.δ_c_t = 15e-6        # 临界切向位移 [m] (15 μm)
+    cohesive.G_c_t = 0.5 * cohesive.τ_max_t * cohesive.δ_c_t  # 断裂能 [J/m²]
+    cohesive.K_t = cohesive.τ_max_t / cohesive.δ_0_t  # 初始刚度 [Pa/m]
     
-    # BK criterion exponent
+    # BK准则指数（Benzeggagh-Kenane）
     cohesive.eta = 1.45
     
     return cohesive
@@ -60,58 +62,58 @@ end
 """
     test_monotonic_loading(cohesive_params)
 
-Test constitutive response under monotonic loading.
-Plot traction-separation curve from zero to complete fracture.
+测试单调加载下的本构响应。
+绘制从0加载到完全断裂的牵引力-分离曲线。
 """
 function test_monotonic_loading(cohesive_params)
     println("\n" * "="^60)
-    println("Test 1: Monotonic Loading Constitutive Response")
+    println("测试1：单调加载本构响应")
     println("="^60)
     
-    # Create damage states
+    # 创建损伤状态
     damage_state_n = JuBat.DamageState()
     damage_state_t = JuBat.DamageState()
     
-    # Normal loading parameters
-    δ_max_n = cohesive_params.δ_c_n * 1.2  # Exceed critical separation
+    # 法向加载参数
+    δ_max_n = cohesive_params.δ_c_n * 1.2  # 超过临界分离
     n_points = 200
     δ_n_vals = range(0, δ_max_n, length=n_points)
     
     T_n_vals = zeros(n_points)
     D_n_vals = zeros(n_points)
     
-    # Normal monotonic loading
+    # 法向单调加载
     for (i, δ_n) in enumerate(δ_n_vals)
         T_n, _, D = JuBat.bilinear_traction(δ_n, 0.0, damage_state_n, cohesive_params; update=true)
         T_n_vals[i] = T_n
         D_n_vals[i] = D
     end
     
-    # Tangential loading parameters
+    # 切向加载参数
     δ_max_t = cohesive_params.δ_c_t * 1.2
     δ_t_vals = range(0, δ_max_t, length=n_points)
     
     T_t_vals = zeros(n_points)
     D_t_vals = zeros(n_points)
     
-    # Tangential monotonic loading
+    # 切向单调加载
     for (i, δ_t) in enumerate(δ_t_vals)
         _, T_t, D = JuBat.bilinear_traction(0.0, δ_t, damage_state_t, cohesive_params; update=true)
         T_t_vals[i] = T_t
         D_t_vals[i] = D
     end
     
-    # Print key parameters
-    println("\nCohesive Zone Parameters:")
-    @printf("  Normal max traction sigma_max_n = %.1f MPa\n", cohesive_params.σ_max_n / 1e6)
-    @printf("  Normal initiation delta_0_n = %.1f um\n", cohesive_params.δ_0_n * 1e6)
-    @printf("  Normal critical delta_c_n = %.1f um\n", cohesive_params.δ_c_n * 1e6)
-    @printf("  Normal fracture energy G_c_n = %.1f J/m^2\n", cohesive_params.G_c_n)
+    # 打印关键参数
+    println("\n内聚力参数：")
+    @printf("  法向最大牵引力 σ_max_n = %.1f MPa\n", cohesive_params.σ_max_n / 1e6)
+    @printf("  法向起始分离 δ_0_n = %.1f μm\n", cohesive_params.δ_0_n * 1e6)
+    @printf("  法向临界分离 δ_c_n = %.1f μm\n", cohesive_params.δ_c_n * 1e6)
+    @printf("  法向断裂能 G_c_n = %.1f J/m²\n", cohesive_params.G_c_n)
     println()
-    @printf("  Tangential max traction tau_max_t = %.1f MPa\n", cohesive_params.τ_max_t / 1e6)
-    @printf("  Tangential initiation delta_0_t = %.1f um\n", cohesive_params.δ_0_t * 1e6)
-    @printf("  Tangential critical delta_c_t = %.1f um\n", cohesive_params.δ_c_t * 1e6)
-    @printf("  Tangential fracture energy G_c_t = %.1f J/m^2\n", cohesive_params.G_c_t)
+    @printf("  切向最大牵引力 τ_max_t = %.1f MPa\n", cohesive_params.τ_max_t / 1e6)
+    @printf("  切向起始分离 δ_0_t = %.1f μm\n", cohesive_params.δ_0_t * 1e6)
+    @printf("  切向临界分离 δ_c_t = %.1f μm\n", cohesive_params.δ_c_t * 1e6)
+    @printf("  切向断裂能 G_c_t = %.1f J/m²\n", cohesive_params.G_c_t)
     
     return (δ_n_vals, T_n_vals, D_n_vals, δ_t_vals, T_t_vals, D_t_vals)
 end
@@ -119,18 +121,18 @@ end
 """
     test_cyclic_loading(cohesive_params; n_cycles=3, max_amp_factor=0.8)
 
-Test constitutive response under cyclic loading/unloading.
-Generate hysteresis loops to validate loading/unloading behavior and damage accumulation.
+测试周期性加卸载下的本构响应。
+生成滞回环曲线，验证加卸载行为和损伤累积。
 """
 function test_cyclic_loading(cohesive_params; n_cycles::Int=3, max_amp_factor::Float64=0.8)
     println("\n" * "="^60)
-    println("Test 2: Cyclic Loading/Unloading Hysteresis")
+    println("测试2：周期性加卸载滞回环")
     println("="^60)
     
-    # Normal cyclic loading
+    # 法向循环加载
     damage_state_n = JuBat.DamageState()
     
-    # Progressively increasing amplitude
+    # 周期性加载幅值逐渐增大
     δ_max_n = cohesive_params.δ_c_n * max_amp_factor
     
     δ_n_history = Float64[]
@@ -140,10 +142,10 @@ function test_cyclic_loading(cohesive_params; n_cycles::Int=3, max_amp_factor::F
     points_per_half_cycle = 50
     
     for cycle in 1:n_cycles
-        # Amplitude increases with each cycle
+        # 每个循环的幅值递增
         amp = δ_max_n * (cycle / n_cycles)
         
-        # Loading phase
+        # 加载阶段
         for i in 1:points_per_half_cycle
             δ_n = amp * (i / points_per_half_cycle)
             T_n, _, D = JuBat.bilinear_traction(δ_n, 0.0, damage_state_n, cohesive_params; update=true)
@@ -152,7 +154,7 @@ function test_cyclic_loading(cohesive_params; n_cycles::Int=3, max_amp_factor::F
             push!(D_n_history, D)
         end
         
-        # Unloading phase
+        # 卸载阶段
         for i in 1:points_per_half_cycle
             δ_n = amp * (1.0 - i / points_per_half_cycle)
             T_n, _, D = JuBat.bilinear_traction(δ_n, 0.0, damage_state_n, cohesive_params; update=false)
@@ -161,11 +163,11 @@ function test_cyclic_loading(cohesive_params; n_cycles::Int=3, max_amp_factor::F
             push!(D_n_history, D)
         end
         
-        @printf("  Cycle %d: amplitude = %.2f um, max damage = %.2f%%\n", 
+        @printf("  循环 %d: 幅值 = %.2f μm, 最大损伤 = %.2f%%\n", 
                 cycle, amp * 1e6, damage_state_n.D * 100)
     end
     
-    # Tangential cyclic loading (bidirectional)
+    # 切向循环加载（双向）
     damage_state_t = JuBat.DamageState()
     
     δ_max_t = cohesive_params.δ_c_t * max_amp_factor
@@ -177,7 +179,7 @@ function test_cyclic_loading(cohesive_params; n_cycles::Int=3, max_amp_factor::F
     for cycle in 1:n_cycles
         amp = δ_max_t * (cycle / n_cycles)
         
-        # Positive loading
+        # 正向加载
         for i in 1:points_per_half_cycle
             δ_t = amp * (i / points_per_half_cycle)
             _, T_t, D = JuBat.bilinear_traction(0.0, δ_t, damage_state_t, cohesive_params; update=true)
@@ -186,7 +188,7 @@ function test_cyclic_loading(cohesive_params; n_cycles::Int=3, max_amp_factor::F
             push!(D_t_history, D)
         end
         
-        # Unload to zero
+        # 卸载到零
         for i in 1:points_per_half_cycle
             δ_t = amp * (1.0 - i / points_per_half_cycle)
             _, T_t, D = JuBat.bilinear_traction(0.0, δ_t, damage_state_t, cohesive_params; update=false)
@@ -195,7 +197,7 @@ function test_cyclic_loading(cohesive_params; n_cycles::Int=3, max_amp_factor::F
             push!(D_t_history, D)
         end
         
-        # Negative loading (reverse direction)
+        # 反向加载（负切向）
         for i in 1:points_per_half_cycle
             δ_t = -amp * (i / points_per_half_cycle)
             _, T_t, D = JuBat.bilinear_traction(0.0, δ_t, damage_state_t, cohesive_params; update=true)
@@ -204,7 +206,7 @@ function test_cyclic_loading(cohesive_params; n_cycles::Int=3, max_amp_factor::F
             push!(D_t_history, D)
         end
         
-        # Reverse unloading to zero
+        # 反向卸载到零
         for i in 1:points_per_half_cycle
             δ_t = -amp * (1.0 - i / points_per_half_cycle)
             _, T_t, D = JuBat.bilinear_traction(0.0, δ_t, damage_state_t, cohesive_params; update=false)
@@ -220,16 +222,16 @@ end
 """
     test_mixed_mode_loading(cohesive_params)
 
-Test constitutive response under mixed-mode (normal + tangential) loading.
-Validate the BK (Benzeggagh-Kenane) criterion.
+测试混合模式（法向+切向）加载下的本构响应。
+验证BK准则（Benzeggagh-Kenane）的正确性。
 """
 function test_mixed_mode_loading(cohesive_params)
     println("\n" * "="^60)
-    println("Test 3: Mixed-Mode Loading (BK Criterion)")
+    println("测试3：混合模式加载（BK准则）")
     println("="^60)
     
-    # Test different mode mixing ratios: beta = |delta_t| / delta_eff
-    mode_ratios = [0.0, 0.25, 0.5, 0.75, 1.0]  # 0=pure Mode I, 1=pure Mode II
+    # 测试不同的模式混合比 β = |δ_t| / δ_eff
+    mode_ratios = [0.0, 0.25, 0.5, 0.75, 1.0]  # 0=纯Mode I, 1=纯Mode II
     
     n_points = 100
     
@@ -238,9 +240,9 @@ function test_mixed_mode_loading(cohesive_params)
     for β in mode_ratios
         damage_state = JuBat.DamageState()
         
-        # Calculate separation components based on mode ratio
-        # delta_eff = sqrt(delta_n^2 + delta_t^2), beta = |delta_t| / delta_eff
-        # => delta_t = beta * delta_eff, delta_n = sqrt(1 - beta^2) * delta_eff
+        # 根据混合比计算分离位移分量
+        # δ_eff = sqrt(δ_n² + δ_t²), β = |δ_t| / δ_eff
+        # => δ_t = β * δ_eff, δ_n = sqrt(1 - β²) * δ_eff
         
         δ_eff_max = max(cohesive_params.δ_c_n, cohesive_params.δ_c_t) * 1.2
         
@@ -265,13 +267,13 @@ function test_mixed_mode_loading(cohesive_params)
             D_vals[i] = D
         end
         
-        # Calculate effective traction
+        # 计算等效牵引力
         T_eff_vals = sqrt.(T_n_vals.^2 .+ T_t_vals.^2)
         
         results[β] = (δ_eff=δ_eff_vals, δ_n=δ_n_vals, δ_t=δ_t_vals,
                       T_n=T_n_vals, T_t=T_t_vals, T_eff=T_eff_vals, D=D_vals)
         
-        @printf("  Mode ratio beta = %.2f: T_max = %.1f MPa, D_final = %.2f%%\n",
+        @printf("  模式比 β = %.2f: T_max = %.1f MPa, 最终损伤 = %.2f%%\n",
                 β, maximum(T_eff_vals) / 1e6, D_vals[end] * 100)
     end
     
@@ -281,39 +283,39 @@ end
 """
     test_sinusoidal_displacement(cohesive_params; n_cycles=5, frequency=1.0, amplitude_factor=0.6)
 
-Test response under sinusoidal displacement loading.
-Simulates more realistic cyclic loading conditions.
+测试正弦位移加载下的响应。
+模拟更真实的周期性加载情况。
 """
 function test_sinusoidal_displacement(cohesive_params; n_cycles::Int=5, 
                                        frequency::Float64=1.0,
                                        amplitude_factor::Float64=0.6)
     println("\n" * "="^60)
-    println("Test 4: Sinusoidal Displacement Loading")
+    println("测试4：正弦位移加载")
     println("="^60)
     
     damage_state = JuBat.DamageState()
     
-    # Time parameters
+    # 时间参数
     T_period = 1.0 / frequency
     t_total = n_cycles * T_period
     n_points = n_cycles * 100
     t_vals = range(0, t_total, length=n_points)
     
-    # Displacement amplitude
+    # 位移幅值
     δ_amp = cohesive_params.δ_c_n * amplitude_factor
     
-    # Sinusoidal displacement history
+    # 正弦位移历史
     δ_n_vals = δ_amp .* sin.(2π * frequency .* t_vals)
     
     T_n_history = zeros(n_points)
     D_history = zeros(n_points)
     
     for (i, δ_n) in enumerate(δ_n_vals)
-        # Only update damage for positive (opening) separation
+        # 只有正向分离（张开）才更新损伤
         if δ_n > 0
             T_n, _, D = JuBat.bilinear_traction(δ_n, 0.0, damage_state, cohesive_params; update=true)
         else
-            # Compression: use pure elastic contact
+            # 压缩时使用纯弹性接触
             T_n = cohesive_params.K_n * δ_n
             D = damage_state.D
         end
@@ -321,13 +323,13 @@ function test_sinusoidal_displacement(cohesive_params; n_cycles::Int=5,
         D_history[i] = D
     end
     
-    @printf("\n  Loading Parameters:\n")
-    @printf("    Amplitude = %.2f um (%.0f%% of delta_c)\n", δ_amp * 1e6, amplitude_factor * 100)
-    @printf("    Frequency = %.1f Hz\n", frequency)
-    @printf("    Number of cycles = %d\n", n_cycles)
-    @printf("  Results:\n")
-    @printf("    Final damage = %.2f%%\n", D_history[end] * 100)
-    @printf("    Maximum traction = %.1f MPa\n", maximum(T_n_history) / 1e6)
+    println("\n  加载参数：")
+    @printf("    振幅 = %.2f μm (%.0f%% δ_c)\n", δ_amp * 1e6, amplitude_factor * 100)
+    @printf("    频率 = %.1f Hz\n", frequency)
+    @printf("    循环数 = %d\n", n_cycles)
+    println("  结果：")
+    @printf("    最终损伤 = %.2f%%\n", D_history[end] * 100)
+    @printf("    最大牵引力 = %.1f MPa\n", maximum(T_n_history) / 1e6)
     
     return (t=t_vals, δ_n=δ_n_vals, T_n=T_n_history, D=D_history)
 end
@@ -335,333 +337,294 @@ end
 """
     plot_all_results(...)
 
-Generate all validation plots with detailed English annotations.
+生成所有验证图像，使用英文标注避免字体问题。
 """
 function plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoidal_data, cohesive_params)
     println("\n" * "="^60)
-    println("Generating Figures...")
+    println("生成图像...")
     println("="^60)
     
-    # Ensure output directory exists
+    # 确保输出目录存在
     isdir("output") || mkdir("output")
     
-    # Unpack data
+    # 解包数据
     δ_n_mono, T_n_mono, D_n_mono, δ_t_mono, T_t_mono, D_t_mono = monotonic_data
     δ_n_cyc, T_n_cyc, D_n_cyc, δ_t_cyc, T_t_cyc, D_t_cyc = cyclic_data
     
     # ====================================================================
-    # Figure 1: Monotonic Loading Constitutive Curves
+    # 图1：单调加载本构曲线
     # ====================================================================
-    p1 = plot(layout=(2, 2), size=(1200, 900), dpi=150)
+    p1 = plot(layout=(2, 2), size=(1200, 900), dpi=150,
+              left_margin=5Plots.mm, bottom_margin=5Plots.mm)
     
-    # Normal traction-separation curve
+    # 法向牵引力-分离曲线
     plot!(p1[1], δ_n_mono .* 1e6, T_n_mono ./ 1e6,
-          xlabel="Normal Separation delta_n (um)", 
-          ylabel="Normal Traction T_n (MPa)",
-          title="(a) Normal Traction-Separation (Mode I)",
-          label="Monotonic Loading", linewidth=2, color=:blue,
-          legend=:topright, grid=true, minorgrid=true)
+          xlabel="Normal Separation (um)", 
+          ylabel="Normal Traction (MPa)",
+          title="(a) Mode I: Traction-Separation",
+          label="T_n", linewidth=2.5, color=:blue,
+          legend=:topright, grid=true)
     
-    # Mark key points
-    vline!(p1[1], [cohesive_params.δ_0_n * 1e6], label="delta_0_n (initiation)", 
-           linestyle=:dash, color=:gray, linewidth=1.5)
-    vline!(p1[1], [cohesive_params.δ_c_n * 1e6], label="delta_c_n (critical)", 
-           linestyle=:dot, color=:red, linewidth=1.5)
-    hline!(p1[1], [cohesive_params.σ_max_n / 1e6], label="sigma_max_n", 
-           linestyle=:dash, color=:orange, linewidth=1.5)
+    # 标记关键点（简化标注，避免重叠）
+    vline!(p1[1], [cohesive_params.δ_0_n * 1e6], label="delta_0", 
+           linestyle=:dash, color=:gray, linewidth=1)
+    vline!(p1[1], [cohesive_params.δ_c_n * 1e6], label="delta_c", 
+           linestyle=:dot, color=:red, linewidth=1)
     
-    # Tangential traction-separation curve
+    # 切向牵引力-分离曲线
     plot!(p1[2], δ_t_mono .* 1e6, T_t_mono ./ 1e6,
-          xlabel="Tangential Separation delta_t (um)", 
-          ylabel="Tangential Traction T_t (MPa)",
-          title="(b) Tangential Traction-Separation (Mode II)",
-          label="Monotonic Loading", linewidth=2, color=:green,
-          legend=:topright, grid=true, minorgrid=true)
+          xlabel="Tangential Separation (um)", 
+          ylabel="Tangential Traction (MPa)",
+          title="(b) Mode II: Traction-Separation",
+          label="T_t", linewidth=2.5, color=:green,
+          legend=:topright, grid=true)
     
-    vline!(p1[2], [cohesive_params.δ_0_t * 1e6], label="delta_0_t (initiation)", 
-           linestyle=:dash, color=:gray, linewidth=1.5)
-    vline!(p1[2], [cohesive_params.δ_c_t * 1e6], label="delta_c_t (critical)", 
-           linestyle=:dot, color=:red, linewidth=1.5)
-    hline!(p1[2], [cohesive_params.τ_max_t / 1e6], label="tau_max_t", 
-           linestyle=:dash, color=:orange, linewidth=1.5)
+    vline!(p1[2], [cohesive_params.δ_0_t * 1e6], label="delta_0", 
+           linestyle=:dash, color=:gray, linewidth=1)
+    vline!(p1[2], [cohesive_params.δ_c_t * 1e6], label="delta_c", 
+           linestyle=:dot, color=:red, linewidth=1)
     
-    # Normal damage evolution
+    # 法向损伤演化
     plot!(p1[3], δ_n_mono .* 1e6, D_n_mono .* 100,
-          xlabel="Normal Separation delta_n (um)", 
-          ylabel="Damage Variable D (%)",
-          title="(c) Normal Damage Evolution",
-          label="D vs delta_n", linewidth=2, color=:red,
-          legend=:bottomright, grid=true, minorgrid=true)
+          xlabel="Normal Separation (um)", 
+          ylabel="Damage D (%)",
+          title="(c) Mode I: Damage Evolution",
+          label="D", linewidth=2.5, color=:red,
+          legend=:bottomright, grid=true)
     
-    # Add annotation for damage stages
-    annotate!(p1[3], [(cohesive_params.δ_0_n * 1e6 * 0.5, 5, 
-                       text("Elastic\nStage", 8, :center)),
-                      ((cohesive_params.δ_0_n + cohesive_params.δ_c_n) / 2 * 1e6, 50, 
-                       text("Softening\nStage", 8, :center)),
-                      (cohesive_params.δ_c_n * 1e6 * 1.1, 95, 
-                       text("Fractured", 8, :left))])
-    
-    # Tangential damage evolution
+    # 切向损伤演化
     plot!(p1[4], δ_t_mono .* 1e6, D_t_mono .* 100,
-          xlabel="Tangential Separation delta_t (um)", 
-          ylabel="Damage Variable D (%)",
-          title="(d) Tangential Damage Evolution",
-          label="D vs delta_t", linewidth=2, color=:purple,
-          legend=:bottomright, grid=true, minorgrid=true)
+          xlabel="Tangential Separation (um)", 
+          ylabel="Damage D (%)",
+          title="(d) Mode II: Damage Evolution",
+          label="D", linewidth=2.5, color=:purple,
+          legend=:bottomright, grid=true)
     
     savefig(p1, "output/czm_monotonic_loading.png")
-    println("  Saved: output/czm_monotonic_loading.png")
+    println("  ✓ 保存: output/czm_monotonic_loading.png")
     
     # ====================================================================
-    # Figure 2: Cyclic Loading/Unloading Hysteresis Loops
+    # 图2：周期性加卸载滞回环
     # ====================================================================
-    p2 = plot(layout=(2, 2), size=(1200, 900), dpi=150)
+    p2 = plot(layout=(2, 2), size=(1200, 900), dpi=150,
+              left_margin=5Plots.mm, bottom_margin=5Plots.mm)
     
-    # Normal hysteresis loop
+    # 法向滞回环
     plot!(p2[1], δ_n_cyc .* 1e6, T_n_cyc ./ 1e6,
-          xlabel="Normal Separation delta_n (um)", 
-          ylabel="Normal Traction T_n (MPa)",
-          title="(a) Normal Loading/Unloading Hysteresis",
-          label="Cyclic Response", linewidth=1.5, color=:blue,
-          grid=true, minorgrid=true)
+          xlabel="Normal Separation (um)", 
+          ylabel="Normal Traction (MPa)",
+          title="(a) Mode I: Hysteresis Loop",
+          label="Cyclic", linewidth=1.5, color=:blue,
+          grid=true)
     
-    # Add monotonic envelope as reference
+    # 添加单调包络线
     plot!(p2[1], δ_n_mono .* 1e6, T_n_mono ./ 1e6,
-          label="Monotonic Envelope", linestyle=:dash, linewidth=1, color=:gray, alpha=0.5)
+          label="Envelope", linestyle=:dash, linewidth=1, color=:gray, alpha=0.6)
     
-    # Add arrows to indicate loading direction
-    annotate!(p2[1], [(2, 35, text("Loading", 9, :left, :blue)),
-                      (5, 15, text("Unloading", 9, :left, :red))])
-    
-    # Tangential hysteresis loop (bidirectional)
+    # 切向滞回环（双向）
     plot!(p2[2], δ_t_cyc .* 1e6, T_t_cyc ./ 1e6,
-          xlabel="Tangential Separation delta_t (um)", 
-          ylabel="Tangential Traction T_t (MPa)",
-          title="(b) Tangential Hysteresis (Bidirectional)",
-          label="Cyclic Response", linewidth=1.5, color=:green,
-          grid=true, minorgrid=true)
+          xlabel="Tangential Separation (um)", 
+          ylabel="Tangential Traction (MPa)",
+          title="(b) Mode II: Hysteresis (Bidirectional)",
+          label="Cyclic", linewidth=1.5, color=:green,
+          grid=true)
     
-    # Normal damage history
+    # 法向损伤历史
     n_cyc_n = length(δ_n_cyc)
     plot!(p2[3], 1:n_cyc_n, D_n_cyc .* 100,
           xlabel="Loading Step", 
-          ylabel="Damage Variable D (%)",
-          title="(c) Normal Damage Accumulation",
-          label="Damage D", linewidth=1.5, color=:red,
-          grid=true, minorgrid=true)
+          ylabel="Damage D (%)",
+          title="(c) Mode I: Damage History",
+          label="D", linewidth=1.5, color=:red,
+          grid=true, legend=:bottomright)
     
-    # Mark cycle boundaries
-    cycle_steps = [100, 200, 300]
-    for (i, step) in enumerate(cycle_steps)
-        if step <= n_cyc_n
-            vline!(p2[3], [step], label=i==1 ? "Cycle End" : "", 
-                   linestyle=:dot, color=:gray, alpha=0.5)
-        end
-    end
-    
-    # Tangential damage history
+    # 切向损伤历史
     n_cyc_t = length(δ_t_cyc)
     plot!(p2[4], 1:n_cyc_t, D_t_cyc .* 100,
           xlabel="Loading Step", 
-          ylabel="Damage Variable D (%)",
-          title="(d) Tangential Damage Accumulation",
-          label="Damage D", linewidth=1.5, color=:purple,
-          grid=true, minorgrid=true)
+          ylabel="Damage D (%)",
+          title="(d) Mode II: Damage History",
+          label="D", linewidth=1.5, color=:purple,
+          grid=true, legend=:bottomright)
     
     savefig(p2, "output/czm_cyclic_hysteresis.png")
-    println("  Saved: output/czm_cyclic_hysteresis.png")
+    println("  ✓ 保存: output/czm_cyclic_hysteresis.png")
     
     # ====================================================================
-    # Figure 3: Mixed-Mode Response (BK Criterion)
+    # 图3：混合模式响应（BK准则）
     # ====================================================================
-    p3 = plot(layout=(2, 2), size=(1200, 900), dpi=150)
+    p3 = plot(layout=(2, 2), size=(1200, 900), dpi=150,
+              left_margin=5Plots.mm, bottom_margin=5Plots.mm)
     
-    # Color palette and labels
+    # 颜色和标签
     colors = [:blue, :cyan, :green, :orange, :red]
-    mode_labels = ["beta=0 (Pure Mode I)", "beta=0.25", "beta=0.5", 
-                   "beta=0.75", "beta=1 (Pure Mode II)"]
+    mode_labels = ["b=0 (I)", "b=0.25", "b=0.5", "b=0.75", "b=1 (II)"]
     
-    # Effective traction vs effective separation
+    # 等效牵引力-等效分离曲线
     for (i, (β, data)) in enumerate(sort(collect(mixed_mode_data)))
         plot!(p3[1], collect(data.δ_eff) .* 1e6, data.T_eff ./ 1e6,
               label=mode_labels[i], linewidth=2, color=colors[i])
     end
-    plot!(p3[1], xlabel="Effective Separation delta_eff (um)", 
-          ylabel="Effective Traction T_eff (MPa)",
-          title="(a) Mixed-Mode: Effective Traction Curves",
-          legend=:topright, grid=true, minorgrid=true)
+    plot!(p3[1], xlabel="Effective Separation (um)", 
+          ylabel="Effective Traction (MPa)",
+          title="(a) Mixed-Mode: T_eff vs delta_eff",
+          legend=:topright, grid=true)
     
-    # Damage evolution
+    # 损伤演化
     for (i, (β, data)) in enumerate(sort(collect(mixed_mode_data)))
         plot!(p3[2], collect(data.δ_eff) .* 1e6, data.D .* 100,
               label=mode_labels[i], linewidth=2, color=colors[i])
     end
-    plot!(p3[2], xlabel="Effective Separation delta_eff (um)", 
-          ylabel="Damage Variable D (%)",
-          title="(b) Mixed-Mode: Damage Evolution",
-          legend=:bottomright, grid=true, minorgrid=true)
+    plot!(p3[2], xlabel="Effective Separation (um)", 
+          ylabel="Damage D (%)",
+          title="(b) Mixed-Mode: Damage",
+          legend=:bottomright, grid=true)
     
-    # Normal component
+    # 法向分量
     for (i, (β, data)) in enumerate(sort(collect(mixed_mode_data)))
         plot!(p3[3], data.δ_n .* 1e6, data.T_n ./ 1e6,
               label=mode_labels[i], linewidth=2, color=colors[i])
     end
-    plot!(p3[3], xlabel="Normal Separation delta_n (um)", 
-          ylabel="Normal Traction T_n (MPa)",
+    plot!(p3[3], xlabel="Normal Separation (um)", 
+          ylabel="Normal Traction (MPa)",
           title="(c) Mixed-Mode: Normal Component",
-          legend=:topright, grid=true, minorgrid=true)
+          legend=:topright, grid=true)
     
-    # Tangential component
+    # 切向分量
     for (i, (β, data)) in enumerate(sort(collect(mixed_mode_data)))
         plot!(p3[4], data.δ_t .* 1e6, data.T_t ./ 1e6,
               label=mode_labels[i], linewidth=2, color=colors[i])
     end
-    plot!(p3[4], xlabel="Tangential Separation delta_t (um)", 
-          ylabel="Tangential Traction T_t (MPa)",
+    plot!(p3[4], xlabel="Tangential Separation (um)", 
+          ylabel="Tangential Traction (MPa)",
           title="(d) Mixed-Mode: Tangential Component",
-          legend=:topright, grid=true, minorgrid=true)
+          legend=:topright, grid=true)
     
     savefig(p3, "output/czm_mixed_mode.png")
-    println("  Saved: output/czm_mixed_mode.png")
+    println("  ✓ 保存: output/czm_mixed_mode.png")
     
     # ====================================================================
-    # Figure 4: Sinusoidal Displacement Loading Response
+    # 图4：正弦位移加载响应
     # ====================================================================
-    p4 = plot(layout=(2, 2), size=(1200, 900), dpi=150)
+    p4 = plot(layout=(2, 2), size=(1200, 900), dpi=150,
+              left_margin=5Plots.mm, bottom_margin=5Plots.mm)
     
-    # Displacement-time curve
+    # 位移-时间曲线
     plot!(p4[1], collect(sinusoidal_data.t), sinusoidal_data.δ_n .* 1e6,
-          xlabel="Time t (s)", 
-          ylabel="Normal Separation delta_n (um)",
-          title="(a) Sinusoidal Displacement History",
+          xlabel="Time (s)", 
+          ylabel="Separation (um)",
+          title="(a) Displacement History",
           label="delta_n(t)", linewidth=1.5, color=:blue,
-          grid=true, minorgrid=true)
-    
-    # Mark positive/negative regions
+          grid=true)
     hline!(p4[1], [0], label="", linestyle=:dash, color=:gray, alpha=0.5)
     
-    # Traction-time curve
+    # 牵引力-时间曲线
     plot!(p4[2], collect(sinusoidal_data.t), sinusoidal_data.T_n ./ 1e6,
-          xlabel="Time t (s)", 
-          ylabel="Normal Traction T_n (MPa)",
-          title="(b) Traction Response History",
+          xlabel="Time (s)", 
+          ylabel="Traction (MPa)",
+          title="(b) Traction History",
           label="T_n(t)", linewidth=1.5, color=:green,
-          grid=true, minorgrid=true)
+          grid=true)
     
-    # Hysteresis loop
+    # 滞回环
     plot!(p4[3], sinusoidal_data.δ_n .* 1e6, sinusoidal_data.T_n ./ 1e6,
-          xlabel="Normal Separation delta_n (um)", 
-          ylabel="Normal Traction T_n (MPa)",
-          title="(c) Sinusoidal Loading Hysteresis Loop",
-          label="Traction-Separation", linewidth=1.5, color=:purple,
-          grid=true, minorgrid=true)
+          xlabel="Separation (um)", 
+          ylabel="Traction (MPa)",
+          title="(c) Sinusoidal Hysteresis",
+          label="T-delta", linewidth=1.5, color=:purple,
+          grid=true)
     
-    # Highlight asymmetry between tension and compression
-    annotate!(p4[3], [(3, 30, text("Tension:\nDamage evolves", 8, :left)),
-                      (-3, -100, text("Compression:\nElastic contact", 8, :right))])
-    
-    # Damage evolution
+    # 损伤演化
     plot!(p4[4], collect(sinusoidal_data.t), sinusoidal_data.D .* 100,
-          xlabel="Time t (s)", 
-          ylabel="Damage Variable D (%)",
-          title="(d) Damage Accumulation Process",
+          xlabel="Time (s)", 
+          ylabel="Damage D (%)",
+          title="(d) Damage Accumulation",
           label="D(t)", linewidth=1.5, color=:red,
-          grid=true, minorgrid=true)
-    
-    # Add cycle markers
-    T_period = 1.0  # Period = 1s for 1 Hz
-    for i in 1:5
-        vline!(p4[4], [i * T_period], label=i==1 ? "Cycle End" : "", 
-               linestyle=:dot, color=:gray, alpha=0.3)
-    end
+          grid=true)
     
     savefig(p4, "output/czm_sinusoidal_loading.png")
-    println("  Saved: output/czm_sinusoidal_loading.png")
+    println("  ✓ 保存: output/czm_sinusoidal_loading.png")
     
     # ====================================================================
-    # Figure 5: Hysteresis Loop Comparison
+    # 图5：滞回环对比
     # ====================================================================
-    p5 = plot(size=(900, 600), dpi=150)
+    p5 = plot(size=(900, 600), dpi=150,
+              left_margin=8Plots.mm, bottom_margin=5Plots.mm)
     
-    # Cyclic loading hysteresis
+    # 周期性加载滞回环
     plot!(p5, δ_n_cyc .* 1e6, T_n_cyc ./ 1e6,
-          label="Progressive Amplitude Loading", linewidth=2, color=:blue)
+          label="Progressive Amplitude", linewidth=2, color=:blue)
     
-    # Sinusoidal loading hysteresis
+    # 正弦加载滞回环
     plot!(p5, sinusoidal_data.δ_n .* 1e6, sinusoidal_data.T_n ./ 1e6,
-          label="Sinusoidal Loading", linewidth=2, color=:red, linestyle=:dash)
+          label="Sinusoidal", linewidth=2, color=:red, linestyle=:dash)
     
-    # Monotonic envelope
+    # 单调包络线
     plot!(p5, δ_n_mono .* 1e6, T_n_mono ./ 1e6,
           label="Monotonic Envelope", linewidth=1.5, color=:black, linestyle=:dot, alpha=0.5)
     
-    plot!(p5, xlabel="Normal Separation delta_n (um)", 
-          ylabel="Normal Traction T_n (MPa)",
-          title="CZM Hysteresis Loop Comparison",
-          legend=:topright, grid=true, minorgrid=true)
-    
-    # Add text box with key observations
-    annotate!(p5, [(8, 45, text("Key Observations:\n" *
-                                "1. Loading follows envelope\n" *
-                                "2. Unloading: secant to origin\n" *
-                                "3. Damage is irreversible", 
-                                8, :left))])
+    plot!(p5, xlabel="Normal Separation (um)", 
+          ylabel="Normal Traction (MPa)",
+          title="CZM Hysteresis Comparison",
+          legend=:topright, grid=true)
     
     savefig(p5, "output/czm_hysteresis_comparison.png")
-    println("  Saved: output/czm_hysteresis_comparison.png")
+    println("  ✓ 保存: output/czm_hysteresis_comparison.png")
     
     # ====================================================================
-    # Figure 6: Bilinear Law Schematic
+    # 图6：双线性本构示意图
     # ====================================================================
-    p6 = plot(size=(800, 500), dpi=150)
+    p6 = plot(size=(800, 550), dpi=150,
+              left_margin=8Plots.mm, bottom_margin=5Plots.mm, top_margin=5Plots.mm)
     
-    # Create idealized bilinear curve
-    δ_0 = 1.0   # Normalized
-    δ_c = 10.0  # Normalized
-    T_max = 50.0  # Normalized
+    # 创建理想化双线性曲线
+    δ_0 = 1.0   # 归一化
+    δ_c = 10.0  # 归一化
+    T_max = 50.0  # 归一化
     
     δ_schematic = [0, δ_0, δ_c, δ_c * 1.2]
     T_schematic = [0, T_max, 0, 0]
     
     plot!(p6, δ_schematic, T_schematic,
-          linewidth=3, color=:blue, label="Bilinear Traction-Separation Law",
-          xlabel="Separation delta (normalized)", 
-          ylabel="Traction T (normalized)",
-          title="Bilinear Cohesive Zone Model Schematic")
+          linewidth=3, color=:blue, label="Bilinear Law",
+          xlabel="Separation (normalized)", 
+          ylabel="Traction (normalized)",
+          title="Bilinear Traction-Separation Law",
+          xlims=(-0.5, 13), ylims=(-5, 65))
     
-    # Mark key points
+    # 标记关键点
     scatter!(p6, [0, δ_0, δ_c], [0, T_max, 0], 
              markersize=8, color=[:black, :red, :green],
              label="")
     
-    # Add labels
-    annotate!(p6, [(δ_0 * 0.5, T_max * 0.3, text("K = T_max/delta_0\n(Initial Stiffness)", 9, :center)),
-                   (δ_0, T_max * 1.1, text("(delta_0, T_max)\nDamage Initiation", 9, :center)),
-                   (δ_c, T_max * 0.15, text("(delta_c, 0)\nComplete Fracture", 9, :center)),
-                   ((δ_0 + δ_c) / 2, T_max * 0.6, text("Softening Region\nD increases", 9, :center))])
+    # 标注（位置优化，避免重叠）
+    annotate!(p6, [(δ_0, T_max + 5, text("(delta_0, T_max)", 9, :center)),
+                   (δ_c + 0.5, 5, text("(delta_c, 0)", 9, :left))])
     
-    # Add unloading path
-    δ_unload = δ_0 + (δ_c - δ_0) * 0.5  # Unload from middle of softening
+    # 卸载路径
+    δ_unload = δ_0 + (δ_c - δ_0) * 0.5
     T_at_unload = T_max * (δ_c - δ_unload) / (δ_c - δ_0)
     
     plot!(p6, [0, δ_unload], [0, T_at_unload],
           linewidth=2, color=:red, linestyle=:dash,
-          label="Unloading Path (Secant)")
+          label="Unloading Path")
     
     scatter!(p6, [δ_unload], [T_at_unload], markersize=6, color=:red, label="")
-    annotate!(p6, [(δ_unload * 0.7, T_at_unload * 0.7, 
-                   text("Unloading:\nK_unload = (1-D)*K", 8, :right, :red))])
     
-    # Shade fracture energy area
+    # 填充断裂能区域
     δ_fill = range(0, δ_c, length=50)
     T_fill = [d <= δ_0 ? T_max * d / δ_0 : T_max * (δ_c - d) / (δ_c - δ_0) for d in δ_fill]
-    plot!(p6, δ_fill, T_fill, fillrange=0, fillalpha=0.2, color=:blue, label="")
-    annotate!(p6, [(δ_c * 0.4, T_max * 0.2, text("G_c = Area\n(Fracture Energy)", 9, :center, :blue))])
+    plot!(p6, δ_fill, T_fill, fillrange=0, fillalpha=0.15, color=:blue, label="G_c (Area)")
+    
+    # 添加区域标注（位置优化）
+    annotate!(p6, [(δ_0 * 0.4, T_max * 0.35, text("Elastic", 9, :center)),
+                   ((δ_0 + δ_c) / 2, T_max * 0.55, text("Softening", 9, :center)),
+                   (δ_c * 1.05, T_max * 0.15, text("Fractured", 9, :left))])
     
     savefig(p6, "output/czm_bilinear_schematic.png")
-    println("  Saved: output/czm_bilinear_schematic.png")
+    println("  ✓ 保存: output/czm_bilinear_schematic.png")
     
-    # Save SVG format
+    # 保存SVG格式
     try
         savefig(p1, "output/czm_monotonic_loading.svg")
         savefig(p2, "output/czm_cyclic_hysteresis.svg")
@@ -669,33 +632,33 @@ function plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoid
         savefig(p4, "output/czm_sinusoidal_loading.svg")
         savefig(p5, "output/czm_hysteresis_comparison.svg")
         savefig(p6, "output/czm_bilinear_schematic.svg")
-        println("  SVG format figures saved")
+        println("  ✓ SVG格式图像已保存")
     catch e
-        println("  Warning: SVG save failed (missing dependencies)")
+        println("  ⚠ SVG格式保存失败")
     end
 end
 
 """
     print_verification_summary(cohesive_params, monotonic_data, cyclic_data)
 
-Print verification summary comparing theoretical and computed values.
+打印验证摘要，对比理论值和计算值。
 """
 function print_verification_summary(cohesive_params, monotonic_data, cyclic_data)
     println("\n" * "="^60)
-    println("Verification Summary")
+    println("验证摘要")
     println("="^60)
     
     δ_n_mono, T_n_mono, D_n_mono, δ_t_mono, T_t_mono, D_t_mono = monotonic_data
     
-    # Theoretical values
+    # 理论值
     σ_max_theo = cohesive_params.σ_max_n
     τ_max_theo = cohesive_params.τ_max_t
     
-    # Computed values
+    # 计算值
     σ_max_calc = maximum(T_n_mono)
     τ_max_calc = maximum(T_t_mono)
     
-    # Compute fracture energy by numerical integration
+    # 数值积分计算断裂能
     G_n_calc = 0.0
     for i in 2:length(δ_n_mono)
         dδ = δ_n_mono[i] - δ_n_mono[i-1]
@@ -708,109 +671,109 @@ function print_verification_summary(cohesive_params, monotonic_data, cyclic_data
         G_t_calc += 0.5 * (T_t_mono[i] + T_t_mono[i-1]) * dδ
     end
     
-    println("\nNormal (Mode I) Verification:")
+    println("\n法向 (Mode I) 验证：")
     println("-"^40)
-    @printf("  sigma_max:  Theory = %.2f MPa, Computed = %.2f MPa, Error = %.2f%%\n",
+    @printf("  σ_max:  理论 = %.2f MPa, 计算 = %.2f MPa, 误差 = %.2f%%\n",
             σ_max_theo / 1e6, σ_max_calc / 1e6, 
             abs(σ_max_calc - σ_max_theo) / σ_max_theo * 100)
-    @printf("  G_c_n:      Theory = %.2f J/m^2, Computed = %.2f J/m^2, Error = %.2f%%\n",
+    @printf("  G_c_n:  理论 = %.2f J/m², 计算 = %.2f J/m², 误差 = %.2f%%\n",
             cohesive_params.G_c_n, G_n_calc,
             abs(G_n_calc - cohesive_params.G_c_n) / cohesive_params.G_c_n * 100)
     
-    println("\nTangential (Mode II) Verification:")
+    println("\n切向 (Mode II) 验证：")
     println("-"^40)
-    @printf("  tau_max:    Theory = %.2f MPa, Computed = %.2f MPa, Error = %.2f%%\n",
+    @printf("  τ_max:  理论 = %.2f MPa, 计算 = %.2f MPa, 误差 = %.2f%%\n",
             τ_max_theo / 1e6, τ_max_calc / 1e6,
             abs(τ_max_calc - τ_max_theo) / τ_max_theo * 100)
-    @printf("  G_c_t:      Theory = %.2f J/m^2, Computed = %.2f J/m^2, Error = %.2f%%\n",
+    @printf("  G_c_t:  理论 = %.2f J/m², 计算 = %.2f J/m², 误差 = %.2f%%\n",
             cohesive_params.G_c_t, G_t_calc,
             abs(G_t_calc - cohesive_params.G_c_t) / cohesive_params.G_c_t * 100)
     
-    # Check loading/unloading behavior
-    println("\nLoading/Unloading Behavior Verification:")
+    # 检查加卸载行为
+    println("\n加卸载行为验证：")
     println("-"^40)
     δ_n_cyc, T_n_cyc, D_n_cyc, _, _, _ = cyclic_data
     
-    # Check that damage remains constant during unloading
+    # 检查卸载时损伤是否保持不变
     D_max_reached = maximum(D_n_cyc)
     
-    # Find first return to zero after some loading
+    # 找第一次回到零点
     zero_idx = findfirst(x -> abs(x) < 1e-10, δ_n_cyc[100:end])
     if zero_idx !== nothing
         D_at_zero = D_n_cyc[zero_idx + 99]
-        @printf("  Damage at max loading: D_max = %.2f%%\n", D_max_reached * 100)
-        @printf("  Damage at zero (after unload): D = %.2f%%\n", D_at_zero * 100)
-        println("  PASS: Damage remains constant during unloading")
+        @printf("  加载时最大损伤: D_max = %.2f%%\n", D_max_reached * 100)
+        @printf("  卸载回零点时损伤: D = %.2f%%\n", D_at_zero * 100)
+        println("  ✓ 验证通过：卸载时损伤保持不变")
     end
     
-    # Check unloading stiffness
-    println("\nUnloading Stiffness Verification:")
+    # 卸载刚度验证
+    println("\n卸载刚度验证：")
     println("-"^40)
     K_initial = cohesive_params.K_n
-    @printf("  Initial stiffness K_n = %.2e Pa/m = %.2f TPa/m\n", K_initial, K_initial / 1e12)
-    println("  After damage D, unloading stiffness K_unload = (1-D) * K_n")
-    @printf("  For D = 50%%: K_unload = %.2f TPa/m\n", 0.5 * K_initial / 1e12)
+    @printf("  初始刚度 K_n = %.2e Pa/m = %.2f TPa/m\n", K_initial, K_initial / 1e12)
+    println("  损伤后卸载刚度 K_unload = (1-D) × K_n")
+    @printf("  例: D = 50%% 时, K_unload = %.2f TPa/m\n", 0.5 * K_initial / 1e12)
     
-    # BK criterion verification
-    println("\nBK Criterion (Mixed-Mode) Notes:")
+    # BK准则说明
+    println("\nBK准则（混合模式）说明：")
     println("-"^40)
-    println("  The BK criterion interpolates between Mode I and Mode II:")
-    println("  delta_0_eff = sqrt(delta_0_n^2 + (delta_0_t^2 - delta_0_n^2) * beta^eta)")
-    println("  delta_c_eff = sqrt(delta_c_n^2 + (delta_c_t^2 - delta_c_n^2) * beta^eta)")
-    @printf("  With eta = %.2f (BK exponent)\n", cohesive_params.eta)
+    println("  BK准则在Mode I和Mode II之间进行插值：")
+    println("  δ_0_eff = √(δ_0_n² + (δ_0_t² - δ_0_n²) × β^η)")
+    println("  δ_c_eff = √(δ_c_n² + (δ_c_t² - δ_c_n²) × β^η)")
+    @printf("  其中 η = %.2f (BK指数)\n", cohesive_params.eta)
     
     println("\n" * "="^60)
-    println("CZM Constitutive Model Verification COMPLETE")
+    println("✓ CZM本构模型验证完成")
     println("="^60)
 end
 
 """
     main()
 
-Main function: Run all CZM validation tests.
+主函数：运行所有CZM验证测试。
 """
 function main()
     println("="^80)
-    println("Cohesive Zone Model (CZM) Validation: Pure Mechanical Loading Tests")
+    println("内聚力模型(CZM)验证：纯机械加载测试")
     println("="^80)
-    println("\nThis test validates the bilinear traction-separation constitutive model,")
-    println("including monotonic loading, cyclic loading/unloading, and mixed-mode response.")
-    println("No electrochemical-thermal coupling is involved.")
+    println("\n本测试验证双线性牵引力-分离本构模型的正确性，")
+    println("包括单调加载、周期性加卸载和混合模式响应。")
+    println("不涉及电化学-热耦合模型。")
     
-    # Create cohesive parameters
+    # 创建内聚力参数
     cohesive_params = create_czm_test_params()
     
-    # Test 1: Monotonic loading
+    # 测试1：单调加载
     monotonic_data = test_monotonic_loading(cohesive_params)
     
-    # Test 2: Cyclic loading/unloading
+    # 测试2：周期性加卸载
     cyclic_data = test_cyclic_loading(cohesive_params; n_cycles=3, max_amp_factor=0.8)
     
-    # Test 3: Mixed-mode loading
+    # 测试3：混合模式
     mixed_mode_data = test_mixed_mode_loading(cohesive_params)
     
-    # Test 4: Sinusoidal displacement loading
+    # 测试4：正弦位移加载
     sinusoidal_data = test_sinusoidal_displacement(cohesive_params; 
                                                     n_cycles=5, 
                                                     frequency=1.0,
                                                     amplitude_factor=0.6)
     
-    # Generate all plots
+    # 绘制所有结果
     plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoidal_data, cohesive_params)
     
-    # Print verification summary
+    # 打印验证摘要
     print_verification_summary(cohesive_params, monotonic_data, cyclic_data)
     
-    println("\nGenerated Figures:")
-    println("  1. output/czm_monotonic_loading.png     - Monotonic loading constitutive curves")
-    println("  2. output/czm_cyclic_hysteresis.png     - Cyclic loading hysteresis loops")
-    println("  3. output/czm_mixed_mode.png            - Mixed-mode response (BK criterion)")
-    println("  4. output/czm_sinusoidal_loading.png    - Sinusoidal displacement response")
-    println("  5. output/czm_hysteresis_comparison.png - Hysteresis loop comparison")
-    println("  6. output/czm_bilinear_schematic.png    - Bilinear law schematic diagram")
+    println("\n生成的图像：")
+    println("  1. output/czm_monotonic_loading.png     - 单调加载本构曲线")
+    println("  2. output/czm_cyclic_hysteresis.png     - 周期性加卸载滞回环")
+    println("  3. output/czm_mixed_mode.png            - 混合模式响应(BK准则)")
+    println("  4. output/czm_sinusoidal_loading.png    - 正弦位移加载响应")
+    println("  5. output/czm_hysteresis_comparison.png - 滞回环对比")
+    println("  6. output/czm_bilinear_schematic.png    - 双线性本构示意图")
     
     return cohesive_params, monotonic_data, cyclic_data, mixed_mode_data, sinusoidal_data
 end
 
-# Run main function
+# 运行主函数
 result = main()
