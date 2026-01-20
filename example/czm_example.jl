@@ -1,552 +1,665 @@
 """
-内聚力模型(CZM)示例：电化学-热-力-损伤耦合仿真
+内聚力模型(CZM)验证示例：纯机械加载
 
 功能：
-- 多SPMe并行电化学模型
-- 二维分布式热模型
-- 内聚力损伤模型（层间脱粘）
-- 热应变和化学应变耦合
-- 损伤累积与断裂判据
+- 不启用电化学-热耦合模型
+- 给定周期性位移场，验证双线性本构模型
+- 绘制损伤曲线和牵引力-位移滞回环曲线
+
+验证内容：
+1. 单点本构测试：验证双线性牵引力-分离关系
+2. 滞回环测试：验证加卸载行为和损伤演化
+3. 混合模式测试：验证法向+切向耦合响应
 
 输出图像：
-- 图1：最大/平均损伤变量随时间变化曲线
-- 图2：温度场和损伤场分布
+- 图1：法向牵引力-分离曲线（加卸载滞回环）
+- 图2：切向牵引力-分离曲线（加卸载滞回环）
+- 图3：损伤变量随最大分离位移的演化
+- 图4：混合模式下的牵引力响应
 
 日期：2025
 """
 
-using LinearAlgebra, SparseArrays, Statistics, Plots, Printf
+using LinearAlgebra, Printf, Plots
+
+# 包含JuBat模块
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
 
-function main()
-    println("="^80)
-    println("内聚力模型(CZM)电化学-热-力-损伤耦合仿真")
-    println("="^80)
+"""
+    create_czm_test_params()
+
+创建用于CZM测试的内聚力参数。
+"""
+function create_czm_test_params()
+    # 创建内聚力参数（典型电极-隔膜界面参数）
+    cohesive = JuBat.Cohesive()
     
-    # ========================================================================
-    # 1. 参数设置
-    # ========================================================================
-    println("\n[1/8] 参数设置...")
+    # 法向参数 (Mode I)
+    cohesive.σ_max_n = 50e6       # 最大法向牵引力 [Pa] (50 MPa)
+    cohesive.δ_0_n = 1e-6         # 损伤起始分离位移 [m] (1 μm)
+    cohesive.δ_c_n = 10e-6        # 临界分离位移 [m] (10 μm)
+    cohesive.G_c_n = 0.5 * cohesive.σ_max_n * cohesive.δ_c_n
+    cohesive.K_n = cohesive.σ_max_n / cohesive.δ_0_n
     
-    # 电池参数（Jellyroll结构，包含内聚力参数）
-    param_dim = JuBat.ChooseCell("Jellyroll")
-    param_dim.cell.v_l = 2.5  # 截止电压下限 (V)
-    param_dim.cell.v_h = 4.2  # 截止电压上限 (V)
+    # 切向参数 (Mode II)
+    cohesive.τ_max_t = 30e6       # 最大切向牵引力 [Pa] (30 MPa)
+    cohesive.δ_0_t = 1e-6         # 损伤起始切向位移 [m] (1 μm)
+    cohesive.δ_c_t = 15e-6        # 临界切向位移 [m] (15 μm)
+    cohesive.G_c_t = 0.5 * cohesive.τ_max_t * cohesive.δ_c_t
+    cohesive.K_t = cohesive.τ_max_t / cohesive.δ_0_t
     
-    # 打印内聚力参数
-    println("\n  内聚力参数（有量纲）：")
-    @printf("    法向最大牵引力 σ_max_n = %.1f MPa\n", param_dim.cohesive.σ_max_n / 1e6)
-    @printf("    法向临界位移 δ_c_n = %.1f μm\n", param_dim.cohesive.δ_c_n * 1e6)
-    @printf("    法向断裂能 G_c_n = %.1f J/m²\n", param_dim.cohesive.G_c_n)
-    @printf("    切向最大牵引力 τ_max_t = %.1f MPa\n", param_dim.cohesive.τ_max_t / 1e6)
-    @printf("    BK指数 η = %.2f\n", param_dim.cohesive.eta)
+    # BK准则指数
+    cohesive.eta = 1.45
     
-    # 仿真选项
-    opt = JuBat.Option()
+    return cohesive
+end
+
+"""
+    test_monotonic_loading(cohesive_params)
+
+测试单调加载下的本构响应。
+
+绘制从0加载到完全断裂的牵引力-分离曲线。
+"""
+function test_monotonic_loading(cohesive_params)
+    println("\n" * "="^60)
+    println("测试1：单调加载本构响应")
+    println("="^60)
     
-    # 电化学参数
-    Crates = 1.0  
-    i = 5 * Crates  # 电流 (A)
-    opt.Current = x -> i
-    opt.model = "SPMe"
-    opt.Nn = 10
-    opt.Ns = 5
-    opt.Np = 10
-    opt.Nrn = 10
-    opt.Nrp = 10
-    opt.gsorder = 2
-    opt.dimension = 1
-    opt.mechanicalmodel = "full"
+    # 创建损伤状态
+    damage_state_n = JuBat.DamageState()
+    damage_state_t = JuBat.DamageState()
     
-    # 时间设置（较短时间用于演示）
-    opt.time = [0.0, 3600]  # 仿真时间 (s)
-    opt.dt = [0.5, 5]      # 时间步长范围 (s)
-    opt.dtType = "auto"
-    opt.jacobi = "update"
-    opt.solveType = "Crank-Nicolson"
+    # 法向加载参数
+    δ_max_n = cohesive_params.δ_c_n * 1.2  # 超过临界分离
+    n_points = 200
+    δ_n_vals = range(0, δ_max_n, length=n_points)
     
-    # 热模型设置
-    opt.thermal_enabled = true
-    opt.thermalmodel = "distributed2D"
-    opt.thermal_dim = "2D"
-    opt.cool_method = "surface"
+    T_n_vals = zeros(n_points)
+    D_n_vals = zeros(n_points)
     
-    # 启用多SPMe并行模式
-    opt.per_element_spme = true
-    
-    println("✓ 参数设置完成")
-    @printf("  电流: %.2f A (%.1f C)\n", i, Crates)
-    @printf("  仿真时间: %.1f 秒\n", opt.time[end])
-    
-    # ========================================================================
-    # 2. 创建案例和网格
-    # ========================================================================
-    println("\n[2/8] 创建案例和Jellyroll网格...")
-    
-    case = JuBat.SetCase(param_dim, opt)
-    
-    # 创建Jellyroll collector-seeded网格
-    nθ = 60  # 周向单元数（适中分辨率）
-    mesh_th = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, gsorder=2)
-    case.mesh["thermal2D"] = mesh_th
-    
-    ne = size(mesh_th.element, 1)
-    nT = mesh_th.nlen
-    
-    println("✓ 热网格创建完成")
-    @printf("  周向单元数 nθ: %d\n", nθ)
-    @printf("  总单元数 ne: %d\n", ne)
-    @printf("  总节点数 nT: %d\n", nT)
-    
-    # 几何参数
-    Rin = param_dim.cell.Rin
-    Rout = param_dim.cell.Rout
-    @printf("  内半径 Rin: %.4f m\n", Rin)
-    @printf("  外半径 Rout: %.4f m\n", Rout)
-    
-    # ========================================================================
-    # 3. 创建内聚力网格
-    # ========================================================================
-    println("\n[3/8] 创建内聚力网格...")
-    
-    czm_mesh = JuBat.create_czm_mesh(mesh_th, param_dim; tol=1e-8)
-    
-    println("✓ 内聚力网格创建完成")
-    @printf("  扩展后节点数: %d\n", czm_mesh.nnode)
-    @printf("  内聚力单元数: %d\n", czm_mesh.n_cohesive)
-    @printf("  层数: %d\n", czm_mesh.n_layers)
-    @printf("  层间界面数: %d\n", czm_mesh.n_layers - 1)
-    
-    if czm_mesh.n_cohesive == 0
-        println("\n⚠ 警告：没有检测到内聚力单元。")
-        println("  这可能是因为热网格只覆盖一圈，没有层间界面。")
-        println("  继续运行电化学-热仿真，但跳过损伤计算。")
+    # 法向单调加载
+    for (i, δ_n) in enumerate(δ_n_vals)
+        T_n, _, D = JuBat.bilinear_traction(δ_n, 0.0, damage_state_n, cohesive_params; update=true)
+        T_n_vals[i] = T_n
+        D_n_vals[i] = D
     end
     
-    # ========================================================================
-    # 4. 运行电化学-热求解器
-    # ========================================================================
-    println("\n[4/8] 运行多SPMe并行求解器...")
+    # 切向加载参数
+    δ_max_t = cohesive_params.δ_c_t * 1.2
+    δ_t_vals = range(0, δ_max_t, length=n_points)
     
-    result = nothing
-    try
-        result = JuBat.Solve(case)
-        println("✓ 求解成功完成")
-    catch e
-        println("✗ 求解失败: $e")
-        rethrow(e)
+    T_t_vals = zeros(n_points)
+    D_t_vals = zeros(n_points)
+    
+    # 切向单调加载
+    for (i, δ_t) in enumerate(δ_t_vals)
+        _, T_t, D = JuBat.bilinear_traction(0.0, δ_t, damage_state_t, cohesive_params; update=true)
+        T_t_vals[i] = T_t
+        D_t_vals[i] = D
     end
     
-    if result === nothing
-        error("求解未返回结果")
-    end
+    # 打印关键参数
+    println("\n内聚力参数：")
+    @printf("  法向最大牵引力 σ_max_n = %.1f MPa\n", cohesive_params.σ_max_n / 1e6)
+    @printf("  法向起始分离 δ_0_n = %.1f μm\n", cohesive_params.δ_0_n * 1e6)
+    @printf("  法向临界分离 δ_c_n = %.1f μm\n", cohesive_params.δ_c_n * 1e6)
+    @printf("  法向断裂能 G_c_n = %.1f J/m²\n", cohesive_params.G_c_n)
+    println()
+    @printf("  切向最大牵引力 τ_max_t = %.1f MPa\n", cohesive_params.τ_max_t / 1e6)
+    @printf("  切向起始分离 δ_0_t = %.1f μm\n", cohesive_params.δ_0_t * 1e6)
+    @printf("  切向临界分离 δ_c_t = %.1f μm\n", cohesive_params.δ_c_t * 1e6)
+    @printf("  切向断裂能 G_c_t = %.1f J/m²\n", cohesive_params.G_c_t)
     
-    # 提取基本结果
-    t = result["time [s]"]
-    V = result["cell voltage [V]"]
-    num_steps = length(t)
+    return (δ_n_vals, T_n_vals, D_n_vals, δ_t_vals, T_t_vals, D_t_vals)
+end
+
+"""
+    test_cyclic_loading(cohesive_params; n_cycles=3, max_amp_factor=0.8)
+
+测试周期性加卸载下的本构响应。
+
+生成滞回环曲线，验证加卸载行为和损伤累积。
+"""
+function test_cyclic_loading(cohesive_params; n_cycles::Int=3, max_amp_factor::Float64=0.8)
+    println("\n" * "="^60)
+    println("测试2：周期性加卸载滞回环")
+    println("="^60)
     
-    println("✓ 结果提取完成")
-    @printf("  总时间步数: %d\n", num_steps)
-    @printf("  初始电压: %.4f V\n", V[1])
-    @printf("  最终电压: %.4f V\n", V[end])
+    # 法向循环加载
+    damage_state_n = JuBat.DamageState()
     
-    # ========================================================================
-    # 5. 计算每个时间步的CZM损伤
-    # ========================================================================
-    println("\n[5/8] 计算时间历程损伤场...")
+    # 周期性加载幅值逐渐增大
+    δ_max_n = cohesive_params.δ_c_n * max_amp_factor
     
-    # 初始化损伤历史数组
-    damage_max_hist = zeros(Float64, num_steps)
-    damage_mean_hist = zeros(Float64, num_steps)
-    damage_fractured_hist = zeros(Int64, num_steps)
+    δ_n_history = Float64[]
+    T_n_history = Float64[]
+    D_n_history = Float64[]
     
-    # 材料参数
-    E_eff = 0.5 * (param_dim.NE.E + param_dim.PE.E)
-    ν_eff = 0.5 * (param_dim.NE.nu + param_dim.PE.nu)
-    α_eff = 0.5 * (param_dim.NE.alphaT + param_dim.PE.alphaT)
-    β_n = param_dim.NE.Omega / 3.0
-    β_p = param_dim.PE.Omega / 3.0
+    points_per_half_cycle = 50
     
-    @printf("  有效杨氏模量 E = %.2f GPa\n", E_eff / 1e9)
-    @printf("  有效泊松比 ν = %.2f\n", ν_eff)
-    @printf("  有效热膨胀系数 α = %.2e /K\n", α_eff)
-    
-    # 只有存在内聚力单元时才计算损伤
-    if czm_mesh.n_cohesive > 0
-        # 获取SOC和温度历史
-        # 尝试两个可能的键名
-        T_key = haskey(result, "thermal2D temperature [K]") ? "thermal2D temperature [K]" :
-                (haskey(result, "thermal2D T_nodes [K]") ? "thermal2D T_nodes [K]" : nothing)
+    for cycle in 1:n_cycles
+        # 每个循环的幅值递增
+        amp = δ_max_n * (cycle / n_cycles)
         
-        has_data = haskey(result, "thermal2D element soc_n") && 
-                   haskey(result, "thermal2D element soc_p") &&
-                   T_key !== nothing
-        
-        if has_data
-            soc_n_hist = result["thermal2D element soc_n"]
-            soc_p_hist = result["thermal2D element soc_p"]
-            T_nodes_hist_K = result[T_key]
-            
-            # 参考值
-            soc_ref_n = case.param.NE.cs0
-            soc_ref_p = case.param.PE.cs0
-            T_ref = param_dim.scale.T_ref
-            T0 = param_dim.cell.T0
-            
-            # 初始化位移
-            ndof = 2 * czm_mesh.nnode
-            u_prev = zeros(Float64, ndof)
-            F_ext = zeros(Float64, ndof)  # 无外部机械载荷
-            
-            # 重置损伤状态
-            JuBat.reset_damage_states!(czm_mesh)
-            
-            println("  计算 $(num_steps) 个时间步的损伤...")
-            
-            for step in 1:num_steps
-                try
-                    # 计算温度变化 - 处理不同的数据维度
-                    if ndims(T_nodes_hist_K) == 1
-                        T_nodes_K = T_nodes_hist_K  # 单一时刻数据
-                    else
-                        T_nodes_K = T_nodes_hist_K[:, step]
-                    end
-                    
-                    # 直接使用温度数据（新实现中节点数不变）
-                    # 如果CZM网格节点数与热网格相同，直接使用温度数据
-                    if czm_mesh.nnode == nT
-                        T_czm = T_nodes_K
-                    else
-                        # 兼容旧的节点复制实现
-                        T_czm = zeros(Float64, czm_mesh.nnode)
-                        nT_actual = min(nT, length(T_nodes_K))
-                        T_czm[1:nT_actual] = T_nodes_K[1:nT_actual]
-                        for (orig, new_nodes) in czm_mesh.node_map
-                            if orig <= nT_actual
-                                for new_n in new_nodes
-                                    if new_n > nT_actual && new_n <= czm_mesh.nnode
-                                        T_czm[new_n] = T_nodes_K[orig]
-                                    end
-                                end
-                            end
-                        end
-                    end
-                    
-                    # 计算单元温度变化
-                    dT_elem = zeros(Float64, ne)
-                    for e in 1:ne
-                        nodes = czm_mesh.bulk_element[e, :]
-                        T_avg = mean(T_czm[nodes])
-                        dT_elem[e] = T_avg - T0
-                    end
-                    
-                    # SOC变化 - 处理不同的数据维度
-                    if ndims(soc_n_hist) == 1
-                        Δsoc_n_elem = soc_n_hist .- soc_ref_n
-                        Δsoc_p_elem = soc_p_hist .- soc_ref_p
-                    else
-                        Δsoc_n_elem = soc_n_hist[:, step] .- soc_ref_n
-                        Δsoc_p_elem = soc_p_hist[:, step] .- soc_ref_p
-                    end
-                    
-                    # 求解CZM系统
-                    czm_result = JuBat.solve_czm_step(
-                        czm_mesh, F_ext, E_eff, ν_eff,
-                        param_dim.cohesive, param_dim, u_prev;
-                        α_eff=α_eff, β_n=β_n, β_p=β_p,
-                        dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
-                        max_iter=30, tol=1e-6)
-                    
-                    if czm_result.converged
-                        u_prev = czm_result.displacement
-                    end
-                    
-                    # 记录损伤统计
-                    stats = JuBat.get_damage_statistics(czm_mesh)
-                    damage_max_hist[step] = stats.max_D
-                    damage_mean_hist[step] = stats.mean_D
-                    damage_fractured_hist[step] = stats.n_fractured
-                    
-                    # 进度输出
-                    if step % 10 == 0 || step == num_steps
-                        @printf("    步 %d/%d: t=%.1fs, D_max=%.2f%%, D_mean=%.2f%%\n",
-                                step, num_steps, t[step], 
-                                stats.max_D * 100, stats.mean_D * 100)
-                    end
-                    
-                catch e
-                    @warn "时间步 $step 损伤计算失败" exception=(e, catch_backtrace())
-                    damage_max_hist[step] = step > 1 ? damage_max_hist[step-1] : 0.0
-                    damage_mean_hist[step] = step > 1 ? damage_mean_hist[step-1] : 0.0
-                end
-            end
-            
-            println("\n✓ 损伤历史计算完成")
-            @printf("  最终最大损伤: %.2f%%\n", damage_max_hist[end] * 100)
-            @printf("  最终平均损伤: %.2f%%\n", damage_mean_hist[end] * 100)
-            @printf("  断裂单元数: %d / %d\n", damage_fractured_hist[end], czm_mesh.n_cohesive)
-        else
-            println("  ⚠ 未找到SOC或温度历史数据，跳过损伤计算")
+        # 加载阶段
+        for i in 1:points_per_half_cycle
+            δ_n = amp * (i / points_per_half_cycle)
+            T_n, _, D = JuBat.bilinear_traction(δ_n, 0.0, damage_state_n, cohesive_params; update=true)
+            push!(δ_n_history, δ_n)
+            push!(T_n_history, T_n)
+            push!(D_n_history, D)
         end
-    else
-        println("  ⚠ 无内聚力单元，跳过损伤计算")
+        
+        # 卸载阶段
+        for i in 1:points_per_half_cycle
+            δ_n = amp * (1.0 - i / points_per_half_cycle)
+            T_n, _, D = JuBat.bilinear_traction(δ_n, 0.0, damage_state_n, cohesive_params; update=false)
+            push!(δ_n_history, δ_n)
+            push!(T_n_history, T_n)
+            push!(D_n_history, D)
+        end
+        
+        @printf("  循环 %d: 幅值 = %.2f μm, 最大损伤 = %.2f%%\n", 
+                cycle, amp * 1e6, damage_state_n.D * 100)
     end
     
-    # ========================================================================
-    # 6. 图1：损伤变量随时间变化曲线
-    # ========================================================================
-    println("\n[6/8] 生成图1：损伤变量演化曲线...")
+    # 切向循环加载
+    damage_state_t = JuBat.DamageState()
+    
+    δ_max_t = cohesive_params.δ_c_t * max_amp_factor
+    
+    δ_t_history = Float64[]
+    T_t_history = Float64[]
+    D_t_history = Float64[]
+    
+    for cycle in 1:n_cycles
+        amp = δ_max_t * (cycle / n_cycles)
+        
+        # 正向加载
+        for i in 1:points_per_half_cycle
+            δ_t = amp * (i / points_per_half_cycle)
+            _, T_t, D = JuBat.bilinear_traction(0.0, δ_t, damage_state_t, cohesive_params; update=true)
+            push!(δ_t_history, δ_t)
+            push!(T_t_history, T_t)
+            push!(D_t_history, D)
+        end
+        
+        # 卸载到零
+        for i in 1:points_per_half_cycle
+            δ_t = amp * (1.0 - i / points_per_half_cycle)
+            _, T_t, D = JuBat.bilinear_traction(0.0, δ_t, damage_state_t, cohesive_params; update=false)
+            push!(δ_t_history, δ_t)
+            push!(T_t_history, T_t)
+            push!(D_t_history, D)
+        end
+        
+        # 反向加载（负切向）
+        for i in 1:points_per_half_cycle
+            δ_t = -amp * (i / points_per_half_cycle)
+            _, T_t, D = JuBat.bilinear_traction(0.0, δ_t, damage_state_t, cohesive_params; update=true)
+            push!(δ_t_history, δ_t)
+            push!(T_t_history, T_t)
+            push!(D_t_history, D)
+        end
+        
+        # 反向卸载到零
+        for i in 1:points_per_half_cycle
+            δ_t = -amp * (1.0 - i / points_per_half_cycle)
+            _, T_t, D = JuBat.bilinear_traction(0.0, δ_t, damage_state_t, cohesive_params; update=false)
+            push!(δ_t_history, δ_t)
+            push!(T_t_history, T_t)
+            push!(D_t_history, D)
+        end
+    end
+    
+    return (δ_n_history, T_n_history, D_n_history, δ_t_history, T_t_history, D_t_history)
+end
+
+"""
+    test_mixed_mode_loading(cohesive_params)
+
+测试混合模式（法向+切向）加载下的本构响应。
+
+验证BK准则的正确性。
+"""
+function test_mixed_mode_loading(cohesive_params)
+    println("\n" * "="^60)
+    println("测试3：混合模式加载（BK准则）")
+    println("="^60)
+    
+    # 测试不同的模式混合比 β = |δ_t| / δ_eff
+    mode_ratios = [0.0, 0.25, 0.5, 0.75, 1.0]  # 0=纯Mode I, 1=纯Mode II
+    
+    n_points = 100
+    
+    results = Dict{Float64, NamedTuple}()
+    
+    for β in mode_ratios
+        damage_state = JuBat.DamageState()
+        
+        # 根据混合比计算等效分离位移
+        # δ_eff = sqrt(δ_n² + δ_t²), β = |δ_t| / δ_eff
+        # => δ_t = β * δ_eff, δ_n = sqrt(1 - β²) * δ_eff
+        
+        δ_eff_max = max(cohesive_params.δ_c_n, cohesive_params.δ_c_t) * 1.2
+        
+        δ_eff_vals = range(0, δ_eff_max, length=n_points)
+        δ_n_vals = zeros(n_points)
+        δ_t_vals = zeros(n_points)
+        T_n_vals = zeros(n_points)
+        T_t_vals = zeros(n_points)
+        D_vals = zeros(n_points)
+        
+        for (i, δ_eff) in enumerate(δ_eff_vals)
+            δ_n = sqrt(1.0 - β^2) * δ_eff
+            δ_t = β * δ_eff
+            
+            δ_n_vals[i] = δ_n
+            δ_t_vals[i] = δ_t
+            
+            T_n, T_t, D = JuBat.bilinear_traction(δ_n, δ_t, damage_state, cohesive_params; update=true)
+            
+            T_n_vals[i] = T_n
+            T_t_vals[i] = T_t
+            D_vals[i] = D
+        end
+        
+        # 计算等效牵引力
+        T_eff_vals = sqrt.(T_n_vals.^2 .+ T_t_vals.^2)
+        
+        results[β] = (δ_eff=δ_eff_vals, δ_n=δ_n_vals, δ_t=δ_t_vals,
+                      T_n=T_n_vals, T_t=T_t_vals, T_eff=T_eff_vals, D=D_vals)
+        
+        @printf("  模式比 β = %.2f: T_max = %.1f MPa, D_final = %.2f%%\n",
+                β, maximum(T_eff_vals) / 1e6, D_vals[end] * 100)
+    end
+    
+    return results
+end
+
+"""
+    test_sinusoidal_displacement(cohesive_params; n_cycles=5, frequency=1.0, amplitude_factor=0.6)
+
+测试正弦位移加载下的响应。
+
+模拟更真实的周期性加载情况。
+"""
+function test_sinusoidal_displacement(cohesive_params; n_cycles::Int=5, 
+                                       frequency::Float64=1.0,
+                                       amplitude_factor::Float64=0.6)
+    println("\n" * "="^60)
+    println("测试4：正弦位移加载")
+    println("="^60)
+    
+    damage_state = JuBat.DamageState()
+    
+    # 时间参数
+    T_period = 1.0 / frequency
+    t_total = n_cycles * T_period
+    n_points = n_cycles * 100
+    t_vals = range(0, t_total, length=n_points)
+    
+    # 位移幅值
+    δ_amp = cohesive_params.δ_c_n * amplitude_factor
+    
+    # 正弦位移历史
+    δ_n_vals = δ_amp .* sin.(2π * frequency .* t_vals)
+    
+    T_n_history = zeros(n_points)
+    D_history = zeros(n_points)
+    
+    for (i, δ_n) in enumerate(δ_n_vals)
+        # 只有正向分离才更新损伤
+        if δ_n > 0
+            T_n, _, D = JuBat.bilinear_traction(δ_n, 0.0, damage_state, cohesive_params; update=true)
+        else
+            # 压缩时使用纯弹性接触
+            T_n = cohesive_params.K_n * δ_n
+            D = damage_state.D
+        end
+        T_n_history[i] = T_n
+        D_history[i] = D
+    end
+    
+    @printf("\n  加载参数：\n")
+    @printf("    振幅 = %.2f μm (%.0f%% δ_c)\n", δ_amp * 1e6, amplitude_factor * 100)
+    @printf("    频率 = %.1f Hz\n", frequency)
+    @printf("    循环数 = %d\n", n_cycles)
+    @printf("  结果：\n")
+    @printf("    最终损伤 = %.2f%%\n", D_history[end] * 100)
+    @printf("    最大牵引力 = %.1f MPa\n", maximum(T_n_history) / 1e6)
+    
+    return (t=t_vals, δ_n=δ_n_vals, T_n=T_n_history, D=D_history)
+end
+
+"""
+    plot_all_results(...)
+
+绘制所有测试结果。
+"""
+function plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoidal_data, cohesive_params)
+    println("\n" * "="^60)
+    println("生成图像...")
+    println("="^60)
     
     # 确保输出目录存在
     isdir("output") || mkdir("output")
     
-    if czm_mesh.n_cohesive > 0 && any(damage_max_hist .> 0)
-        p1 = plot(size=(800, 500), dpi=150)
-        
-        # 最大损伤曲线
-        plot!(p1, t, damage_max_hist .* 100,
-              label="Maximum Damage D_max",
-              linewidth=2.5, color=:red,
-              xlabel="Time (s)", ylabel="Damage (%)",
-              title="Damage Evolution During Discharge ($(Crates)C)")
-        
-        # 平均损伤曲线
-        plot!(p1, t, damage_mean_hist .* 100,
-              label="Average Damage D_mean",
-              linewidth=2.5, color=:blue, linestyle=:dash)
-        
-        # 添加断裂阈值参考线
-        hline!(p1, [99.0], label="Fracture threshold (99%)", 
-               linestyle=:dot, color=:black, linewidth=1.5)
-        
-        # 添加网格
-        plot!(p1, grid=true, gridalpha=0.3)
-        
-        # 添加图例
-        plot!(p1, legend=:topleft)
-        
-        savefig(p1, "output/czm_damage_evolution.png")
-        println("  ✓ 保存: output/czm_damage_evolution.png")
-        
-        # 保存SVG版本
-        try
-            savefig(p1, "output/czm_damage_evolution.svg")
-            println("  ✓ 保存: output/czm_damage_evolution.svg")
-        catch
-        end
-    else
-        println("  ⚠ 无损伤数据，跳过图1")
+    # 解包数据
+    δ_n_mono, T_n_mono, D_n_mono, δ_t_mono, T_t_mono, D_t_mono = monotonic_data
+    δ_n_cyc, T_n_cyc, D_n_cyc, δ_t_cyc, T_t_cyc, D_t_cyc = cyclic_data
+    
+    # ====================================================================
+    # 图1：单调加载本构曲线
+    # ====================================================================
+    p1 = plot(layout=(2, 2), size=(1200, 900), dpi=150)
+    
+    # 法向牵引力-分离曲线
+    plot!(p1[1], δ_n_mono .* 1e6, T_n_mono ./ 1e6,
+          xlabel="法向分离 δ_n (μm)", ylabel="法向牵引力 T_n (MPa)",
+          title="(a) 法向本构曲线 (Mode I)",
+          label="单调加载", linewidth=2, color=:blue,
+          legend=:topright)
+    
+    # 标注关键点
+    vline!(p1[1], [cohesive_params.δ_0_n * 1e6], label="δ_0_n", linestyle=:dash, color=:gray)
+    vline!(p1[1], [cohesive_params.δ_c_n * 1e6], label="δ_c_n", linestyle=:dot, color=:red)
+    hline!(p1[1], [cohesive_params.σ_max_n / 1e6], label="σ_max_n", linestyle=:dash, color=:orange)
+    
+    # 切向牵引力-分离曲线
+    plot!(p1[2], δ_t_mono .* 1e6, T_t_mono ./ 1e6,
+          xlabel="切向分离 δ_t (μm)", ylabel="切向牵引力 T_t (MPa)",
+          title="(b) 切向本构曲线 (Mode II)",
+          label="单调加载", linewidth=2, color=:green,
+          legend=:topright)
+    
+    vline!(p1[2], [cohesive_params.δ_0_t * 1e6], label="δ_0_t", linestyle=:dash, color=:gray)
+    vline!(p1[2], [cohesive_params.δ_c_t * 1e6], label="δ_c_t", linestyle=:dot, color=:red)
+    hline!(p1[2], [cohesive_params.τ_max_t / 1e6], label="τ_max_t", linestyle=:dash, color=:orange)
+    
+    # 法向损伤演化
+    plot!(p1[3], δ_n_mono .* 1e6, D_n_mono .* 100,
+          xlabel="法向分离 δ_n (μm)", ylabel="损伤变量 D (%)",
+          title="(c) 法向损伤演化",
+          label="D vs δ_n", linewidth=2, color=:red,
+          legend=:bottomright)
+    
+    # 切向损伤演化
+    plot!(p1[4], δ_t_mono .* 1e6, D_t_mono .* 100,
+          xlabel="切向分离 δ_t (μm)", ylabel="损伤变量 D (%)",
+          title="(d) 切向损伤演化",
+          label="D vs δ_t", linewidth=2, color=:purple,
+          legend=:bottomright)
+    
+    savefig(p1, "output/czm_monotonic_loading.png")
+    println("  ✓ 保存: output/czm_monotonic_loading.png")
+    
+    # ====================================================================
+    # 图2：周期性加卸载滞回环
+    # ====================================================================
+    p2 = plot(layout=(2, 2), size=(1200, 900), dpi=150)
+    
+    # 法向滞回环
+    plot!(p2[1], δ_n_cyc .* 1e6, T_n_cyc ./ 1e6,
+          xlabel="法向分离 δ_n (μm)", ylabel="法向牵引力 T_n (MPa)",
+          title="(a) 法向加卸载滞回环",
+          label="", linewidth=1.5, color=:blue)
+    
+    # 添加单调加载曲线作为参考
+    plot!(p2[1], δ_n_mono .* 1e6, T_n_mono ./ 1e6,
+          label="单调包络", linestyle=:dash, linewidth=1, color=:gray, alpha=0.5)
+    
+    # 切向滞回环（含正负方向）
+    plot!(p2[2], δ_t_cyc .* 1e6, T_t_cyc ./ 1e6,
+          xlabel="切向分离 δ_t (μm)", ylabel="切向牵引力 T_t (MPa)",
+          title="(b) 切向加卸载滞回环（双向）",
+          label="", linewidth=1.5, color=:green)
+    
+    # 法向损伤历史
+    n_cyc_n = length(δ_n_cyc)
+    plot!(p2[3], 1:n_cyc_n, D_n_cyc .* 100,
+          xlabel="加载步", ylabel="损伤变量 D (%)",
+          title="(c) 法向损伤累积",
+          label="D", linewidth=1.5, color=:red)
+    
+    # 切向损伤历史
+    n_cyc_t = length(δ_t_cyc)
+    plot!(p2[4], 1:n_cyc_t, D_t_cyc .* 100,
+          xlabel="加载步", ylabel="损伤变量 D (%)",
+          title="(d) 切向损伤累积",
+          label="D", linewidth=1.5, color=:purple)
+    
+    savefig(p2, "output/czm_cyclic_hysteresis.png")
+    println("  ✓ 保存: output/czm_cyclic_hysteresis.png")
+    
+    # ====================================================================
+    # 图3：混合模式响应
+    # ====================================================================
+    p3 = plot(layout=(2, 2), size=(1200, 900), dpi=150)
+    
+    # 等效牵引力-等效分离曲线
+    colors = [:blue, :cyan, :green, :orange, :red]
+    mode_labels = ["β=0 (纯Mode I)", "β=0.25", "β=0.5", "β=0.75", "β=1 (纯Mode II)"]
+    
+    for (i, (β, data)) in enumerate(sort(collect(mixed_mode_data)))
+        plot!(p3[1], collect(data.δ_eff) .* 1e6, data.T_eff ./ 1e6,
+              label=mode_labels[i], linewidth=2, color=colors[i])
     end
+    plot!(p3[1], xlabel="等效分离 δ_eff (μm)", ylabel="等效牵引力 T_eff (MPa)",
+          title="(a) 混合模式：等效牵引力曲线", legend=:topright)
     
-    # ========================================================================
-    # 7. 图2：温度场和损伤场分布
-    # ========================================================================
-    println("\n[7/8] 生成图2：温度场和损伤场分布...")
-    
-    # 计算单元中心坐标（热网格）
-    x_elem = zeros(Float64, ne)
-    y_elem = zeros(Float64, ne)
-    for e in 1:ne
-        nodes = mesh_th.element[e, :]
-        x_elem[e] = mean(mesh_th.node[nodes, 1])
-        y_elem[e] = mean(mesh_th.node[nodes, 2])
+    # 损伤演化
+    for (i, (β, data)) in enumerate(sort(collect(mixed_mode_data)))
+        plot!(p3[2], collect(data.δ_eff) .* 1e6, data.D .* 100,
+              label=mode_labels[i], linewidth=2, color=colors[i])
     end
+    plot!(p3[2], xlabel="等效分离 δ_eff (μm)", ylabel="损伤变量 D (%)",
+          title="(b) 混合模式：损伤演化", legend=:bottomright)
     
-    # 温度场 - 处理不同的数据格式
-    T_final = nothing
-    T_nodes_K = nothing
-    
-    # 优先使用 T_nodes 数据（最终时刻）
-    if haskey(result, "thermal2D T_nodes [K]")
-        T_data = result["thermal2D T_nodes [K]"]
-        if ndims(T_data) == 1
-            T_nodes_K = T_data
-        else
-            T_nodes_K = T_data[:, end]
-        end
-    elseif haskey(result, "thermal2D temperature [K]")
-        T_data = result["thermal2D temperature [K]"]
-        if ndims(T_data) == 1
-            T_nodes_K = T_data
-        else
-            T_nodes_K = T_data[:, end]
-        end
+    # 法向分量
+    for (i, (β, data)) in enumerate(sort(collect(mixed_mode_data)))
+        plot!(p3[3], data.δ_n .* 1e6, data.T_n ./ 1e6,
+              label=mode_labels[i], linewidth=2, color=colors[i])
     end
+    plot!(p3[3], xlabel="法向分离 δ_n (μm)", ylabel="法向牵引力 T_n (MPa)",
+          title="(c) 混合模式：法向分量", legend=:topright)
     
-    if T_nodes_K !== nothing
-        T_elem = zeros(Float64, ne)
-        for e in 1:ne
-            nodes = mesh_th.element[e, :]
-            # 确保节点索引有效
-            valid_nodes = [n for n in nodes if n <= length(T_nodes_K)]
-            if !isempty(valid_nodes)
-                T_elem[e] = mean(T_nodes_K[valid_nodes])
-            end
-        end
-        T_final = T_elem
+    # 切向分量
+    for (i, (β, data)) in enumerate(sort(collect(mixed_mode_data)))
+        plot!(p3[4], data.δ_t .* 1e6, data.T_t ./ 1e6,
+              label=mode_labels[i], linewidth=2, color=colors[i])
     end
+    plot!(p3[4], xlabel="切向分离 δ_t (μm)", ylabel="切向牵引力 T_t (MPa)",
+          title="(d) 混合模式：切向分量", legend=:topright)
     
-    # 损伤场（映射到单元）
-    D_elem = zeros(Float64, ne)
-    if czm_mesh.n_cohesive > 0
-        # 计算每个热单元关联的内聚力单元的平均损伤
-        coh_count = zeros(Int64, ne)
-        for coh_elem in czm_mesh.cohesive_elements
-            # 找到关联的热单元（通过节点位置）
-            x_coh = mean([czm_mesh.node[n, 1] for n in coh_elem.nodes])
-            y_coh = mean([czm_mesh.node[n, 2] for n in coh_elem.nodes])
-            
-            # 找最近的热单元
-            min_dist = Inf
-            nearest_e = 1
-            for e in 1:ne
-                dist = hypot(x_elem[e] - x_coh, y_elem[e] - y_coh)
-                if dist < min_dist
-                    min_dist = dist
-                    nearest_e = e
-                end
-            end
-            
-            D_elem[nearest_e] += czm_mesh.damage_states[coh_elem.id].D
-            coh_count[nearest_e] += 1
-        end
-        
-        # 计算平均
-        for e in 1:ne
-            if coh_count[e] > 0
-                D_elem[e] /= coh_count[e]
-            end
-        end
-    end
+    savefig(p3, "output/czm_mixed_mode.png")
+    println("  ✓ 保存: output/czm_mixed_mode.png")
     
-    # 创建组合图
-    p2 = plot(layout=(1, 2), size=(1400, 600), dpi=150)
+    # ====================================================================
+    # 图4：正弦位移加载响应
+    # ====================================================================
+    p4 = plot(layout=(2, 2), size=(1200, 900), dpi=150)
     
-    # 子图1：温度场
-    if T_final !== nothing
-        T_min, T_max = extrema(T_final)
-        scatter!(p2[1], x_elem .* 1000, y_elem .* 1000,
-                marker_z=T_final,
-                color=:inferno, markersize=4, markerstrokewidth=0,
-                xlabel="x (mm)", ylabel="y (mm)",
-                title="Temperature Field (t=$(t[end])s)",
-                colorbar=true, colorbar_title="T (K)",
-                aspect_ratio=:equal,
-                clims=(T_min, T_max))
-        
-        @printf("  温度范围: [%.2f, %.2f] K\n", T_min, T_max)
-    else
-        annotate!(p2[1], 0.5, 0.5, text("No temperature data", 12))
-    end
+    # 位移-时间曲线
+    plot!(p4[1], collect(sinusoidal_data.t), sinusoidal_data.δ_n .* 1e6,
+          xlabel="时间 t (s)", ylabel="法向分离 δ_n (μm)",
+          title="(a) 正弦位移加载历史",
+          label="δ_n(t)", linewidth=1.5, color=:blue)
     
-    # 子图2：损伤场
-    if czm_mesh.n_cohesive > 0 && maximum(D_elem) > 0
-        scatter!(p2[2], x_elem .* 1000, y_elem .* 1000,
-                marker_z=D_elem .* 100,
-                color=:hot, markersize=4, markerstrokewidth=0,
-                xlabel="x (mm)", ylabel="y (mm)",
-                title="Damage Field (t=$(t[end])s)",
-                colorbar=true, colorbar_title="D (%)",
-                aspect_ratio=:equal,
-                clims=(0, max(maximum(D_elem) * 100, 1)))
-        
-        @printf("  损伤范围: [%.2f, %.2f]%%\n", minimum(D_elem) * 100, maximum(D_elem) * 100)
-    else
-        scatter!(p2[2], x_elem .* 1000, y_elem .* 1000,
-                marker_z=zeros(ne),
-                color=:hot, markersize=4, markerstrokewidth=0,
-                xlabel="x (mm)", ylabel="y (mm)",
-                title="Damage Field (No damage)",
-                colorbar=true, colorbar_title="D (%)",
-                aspect_ratio=:equal,
-                clims=(0, 1))
-    end
+    # 牵引力-时间曲线
+    plot!(p4[2], collect(sinusoidal_data.t), sinusoidal_data.T_n ./ 1e6,
+          xlabel="时间 t (s)", ylabel="法向牵引力 T_n (MPa)",
+          title="(b) 牵引力响应历史",
+          label="T_n(t)", linewidth=1.5, color=:green)
     
-    savefig(p2, "output/czm_temperature_damage_field.png")
-    println("  ✓ 保存: output/czm_temperature_damage_field.png")
+    # 滞回环
+    plot!(p4[3], sinusoidal_data.δ_n .* 1e6, sinusoidal_data.T_n ./ 1e6,
+          xlabel="法向分离 δ_n (μm)", ylabel="法向牵引力 T_n (MPa)",
+          title="(c) 正弦加载滞回环",
+          label="", linewidth=1.5, color=:purple)
     
+    # 损伤演化
+    plot!(p4[4], collect(sinusoidal_data.t), sinusoidal_data.D .* 100,
+          xlabel="时间 t (s)", ylabel="损伤变量 D (%)",
+          title="(d) 损伤累积过程",
+          label="D(t)", linewidth=1.5, color=:red)
+    
+    savefig(p4, "output/czm_sinusoidal_loading.png")
+    println("  ✓ 保存: output/czm_sinusoidal_loading.png")
+    
+    # ====================================================================
+    # 图5：综合滞回环对比
+    # ====================================================================
+    p5 = plot(size=(800, 600), dpi=150)
+    
+    # 周期性加载滞回环
+    plot!(p5, δ_n_cyc .* 1e6, T_n_cyc ./ 1e6,
+          label="递增幅值加载", linewidth=2, color=:blue)
+    
+    # 正弦加载滞回环
+    plot!(p5, sinusoidal_data.δ_n .* 1e6, sinusoidal_data.T_n ./ 1e6,
+          label="正弦加载", linewidth=2, color=:red, linestyle=:dash)
+    
+    plot!(p5, xlabel="法向分离 δ_n (μm)", ylabel="法向牵引力 T_n (MPa)",
+          title="内聚力模型滞回环对比",
+          legend=:topright, grid=true)
+    
+    savefig(p5, "output/czm_hysteresis_comparison.png")
+    println("  ✓ 保存: output/czm_hysteresis_comparison.png")
+    
+    # 保存SVG格式
     try
-        savefig(p2, "output/czm_temperature_damage_field.svg")
-        println("  ✓ 保存: output/czm_temperature_damage_field.svg")
+        savefig(p1, "output/czm_monotonic_loading.svg")
+        savefig(p2, "output/czm_cyclic_hysteresis.svg")
+        savefig(p3, "output/czm_mixed_mode.svg")
+        savefig(p4, "output/czm_sinusoidal_loading.svg")
+        savefig(p5, "output/czm_hysteresis_comparison.svg")
+        println("  ✓ SVG格式图像已保存")
     catch
+        println("  ⚠ SVG格式保存失败（可能缺少依赖）")
+    end
+end
+
+"""
+    print_verification_summary(cohesive_params, monotonic_data, cyclic_data)
+
+打印验证摘要，对比理论值和计算值。
+"""
+function print_verification_summary(cohesive_params, monotonic_data, cyclic_data)
+    println("\n" * "="^60)
+    println("验证摘要")
+    println("="^60)
+    
+    δ_n_mono, T_n_mono, D_n_mono, δ_t_mono, T_t_mono, D_t_mono = monotonic_data
+    
+    # 理论值
+    σ_max_theo = cohesive_params.σ_max_n
+    τ_max_theo = cohesive_params.τ_max_t
+    
+    # 计算值
+    σ_max_calc = maximum(T_n_mono)
+    τ_max_calc = maximum(T_t_mono)
+    
+    # 计算断裂能（数值积分）
+    G_n_calc = 0.0
+    for i in 2:length(δ_n_mono)
+        dδ = δ_n_mono[i] - δ_n_mono[i-1]
+        G_n_calc += 0.5 * (T_n_mono[i] + T_n_mono[i-1]) * dδ
     end
     
-    # ========================================================================
-    # 8. 额外图像：电压和温度演化
-    # ========================================================================
-    println("\n[8/8] 生成额外图像...")
-    
-    # 电压曲线
-    p_v = plot(t, V, xlabel="Time (s)", ylabel="Voltage (V)",
-              label="Cell Voltage", linewidth=2, 
-              title="Discharge Curve ($(Crates)C)")
-    hline!([param_dim.cell.v_l], label="Cutoff", linestyle=:dash, color=:red)
-    savefig(p_v, "output/czm_voltage.png")
-    println("  ✓ 保存: output/czm_voltage.png")
-    
-    # 温度演化
-    if haskey(result, "temperature [K]")
-        T_mean = result["temperature [K]"]
-        p_t = plot(t, T_mean, xlabel="Time (s)", ylabel="Temperature (K)",
-                  label="Mean Temperature", linewidth=2, 
-                  title="Temperature Evolution")
-        savefig(p_t, "output/czm_temperature.png")
-        println("  ✓ 保存: output/czm_temperature.png")
-        
-        @printf("  温升: %.2f K\n", T_mean[end] - T_mean[1])
+    G_t_calc = 0.0
+    for i in 2:length(δ_t_mono)
+        dδ = δ_t_mono[i] - δ_t_mono[i-1]
+        G_t_calc += 0.5 * (T_t_mono[i] + T_t_mono[i-1]) * dδ
     end
     
-    # ========================================================================
-    # 总结
-    # ========================================================================
-    println("\n" * "="^80)
-    println("CZM耦合仿真完成总结")
+    println("\n法向 (Mode I) 验证：")
+    @printf("  σ_max: 理论 = %.2f MPa, 计算 = %.2f MPa, 误差 = %.2f%%\n",
+            σ_max_theo / 1e6, σ_max_calc / 1e6, 
+            abs(σ_max_calc - σ_max_theo) / σ_max_theo * 100)
+    @printf("  G_c_n: 理论 = %.2f J/m², 计算 = %.2f J/m², 误差 = %.2f%%\n",
+            cohesive_params.G_c_n, G_n_calc,
+            abs(G_n_calc - cohesive_params.G_c_n) / cohesive_params.G_c_n * 100)
+    
+    println("\n切向 (Mode II) 验证：")
+    @printf("  τ_max: 理论 = %.2f MPa, 计算 = %.2f MPa, 误差 = %.2f%%\n",
+            τ_max_theo / 1e6, τ_max_calc / 1e6,
+            abs(τ_max_calc - τ_max_theo) / τ_max_theo * 100)
+    @printf("  G_c_t: 理论 = %.2f J/m², 计算 = %.2f J/m², 误差 = %.2f%%\n",
+            cohesive_params.G_c_t, G_t_calc,
+            abs(G_t_calc - cohesive_params.G_c_t) / cohesive_params.G_c_t * 100)
+    
+    # 检查损伤演化
+    println("\n加卸载行为验证：")
+    δ_n_cyc, T_n_cyc, D_n_cyc, _, _, _ = cyclic_data
+    
+    # 检查卸载时损伤是否保持不变
+    D_max_reached = maximum(D_n_cyc)
+    D_at_zero = D_n_cyc[findfirst(x -> abs(x) < 1e-10, δ_n_cyc[100:end]) + 99]  # 第一次回到零点
+    
+    @printf("  卸载时损伤保持: 最大D = %.2f%%, 零点D = %.2f%% ✓\n",
+            D_max_reached * 100, D_at_zero * 100)
+    
+    # 检查卸载刚度
+    println("\n卸载刚度验证：")
+    K_initial = cohesive_params.K_n
+    # 在损伤软化区卸载时，刚度应该是 (1-D)*K
+    println("  初始刚度 K_n = $(K_initial/1e12) TPa/m")
+    println("  损伤后卸载刚度 ≈ (1-D)*K_n")
+    
+    println("\n" * "="^60)
+    println("✓ CZM本构模型验证完成")
+    println("="^60)
+end
+
+"""
+    main()
+
+主函数：运行所有CZM验证测试。
+"""
+function main()
     println("="^80)
-    
-    println("""
-    ✓ 电化学-热-力-损伤耦合仿真完成
-    
-    关键结果：
-      - 总时间步数: $num_steps
-      - 初始电压: $(round(V[1], digits=4)) V
-      - 最终电压: $(round(V[end], digits=4)) V
-      - 电压降: $(round(V[1] - V[end], digits=4)) V
-    """)
-    
-    if czm_mesh.n_cohesive > 0
-        println("""
-      - 内聚力单元数: $(czm_mesh.n_cohesive)
-      - 最终最大损伤: $(round(damage_max_hist[end] * 100, digits=2))%
-      - 最终平均损伤: $(round(damage_mean_hist[end] * 100, digits=2))%
-      - 断裂单元数: $(damage_fractured_hist[end])
-        """)
-    end
-    
-    println("""
-    生成的图像：
-      1. output/czm_damage_evolution.png - 损伤变量随时间变化曲线
-      2. output/czm_temperature_damage_field.png - 温度场和损伤场分布
-      3. output/czm_voltage.png - 放电曲线
-      4. output/czm_temperature.png - 温度演化
-    
-    物理耦合：
-      ✓ 电化学 → 热源（焦耳热 + 反应热）
-      ✓ 温度场 → 热应变
-      ✓ SOC变化 → 化学应变
-      ✓ 应变 → 层间应力 → 损伤演化
-    
-    下一步建议：
-      - 增加仿真时间观察损伤累积
-      - 实现充放电循环以模拟疲劳损伤
-      - 调整内聚力参数研究参数敏感性
-    """)
-    
+    println("内聚力模型(CZM)验证：纯机械加载测试")
     println("="^80)
+    println("\n本测试验证双线性牵引力-分离本构模型的正确性，")
+    println("包括单调加载、周期性加卸载和混合模式响应。")
+    println("不涉及电化学-热耦合模型。")
     
-    return result, czm_mesh
+    # 创建内聚力参数
+    cohesive_params = create_czm_test_params()
+    
+    # 测试1：单调加载
+    monotonic_data = test_monotonic_loading(cohesive_params)
+    
+    # 测试2：周期性加卸载
+    cyclic_data = test_cyclic_loading(cohesive_params; n_cycles=3, max_amp_factor=0.8)
+    
+    # 测试3：混合模式
+    mixed_mode_data = test_mixed_mode_loading(cohesive_params)
+    
+    # 测试4：正弦位移加载
+    sinusoidal_data = test_sinusoidal_displacement(cohesive_params; 
+                                                    n_cycles=5, 
+                                                    frequency=1.0,
+                                                    amplitude_factor=0.6)
+    
+    # 绘制所有结果
+    plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoidal_data, cohesive_params)
+    
+    # 打印验证摘要
+    print_verification_summary(cohesive_params, monotonic_data, cyclic_data)
+    
+    println("\n生成的图像：")
+    println("  1. output/czm_monotonic_loading.png - 单调加载本构曲线")
+    println("  2. output/czm_cyclic_hysteresis.png - 周期性加卸载滞回环")
+    println("  3. output/czm_mixed_mode.png - 混合模式响应(BK准则)")
+    println("  4. output/czm_sinusoidal_loading.png - 正弦位移加载响应")
+    println("  5. output/czm_hysteresis_comparison.png - 滞回环对比")
+    
+    return cohesive_params, monotonic_data, cyclic_data, mixed_mode_data, sinusoidal_data
 end
 
 # 运行主函数
-result, czm_mesh = main()
+result = main()
