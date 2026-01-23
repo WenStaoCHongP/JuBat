@@ -504,7 +504,7 @@ end
 - 放电时 (I_total > 0)：如果单元的 OCV <= V_MIN，该单元已完全放电
 - 静置时 (I_total ≈ 0)：所有单元都是活跃的
 """
-function _detect_cutoff_elements(coeffs, ne::Int, V_MIN::Float64, V_MAX::Float64, I_total::Float64; phi_scale::Float64=1.0)
+function _detect_cutoff_elements(coeffs, ne::Int, V_MIN::Float64, V_MAX::Float64, I_total::Float64, phi_scale::Float64)
     active_mask = trues(ne)
     
     # 计算各单元的开路电压 (OCV = C1，当 I=0 时的电压)
@@ -759,7 +759,7 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
     coeffs = _compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref, debug_mode)
     
     # 4. 检测达到截止电压的单元（严格模式）
-    active_mask, n_cutoff, cutoff_info = _detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total; phi_scale=phi_scale)
+    active_mask, n_cutoff, cutoff_info = _detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
     
     # 5. 初始化电流猜测
     I_e = _initialize_currents(ne, w, I_total, x_prev)
