@@ -267,14 +267,28 @@ function ChooseCell(CellType::String="LG M50")
         2. "Northrop"  for the Northrop cells from LIONSIMBA
     Output - param_dim::Params for all param_dim parameters
 """
+    # Use Core.eval to include and get param_dim in correct world
+    local param_dim
     if CellType == "LG M50"
-        include("../src/parameters/LGM50.jl") # pathof(JuBat)
+        param_dim = Core.eval(@__MODULE__, quote
+            include("../src/parameters/LGM50.jl")
+            param_dim
+        end)
     elseif CellType == "Northrop"
-        include("../src/parameters/Northrop.jl") # pathof(JuBat)
+        param_dim = Core.eval(@__MODULE__, quote
+            include("../src/parameters/Northrop.jl")
+            param_dim
+        end)
     elseif CellType == "Enertech"
-        include("../src/parameters/Enertech.jl") # pathof(JuBat)
+        param_dim = Core.eval(@__MODULE__, quote
+            include("../src/parameters/Enertech.jl")
+            param_dim
+        end)
     elseif CellType == "Jellyroll"
-        include(joinpath(@__DIR__, "parameters", "Jellyroll.jl"))
+        param_dim = Core.eval(@__MODULE__, quote
+            include(joinpath(@__DIR__, "parameters", "Jellyroll.jl"))
+            param_dim
+        end)
     end
     param_dim.PE.eps_s = 1 - param_dim.PE.eps - param_dim.PE.eps_fi
     param_dim.NE.eps_s = 1 - param_dim.NE.eps - param_dim.NE.eps_fi

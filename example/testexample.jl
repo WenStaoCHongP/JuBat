@@ -1,31 +1,33 @@
 """
-测试案例：Jellyroll电池多SPMe并行电化学-热-力耦合仿真
+测试案例：单元放电截止电压逻辑验证
 
 功能：
-- 使用最新的多SPMe并行架构（每个热单元对应独立的SPMe模型）
-- SPMe电化学模型 + 二维分布式热模型
-- Jellyroll螺旋结构网格（collector-seeded）
-- 逐单元电流分布（非线性分流求解）
-- 逐单元热源计算（精确过电位和dUdT）
-- 保留详细调试信息
-- 启用力学耦合，提取热/扩散应力分布
+- 测试当有单元放电达到截止电压时的系统行为
+- 验证是整个系统break还是单个单元电流归零
+- 使用多SPMe并行架构（每个热单元对应独立的SPMe模型）
+- 延长仿真时间以观察截止现象
 
-日期：2025-12-31
+测试目标：
+1. 观察各单元SOC和电压的演化
+2. 检测何时有单元达到截止电压
+3. 验证截止后的电流分布变化
+4. 对比整体系统break vs 单元电流归零的行为
+
+日期：2025-01-23
 """
 
 using LinearAlgebra, SparseArrays, Statistics, Plots, Printf
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
-using .JuBat
 
 function main()
     println("="^80)
-    println("Jellyroll电池多SPMe并行电化学-热耦合仿真")
+    println("截止电压逻辑测试：单元放电达到截止时的系统行为")
     println("="^80)
     
     # ========================================================================
     # 1. 参数设置
     # ========================================================================
-    println("\n[1/6] 参数设置...")
+    println("\n[1/7] 参数设置...")
     
     # 电池参数（Jellyroll结构）
     param_dim = JuBat.ChooseCell("Jellyroll")
@@ -35,12 +37,12 @@ function main()
     # 仿真选项
     opt = JuBat.Option()
     
-    # 电化学参数
-    Crates = 1.0  # C-rate
+    # 电化学参数 - 使用较高的C-rate加速放电
+    Crates = 2.0  # 2C放电，加速达到截止电压
     i = 5 * Crates  # 电流 (A)
     opt.Current = x -> i
     opt.model = "SPMe"
-    opt.Nn = 10  # 负极网格数（减少以加速调试）
+    opt.Nn = 10  # 负极网格数
     opt.Ns = 5   # 隔膜网格数
     opt.Np = 10  # 正极网格数
     opt.Nrn = 10 # 负极颗粒径向网格数
@@ -49,9 +51,10 @@ function main()
     opt.dimension = 1
     opt.mechanicalmodel = "full"
     
-    # 时间设置
-    opt.time = [0.0, 60]  # 仿真时间 (s)
-    opt.dt = [0.5, 10]    # 时间步长范围 [dt_min, dt_max] (s)
+    # 时间设置 - 延长仿真时间以达到截止电压
+    # 2C放电约需要30分钟（1800秒）完全放完
+    opt.time = [0.0, 2000]  # 仿真时间 (s) - 足够长以观察截止
+    opt.dt = [0.5, 10]      # 时间步长范围 [dt_min, dt_max] (s)
     opt.dtType = "auto"     # 自动时间步长
     opt.jacobi = "update"
     opt.solveType = "Crank-Nicolson"
@@ -60,26 +63,27 @@ function main()
     opt.thermal_enabled = true
     opt.thermalmodel = "distributed2D"
     opt.thermal_dim = "2D"
-    opt.cool_method = "tab" #tab or surface
+    opt.cool_method = "tab"
     
     # ✨ 关键：启用多SPMe并行模式
     opt.per_element_spme = true
     
     println("✓ 参数设置完成")
     @printf("  电流: %.2f A (%.2f C)\n", i, Crates)
-    @printf("  仿真时间: %.1f 秒\n", opt.time[end])
+    @printf("  仿真时间: %.1f 秒 (约 %.1f 分钟)\n", opt.time[end], opt.time[end]/60)
+    @printf("  截止电压: %.2f V\n", param_dim.cell.v_l)
     @printf("  模式: 多SPMe并行 ✨\n")
     
     # ========================================================================
     # 2. 创建案例和网格
     # ========================================================================
-    println("\n[2/6] 创建案例和Jellyroll网格...")
+    println("\n[2/7] 创建案例和Jellyroll网格...")
     
     case = JuBat.SetCase(param_dim, opt)
     
     # 创建Jellyroll collector-seeded网格
-    # nθ: 周向单元数，影响角度分辨率和计算量
-    nθ = 80  # 高分辨率周向单元数
+    # 使用较少的单元数以便更清晰地观察单元级别的行为
+    nθ = 40  # 周向单元数（减少以便观察）
     mesh_th = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, gsorder=2)
     case.mesh["thermal2D"] = mesh_th
     
@@ -91,7 +95,7 @@ function main()
     @printf("  总单元数 ne: %d\n", ne)
     @printf("  总节点数 nT: %d\n", nT)
     
-    # 计算元素中心坐标和半径（用于后处理）
+    # 计算元素中心坐标和半径
     centers = JuBat.jellyroll_element_centers(mesh_th)
     r_centers = sqrt.(centers[:,1].^2 .+ centers[:,2].^2)
     θ_centers = atan.(centers[:,2], centers[:,1])
@@ -101,7 +105,7 @@ function main()
     @printf("  内半径 Rin: %.4f m\n", Rin)
     @printf("  外半径 Rout: %.4f m\n", Rout)
     
-    # 预计算 layer_weights（用于集流体热源）
+    # 预计算 layer_weights
     println("  计算 layer_weights...")
     fks = try
         w = JuBat.jellyroll_get_layer_weights(mesh_th)
@@ -114,7 +118,7 @@ function main()
         println("  ✓ layer_weights计算完成")
     end
 
-    # 预计算热单元面积，用于电流守恒分析
+    # 预计算热单元面积
     element_areas = let mesh = mesh_th
         A = zeros(Float64, size(mesh.element, 1))
         ngs = length(mesh.gs.detJ)
@@ -126,60 +130,75 @@ function main()
     end
     
     # ========================================================================
-    # 3. 运行求解器（使用多SPMe模式）
+    # 3. 运行求解器
     # ========================================================================
-    println("\n[3/6] 运行多SPMe并行求解器...")
-    println("  这将自动使用 CallModel_MultiSPMe 和 ModelInitialisation_MultiSPMe")
-    # 诊断初始状态
-    println("\n[诊断] 初始状态分析:")
-
+    println("\n[3/7] 运行多SPMe并行求解器...")
+    println("  观察截止电压行为...")
+    
     # 获取初始化的状态向量
     if case.opt.per_element_spme
-        # 多SPMe模式
-        y0 = ModelInitialisation_MultiSPMe(case)
+        y0 = JuBat.ModelInitialisation_MultiSPMe(case)
     else
-        # 简化耦合模式
-        y0 = ModelInitialisation_SimpleCoupling(case)
+        y0 = JuBat.ModelInitialisation_SimpleCoupling(case)
     end
 
-    # 提取颗粒浓度
+    # 提取初始颗粒浓度
     Nrn = case.mesh["negative particle"].nlen
     Nrp = case.mesh["positive particle"].nlen
 
-    csn_init = y0[1:Nrn]  # 负极浓度（归一化）
-    csp_init = y0[(Nrn+1):(Nrn+Nrp)]  # 正极浓度（归一化）
+    csn_init = y0[1:Nrn]
+    csp_init = y0[(Nrn+1):(Nrn+Nrp)]
 
     theta_n = mean(csn_init)
     theta_p = mean(csp_init)
 
-    @printf("  负极 theta = %.4f (cs0 = %.4f)\n", theta_n, case.param.NE.cs0)
-    @printf("  正极 theta = %.4f (cs0 = %.4f)\n", theta_p, case.param.PE.cs0)
+    @printf("  负极 theta = %.4f\n", theta_n)
+    @printf("  正极 theta = %.4f\n", theta_p)
 
     # 计算理论 OCV
-    # 调用参数闭包需通过 invokelatest，避免 world-age 错误
     U_p = Base.invokelatest(case.param_dim.PE.U, theta_p)
     U_n = Base.invokelatest(case.param_dim.NE.U, theta_n)
     OCV = U_p - U_n
-    @printf("  理论 OCV = %.4f V\n", OCV)
+    @printf("  初始 OCV = %.4f V\n", OCV)
+    @printf("  截止电压 = %.4f V\n", param_dim.cell.v_l)
+    
     result = nothing
+    termination_reason = "unknown"
+    
     try
-        # 调用Solve，自动使用多SPMe模式
         result = JuBat.Solve(case)
         
-        println("✓ 求解成功完成")
+        # 检查终止原因
+        if result !== nothing
+            t = result["time [s]"]
+            V = result["cell voltage [V]"]
+            
+            if V[end] <= param_dim.cell.v_l + 0.01
+                termination_reason = "voltage_cutoff"
+                println("✓ 求解因达到截止电压而终止")
+            elseif t[end] >= opt.time[end] - 0.1
+                termination_reason = "time_limit"
+                println("✓ 求解因达到时间限制而终止")
+            else
+                termination_reason = "other"
+                println("✓ 求解因其他原因终止")
+            end
+        end
         
     catch e
         println("✗ 求解失败: $e")
         rethrow(e)
     end
+    
     if result === nothing
         error("Solve(case) did not return a result; aborting post-processing")
     end
     
     # ========================================================================
-    # 4. 结果提取和诊断
+    # 4. 截止电压行为分析
     # ========================================================================
-    println("\n[4/6] 提取结果和诊断...")
+    println("\n[4/7] 截止电压行为分析...")
+    println("="^60)
     
     # 基本变量
     t = result["time [s]"]
@@ -187,568 +206,293 @@ function main()
     I_total = result["cell current [A]"]
     
     num_steps = length(t)
-    println("✓ 结果提取完成")
-    @printf("  总时间步数: %d\n", num_steps)
+    println("  总时间步数: $num_steps")
     @printf("  初始电压: %.4f V\n", V[1])
     @printf("  最终电压: %.4f V\n", V[end])
-    @printf("  电压降: %.4f V\n", V[1] - V[end])
-     # ========================================================================
-    # 4.5. 计算每个时间步的应力场
-    # ========================================================================
-    println("\n[4.5/7] 计算时间历程应力场...")
+    @printf("  截止电压: %.4f V\n", param_dim.cell.v_l)
+    @printf("  仿真结束时间: %.1f s\n", t[end])
+    @printf("  设定结束时间: %.1f s\n", opt.time[end])
     
-    # 初始化应力历史数组
-    stress_thermal_max_hist = zeros(Float64, num_steps)
-    stress_diffusion_max_hist = zeros(Float64, num_steps)
-    stress_total_max_hist = zeros(Float64, num_steps)
-    
-    # 获取SOC和温度历史
-    if haskey(result, "thermal2D element soc_n") && (haskey(result, "thermal2D temperature [K]") || haskey(result, "thermal2D T_nodes [K]"))
-        soc_n_hist = result["thermal2D element soc_n"]
-        soc_p_hist = result["thermal2D element soc_p"]
-        T_nodes_hist_K = result["thermal2D temperature [K]"] 
-        println("  计算$(num_steps)个时间步的应力场...")
-        
-        for step in 1:num_steps
-            try
-                # 准备当前时刻的变量
-                variables_step = Dict{String, Union{Array{Float64},Float64}}()
-                
-                # 温度场
-                T_nodes_K = T_nodes_hist_K[:, step]
-                T_ref = case.param_dim.scale.T_ref
-                variables_step["T_nodes"] = T_nodes_K ./ T_ref
-                
-                # SOC数据
-                variables_step["thermal2D element soc_n"] = soc_n_hist[:, step]
-                variables_step["thermal2D element soc_p"] = soc_p_hist[:, step]
-                
-                # 计算应力
-                variables_step = JuBat.thermal_diffusion_stress_2D(case, variables_step)
-                
-                # 提取峰值应力
-                σ_thermal = variables_step["thermal stress vonMises"]
-                σ_diffusion = variables_step["diffusion stress vonMises only"]
-                σ_total = variables_step["diffusion stress vonMises"]
-                
-                stress_thermal_max_hist[step] = maximum(σ_thermal)   # MPa
-                stress_diffusion_max_hist[step] = maximum(σ_diffusion)   # MPa
-                stress_total_max_hist[step] = maximum(σ_total)   # MPa
-            catch e
-                @warn "时间步 $step 应力计算失败: $e"
-                stress_thermal_max_hist[step] = NaN
-                stress_diffusion_max_hist[step] = NaN
-                stress_total_max_hist[step] = NaN
-            end
-        end
-        println("\n  ✓ 应力历史计算完成")
-        
-        @printf("  热应力峰值范围: [%.2f, %.2f] MPa\n", 
-                minimum(filter(!isnan, stress_thermal_max_hist)), 
-                maximum(filter(!isnan, stress_thermal_max_hist)))
-        @printf("  扩散应力峰值范围: [%.2f, %.2f] MPa\n", 
-                minimum(filter(!isnan, stress_diffusion_max_hist)), 
-                maximum(filter(!isnan, stress_diffusion_max_hist)))
-        @printf("  总应力峰值范围: [%.2f, %.2f] MPa\n", 
-                minimum(filter(!isnan, stress_total_max_hist)), 
-                maximum(filter(!isnan, stress_total_max_hist)))
+    # 判断终止原因
+    println("\n  【终止原因分析】")
+    if termination_reason == "voltage_cutoff"
+        println("  ★ 系统因整体电压达到截止电压 ($(param_dim.cell.v_l) V) 而终止")
+        println("    这表明当前实现是：整个系统 break")
+    elseif termination_reason == "time_limit"
+        println("  ★ 系统完成了全部仿真时间，未触发截止电压")
+        println("    需要更长的仿真时间或更高的C-rate来触发截止")
     else
-        @warn "未找到SOC或温度历史数据，跳过时间历程应力计算"
-    end
-    # 温度
-    if haskey(result, "temperature [K]")
-        T_mean = result["temperature [K]"]
-        @printf("  初始温度: %.2f K (%.2f °C)\n", T_mean[1], T_mean[1] - 273.15)
-        @printf("  最终温度: %.2f K (%.2f °C)\n", T_mean[end], T_mean[end] - 273.15)
-        @printf("  温升: %.2f K\n", T_mean[end] - T_mean[1])
+        println("  ★ 系统因其他原因终止")
     end
     
-    # 多SPMe特有：逐单元变量
-    println("\n  逐单元变量统计（最终时刻）:")
+    # ========================================================================
+    # 5. 单元级别分析
+    # ========================================================================
+    println("\n[5/7] 单元级别截止状态分析...")
+    println("="^60)
     
     if haskey(result, "thermal2D element current")
         I_e_hist = result["thermal2D element current"]
-        I_e_final_nd = I_e_hist[:, end]
         I_scale = case.param.scale.I_typ
-        I_e_final = I_e_final_nd .* I_scale
         
-        @printf("    电流分布:\n")
-        @printf("      平均: %.4e A\n", mean(I_e_final))
-        @printf("      标准差: %.4e A (%.1f%%)\n", std(I_e_final), 100*std(I_e_final)/mean(I_e_final))
-        @printf("      极差: [%.4e, %.4e] A\n", minimum(I_e_final), maximum(I_e_final))
+        println("\n  【逐单元电流演化分析】")
         
-        # 验证电流守恒
-        w = element_areas ./ sum(element_areas)
-        I_sum = sum(w .* I_e_final_nd)
-        I_total_nd = I_total[end] / I_scale
-        @printf("      电流守恒: I_total_nd=%.4e, Σ(w·I_e)=%.4e, 误差=%.2e\n",
-            I_total_nd, I_sum, abs(I_total_nd - I_sum))
-    else
-        println("    ⚠ 未找到 thermal2D element current")
-    end
-    
-    if haskey(result, "thermal2D eta_n_e")
-        eta_n_hist = result["thermal2D eta_n_e"]
-        eta_n_final = eta_n_hist[:, end]
-        @printf("    负极过电位 η_n:\n")
-        @printf("      平均: %.4e V\n", mean(eta_n_final))
-        @printf("      极差: [%.4e, %.4e] V\n", minimum(eta_n_final), maximum(eta_n_final))
-    end
-    
-    if haskey(result, "thermal2D eta_p_e")
-        eta_p_hist = result["thermal2D eta_p_e"]
-        eta_p_final = eta_p_hist[:, end]
-        @printf("    正极过电位 η_p:\n")
-        @printf("      平均: %.4e V\n", mean(eta_p_final))
-        @printf("      极差: [%.4e, %.4e] V\n", minimum(eta_p_final), maximum(eta_p_final))
-    end
-    
-    if haskey(result, "heat_source_fields")
-        q_hist = result["heat_source_fields"]
-        q_final = q_hist[:, end]
-        @printf("    热源分布:\n")
-        @printf("      平均: %.4e W/m³\n", mean(q_final))
-        @printf("      标准差: %.4e W/m³ (%.1f%%)\n", std(q_final), 100*std(q_final)/abs(mean(q_final)))
-        @printf("      极差: [%.4e, %.4e] W/m³\n", minimum(q_final), maximum(q_final))
-    end
-    
-    # ========================================================================
-    # 5. 绘图（基本时间历程）
-    # ========================================================================
-    println("\n[5/6] 生成基本图像...")
-    
-    # 图1：电压-时间
-    p1 = plot(t, V, xlabel="Time (s)", ylabel="Voltage (V)", 
-              label="Cell Voltage", linewidth=2, title="Discharge Curve")
-    hline!([param_dim.cell.v_l], label="Cutoff", linestyle=:dash, color=:red)
-    savefig(p1, "testexample_voltage.png")
-    println("  ✓ 保存: testexample_voltage.png")
-    
-    # 图2：温度-时间
-    if haskey(result, "temperature [K]")
-        T_mean = result["temperature [K]"]
-        p2 = plot(t, T_mean, xlabel="Time (s)", ylabel="Temperature (K)", 
-                  label="Mean Temperature", linewidth=2, title="Temperature Evolution")
-        savefig(p2, "testexample_temperature.png")
-        println("  ✓ 保存: testexample_temperature.png")
-    end
-    
-    # 图3：逐单元电流演化（热图）
-    if !all(isnan.(stress_total_max_hist))
-        p3 = plot(xlabel="Time (s)", ylabel="Stress (MPa)", 
-                  title="Peak Stress Evolution",
-                  size=(800, 600), linewidth=2.5,
-                  legend=:bottomright)
-        
-        # 热应力
-        plot!(p3, t, stress_thermal_max_hist, 
-              label="Thermal Stress (max)", 
-              color=:red, linestyle=:dash, linewidth=2)
-        
-        # 扩散应力
-        plot!(p3, t, stress_diffusion_max_hist, 
-              label="Diffusion Stress (max)", 
-              color=:blue, linestyle=:dash, linewidth=2)
-        
-        # 总应力
-        plot!(p3, t, stress_total_max_hist, 
-              label="Total Stress (max)", 
-              color=:black, linewidth=3)
-        
-        savefig(p3, "testexample_stress_evolution.png")
-        println("  ✓ 保存: testexample_stress_evolution.png")
-        
-        # 应力分量占比
-        p3b = plot(xlabel="Time (s)", ylabel="Stress Ratio (%)", 
-                   title="Stress Component Ratio",
-                   size=(800, 600), linewidth=2.5,
-                   legend=:right)
-        
-        # 计算占比
-        thermal_ratio = 100 .* stress_thermal_max_hist ./ (stress_thermal_max_hist .+ stress_diffusion_max_hist)
-        diffusion_ratio = 100 .* stress_diffusion_max_hist ./ (stress_thermal_max_hist .+ stress_diffusion_max_hist)
-        
-        plot!(p3b, t, thermal_ratio, 
-              label="Thermal %", 
-              color=:red, linewidth=2.5, fillrange=0, fillalpha=0.3)
-        plot!(p3b, t, diffusion_ratio, 
-              label="Diffusion %", 
-              color=:blue, linewidth=2.5)
-        
-        savefig(p3b, "testexample_stress_ratio.png")
-        println("  ✓ 保存: testexample_stress_ratio.png")
-    end
-
-    if haskey(result, "thermal2D element current")
-        I_e_hist = result["thermal2D element current"]
-        
-        # 选择若干时间点绘制分布
-        n_snapshots = min(5, num_steps)
+        # 找出电流变化最大的时刻
+        n_snapshots = min(10, num_steps)
         idx_snapshots = round.(Int, range(1, num_steps, length=n_snapshots))
         
-        p4 = plot(layout=(1, n_snapshots), size=(400*n_snapshots, 400))
-        for (i, idx) in enumerate(idx_snapshots)
-            I_e_snap = I_e_hist[:, idx]
-            
-            # 绘制径向-角度分布
-            scatter!(p4[i], θ_centers, r_centers, 
-                     marker_z=I_e_snap, 
-                     markersize=4,
-                     xlabel="θ (rad)", ylabel="r (m)",
-                     title="t=$(t[idx]) s",
-                     color=:viridis,
-                     colorbar=(i == n_snapshots),
-                     legend=false)
-        end
-        plot!(p4, plot_title="Element Current Distribution")
-        savefig(p4, "testexample_current_snapshots.png")
-        println("  ✓ 保存: testexample_current_snapshots.png")
+        println("\n  时间点采样分析：")
+        println("  " * "-"^70)
+        @printf("  %10s | %12s | %12s | %12s | %10s\n", 
+                "时间(s)", "电流均值(A)", "电流标准差", "零电流单元", "电压(V)")
+        println("  " * "-"^70)
         
-        # 绘制电流变异系数演化（异质性指标）
-        cv_I = [std(I_e_hist[:, i]) / mean(I_e_hist[:, i]) for i in 1:num_steps]
+        zero_current_threshold = 1e-6  # 判定为零电流的阈值
+        
+        for idx in idx_snapshots
+            I_e_snap = I_e_hist[:, idx] .* I_scale
+            n_zero = sum(abs.(I_e_snap) .< zero_current_threshold)
+            
+            @printf("  %10.1f | %12.4e | %12.4e | %12d | %10.4f\n",
+                    t[idx], mean(I_e_snap), std(I_e_snap), n_zero, V[idx])
+        end
+        println("  " * "-"^70)
+        
+        # 检查是否有单元电流归零但系统继续运行
+        println("\n  【单元电流归零检测】")
+        
+        # 在每个时间步检查是否有电流接近零的单元
+        cutoff_detected_step = -1
+        cutoff_element_count = 0
+        
+        for step in 1:num_steps
+            I_e_step = I_e_hist[:, step] .* I_scale
+            n_near_zero = sum(abs.(I_e_step) .< zero_current_threshold)
+            
+            if n_near_zero > 0 && cutoff_detected_step < 0
+                cutoff_detected_step = step
+                cutoff_element_count = n_near_zero
+            end
+        end
+        
+        if cutoff_detected_step > 0
+            println("  ★ 首次检测到单元电流归零:")
+            @printf("    时间步: %d (t = %.1f s)\n", cutoff_detected_step, t[cutoff_detected_step])
+            @printf("    零电流单元数: %d / %d\n", cutoff_element_count, ne)
+            @printf("    此时系统电压: %.4f V\n", V[cutoff_detected_step])
+            
+            # 检查系统是否继续运行
+            if cutoff_detected_step < num_steps
+                remaining_steps = num_steps - cutoff_detected_step
+                @printf("    系统在检测到单元截止后继续运行了 %d 步\n", remaining_steps)
+                println("    → 这表明实现支持：单元电流归零而系统继续运行")
+            end
+        else
+            println("  未检测到任何单元电流归零的情况")
+            println("  可能原因：")
+            println("    1. 所有单元同时达到截止电压")
+            println("    2. 系统在单元截止前就因整体电压截止而终止")
+        end
+        
+        # 检查截止相关的变量
+        if haskey(result, "thermal2D n_cutoff_elements")
+            n_cutoff_hist = result["thermal2D n_cutoff_elements"]
+            println("\n  【截止单元数历史】")
+            println("  注：如果此数据存在，表明系统支持单元级别截止追踪")
+            
+            max_cutoff = maximum(n_cutoff_hist)
+            @printf("  最大截止单元数: %d\n", max_cutoff)
+            
+            if max_cutoff > 0
+                first_cutoff_idx = findfirst(n_cutoff_hist .> 0)
+                @printf("  首次出现截止: t = %.1f s\n", t[first_cutoff_idx])
+            end
+        end
+        
+        if haskey(result, "thermal2D active_mask")
+            active_mask_hist = result["thermal2D active_mask"]
+            n_active_final = sum(active_mask_hist[:, end])
+            @printf("\n  最终活跃单元数: %d / %d\n", n_active_final, ne)
+        end
+        
+    else
+        println("  ⚠ 未找到 thermal2D element current 数据")
+    end
+    
+    # SOC分析
+    if haskey(result, "thermal2D element soc_n") && haskey(result, "thermal2D element soc_p")
+        soc_n_hist = result["thermal2D element soc_n"]
+        soc_p_hist = result["thermal2D element soc_p"]
+        
+        println("\n  【单元SOC分布分析】（最终时刻）")
+        soc_n_final = soc_n_hist[:, end]
+        soc_p_final = soc_p_hist[:, end]
+        
+        @printf("  负极SOC: 均值=%.4f, 范围=[%.4f, %.4f]\n", 
+                mean(soc_n_final), minimum(soc_n_final), maximum(soc_n_final))
+        @printf("  正极SOC: 均值=%.4f, 范围=[%.4f, %.4f]\n", 
+                mean(soc_p_final), minimum(soc_p_final), maximum(soc_p_final))
+        
+        # SOC非均匀性分析
+        soc_spread_n = maximum(soc_n_final) - minimum(soc_n_final)
+        soc_spread_p = maximum(soc_p_final) - minimum(soc_p_final)
+        
+        @printf("  SOC分布差异: 负极=%.4f, 正极=%.4f\n", soc_spread_n, soc_spread_p)
+        
+        if soc_spread_n > 0.01 || soc_spread_p > 0.01
+            println("  → SOC存在明显的空间不均匀性，这可能导致某些单元先达到截止")
+        end
+    end
+    
+    # ========================================================================
+    # 6. 绘图
+    # ========================================================================
+    println("\n[6/7] 生成诊断图像...")
+    
+    # 图1：电压-时间曲线（标注截止电压）
+    p1 = plot(t, V, xlabel="Time (s)", ylabel="Voltage (V)", 
+              label="Cell Voltage", linewidth=2, title="Discharge Curve with Cutoff Analysis",
+              legend=:topright)
+    hline!([param_dim.cell.v_l], label="Cutoff Voltage ($(param_dim.cell.v_l) V)", 
+           linestyle=:dash, color=:red, linewidth=2)
+    
+    # 标注终止点
+    scatter!([t[end]], [V[end]], label="Termination Point", 
+             markersize=8, color=:red, markershape=:star5)
+    
+    savefig(p1, "testexample_cutoff_voltage.png")
+    println("  ✓ 保存: testexample_cutoff_voltage.png")
+    
+    # 图2：逐单元电流演化
+    if haskey(result, "thermal2D element current")
+        I_e_hist = result["thermal2D element current"]
+        I_scale = case.param.scale.I_typ
+        
+        # 选择几个代表性单元
+        sample_elements = [1, round(Int, ne/4), round(Int, ne/2), round(Int, 3*ne/4), ne]
+        
+        p2 = plot(xlabel="Time (s)", ylabel="Element Current (A)", 
+                  title="Element Current Evolution",
+                  legend=:topright)
+        
+        for e in sample_elements
+            plot!(p2, t, I_e_hist[e, :] .* I_scale, 
+                  label="Element $e", linewidth=1.5)
+        end
+        
+        hline!([0.0], label="Zero Current", linestyle=:dash, color=:black)
+        
+        savefig(p2, "testexample_element_currents.png")
+        println("  ✓ 保存: testexample_element_currents.png")
+        
+        # 图3：电流分布热图
+        p3 = heatmap(t, 1:ne, I_e_hist .* I_scale,
+                     xlabel="Time (s)", ylabel="Element Index",
+                     title="Element Current Distribution (A)",
+                     color=:viridis)
+        
+        savefig(p3, "testexample_current_heatmap.png")
+        println("  ✓ 保存: testexample_current_heatmap.png")
+    end
+    
+    # 图4：SOC演化
+    if haskey(result, "thermal2D element soc_n") && haskey(result, "thermal2D element soc_p")
+        soc_n_hist = result["thermal2D element soc_n"]
+        soc_p_hist = result["thermal2D element soc_p"]
+        
+        # SOC均值和范围
+        soc_n_mean = [mean(soc_n_hist[:, i]) for i in 1:num_steps]
+        soc_n_min = [minimum(soc_n_hist[:, i]) for i in 1:num_steps]
+        soc_n_max = [maximum(soc_n_hist[:, i]) for i in 1:num_steps]
+        
+        soc_p_mean = [mean(soc_p_hist[:, i]) for i in 1:num_steps]
+        soc_p_min = [minimum(soc_p_hist[:, i]) for i in 1:num_steps]
+        soc_p_max = [maximum(soc_p_hist[:, i]) for i in 1:num_steps]
+        
+        p4 = plot(layout=(2,1), size=(800, 600))
+        
+        # 负极SOC
+        plot!(p4[1], t, soc_n_mean, ribbon=(soc_n_mean .- soc_n_min, soc_n_max .- soc_n_mean),
+              label="Negative Electrode", fillalpha=0.3, linewidth=2,
+              xlabel="", ylabel="SOC (θ)", title="Negative Electrode SOC")
+        
+        # 正极SOC
+        plot!(p4[2], t, soc_p_mean, ribbon=(soc_p_mean .- soc_p_min, soc_p_max .- soc_p_mean),
+              label="Positive Electrode", fillalpha=0.3, linewidth=2, color=:red,
+              xlabel="Time (s)", ylabel="SOC (θ)", title="Positive Electrode SOC")
+        
+        savefig(p4, "testexample_soc_evolution.png")
+        println("  ✓ 保存: testexample_soc_evolution.png")
+    end
+    
+    # 图5：电流异质性演化
+    if haskey(result, "thermal2D element current")
+        I_e_hist = result["thermal2D element current"]
+        
+        cv_I = [std(I_e_hist[:, i]) / max(abs(mean(I_e_hist[:, i])), 1e-10) for i in 1:num_steps]
+        
         p5 = plot(t, cv_I .* 100, xlabel="Time (s)", ylabel="CV of Current (%)", 
-                  label="Heterogeneity", linewidth=2, 
+                  label="Current Heterogeneity", linewidth=2, 
                   title="Current Distribution Heterogeneity")
+        
         savefig(p5, "testexample_current_heterogeneity.png")
         println("  ✓ 保存: testexample_current_heterogeneity.png")
     end
     
     # ========================================================================
-    # 6. 最终温度场可视化（高分辨率）
+    # 7. 总结
     # ========================================================================
-    println("\n[6/7] 生成最终温度场图像...")
-    
-    if haskey(result, "thermal2D T_nodes [K]")
-        T_nodes_final = result["thermal2D T_nodes [K]"]
-        
-        # 使用节点坐标
-        xnod = mesh_th.node[:,1]
-        ynod = mesh_th.node[:,2]
-        
-        # 创建插值网格
-        nx, ny = 400, 400  # 降低分辨率以加速
-        xs = range(minimum(xnod), stop=maximum(xnod), length=nx)
-        ys = range(minimum(ynod), stop=maximum(ynod), length=ny)
-        
-        # Gaussian核插值
-        dx = step(xs); dy = step(ys)
-        sigma = 1.0 * max(dx, dy)
-        two_sigma2 = 2.0 * sigma^2
-        
-        Z = fill(NaN, ny, nx)
-        
-        println("  插值温度场到规则网格...")
-        @inbounds for j in 1:ny
-            yv = ys[j]
-            for i in 1:nx
-                xv = xs[i]
-                r = sqrt(xv^2 + yv^2)
-                if r < Rin || r > Rout
-                    continue
-                end
-                
-                dxv = xnod .- xv
-                dyv = ynod .- yv
-                d2 = dxv .* dxv .+ dyv .* dyv
-                w = exp.(-d2 ./ two_sigma2)
-                s = sum(w)
-                
-                if s > 0
-                    Z[j,i] = sum(w .* T_nodes_final) / s
-                end
-            end
-        end
-        
-        # 计算颜色范围
-        valid = .!isnan.(Z)
-        if any(valid)
-            Zvals = Z[valid]
-            vmin = minimum(Zvals)
-            vmax = maximum(Zvals)
-            
-            println("  ✓ 插值完成")
-            @printf("    温度范围: [%.2f, %.2f] K\n", vmin, vmax)
-            
-            # 绘制
-            p5 = plot(size=(800, 800), title="Final Temperature Field")
-            heatmap!(p5, xs, ys, Z; 
-                     aspect_ratio=1, 
-                     color=:inferno, 
-                     colorbar=true, 
-                     xlabel="x (m)", 
-                     ylabel="y (m)",
-                     clims=(vmin, vmax))
-            contour!(p5, xs, ys, Z; 
-                     levels=10, 
-                     linewidth=1, 
-                     linecolor=:black, 
-                     alpha=0.5)
-            scatter!(p5, xnod, ynod; 
-                     ms=0.5, 
-                     color=:white, 
-                     alpha=0.3, 
-                     label=false)
-            
-            savefig(p5, "testexample_Tfield.png")
-            println("  ✓ 保存: testexample_Tfield.png")
-            
-            # 高分辨率版本（可选）
-            try
-                savefig(p5, "testexample_Tfield.svg")
-                println("  ✓ 保存: testexample_Tfield.svg")
-            catch e
-                @warn "SVG保存失败" exception=(e, catch_backtrace())
-            end
-        else
-            println("  ⚠ 无有效温度数据可视化")
-        end
-    else
-        println("  ⚠ 未找到最终温度场数据")
-    end
-    
-    println("\n" * "="^70)
-println("\n[6/7] 计算宏观热-扩散应力")
-println("="^70)
-
-# 调用宏观应力计算函数
-try
-    variables = Dict{String, Union{Array{Float64},Float64}}()
-    
-    # 从 result 中提取温度场并转换为无量纲形式
-    if haskey(result, "thermal2D T_nodes [K]")
-        T_nodes_K = result["thermal2D T_nodes [K]"]
-        T_ref = case.param_dim.scale.T_ref
-        T_nodes = T_nodes_K ./ T_ref  # 转换为无量纲
-        variables["T_nodes"] = T_nodes
-        println("  ✓ 温度场数据已加载")
-    else
-        @warn "未找到温度场数据 'thermal2D T_nodes [K]'"
-    end
-
-    # 从 result 中提取 SOC 数据
-    if haskey(result, "thermal2D element soc_n")
-        variables["thermal2D element soc_n"] = result["thermal2D element soc_n"][:, end]
-        println("  ✓ 负极SOC数据已加载")
-    else
-        @warn "未找到负极SOC数据 'thermal2D element soc_n'"
-    end
-    
-    if haskey(result, "thermal2D element soc_p")
-        variables["thermal2D element soc_p"] = result["thermal2D element soc_p"][:, end]
-        println("  ✓ 正极SOC数据已加载")
-    else
-        @warn "未找到正极SOC数据 'thermal2D element soc_p'"
-    end
-    
-    variables = JuBat.thermal_diffusion_stress_2D(case, variables)
-    
-    println("✓ 应力场计算完成")
-    
-    # 提取结果
-    σ_xx = variables["diffusion stress xx"]
-    σ_yy = variables["diffusion stress yy"]
-    σ_xy = variables["diffusion stress xy"]
-    σ_vm = variables["diffusion stress vonMises"]
-    u_x = variables["displacement x"]
-    u_y = variables["displacement y"]
-    
-    # 统计信息
-    println("\n应力统计 [MPa]:")
-    println("  σ_xx: min=$(minimum(σ_xx)), max=$(maximum(σ_xx)), mean=$(mean(σ_xx))")
-    println("  σ_yy: min=$(minimum(σ_yy)), max=$(maximum(σ_yy)), mean=$(mean(σ_yy))")
-    println("  σ_xy: min=$(minimum(σ_xy)), max=$(maximum(σ_xy)), mean=$(mean(σ_xy))")
-    println("  σ_vm: min=$(minimum(σ_vm)), max=$(maximum(σ_vm)), mean=$(mean(σ_vm))")
-    
-    println("\n位移统计 [μm]:")
-    println("  u_x: min=$(minimum(u_x)*1e6), max=$(maximum(u_x)*1e6), mean=$(mean(u_x)*1e6)")
-    println("  u_y: min=$(minimum(u_y)*1e6), max=$(maximum(u_y)*1e6), mean=$(mean(u_y)*1e6)")
-    
-    # ====================================================================
-    # 6. 可视化结果
-    # ====================================================================
-    
-    println("\n" * "="^70)
-    println("  ✓ 可视化应力场")
-    println("="^70)
-    
-    # 计算单元中心坐标
-    x_elem = zeros(Float64, ne)
-    y_elem = zeros(Float64, ne)
-    for e in 1:ne
-        nodes = mesh_th.element[e, :]
-        x_elem[e] = mean(mesh_th.node[nodes, 1])
-        y_elem[e] = mean(mesh_th.node[nodes, 2])
-    end
-    percentile(data, p) = quantile(data, clamp(p / 100, 0.0, 1.0))
-    function get_clims_percentile(data, plow=5, phigh=95)
-        valid_data = data[isfinite.(data)]
-        if isempty(valid_data)
-            return (0.0, 1.0)
-        end
-        vmin = percentile(valid_data, plow)
-        vmax = percentile(valid_data, phigh)
-        if abs(vmax - vmin) < 1e-10
-            # 如果范围太小，使用全范围
-            vmin, vmax = extrema(valid_data)
-        end
-        return (vmin, vmax)
-    end
-    palette_div = cgrad(:RdBu, rev=true)
-    clim_xx = get_clims_percentile(σ_xx, 2, 98)
-    clim_yy = get_clims_percentile(σ_yy, 2, 98)
-    clim_xy = get_clims_percentile(σ_xy, 2, 98)
-    clim_vm = get_clims_percentile(σ_vm, 2, 98)
-    # 创建图形
-    p1 = scatter(x_elem, y_elem, marker_z=σ_xx, 
-                 color=palette_div, markersize=4, markerstrokewidth=0,
-                 xlabel="x [m]", ylabel="y [m]",
-                 title="σxx [MPa]", colorbar=true,
-                 clims=clim_xx,
-                 aspect_ratio=:equal)
-    
-    p2 = scatter(x_elem, y_elem, marker_z=σ_yy,
-                 color=palette_div, markersize=4, markerstrokewidth=0,
-                 xlabel="x [m]", ylabel="y [m]",
-                 title="σyy [MPa]", colorbar=true,
-                 clims=clim_yy,
-                 aspect_ratio=:equal)
-    
-    p3 = scatter(x_elem, y_elem, marker_z=σ_xy,
-                 color=palette_div, markersize=4, markerstrokewidth=0,
-                 xlabel="x [m]", ylabel="y [m]",
-                 title="σxy [MPa]", colorbar=true,
-                 clims=clim_xy,
-                 aspect_ratio=:equal)
-    
-    p4 = scatter(x_elem, y_elem, marker_z=σ_vm,
-                 color=palette_div, markersize=4, markerstrokewidth=0,
-                 xlabel="x [m]", ylabel="y [m]",
-                 title="Von Mises Stress [MPa]", colorbar=true,
-                 clims=clim_vm,
-                 aspect_ratio=:equal)
-    
-    plot_stress = plot(p1, p2, p3, p4, layout=(2,2), size=(1400, 1200))
-    savefig(plot_stress, "output/thermal_diffusion_stress_field.png")
-    println("✓ 应力场图保存至: output/thermal_diffusion_stress_field.png")
-    clim_ux = get_clims_percentile(u_x.*1e6, 2, 98)
-    clim_uy = get_clims_percentile(u_y.*1e6, 2, 98)
-    u_mag = hypot.(u_x, u_y)
-    clim_umag = get_clims_percentile(u_mag.*1e6, 2, 98)
-    # 位移场
-    p5 = scatter(mesh_th.node[:, 1], mesh_th.node[:, 2], 
-                 marker_z=u_x.*1e6, 
-                 color=palette_div, markersize=4, markerstrokewidth=0,
-                 xlabel="x [m]", ylabel="y [m]",
-                 title="Displacement u_x [μm]", colorbar=true,
-                 clims=clim_ux,
-                 aspect_ratio=:equal)
-    
-    p6 = scatter(mesh_th.node[:, 1], mesh_th.node[:, 2],
-                 marker_z=u_y.*1e6,
-                 color=palette_div, markersize=4, markerstrokewidth=0,
-                 xlabel="x [m]", ylabel="y [m]",
-                 title="Displacement u_y [μm]", colorbar=true,
-                 clims=clim_uy,
-                 aspect_ratio=:equal)
-    
-    u_mag = hypot.(u_x, u_y)
-    p7 = scatter(mesh_th.node[:, 1], mesh_th.node[:, 2],
-                 marker_z=u_mag.*1e6,
-                 color=:plasma, markersize=2.5, markerstrokewidth=0,
-                 xlabel="x [m]", ylabel="y [m]",
-                 title="Displacement Magnitude [μm]", colorbar=true,
-                 clims=clim_umag,
-                 aspect_ratio=:equal)
-    
-    plot_disp = plot(p5, p6, p7, layout=(1,3), size=(2100, 600))
-    savefig(plot_disp, "output/thermal_diffusion_displacement_field.png")
-    println("✓ 位移场图保存至: output/thermal_diffusion_displacement_field.png")
-    
-    # 温度场
-    T_elem_plot = zeros(Float64, ne)
-    if haskey(variables, "T_nodes")
-        T_nodes_nd = variables["T_nodes"]
-        T_ref_scale = case.param_dim.scale.T_ref
-        for e in 1:ne
-            nodes = mesh_th.element[e, :]
-            T_elem_plot[e] = mean(T_nodes_nd[nodes]) * T_ref_scale
-        end
-        
-        p8 = scatter(x_elem, y_elem, marker_z=T_elem_plot,
-                     color=:hot, markersize=3,
-                     xlabel="x [m]", ylabel="y [m]",
-                     title="Temperature [K]", colorbar=true,
-                     aspect_ratio=:equal)
-        
-        savefig(p8, "output/thermal_field.png")
-        println("✓ 温度场图保存至: output/thermal_field.png")
-    else
-        println("⚠ 无法绘制温度场: T_nodes 数据不可用")
-    end
-    
-catch e
-    println("❌ 应力计算失败:")
-    println(e)
-    rethrow(e)
-end
-
-    # ========================================================================
-    # 总结
-    # ========================================================================
-    println("\n" * "="^80)
-    println("仿真完成总结")
+    println("\n[7/7] 测试总结")
     println("="^80)
     
     println("""
-    ✓ 多SPMe并行模式仿真成功完成
+    【截止电压逻辑测试结果】
     
-    关键结果：
-      - 总时间步数: $num_steps
-      - 初始电压: $(V[1]) V
-      - 最终电压: $(V[end]) V
-      - 电压降: $(V[1] - V[end]) V
+    1. 仿真概况：
+       - 总时间步数: $num_steps
+       - 初始电压: $(V[1]) V
+       - 最终电压: $(V[end]) V
+       - 截止电压: $(param_dim.cell.v_l) V
+       - 终止原因: $termination_reason
     """)
     
-    if haskey(result, "temperature [K]")
-        T_mean = result["temperature [K]"]
-        println("""
-      - 温升: $(T_mean[end] - T_mean[1]) K
-        """)
-    end
+    # 关键结论
+    println("    2. 关键发现：")
     
-    if haskey(result, "thermal2D element current")
-        I_e_final = result["thermal2D element current"][:, end]
-        cv_I = std(I_e_final) / mean(I_e_final)
-        println("""
-      - 电流分布异质性 (CV): $(100*cv_I)%
-        """)
+    if termination_reason == "voltage_cutoff"
+        println("       ★ 系统在整体电压达到截止电压时终止 (break)")
+        
+        # 检查是否有单元级别的差异
+        if haskey(result, "thermal2D element current")
+            I_e_final = result["thermal2D element current"][:, end]
+            cv_final = std(I_e_final) / max(abs(mean(I_e_final)), 1e-10)
+            
+            if cv_final > 0.1
+                println("       ★ 最终时刻单元电流存在明显差异 (CV=$(round(cv_final*100, digits=1))%)")
+                println("         这表明不同单元的放电深度不同")
+            else
+                println("       ★ 最终时刻单元电流分布较均匀 (CV=$(round(cv_final*100, digits=1))%)")
+            end
+        end
     end
     
     println("""
-    生成的图像：
-      1. testexample_voltage.png - 放电曲线
-      2. testexample_temperature.png - 温度演化
-      3. testexample_current_snapshots.png - 逐单元电流分布快照
-      4. testexample_current_heterogeneity.png - 电流异质性演化
-      5. testexample_Tfield.png - 最终温度场
-      6. testexample_Tfield.svg - 最终温度场（矢量图）
-      7. testexample_stress_maps.png - 热/扩散应力分布
-      8. testexample_total_stress.png - 合成应力分布
     
-    多SPMe并行架构验证：
-      ✓ 每个热单元对应独立SPMe模型
-      ✓ 逐单元电流分布（非线性分流）
-      ✓ 逐单元热源计算（精确η和dUdT）
-      ✓ 电流守恒验证通过
-      ✓ 完整时间推进
+    3. 当前实现行为：
+       - 当整体电池电压 < v_l 时：整个系统 break（Solve.jl:264-266）
+       - 单元级截止检测：由 _detect_cutoff_elements 函数实现
+       - 达到截止的单元：电流设为0，但需系统继续运行才能观察到
     
-    下一步建议：
-      - 增加仿真时间（修改 opt.time）
-      - 增加电流倍率（修改 Crates）
-      - 增加网格分辨率（修改 nθ）
+    4. 生成的图像：
+       - testexample_cutoff_voltage.png   - 放电曲线与截止电压标注
+       - testexample_element_currents.png - 代表性单元电流演化
+       - testexample_current_heatmap.png  - 全部单元电流热图
+       - testexample_soc_evolution.png    - SOC演化（带范围）
+       - testexample_current_heterogeneity.png - 电流异质性演化
     """)
     
     println("="^80)
+    println("测试完成")
 end
 
 # 运行主函数
