@@ -183,6 +183,13 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64,
     result.ΔD_max = phase_result_data["ΔD_max"]
     result.final_state = phase_result_data["final_state"]
     
+    # 静置阶段：添加锂扩散信息到 final_state
+    if phase_type == PHASE_REST && haskey(phase_result_data, "diffusion_active")
+        result.final_state["diffusion_active"] = phase_result_data["diffusion_active"]
+        result.final_state["cs_relaxation_n"] = get(phase_result_data, "cs_relaxation_n", 0.0)
+        result.final_state["cs_relaxation_p"] = get(phase_result_data, "cs_relaxation_p", 0.0)
+    end
+    
     return result
 end
 
@@ -191,10 +198,20 @@ end
                           y0, T_nodes, czm_mesh, czm_params, dt_range)
 
 内部阶段求解实现。
+
+对于静置阶段（PHASE_REST）：
+- 电化学状态完全继承上一步的最终状态
+- 电流设为 0，但继续进行锂扩散计算
+- 颗粒内锂浓度会因扩散而趋向均匀化
 """
 function _solve_phase_internal(case::Case, phase_type::PhaseType, 
                                t_max::Float64, I_current::Float64, V_limit::Float64,
                                y0, T_nodes, czm_mesh, czm_params, dt_range)
+    
+    # 静置阶段特殊处理：确保电流为0
+    if phase_type == PHASE_REST
+        I_current = 0.0  # 强制设为0
+    end
     
     # 时间缩放
     t0_scale = case.param.scale.t0
@@ -210,7 +227,13 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
                  haskey(case.mesh, "thermal2D")
     
     # 初始化或验证状态向量
+    # 静置阶段特别说明：y0 必须从上一阶段继承，不能重新初始化
+    is_rest_phase = (phase_type == PHASE_REST)
+    
     if y0 === nothing
+        if is_rest_phase
+            @warn "[CycleSolver] 静置阶段应继承上一步状态，但y0为空，将使用初始状态"
+        end
         # 使用标准初始化
         if multi_spme
             y0 = ModelInitialisation_MultiSPMe(case)
@@ -218,7 +241,7 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
             y0 = ModelInitialisation(case)
         end
     else
-        # 状态向量从上一阶段传递
+        # 状态向量从上一阶段传递（静置阶段的正常行为）
         y0 = vec(y0)  # 确保是向量格式
         
         if multi_spme
@@ -352,6 +375,39 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     D_max_init = czm_mesh !== nothing ? maximum(s.D for s in czm_mesh.damage_states) : 0.0
     D_mean_init = czm_mesh !== nothing ? mean(s.D for s in czm_mesh.damage_states) : 0.0
     
+    # 静置阶段：记录初始锂浓度分布（用于分析扩散过程）
+    cs_n_init_var = 0.0  # 负极锂浓度方差
+    cs_p_init_var = 0.0  # 正极锂浓度方差
+    if is_rest_phase
+        # 提取初始锂浓度分布
+        Nrn = case.mesh["negative particle"].nlen
+        Nrp = case.mesh["positive particle"].nlen
+        
+        if multi_spme && !isempty(case.multi_spme_layout)
+            # 多SPMe模式：提取所有单元的平均锂浓度
+            ne = case.multi_spme_layout["ne"]
+            n_chem = case.multi_spme_layout["n_chem"]
+            
+            cs_n_all = Float64[]
+            cs_p_all = Float64[]
+            for e in 1:ne
+                offset = (e - 1) * n_chem
+                cs_n_e = y0[(offset + 1):(offset + Nrn)]
+                cs_p_e = y0[(offset + Nrn + 1):(offset + Nrn + Nrp)]
+                push!(cs_n_all, mean(cs_n_e))
+                push!(cs_p_all, mean(cs_p_e))
+            end
+            cs_n_init_var = var(cs_n_all)
+            cs_p_init_var = var(cs_p_all)
+        else
+            # 单SPMe模式
+            cs_n = y0[1:Nrn]
+            cs_p = y0[(Nrn+1):(Nrn+Nrp)]
+            cs_n_init_var = var(cs_n)
+            cs_p_init_var = var(cs_p)
+        end
+    end
+    
     # 初始求解步
     vc = 1:size(M_old, 1)
     dt_init = 1e-8
@@ -433,6 +489,50 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
         D_mean_end = stats.mean_D
     end
     
+    # 静置阶段：计算最终锂浓度分布并分析扩散效果
+    cs_relaxation_n = 0.0  # 负极锂浓度松弛率（方差减少百分比）
+    cs_relaxation_p = 0.0  # 正极锂浓度松弛率
+    if is_rest_phase && t_actual > 0
+        # 提取最终锂浓度分布
+        Nrn = case.mesh["negative particle"].nlen
+        Nrp = case.mesh["positive particle"].nlen
+        
+        cs_n_final_var = 0.0
+        cs_p_final_var = 0.0
+        
+        if multi_spme && !isempty(case.multi_spme_layout)
+            # 多SPMe模式
+            ne = case.multi_spme_layout["ne"]
+            n_chem = case.multi_spme_layout["n_chem"]
+            
+            cs_n_all = Float64[]
+            cs_p_all = Float64[]
+            for e in 1:ne
+                offset = (e - 1) * n_chem
+                cs_n_e = y_old[(offset + 1):(offset + Nrn)]
+                cs_p_e = y_old[(offset + Nrn + 1):(offset + Nrn + Nrp)]
+                push!(cs_n_all, mean(cs_n_e))
+                push!(cs_p_all, mean(cs_p_e))
+            end
+            cs_n_final_var = var(cs_n_all)
+            cs_p_final_var = var(cs_p_all)
+        else
+            # 单SPMe模式
+            cs_n = y_old[1:Nrn]
+            cs_p = y_old[(Nrn+1):(Nrn+Nrp)]
+            cs_n_final_var = var(cs_n)
+            cs_p_final_var = var(cs_p)
+        end
+        
+        # 计算松弛率（方差减少百分比）
+        if cs_n_init_var > 1e-12
+            cs_relaxation_n = 100.0 * (1.0 - cs_n_final_var / cs_n_init_var)
+        end
+        if cs_p_init_var > 1e-12
+            cs_relaxation_p = 100.0 * (1.0 - cs_p_final_var / cs_p_init_var)
+        end
+    end
+    
     # 构建最终状态
     # 确保保存的是最新的电压值（从 variables 获取，如果有的话）
     V_final = V_current
@@ -447,7 +547,8 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
         "t_global" => t_actual
     )
     
-    return Dict(
+    # 构建返回结果
+    result_dict = Dict(
         "duration" => t_actual,
         "V_start" => V_start_actual,  # 实际计算的初始电压
         "V_end" => V_current,
@@ -462,6 +563,15 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
         "ΔD_max" => D_max_end - D_max_init,
         "final_state" => final_state
     )
+    
+    # 静置阶段额外信息
+    if is_rest_phase
+        result_dict["cs_relaxation_n"] = cs_relaxation_n
+        result_dict["cs_relaxation_p"] = cs_relaxation_p
+        result_dict["diffusion_active"] = true  # 标记扩散过程已执行
+    end
+    
+    return result_dict
 end
 
 
@@ -573,18 +683,19 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
         end
         
         # ============ 阶段2: 静置1 ============
+        # 静置阶段：电化学状态继承上一步，以0电流继续锂扩散
         if cycle_opt.t_rest1 > 0
-            # 静置时间 > 0：正常执行静置阶段
+            # 静置时间 > 0：执行静置阶段，继续锂扩散过程
             if verbose
-                print("  [静置1] ")
+                print("  [静置1] 状态继承+锂扩散 ")
             end
             
             rest1_result = solve_phase(
                 case, PHASE_REST,
                 cycle_opt.t_rest1,
-                0.0,  # 无电流
+                0.0,  # 零电流：仅进行锂扩散
                 0.0,  # 无电压限制
-                current_state;
+                current_state;  # 继承上一步状态
                 czm_mesh=czm_mesh,
                 czm_params=czm_params,
                 dt_range=cycle_opt.dt_cycle
@@ -596,7 +707,14 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
                 @printf("%.1fs, T_max=%.2fK\n", rest1_result.duration, rest1_result.T_max)
                 y_out = get(current_state, "y", nothing)
                 V_out = get(current_state, "V", NaN)
-                @printf("    → V_out=%.3fV, y_len=%d\n", V_out, y_out === nothing ? 0 : length(y_out))
+                @printf("    → V_out=%.3fV, y_len=%d", V_out, y_out === nothing ? 0 : length(y_out))
+                # 显示锂浓度松弛信息（如果有）
+                if haskey(rest1_result.final_state, "cs_relaxation_n") || 
+                   hasproperty(rest1_result, :cs_relaxation_n)
+                    # 从 solve_phase 结果中提取松弛信息
+                    # 注意：这些信息可能在内部结果字典中
+                end
+                println()
             end
         else
             # 静置时间 = 0：跳过静置阶段，直接继承上一阶段状态
@@ -605,10 +723,10 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
             cycle_result.rest1.V_start = get(current_state, "V", NaN)
             cycle_result.rest1.V_end = cycle_result.rest1.V_start
             cycle_result.rest1.final_state = current_state
-            # current_state 保持不变
+            # current_state 保持不变（无扩散过程）
             
             if verbose
-                println("  [静置1] 跳过 (t=0)")
+                println("  [静置1] 跳过 (t=0，无扩散)")
             end
         end
         
@@ -651,39 +769,40 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
         end
         
         # ============ 阶段4: 静置2 ============
+        # 静置阶段：电化学状态继承上一步，以0电流继续锂扩散
         if cycle_opt.t_rest2 > 0
-            # 静置时间 > 0：正常执行静置阶段
+            # 静置时间 > 0：执行静置阶段，继续锂扩散过程
             if verbose
-                print("  [静置2] ")
+                print("  [静置2] 状态继承+锂扩散 ")
             end
             
             rest2_result = solve_phase(
                 case, PHASE_REST,
                 cycle_opt.t_rest2,
+                0.0,  # 零电流：仅进行锂扩散
                 0.0,
-                0.0,
-                current_state;
+                current_state;  # 继承上一步状态
                 czm_mesh=czm_mesh,
                 czm_params=czm_params,
                 dt_range=cycle_opt.dt_cycle
             )
             cycle_result.rest2 = rest2_result
             current_state = rest2_result.final_state
+            
+            if verbose
+                @printf("%.1fs, T_max=%.2fK\n", rest2_result.duration, rest2_result.T_max)
+            end
         else
-            # 静置时间 = 0：跳过静置阶段
+            # 静置时间 = 0：跳过静置阶段，无扩散过程
             cycle_result.rest2 = PhaseResult()
             cycle_result.rest2.duration = 0.0
             cycle_result.rest2.V_start = get(current_state, "V", NaN)
             cycle_result.rest2.V_end = cycle_result.rest2.V_start
             cycle_result.rest2.final_state = current_state
-            # current_state 保持不变
-        end
-        
-        if verbose
-            if cycle_opt.t_rest2 > 0
-                @printf("%.1fs, T_max=%.2fK\n", rest2_result.duration, rest2_result.T_max)
-            else
-                println("  [静置2] 跳过 (t=0)")
+            # current_state 保持不变（无扩散过程）
+            
+            if verbose
+                println("  [静置2] 跳过 (t=0，无扩散)")
             end
         end
         
