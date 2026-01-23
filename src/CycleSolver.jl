@@ -598,12 +598,38 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;
     n_cycles = cycle_opt.n_cycles
     result = CyclingResult(n_cycles)
     
+    # 应用初始SOC设置
+    soc_init = cycle_opt.SOC_init
+    if soc_init >= 0.0 && soc_init <= 1.0
+        # 获取param_dim（从case.param_dim，如果存在）
+        if hasproperty(case, :param_dim) && case.param_dim !== nothing
+            cs0_NE, cs0_PE = apply_initial_soc!(case, case.param_dim, soc_init)
+            if verbose
+                @printf("  初始SOC: %.1f%%\n", soc_init * 100)
+                @printf("    → 负极cs0: %.1f mol/m³\n", cs0_NE)
+                @printf("    → 正极cs0: %.1f mol/m³\n", cs0_PE)
+            end
+        else
+            # 回退：直接计算归一化参数（不修改param_dim）
+            theta_n = case.param.NE.theta_0 + soc_init * (case.param.NE.theta_100 - case.param.NE.theta_0)
+            theta_p = case.param.PE.theta_0 - soc_init * (case.param.PE.theta_0 - case.param.PE.theta_100)
+            case.param.NE.cs0 = theta_n
+            case.param.PE.cs0 = theta_p
+            if verbose
+                @printf("  初始SOC: %.1f%% (归一化模式)\n", soc_init * 100)
+                @printf("    → 负极θ_n: %.4f\n", theta_n)
+                @printf("    → 正极θ_p: %.4f\n", theta_p)
+            end
+        end
+    end
+    
     # 初始化
     if verbose
         println("="^60)
         println("开始充放电循环仿真")
         println("="^60)
         @printf("  循环次数: %d\n", n_cycles)
+        @printf("  初始SOC: %.1f%%\n", soc_init * 100)
         println("  循环顺序: 放电 → 静置 → 充电 → 静置")
         @printf("  放电: %.0fs (%.1fC), 截止 %.2fV\n", 
                 cycle_opt.t_discharge, cycle_opt.I_discharge/5.0, cycle_opt.V_lower)
@@ -879,6 +905,87 @@ end
 # ========================================================================
 # 4. 辅助函数
 # ========================================================================
+
+"""
+    compute_cs0_from_soc(param_dim, soc::Float64) -> (cs0_NE, cs0_PE)
+
+根据目标SOC计算正负极的初始锂浓度。
+
+# 参数
+- `param_dim`: 包含电极参数的维度参数结构体
+- `soc::Float64`: 目标SOC (0~1)
+
+# 返回
+- `cs0_NE::Float64`: 负极初始锂浓度 (mol/m³)
+- `cs0_PE::Float64`: 正极初始锂浓度 (mol/m³)
+
+# 计算公式
+负极：θ_n = θ_0_n + SOC × (θ_100_n - θ_0_n)
+      cs_n = θ_n × cs_max_n
+
+正极：θ_p = θ_0_p - SOC × (θ_0_p - θ_100_p)
+      cs_p = θ_p × cs_max_p
+
+# 示例
+```julia
+param_dim = JuBat.ChooseCell("Jellyroll")
+cs0_NE, cs0_PE = compute_cs0_from_soc(param_dim, 0.8)  # 80% SOC
+param_dim.NE.cs0 = cs0_NE
+param_dim.PE.cs0 = cs0_PE
+```
+"""
+function compute_cs0_from_soc(param_dim, soc::Float64)
+    # 验证SOC范围
+    if soc < 0.0 || soc > 1.0
+        error("SOC must be in [0, 1], got $soc")
+    end
+    
+    # 负极：SOC↑ → θ_n↑ → cs_n↑
+    # θ_n = θ_0_n + SOC × (θ_100_n - θ_0_n)
+    theta_n = param_dim.NE.theta_0 + soc * (param_dim.NE.theta_100 - param_dim.NE.theta_0)
+    cs0_NE = theta_n * param_dim.NE.cs_max
+    
+    # 正极：SOC↑ → θ_p↓ → cs_p↓（锂从正极脱出）
+    # θ_p = θ_0_p - SOC × (θ_0_p - θ_100_p)
+    theta_p = param_dim.PE.theta_0 - soc * (param_dim.PE.theta_0 - param_dim.PE.theta_100)
+    cs0_PE = theta_p * param_dim.PE.cs_max
+    
+    return cs0_NE, cs0_PE
+end
+
+"""
+    apply_initial_soc!(case::Case, param_dim, soc::Float64)
+
+应用初始SOC设置到case的参数中。
+
+# 参数
+- `case::Case`: JuBat Case对象
+- `param_dim`: 维度参数结构体
+- `soc::Float64`: 目标SOC (0~1)
+
+# 说明
+此函数会修改 `param_dim.NE.cs0` 和 `param_dim.PE.cs0`，
+然后重新归一化参数到 `case.param` 中。
+
+# 示例
+```julia
+apply_initial_soc!(case, param_dim, 0.8)  # 设置初始SOC为80%
+```
+"""
+function apply_initial_soc!(case::Case, param_dim, soc::Float64)
+    # 计算对应SOC的锂浓度
+    cs0_NE, cs0_PE = compute_cs0_from_soc(param_dim, soc)
+    
+    # 更新维度参数
+    param_dim.NE.cs0 = cs0_NE
+    param_dim.PE.cs0 = cs0_PE
+    
+    # 更新归一化参数（重新归一化）
+    case.param.NE.cs0 = param_dim.NE.cs0 / param_dim.NE.cs_max
+    case.param.PE.cs0 = param_dim.PE.cs0 / param_dim.PE.cs_max
+    
+    return cs0_NE, cs0_PE
+end
 
 """
     _ensure_multi_spme_layout!(case::Case)

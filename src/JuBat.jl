@@ -57,4 +57,5 @@ export czm_output_to_variables
 export CycleOption, PhaseType, PHASE_CHARGE, PHASE_REST, PHASE_DISCHARGE
 export PhaseResult, CycleResult, CyclingResult
 export solve_phase, solve_cycling, plot_cycling_results
+export compute_cs0_from_soc, apply_initial_soc!
 end
