@@ -176,7 +176,15 @@ function Solve(case::Case)
     end
 
     print( "start to solve the problem \n")
-
+    
+    # 单元截止追踪变量
+    first_cutoff_detected = false
+    first_cutoff_time = 0.0
+    first_cutoff_element = 0
+    first_cutoff_ocv = 0.0
+    total_cutoff_count = 0
+    termination_reason = "time_limit"  # 默认终止原因
+    
     # run the model
     while t <= t_end
         # 1) 先用当前热场的均温影响动力学
@@ -261,14 +269,87 @@ function Solve(case::Case)
             F_old = deepcopy(F_new)
             t += dt 
         end
-        if variables["cell voltage"] * case.param.scale.phi < case.param.cell.v_l || variables["cell voltage"] * case.param.scale.phi > case.param.cell.v_h
+        
+        # ====================================================================
+        # 精细化截止电压检测（单元级别）
+        # ====================================================================
+        V_cell = variables["cell voltage"] * case.param.scale.phi
+        v_l = case.param.cell.v_l
+        v_h = case.param.cell.v_h
+        t_phys = t * case.param.scale.t0  # 物理时间 (s)
+        
+        # 检查是否有单元截止
+        if haskey(variables, "thermal2D n_cutoff_elements")
+            n_cutoff = Int(variables["thermal2D n_cutoff_elements"])
+            
+            # 记录首个截止单元信息
+            if n_cutoff > 0 && !first_cutoff_detected
+                first_cutoff_detected = true
+                first_cutoff_time = t_phys
+                
+                # 获取截止单元详细信息
+                if haskey(variables, "thermal2D cutoff_elements") && !isempty(variables["thermal2D cutoff_elements"])
+                    first_cutoff_element = Int(variables["thermal2D cutoff_elements"][1])
+                end
+                if haskey(variables, "thermal2D cutoff_ocv") && !isempty(variables["thermal2D cutoff_ocv"])
+                    first_cutoff_ocv = variables["thermal2D cutoff_ocv"][1]
+                end
+                
+                # 打印首个截止单元信息
+                println("\n[Solve] ★ 首个单元达到截止电压:")
+                println("  时间: $(round(first_cutoff_time, digits=2)) s")
+                println("  单元: $first_cutoff_element")
+                println("  OCV: $(round(first_cutoff_ocv, digits=4)) V")
+                println("  截止电压: $v_l V")
+                println("  当前整体电压: $(round(V_cell, digits=4)) V")
+            end
+            
+            total_cutoff_count = n_cutoff
+            
+            # 获取总单元数
+            ne_total = haskey(case.mesh, "thermal2D") ? size(case.mesh["thermal2D"].element, 1) : 0
+            
+            # 检查是否所有单元都截止
+            if ne_total > 0 && n_cutoff >= ne_total
+                println("\n[Solve] ★★ 所有单元 ($ne_total) 都已达到截止电压，终止仿真")
+                termination_reason = "all_elements_cutoff"
+                break
+            end
+        end
+        
+        # 整体电压截止检测（备用）
+        if V_cell < v_l
+            println("\n[Solve] ★ 整体电压 $(round(V_cell, digits=4)) V 低于截止电压 $v_l V")
+            termination_reason = "voltage_cutoff_low"
+            break
+        elseif V_cell > v_h
+            println("\n[Solve] ★ 整体电压 $(round(V_cell, digits=4)) V 高于截止电压 $v_h V")
+            termination_reason = "voltage_cutoff_high"
             break
         end
     end
+    
+    # 记录终止原因和截止信息
+    if t >= t_end
+        termination_reason = "time_limit"
+    end
     result = PostProcessing(case, variables_hist, v) 
-     # 附加热相关历史数据
+    
+    # 添加截止信息到结果
+    result["termination_reason"] = termination_reason
+    result["first_cutoff_detected"] = first_cutoff_detected
+    if first_cutoff_detected
+        result["first_cutoff_time [s]"] = first_cutoff_time
+        result["first_cutoff_element"] = first_cutoff_element
+        result["first_cutoff_ocv [V]"] = first_cutoff_ocv
+    end
+    result["total_cutoff_count"] = total_cutoff_count
+    
+    # 附加热相关历史数据
     try
-        for key in ["thermal2D element current", "thermal2D eta_n_e", "thermal2D eta_p_e", "thermal2D element soc_n", "thermal2D element soc_p"]
+        for key in ["thermal2D element current", "thermal2D eta_n_e", "thermal2D eta_p_e", "thermal2D element soc_n", "thermal2D element soc_p",
+                    "thermal2D element OCV", "thermal2D n_cutoff_elements", "thermal2D active_mask",
+                    "thermal2D nearest_cutoff_element", "thermal2D nearest_cutoff_ocv", "thermal2D margin_to_cutoff"]
             haskey(variables_hist, key) && (result[key] = variables_hist[key][:, 1:v])
         end
         if haskey(variables_hist, "heat_source_fields") && size(variables_hist["heat_source_fields"], 1) > 0

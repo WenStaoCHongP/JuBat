@@ -462,89 +462,109 @@ function _initialize_currents(ne, w, I_total, x_prev)
     return I_e
 end
 
-"""检查电压边界
+"""检查电压边界（严格模式）
 
-返回 true 如果在边界内，false 如果超出但在软边界内（允许继续），
-只有严重超出时才抛出错误。
+返回 (in_bounds, cutoff_type)：
+- in_bounds: true 如果在边界内
+- cutoff_type: 0 = 正常, 1 = 放电截止(V < V_MIN), 2 = 充电截止(V > V_MAX)
 
-软边界设置为 ±5% 的容差，允许主循环正常处理截止条件。
+无软边界，严格按照截止电压判断。
 """
 function _check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e, context="")
-    # 正常范围内
-    if V_MIN <= V <= V_MAX
-        return true
-    end
-    
     V_phys = V * phi_scale
     V_MIN_phys = V_MIN * phi_scale
     V_MAX_phys = V_MAX * phi_scale
     
-    # 计算软边界（允许 5% 的超出，让主循环处理截止）
-    V_range = V_MAX - V_MIN
-    soft_margin = 0.05 * V_range  # 5% 容差
-    V_MIN_soft = V_MIN - soft_margin
-    V_MAX_soft = V_MAX + soft_margin
-    
-    # 在软边界内：发出警告但继续
-    if V_MIN_soft <= V <= V_MAX_soft
-        # 电压略微超出正常范围，但在软边界内
-        # 这通常发生在充电接近截止电压时，应该由主循环处理
-        return false  # 返回 false 表示超出正常范围但可以继续
+    # 严格检查：无软边界
+    if V < V_MIN
+        # 放电截止
+        return false, 1, V_phys, V_MIN_phys
+    elseif V > V_MAX
+        # 充电截止
+        return false, 2, V_phys, V_MAX_phys
     end
     
-    # 严重超出软边界：抛出错误
-    error_msg = "thermal2D common voltage severely out of bounds$context: " *
-                "V(nd)=$V, V(V)=$V_phys, " *
-                "allowed [$V_MIN, $V_MAX] nd -> [$V_MIN_phys, $V_MAX_phys] V, " *
-                "soft bounds [$V_MIN_soft, $V_MAX_soft] nd; " *
-                "I_total_nd=$I_total, sum(w.*I_e)=$(sum(w .* I_e))"
-    
-    throw(ErrorException(error_msg))
+    # 正常范围内
+    return true, 0, V_phys, 0.0
 end
 
 # 牛顿迭代求解器
 """
-    _detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total)
+    _detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
 
-检测达到截止电压的单元。
+检测达到截止电压的单元（严格模式，无容差）。
 
 # 返回
 - `active_mask`: 布尔数组，true 表示单元活跃（可接受电流）
 - `n_cutoff`: 达到截止的单元数
+- `cutoff_info`: 截止单元详细信息字典
 
 # 物理含义
 - 充电时 (I_total < 0)：如果单元的 OCV >= V_MAX，该单元已满充
 - 放电时 (I_total > 0)：如果单元的 OCV <= V_MIN，该单元已完全放电
 - 静置时 (I_total ≈ 0)：所有单元都是活跃的
 """
-function _detect_cutoff_elements(coeffs, ne::Int, V_MIN::Float64, V_MAX::Float64, I_total::Float64)
+function _detect_cutoff_elements(coeffs, ne::Int, V_MIN::Float64, V_MAX::Float64, I_total::Float64; phi_scale::Float64=1.0)
     active_mask = trues(ne)
     
     # 计算各单元的开路电压 (OCV = C1，当 I=0 时的电压)
     OCV = [coeffs[e].C1 for e in 1:ne]
     
-    # 添加小容差避免数值问题
-    tol = 0.001 * (V_MAX - V_MIN)  # 0.1% 容差
+    # 记录截止单元的详细信息
+    cutoff_elements = Int[]
+    cutoff_ocv = Float64[]
+    cutoff_type = Int[]  # 1 = 放电截止, 2 = 充电截止
     
+    # 严格检测：无容差
     if I_total < -1e-10  # 充电
-        # 充电时，如果单元 OCV 已达到上限，无法继续充电
+        # 充电时，如果单元 OCV >= V_MAX，该单元已满充
         for e in 1:ne
-            if OCV[e] >= V_MAX - tol
+            if OCV[e] >= V_MAX
                 active_mask[e] = false
+                push!(cutoff_elements, e)
+                push!(cutoff_ocv, OCV[e] * phi_scale)
+                push!(cutoff_type, 2)
             end
         end
     elseif I_total > 1e-10  # 放电
-        # 放电时，如果单元 OCV 已达到下限，无法继续放电
+        # 放电时，如果单元 OCV <= V_MIN，该单元已完全放电
         for e in 1:ne
-            if OCV[e] <= V_MIN + tol
+            if OCV[e] <= V_MIN
                 active_mask[e] = false
+                push!(cutoff_elements, e)
+                push!(cutoff_ocv, OCV[e] * phi_scale)
+                push!(cutoff_type, 1)
             end
         end
     end
     # 静置时 (I_total ≈ 0)，所有单元保持活跃
     
     n_cutoff = sum(.!active_mask)
-    return active_mask, n_cutoff
+    
+    # 构建截止信息字典
+    cutoff_info = Dict{String, Any}(
+        "cutoff_elements" => cutoff_elements,
+        "cutoff_ocv" => cutoff_ocv,
+        "cutoff_type" => cutoff_type,
+        "all_ocv" => OCV .* phi_scale,
+        "V_MIN" => V_MIN * phi_scale,
+        "V_MAX" => V_MAX * phi_scale
+    )
+    
+    # 找出最接近截止的单元（用于预警）
+    if I_total > 1e-10  # 放电
+        min_ocv_idx = argmin(OCV)
+        cutoff_info["nearest_cutoff_element"] = min_ocv_idx
+        cutoff_info["nearest_cutoff_ocv"] = OCV[min_ocv_idx] * phi_scale
+        cutoff_info["margin_to_cutoff"] = (OCV[min_ocv_idx] - V_MIN) * phi_scale
+    elseif I_total < -1e-10  # 充电
+        max_ocv_idx = argmax(OCV)
+        cutoff_info["nearest_cutoff_element"] = max_ocv_idx
+        cutoff_info["nearest_cutoff_ocv"] = OCV[max_ocv_idx] * phi_scale
+        cutoff_info["margin_to_cutoff"] = (V_MAX - OCV[max_ocv_idx]) * phi_scale
+    end
+    
+    return active_mask, n_cutoff, cutoff_info
 end
 
 """牛顿迭代主循环（支持部分单元截止）
@@ -738,8 +758,8 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
     T_ref = case.param.cell.T0
     coeffs = _compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref, debug_mode)
     
-    # 4. 检测达到截止电压的单元
-    active_mask, n_cutoff = _detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total)
+    # 4. 检测达到截止电压的单元（严格模式）
+    active_mask, n_cutoff, cutoff_info = _detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total; phi_scale=phi_scale)
     
     # 5. 初始化电流猜测
     I_e = _initialize_currents(ne, w, I_total, x_prev)
@@ -817,25 +837,39 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
     end
     # 当所有单元都截止时，I_e 全为 0，不需要归一化
     
-    # 8. 边界检查（软边界，允许主循环处理截止条件）
-    voltage_in_bounds = _check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e)
+    # 8. 边界检查（严格模式）
+    voltage_in_bounds, cutoff_type_global, V_phys, V_limit = _check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e)
     
     # 9. 写入结果（包括边界状态和截止信息）
     variables["thermal2D element current"] = I_e
     variables["thermal2D element current A"] = case.param.scale.I_typ .* I_e
     variables["thermal2D common voltage"] = V
+    variables["thermal2D common voltage V"] = V * phi_scale
     variables["thermal2D Vsolve status"] = converged ? 3.0 : 3.5
     variables["thermal2D Vsolve iters"] = Float64(last_iter)
     variables["thermal2D Vsolve converged"] = converged ? 1.0 : 0.0
     
-    # 截止状态信息
+    # 截止状态信息（精细化）
     variables["thermal2D n_active_elements"] = Float64(sum(active_mask))
     variables["thermal2D n_cutoff_elements"] = Float64(n_cutoff)
     variables["thermal2D active_mask"] = Float64.(active_mask)  # 1.0 = 活跃, 0.0 = 截止
+    variables["thermal2D voltage_in_bounds"] = voltage_in_bounds ? 1.0 : 0.0
+    variables["thermal2D cutoff_type_global"] = Float64(cutoff_type_global)  # 0=正常, 1=放电截止, 2=充电截止
     
     # 各单元的开路电压（用于诊断）
-    OCV_elements = [coeffs[e].C1 * phi_scale for e in 1:ne]  # 转换为物理单位 (V)
-    variables["thermal2D element OCV"] = OCV_elements
+    variables["thermal2D element OCV"] = cutoff_info["all_ocv"]
+    
+    # 截止单元详细信息
+    variables["thermal2D cutoff_elements"] = Float64.(cutoff_info["cutoff_elements"])
+    variables["thermal2D cutoff_ocv"] = cutoff_info["cutoff_ocv"]
+    variables["thermal2D cutoff_type"] = Float64.(cutoff_info["cutoff_type"])
+    
+    # 最接近截止的单元信息（预警）
+    if haskey(cutoff_info, "nearest_cutoff_element")
+        variables["thermal2D nearest_cutoff_element"] = Float64(cutoff_info["nearest_cutoff_element"])
+        variables["thermal2D nearest_cutoff_ocv"] = cutoff_info["nearest_cutoff_ocv"]
+        variables["thermal2D margin_to_cutoff"] = cutoff_info["margin_to_cutoff"]
+    end
     
     return variables, I_e, V
 end

@@ -163,27 +163,10 @@ function main()
     @printf("  截止电压 = %.4f V\n", param_dim.cell.v_l)
     
     result = nothing
-    termination_reason = "unknown"
     
     try
         result = JuBat.Solve(case)
-        
-        # 检查终止原因
-        if result !== nothing
-            t = result["time [s]"]
-            V = result["cell voltage [V]"]
-            
-            if V[end] <= param_dim.cell.v_l + 0.01
-                termination_reason = "voltage_cutoff"
-                println("✓ 求解因达到截止电压而终止")
-            elseif t[end] >= opt.time[end] - 0.1
-                termination_reason = "time_limit"
-                println("✓ 求解因达到时间限制而终止")
-            else
-                termination_reason = "other"
-                println("✓ 求解因其他原因终止")
-            end
-        end
+        println("✓ 求解完成")
         
     catch e
         println("✗ 求解失败: $e")
@@ -195,10 +178,10 @@ function main()
     end
     
     # ========================================================================
-    # 4. 截止电压行为分析
+    # 4. 精细化截止电压行为分析
     # ========================================================================
-    println("\n[4/7] 截止电压行为分析...")
-    println("="^60)
+    println("\n[4/7] 精细化截止电压行为分析...")
+    println("="^70)
     
     # 基本变量
     t = result["time [s]"]
@@ -213,23 +196,82 @@ function main()
     @printf("  仿真结束时间: %.1f s\n", t[end])
     @printf("  设定结束时间: %.1f s\n", opt.time[end])
     
-    # 判断终止原因
+    # 从 result 获取终止原因
+    termination_reason = get(result, "termination_reason", "unknown")
+    first_cutoff_detected = get(result, "first_cutoff_detected", false)
+    
     println("\n  【终止原因分析】")
-    if termination_reason == "voltage_cutoff"
-        println("  ★ 系统因整体电压达到截止电压 ($(param_dim.cell.v_l) V) 而终止")
-        println("    这表明当前实现是：整个系统 break")
+    println("  终止原因: $termination_reason")
+    
+    if termination_reason == "voltage_cutoff_low"
+        println("  ★ 系统因整体电压低于截止电压而终止")
+    elseif termination_reason == "voltage_cutoff_high"
+        println("  ★ 系统因整体电压高于截止电压而终止")
+    elseif termination_reason == "all_elements_cutoff"
+        println("  ★ 系统因所有单元都达到截止而终止")
     elseif termination_reason == "time_limit"
-        println("  ★ 系统完成了全部仿真时间，未触发截止电压")
-        println("    需要更长的仿真时间或更高的C-rate来触发截止")
+        println("  ★ 系统完成了全部仿真时间")
+    end
+    
+    # 显示首个截止单元信息
+    println("\n  【首个截止单元信息】")
+    if first_cutoff_detected
+        first_cutoff_time = get(result, "first_cutoff_time [s]", 0.0)
+        first_cutoff_element = get(result, "first_cutoff_element", 0)
+        first_cutoff_ocv = get(result, "first_cutoff_ocv [V]", 0.0)
+        total_cutoff_count = get(result, "total_cutoff_count", 0)
+        
+        println("  ★★★ 检测到单元级截止 ★★★")
+        @printf("    首个截止时间: %.2f s\n", first_cutoff_time)
+        @printf("    首个截止单元: %d\n", first_cutoff_element)
+        @printf("    该单元OCV: %.4f V\n", first_cutoff_ocv)
+        @printf("    截止电压: %.4f V\n", param_dim.cell.v_l)
+        @printf("    最终截止单元数: %d / %d\n", total_cutoff_count, ne)
     else
-        println("  ★ 系统因其他原因终止")
+        println("  未检测到任何单元达到截止条件")
     end
     
     # ========================================================================
     # 5. 单元级别分析
     # ========================================================================
     println("\n[5/7] 单元级别截止状态分析...")
-    println("="^60)
+    println("="^70)
+    
+    # 显示OCV分布分析
+    if haskey(result, "thermal2D element OCV")
+        OCV_hist = result["thermal2D element OCV"]
+        
+        println("\n  【单元OCV分布分析】")
+        println("  " * "-"^70)
+        @printf("  %10s | %10s | %10s | %10s | %10s | %8s\n",
+                "时间(s)", "OCV最小", "OCV最大", "OCV均值", "距截止", "电压(V)")
+        println("  " * "-"^70)
+        
+        n_snapshots = min(10, num_steps)
+        idx_snapshots = round.(Int, range(1, num_steps, length=n_snapshots))
+        
+        for idx in idx_snapshots
+            ocv_snap = OCV_hist[:, idx]
+            ocv_min = minimum(ocv_snap)
+            ocv_max = maximum(ocv_snap)
+            ocv_mean = mean(ocv_snap)
+            margin = ocv_min - param_dim.cell.v_l  # 距离放电截止的余量
+            
+            @printf("  %10.1f | %10.4f | %10.4f | %10.4f | %10.4f | %8.4f\n",
+                    t[idx], ocv_min, ocv_max, ocv_mean, margin, V[idx])
+        end
+        println("  " * "-"^70)
+        
+        # 找出OCV最低的单元
+        ocv_final = OCV_hist[:, end]
+        min_ocv_elem = argmin(ocv_final)
+        max_ocv_elem = argmax(ocv_final)
+        
+        println("\n  【最终时刻OCV极值单元】")
+        @printf("    OCV最低单元: %d (OCV = %.4f V)\n", min_ocv_elem, ocv_final[min_ocv_elem])
+        @printf("    OCV最高单元: %d (OCV = %.4f V)\n", max_ocv_elem, ocv_final[max_ocv_elem])
+        @printf("    OCV差异: %.4f V\n", ocv_final[max_ocv_elem] - ocv_final[min_ocv_elem])
+    end
     
     if haskey(result, "thermal2D element current")
         I_e_hist = result["thermal2D element current"]
@@ -242,10 +284,10 @@ function main()
         idx_snapshots = round.(Int, range(1, num_steps, length=n_snapshots))
         
         println("\n  时间点采样分析：")
-        println("  " * "-"^70)
-        @printf("  %10s | %12s | %12s | %12s | %10s\n", 
-                "时间(s)", "电流均值(A)", "电流标准差", "零电流单元", "电压(V)")
-        println("  " * "-"^70)
+        println("  " * "-"^80)
+        @printf("  %10s | %12s | %12s | %12s | %12s | %10s\n", 
+                "时间(s)", "电流均值(A)", "电流标准差", "零电流单元", "截止单元", "电压(V)")
+        println("  " * "-"^80)
         
         zero_current_threshold = 1e-6  # 判定为零电流的阈值
         
@@ -253,10 +295,19 @@ function main()
             I_e_snap = I_e_hist[:, idx] .* I_scale
             n_zero = sum(abs.(I_e_snap) .< zero_current_threshold)
             
-            @printf("  %10.1f | %12.4e | %12.4e | %12d | %10.4f\n",
-                    t[idx], mean(I_e_snap), std(I_e_snap), n_zero, V[idx])
+            # 获取截止单元数
+            n_cutoff = 0
+            if haskey(result, "thermal2D n_cutoff_elements")
+                cutoff_hist = result["thermal2D n_cutoff_elements"]
+                if size(cutoff_hist, 2) >= idx
+                    n_cutoff = Int(cutoff_hist[1, idx])
+                end
+            end
+            
+            @printf("  %10.1f | %12.4e | %12.4e | %12d | %12d | %10.4f\n",
+                    t[idx], mean(I_e_snap), std(I_e_snap), n_zero, n_cutoff, V[idx])
         end
-        println("  " * "-"^70)
+        println("  " * "-"^80)
         
         # 检查是否有单元电流归零但系统继续运行
         println("\n  【单元电流归零检测】")
@@ -446,42 +497,69 @@ function main()
     println("="^80)
     
     println("""
-    【截止电压逻辑测试结果】
+    【精细化截止电压逻辑测试结果】
     
     1. 仿真概况：
        - 总时间步数: $num_steps
-       - 初始电压: $(V[1]) V
-       - 最终电压: $(V[end]) V
+       - 初始电压: $(round(V[1], digits=4)) V
+       - 最终电压: $(round(V[end], digits=4)) V
        - 截止电压: $(param_dim.cell.v_l) V
        - 终止原因: $termination_reason
     """)
     
     # 关键结论
-    println("    2. 关键发现：")
+    println("    2. 单元级截止分析：")
     
-    if termination_reason == "voltage_cutoff"
-        println("       ★ 系统在整体电压达到截止电压时终止 (break)")
+    if first_cutoff_detected
+        first_cutoff_time = get(result, "first_cutoff_time [s]", 0.0)
+        first_cutoff_element = get(result, "first_cutoff_element", 0)
+        first_cutoff_ocv = get(result, "first_cutoff_ocv [V]", 0.0)
+        total_cutoff_count = get(result, "total_cutoff_count", 0)
         
-        # 检查是否有单元级别的差异
-        if haskey(result, "thermal2D element current")
-            I_e_final = result["thermal2D element current"][:, end]
-            cv_final = std(I_e_final) / max(abs(mean(I_e_final)), 1e-10)
-            
-            if cv_final > 0.1
-                println("       ★ 最终时刻单元电流存在明显差异 (CV=$(round(cv_final*100, digits=1))%)")
-                println("         这表明不同单元的放电深度不同")
-            else
-                println("       ★ 最终时刻单元电流分布较均匀 (CV=$(round(cv_final*100, digits=1))%)")
-            end
+        println("       ★★★ 检测到单元级截止 ★★★")
+        @printf("       首个截止时间: %.2f s\n", first_cutoff_time)
+        @printf("       首个截止单元: %d\n", first_cutoff_element)
+        @printf("       该单元OCV: %.4f V\n", first_cutoff_ocv)
+        @printf("       最终截止单元数: %d / %d\n", total_cutoff_count, ne)
+        
+        # 检查系统行为
+        if termination_reason == "all_elements_cutoff"
+            println("       → 系统因所有单元都截止而终止")
+        elseif termination_reason == "voltage_cutoff_low" || termination_reason == "voltage_cutoff_high"
+            println("       → 系统因整体电压截止而终止（在所有单元截止前）")
+        elseif termination_reason == "time_limit"
+            println("       → 系统完成全部仿真时间（部分单元已截止但继续运行）")
+        end
+    else
+        println("       未检测到任何单元达到截止条件")
+        if termination_reason == "voltage_cutoff_low" || termination_reason == "voltage_cutoff_high"
+            println("       → 整体电压先于任何单元达到截止")
+        end
+    end
+    
+    # 检查是否有单元级别的差异
+    if haskey(result, "thermal2D element current")
+        I_e_final = result["thermal2D element current"][:, end]
+        cv_final = std(I_e_final) / max(abs(mean(I_e_final)), 1e-10)
+        
+        println()
+        if cv_final > 0.1
+            @printf("       电流分布差异: CV = %.1f%% (明显不均匀)\n", cv_final*100)
+        else
+            @printf("       电流分布差异: CV = %.1f%% (较均匀)\n", cv_final*100)
         end
     end
     
     println("""
     
-    3. 当前实现行为：
-       - 当整体电池电压 < v_l 时：整个系统 break（Solve.jl:264-266）
-       - 单元级截止检测：由 _detect_cutoff_elements 函数实现
-       - 达到截止的单元：电流设为0，但需系统继续运行才能观察到
+    3. 当前实现行为（精细化控制）：
+       - 严格截止检测：无软边界，OCV <= V_MIN 即判定为截止
+       - 单元级截止追踪：记录首个截止单元的索引、时间、OCV
+       - 电流控制：截止单元电流设为0，其他单元继续分担电流
+       - 终止条件：
+         * 所有单元都截止 → 终止
+         * 整体电压超出范围 → 终止
+         * 达到仿真时间 → 终止
     
     4. 生成的图像：
        - testexample_cutoff_voltage.png   - 放电曲线与截止电压标注
@@ -489,6 +567,11 @@ function main()
        - testexample_current_heatmap.png  - 全部单元电流热图
        - testexample_soc_evolution.png    - SOC演化（带范围）
        - testexample_current_heterogeneity.png - 电流异质性演化
+    
+    5. 精细化控制研究要点：
+       - 可以追踪哪个单元先达到截止条件
+       - 可以观察截止单元数量随时间的变化
+       - 可以分析不同单元的OCV分布差异
     """)
     
     println("="^80)
