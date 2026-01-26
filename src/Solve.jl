@@ -102,20 +102,11 @@ function Solve(case::Case)
         nnode_th = case.mesh["thermal2D"].nlen
         T_nodes = fill(case.param.cell.T0, nnode_th)
         variables["T_nodes"] = T_nodes
-        # 若启用 collector-seeded 逻辑，则优先尝试从 mesh 读取内置的 layer_weights；如无，则回退采样计算
+        # 若启用 collector-seeded 逻辑，计算 layer_weights
         if hasproperty(case.opt, :collector_seeded) && case.opt.collector_seeded
             try
-                fks_mesh = try
-                    jellyroll_get_layer_weights(case.mesh["thermal2D"])
-                catch
-                    nothing
-                end
-                if fks_mesh !== nothing
-                    variables["thermal2D layer_weights"] = fks_mesh
-                else
-                    fks = jellyroll_element_layer_weights(case.mesh["thermal2D"], case.param_dim; nsamples_per_dim=4, logic=:spiral)
-                    variables["thermal2D layer_weights"] = fks
-                end
+                _, fks = jellyroll_element_properties(case.mesh["thermal2D"], case.param_dim)
+                variables["thermal2D layer_weights"] = fks
             catch err
                 @warn "Failed to set layer_weights: $err"
             end
@@ -538,15 +529,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 获取 layer_weights（如果存在）
     fks = haskey(variables, "thermal2D layer_weights") ? variables["thermal2D layer_weights"] : nothing
     if fks === nothing
-        mesh_loc = mesh_th
-        fks = try
-            jellyroll_get_layer_weights(mesh_loc)
-        catch
-            nothing
-        end
-        if fks === nothing
-            fks = jellyroll_element_layer_weights(mesh_loc, case.param_dim; nsamples_per_dim=4, logic=:spiral)
-        end
+        _, fks = jellyroll_element_properties(mesh_th, case.param_dim)
         variables["thermal2D layer_weights"] = fks
     end
     

@@ -62,8 +62,8 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Flo
     Vi, Vj = mesh.element[mesh.gs.ele, :], mesh.element[mesh.gs.ele, :]
     ele_of_gp = mesh.gs.ele
     
-    # 获取层权重（从 Jellyrollmodel.jl 缓存）
-    fks = jellyroll_get_layer_weights(mesh)
+    # 获取层权重（从 jellyroll_element_properties 计算）
+    _, fks = jellyroll_element_properties(mesh, case.param_dim)
     
     # ========== 质量矩阵 ==========
     # 计算各单元的等效热容
@@ -340,7 +340,7 @@ function compute_element_heat_sources(case::Case, variables::Dict, I_e::Vector{F
     q_ref = case.param_dim.scale.q_th
     
     # 获取层权重
-    fks = jellyroll_get_layer_weights(mesh)
+    _, fks = jellyroll_element_properties(mesh, case.param_dim)
     
     # 获取电化学变量
     eta_n = variables["negative electrode overpotential"][1]

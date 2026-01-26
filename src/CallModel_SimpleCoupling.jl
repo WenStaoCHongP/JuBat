@@ -69,13 +69,11 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
     # 转换: 电化学无量纲 → 物理值 → 傅里叶无量纲
     Q_layers = Q_layers_ec .* (q_ec_scale / q_ref)
 
-    layer_weights = try
-        jellyroll_get_layer_weights(mesh_th)
+    # 获取层权重
+    _, layer_weights = try
+        jellyroll_element_properties(mesh_th, case.param_dim)
     catch
-        nothing
-    end
-    if layer_weights === nothing
-        layer_weights = jellyroll_element_layer_weights(mesh_th, case.param_dim; nsamples_per_dim=4, logic=:spiral)
+        (nothing, nothing)
     end
 
     q_elem = zeros(Float64, ne)

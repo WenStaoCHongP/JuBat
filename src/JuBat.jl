@@ -36,8 +36,8 @@ export ModelInitialisation_SimpleCoupling, CallModel_SimpleCoupling
 export extract_states_simple_coupling, compute_average_temperature
 export Arrhenius, IntV
 export jellyroll_spiral_params, cart2pol
-export jellyroll_collector_seed_mesh, jellyroll_get_layer_weights, jellyroll_get_element_areas
-export jellyroll_tab_node_indices, edge_boundary, jellyroll_element_properties
+export jellyroll_collector_seed_mesh, jellyroll_element_properties
+export jellyroll_tab_node_indices, edge_boundary
 export jellyroll_element_centers
 export ThermalDistributed1D, ThermalDistributed2D, ThermalDistributed2D_BC
 export heatQ_Source, compute_element_heat_sources, solve_branch_currents_newton
