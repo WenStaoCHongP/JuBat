@@ -39,7 +39,6 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
     # 拆分状态向量
     y_chem, y_T = extract_states_simple_coupling(case, y)
     T_avg_nd, T_avg_K = compute_average_temperature(case, y_T)
-    case.shared_spme_temperature = T_avg_nd
 
     # 临时使用平均温度更新 SPMe 参数
     T0_original = case.param.cell.T0
@@ -98,19 +97,12 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
     total_heat_W = q_ref * sum(q_elem .* elem_volumes)
     q_avg_Wm3 = total_volume > 0 ? (total_heat_W / total_volume) : 0.0
 
-    units_SI = hasproperty(case.opt, :units_thermal) && case.opt.units_thermal == "SI"
-    if units_SI
-        heat_fields = q_elem .* q_ref
-        heat_units_code = 1.0
-    else
-        heat_fields = q_elem
-        heat_units_code = 0.0
-    end
+    # 统一使用无量纲热源
+    heat_fields = q_elem
 
     thermal_vars = Dict{String, Union{Array{Float64}, Float64}}(
         "T_nodes" => y_T,
         "heat_source_fields" => heat_fields,
-        "heat_source_units_code" => heat_units_code,
     )
     thermal_vars["average temperature"] = T_avg_K
     thermal_vars["total heat source"] = total_heat_W
@@ -137,17 +129,9 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
     variables["thermal2D temperature field"] = variables["thermal2D temperature"]
     variables["time"] = t
 
-    if hasproperty(case.opt, :debug_simple_coupling) && case.opt.debug_simple_coupling
-        println("[SimpleCoupling @ t=$(t * case.param.scale.t0)s]")
-        println("  T_avg = $(T_avg_K) K")
-        println("  Q_total = $(total_heat_W) W")
-        println("  q_avg = $(q_avg_Wm3) W/m^3")
-        Vc_val = begin
-            Vc_nd = variables_chem["cell voltage"]  # 无量纲电压
-            Vc_nd_scalar = isa(Vc_nd, AbstractArray) ? (length(Vc_nd) > 0 ? Vc_nd[1] : 0.0) : Vc_nd
-            Vc_nd_scalar * case.param.scale.phi  # 转换为有量纲 [V]
-        end
-        println("  V_cell = $(Vc_val) V")
+    # 调试输出到文件
+    if case.opt.debug_coupling
+        _debug_log(case.opt, "[SimpleCoupling @ t=$(t * case.param.scale.t0)s] T_avg=$(T_avg_K)K, Q_total=$(total_heat_W)W")
     end
 
     return M, K, F, variables, Float64[]

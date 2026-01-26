@@ -219,10 +219,8 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     dt_max = dt_range[2] / t0_scale
     t_end_nd = t_max / t0_scale
     
-    # 检测是否为多SPMe模式
+    # 检测是否为多SPMe模式（当使用分布式2D热模型时自动启用）
     multi_spme = case.opt.model == "SPMe" && 
-                 hasproperty(case.opt, :per_element_spme) && 
-                 case.opt.per_element_spme &&
                  case.opt.thermalmodel == "distributed2D" &&
                  haskey(case.mesh, "thermal2D")
     

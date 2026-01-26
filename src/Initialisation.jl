@@ -78,13 +78,11 @@ end
 1. `case.opt.model` 必须为 "SPMe"
 2. `case.opt.thermalmodel` 必须为 "distributed2D"
 3. `case.mesh` 必须包含 "thermal2D" 网格
-4. `case.opt.per_element_spme` 应为 true（建议，非强制）
 
 # 示例
 ```julia
 # 均匀初始SOC（所有单元相同）
 case = SetCase(param_dim, opt)
-case.opt.per_element_spme = true
 y0 = ModelInitialisation_MultiSPMe(case)
 
 # 非均匀初始SOC（如热失控扩散研究）

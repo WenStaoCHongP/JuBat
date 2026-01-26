@@ -82,21 +82,11 @@ function ModelInitialisation_SimpleCoupling(case::Case)
         case.simple_coupling_layout["Ne"] = Ne
     end
     
-    # 打印初始化信息
-    if hasproperty(case.opt, :debug_simple_coupling) && case.opt.debug_simple_coupling
-        println("[SimpleCoupling初始化]")
-        println("  模型: $(case.opt.model)")
-        println("  化学状态维度: $n_chem")
-        println("    - 负极颗粒节点: $Nrn")
-        println("    - 正极颗粒节点: $Nrp")
-        if case.opt.model == "SPMe"
-            println("    - 电解质节点: $Ne")
-        end
-        println("  温度场维度: $nT")
-        println("  总状态向量维度: $(length(y0))")
-        println("  初始温度: $(case.param.cell.T0 * case.param_dim.scale.T_ref) K")
+    # 调试输出到文件
+    if case.opt.debug_coupling
+        msg = "[SimpleCoupling初始化] model=$(case.opt.model), n_chem=$n_chem, nT=$nT, T0=$(case.param.cell.T0 * case.param_dim.scale.T_ref)K"
+        _debug_log(case.opt, msg)
     end
-    case.shared_spme_temperature = T_init
     
     return y0
 end

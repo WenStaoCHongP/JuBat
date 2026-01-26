@@ -98,9 +98,9 @@ function StandardVariables(case::Case, num::Int64)
     variables["T_nodes"] = zeros(Float64, 0, num)
     variables["T_prev"] = zeros(Float64, 0, num)
     variables["heat_source_fields"] = zeros(Float64, 0, num)
-    # Phase B: 多SPMe模式的逐单元变量历史记录（如果启用）
-    if hasproperty(case.opt, :per_element_spme) && case.opt.per_element_spme && 
-       case.opt.thermalmodel == "distributed2D" && haskey(case.mesh, "thermal2D")
+    # Phase B: 多SPMe模式的逐单元变量历史记录（当使用分布式2D热模型时自动启用）
+    if case.opt.model == "SPMe" && case.opt.thermalmodel == "distributed2D" && 
+       haskey(case.mesh, "thermal2D")
         ne = size(case.mesh["thermal2D"].element, 1)
         nT = case.mesh["thermal2D"].nlen
         # 覆盖热源历史为逐单元尺寸

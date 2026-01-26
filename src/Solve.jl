@@ -42,29 +42,18 @@ function Solve(case::Case)
         t0 = RunTime[1] 
         t_end = RunTime[end]
     
-    # initialisation（根据模式选择初始化函数）
+    # 判断是否启用多SPMe模式（当使用分布式2D热模型时自动启用）
     multi_spme_enabled = (
         case.opt.model == "SPMe" &&
-        hasproperty(case.opt, :per_element_spme) && case.opt.per_element_spme &&
         case.opt.thermalmodel == "distributed2D" &&
         haskey(case.mesh, "thermal2D")
     )
     
     # 检查模式并初始化（优先级：简化耦合 > 多SPMe > 标准）
-    if hasproperty(case.opt, :simple_thermal_coupling) && 
-       case.opt.simple_thermal_coupling &&
-       case.opt.thermalmodel == "distributed2D"
+    if case.opt.simple_thermal_coupling && case.opt.thermalmodel == "distributed2D"
         y0 = ModelInitialisation_SimpleCoupling(case)
-        if hasproperty(case.opt, :debug_simple_coupling) && case.opt.debug_simple_coupling
-            println("[Solve] 简化耦合模式：状态向量维度 = $(length(y0))")
-        end
     elseif multi_spme_enabled
         y0 = ModelInitialisation_MultiSPMe(case)
-        if hasproperty(case.opt, :debug_multi_spme) && case.opt.debug_multi_spme
-            println("[Solve] 多SPMe模式：状态向量维度 = $(length(y0))")
-            layout = case.multi_spme_layout
-            println("  ne = $(layout["ne"]), n_chem = $(layout["n_chem"]), nT = $(layout["nT"])")
-        end
     else
         y0 = ModelInitialisation(case)
     end
@@ -84,11 +73,7 @@ function Solve(case::Case)
     # 计算预期时间步数，添加安全限制避免内存溢出
     num_estimated = round(Int64, (t_end - t0)/dt * 1.5)
     # 限制最大预分配步数（避免内存溢出）
-    # 对于多SPMe模式，由于每步需要存储ne个单元的数据，限制更严格
-    max_steps = 100000  # 默认最大步数
-    if hasproperty(case.opt, :per_element_spme) && case.opt.per_element_spme
-        max_steps = 50000  # 多SPMe模式限制更严格
-    end
+    max_steps = multi_spme_enabled ? 50000 : 100000
     num = min(num_estimated, max_steps)
     
     if num_estimated > max_steps
@@ -632,18 +617,11 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     variables["thermal2D dUdT_p_e"] = dUdT_p_e
     
     # 无量纲化热源
-    if hasproperty(case.opt, :units_thermal) && case.opt.units_thermal == "SI"
-        variables["heat_source_fields"] = q_elem
-        variables["heat_source_units_code"] = 1.0
-    else
-        q_ec_scale = case.param_dim.scale.I_typ * case.param_dim.scale.phi / case.param_dim.cell.volume
-        q_elem_physical = q_elem .* q_ec_scale  # 物理热源 [W/m³]
-        
-        # 用傅里叶尺度归一化
-        q_ref = case.param_dim.scale.q_th  # 傅里叶尺度
-        variables["heat_source_fields"] = q_elem_physical ./ q_ref
-        variables["heat_source_units_code"] = 0.0
-    end
+    # 热源归一化（统一使用无量纲）
+    q_ec_scale = case.param_dim.scale.I_typ * case.param_dim.scale.phi / case.param_dim.cell.volume
+    q_elem_physical = q_elem .* q_ec_scale  # 物理热源 [W/m³]
+    q_ref = case.param_dim.scale.q_th
+    variables["heat_source_fields"] = q_elem_physical ./ q_ref
     
     # 7) 装配热学矩阵
     MT, KT, FT = ThermalDistributed2D(case, variables)
@@ -688,9 +666,9 @@ function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
     end
     
     # 判断是否应该启用多SPMe模式
+    # 当使用分布式2D热模型时自动启用多SPMe
     should_use_multi_spme = (
         case.opt.model == "SPMe" &&
-        hasproperty(case.opt, :per_element_spme) && case.opt.per_element_spme &&
         case.opt.thermalmodel == "distributed2D" &&
         haskey(case.mesh, "thermal2D")
     )
