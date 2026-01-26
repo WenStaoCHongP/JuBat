@@ -290,6 +290,10 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
                 y0[thermal_range] .= T_nodes_carry
             end
         end
+    elseif multi_spme && !isempty(case.multi_spme_layout) && haskey(case.mesh, "thermal2D")
+        # 情况2：多SPMe模式，T_nodes为nothing，从状态向量y0中提取温度场（继承）
+        thermal_range = case.multi_spme_layout["thermal_range"]
+        T_nodes_carry = y0[thermal_range]
     elseif haskey(case.mesh, "thermal2D")
         nT_mesh = case.mesh["thermal2D"].nlen
         
