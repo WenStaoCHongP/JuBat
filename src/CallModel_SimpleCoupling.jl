@@ -70,10 +70,10 @@ function CallModel_SimpleCoupling(case::Case, y::Array{Float64}, t::Float64; jac
     Q_layers = Q_layers_ec .* (q_ec_scale / q_ref)
 
     # 获取层权重
-    _, layer_weights = try
-        jellyroll_element_properties(mesh_th, case.param_dim)
+    layer_weights = try
+        jellyroll_element_properties(mesh_th, case.param_dim)[2]
     catch
-        (nothing, nothing)
+        nothing
     end
 
     q_elem = zeros(Float64, ne)
