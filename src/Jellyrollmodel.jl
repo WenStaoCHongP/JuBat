@@ -166,30 +166,10 @@ function jellyroll_collector_seed_mesh(param_dim; nθ::Int=360, gsorder::Int=2, 
     areas = _compute_element_areas(mesh)
     __jr_element_areas[mesh] = areas
     
-    # 计算并缓存层权重（体积分数）
-    # 层序: [NE, SP, PE, PCC, NCC]
-    t_PE = param_dim.PE.thickness
-    t_NE = param_dim.NE.thickness
-    t_SP = param_dim.SP.thickness
-    t_PCC = param_dim.PCC.thickness
-    t_NCC = param_dim.NCC.thickness
-    t_total = p.t_repeat
-    
-    # 各层在完整周期中的体积分数
-    f_NE = 2 * t_NE / t_total
-    f_SP = 2 * t_SP / t_total
-    f_PE = 2 * t_PE / t_total
-    f_PCC = t_PCC / t_total
-    f_NCC = t_NCC / t_total
-    
-    f_k = zeros(Float64, ne, 5)
-    @inbounds for e in 1:ne
-        f_k[e, 1] = f_NE
-        f_k[e, 2] = f_SP
-        f_k[e, 3] = f_PE
-        f_k[e, 4] = f_PCC
-        f_k[e, 5] = f_NCC
-    end
+    # 计算并缓存层权重（基于网格几何的面积权重）
+    # 层序（从内到外）: PE → PCC → PE → SP → NE → NCC → NE → SP
+    # 输出格式: [NE, SP, PE, PCC, NCC]
+    f_k = _compute_layer_area_weights(mesh, param_dim)
     __jr_layer_weights[mesh] = f_k
     
     return mesh
@@ -205,6 +185,15 @@ export jellyroll_get_layer_weights, jellyroll_get_element_areas, jellyroll_eleme
     jellyroll_get_layer_weights(mesh) -> Matrix{Float64}
 
 返回层权重矩阵 (ne×5): [NE, SP, PE, PCC, NCC]
+
+# 说明
+层权重基于网格几何计算（面积加权）。
+对于螺旋结构，不同径向位置的单元各层面积比例略有不同：
+- 靠近中心（小半径）：内层（PE/PCC）面积占比略大
+- 靠近外侧（大半径）：外层（NE/NCC）面积占比略大
+
+# 层序（从内到外）
+PE → PCC → PE → SP → NE → NCC → NE → SP
 """
 function jellyroll_get_layer_weights(mesh)
     return get(__jr_layer_weights, mesh, nothing)
@@ -225,9 +214,15 @@ end
 统一接口：获取单元面积和层权重。
 如果缓存不存在，会重新计算。
 
+# 层序（从内到外）
+PE → PCC → PE → SP → NE → NCC → NE → SP
+
 # 返回
 - `areas`: Vector{Float64}(ne) - 各单元面积
 - `layer_weights`: Matrix{Float64}(ne, 5) - 层权重 [NE, SP, PE, PCC, NCC]
+
+# 说明
+层权重基于网格几何计算（面积加权），不同单元的权重会略有不同。
 """
 function jellyroll_element_properties(mesh, param_dim)
     # 获取或计算单元面积
@@ -237,33 +232,10 @@ function jellyroll_element_properties(mesh, param_dim)
         __jr_element_areas[mesh] = areas
     end
     
-    # 获取或计算层权重
+    # 获取或计算层权重（基于网格几何的面积权重）
     fks = jellyroll_get_layer_weights(mesh)
     if fks === nothing
-        p = jellyroll_spiral_params(param_dim)
-        ne = size(mesh.element, 1)
-        t_total = p.t_repeat
-        
-        t_PE = param_dim.PE.thickness
-        t_NE = param_dim.NE.thickness
-        t_SP = param_dim.SP.thickness
-        t_PCC = param_dim.PCC.thickness
-        t_NCC = param_dim.NCC.thickness
-        
-        f_NE = 2 * t_NE / t_total
-        f_SP = 2 * t_SP / t_total
-        f_PE = 2 * t_PE / t_total
-        f_PCC = t_PCC / t_total
-        f_NCC = t_NCC / t_total
-        
-        fks = zeros(Float64, ne, 5)
-        @inbounds for e in 1:ne
-            fks[e, 1] = f_NE
-            fks[e, 2] = f_SP
-            fks[e, 3] = f_PE
-            fks[e, 4] = f_PCC
-            fks[e, 5] = f_NCC
-        end
+        fks = _compute_layer_area_weights(mesh, param_dim)
         __jr_layer_weights[mesh] = fks
     end
     
@@ -401,6 +373,144 @@ end
 # ------------------------------------------------------------------------
 # 内部辅助函数
 # ------------------------------------------------------------------------
+
+"""
+    _compute_layer_area_weights(mesh, param_dim) -> Matrix{Float64}
+
+基于网格几何计算每个单元的层面积权重。
+
+# 层序（从内螺旋到外螺旋）
+PE → PCC → PE → SP → NE → NCC → NE → SP
+
+# 返回
+Matrix{Float64}(ne, 5): 各单元的层权重 [NE, SP, PE, PCC, NCC]
+
+# 原理
+对于每个Q4单元：
+1. 从节点坐标计算内边半径 r_in 和外边半径 r_out
+2. 计算单元跨越的角度 Δθ
+3. 根据层序，计算每层的面积（使用扇形面积公式）
+4. 归一化得到权重
+
+面积计算：A_layer = 0.5 * (r_outer² - r_inner²) * Δθ
+"""
+function _compute_layer_area_weights(mesh, param_dim)
+    ne = size(mesh.element, 1)
+    
+    # 获取各层厚度
+    t_PE = param_dim.PE.thickness
+    t_NE = param_dim.NE.thickness
+    t_SP = param_dim.SP.thickness
+    t_PCC = param_dim.PCC.thickness
+    t_NCC = param_dim.NCC.thickness
+    
+    # 层序（从内到外）及其厚度
+    # PE → PCC → PE → SP → NE → NCC → NE → SP
+    # 对应材料类型: :PE, :PCC, :PE, :SP, :NE, :NCC, :NE, :SP
+    layer_sequence = [
+        (:PE,  t_PE),   # 层1
+        (:PCC, t_PCC),  # 层2
+        (:PE,  t_PE),   # 层3
+        (:SP,  t_SP),   # 层4
+        (:NE,  t_NE),   # 层5
+        (:NCC, t_NCC),  # 层6
+        (:NE,  t_NE),   # 层7
+        (:SP,  t_SP),   # 层8
+    ]
+    
+    # 输出权重矩阵：[NE, SP, PE, PCC, NCC]
+    f_k = zeros(Float64, ne, 5)
+    
+    @inbounds for e in 1:ne
+        # 获取单元4个节点的坐标
+        # 节点顺序: 1-内侧起点, 2-外侧起点, 3-外侧终点, 4-内侧终点
+        n1, n2, n3, n4 = mesh.element[e, :]
+        x1, y1 = mesh.node[n1, 1], mesh.node[n1, 2]
+        x2, y2 = mesh.node[n2, 1], mesh.node[n2, 2]
+        x3, y3 = mesh.node[n3, 1], mesh.node[n3, 2]
+        x4, y4 = mesh.node[n4, 1], mesh.node[n4, 2]
+        
+        # 计算各节点的极坐标
+        r1, θ1 = hypot(x1, y1), atan(y1, x1)
+        r2, θ2 = hypot(x2, y2), atan(y2, x2)
+        r3, θ3 = hypot(x3, y3), atan(y3, x3)
+        r4, θ4 = hypot(x4, y4), atan(y4, x4)
+        
+        # 单元内边半径（内螺旋边：节点1-4的平均）
+        r_in = 0.5 * (r1 + r4)
+        
+        # 计算单元跨越的角度Δθ
+        # 处理角度跨越 ±π 的情况
+        dθ_14 = _angle_diff(θ1, θ4)  # 内边角度差
+        dθ_23 = _angle_diff(θ2, θ3)  # 外边角度差
+        Δθ = 0.5 * (abs(dθ_14) + abs(dθ_23))
+        
+        # 确保Δθ为正且合理
+        Δθ = max(Δθ, 1e-10)
+        
+        # 从内边开始，依次计算各层的面积
+        r_current = r_in
+        A_NE, A_SP, A_PE, A_PCC, A_NCC = 0.0, 0.0, 0.0, 0.0, 0.0
+        
+        for (mat_type, t_layer) in layer_sequence
+            r_inner = r_current
+            r_outer = r_current + t_layer
+            
+            # 扇形面积: A = 0.5 * (r_outer² - r_inner²) * Δθ
+            A_layer = 0.5 * (r_outer^2 - r_inner^2) * Δθ
+            
+            # 累加到对应材料
+            if mat_type == :NE
+                A_NE += A_layer
+            elseif mat_type == :SP
+                A_SP += A_layer
+            elseif mat_type == :PE
+                A_PE += A_layer
+            elseif mat_type == :PCC
+                A_PCC += A_layer
+            elseif mat_type == :NCC
+                A_NCC += A_layer
+            end
+            
+            r_current = r_outer
+        end
+        
+        # 总面积
+        A_total = A_NE + A_SP + A_PE + A_PCC + A_NCC
+        
+        # 归一化得到权重
+        if A_total > 0
+            f_k[e, 1] = A_NE / A_total   # NE
+            f_k[e, 2] = A_SP / A_total   # SP
+            f_k[e, 3] = A_PE / A_total   # PE
+            f_k[e, 4] = A_PCC / A_total  # PCC
+            f_k[e, 5] = A_NCC / A_total  # NCC
+        else
+            # 回退到厚度权重
+            t_total = 2*t_NE + 2*t_SP + 2*t_PE + t_PCC + t_NCC
+            f_k[e, 1] = 2*t_NE / t_total
+            f_k[e, 2] = 2*t_SP / t_total
+            f_k[e, 3] = 2*t_PE / t_total
+            f_k[e, 4] = t_PCC / t_total
+            f_k[e, 5] = t_NCC / t_total
+        end
+    end
+    
+    return f_k
+end
+
+"""计算两个角度之间的差值（处理周期性）"""
+function _angle_diff(θ1::Float64, θ2::Float64)
+    d = θ2 - θ1
+    # 将差值归一化到 [-π, π]
+    while d > π
+        d -= 2π
+    end
+    while d < -π
+        d += 2π
+    end
+    return d
+end
 
 """极耳节点查找（内部函数）"""
 function _find_tab_nodes(mesh, tab_angles, θ_cum_nodes, θ_cum_range, delta_theta_fn, tw, Rin, Rout; reverse_range=false)
