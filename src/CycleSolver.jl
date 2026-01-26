@@ -275,11 +275,13 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     
     # 初始化温度场
     # T_nodes 有三种情况：
-    # 1. 有效数组：使用传入的温度场
-    # 2. nothing 且 y0 包含热场：从 y0 中提取（继承）
-    # 3. nothing 且 y0 不包含热场（或显式要求重置）：使用初始温度
-    if T_nodes !== nothing && haskey(case.mesh, "thermal2D")
-        # 情况1：使用传入的温度场
+    # 1. 有效数组（非空）：使用传入的温度场
+    # 2. nothing 或空数组，且 y0 包含热场：从 y0 中提取（继承）
+    # 3. nothing 或空数组，且 y0 不包含热场：使用初始温度
+    T_nodes_valid = T_nodes !== nothing && !isempty(T_nodes)
+    
+    if T_nodes_valid && haskey(case.mesh, "thermal2D")
+        # 情况1：使用传入的有效温度场
         T_nodes_carry = copy(T_nodes)
         
         # 多SPMe模式：同步温度场到状态向量中
