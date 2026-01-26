@@ -274,48 +274,36 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     end
     
     # 初始化温度场
-    # T_nodes 有三种情况：
-    # 1. 有效数组：使用传入的温度场
-    # 2. nothing 且 y0 包含热场：从 y0 中提取（继承）
-    # 3. nothing 且 y0 不包含热场（或显式要求重置）：使用初始温度
-    if T_nodes !== nothing && haskey(case.mesh, "thermal2D")
-        # 情况1：使用传入的温度场
-        T_nodes_carry = copy(T_nodes)
+    # 温度场处理优先级：
+    # 1. T_nodes 有效数组：直接使用（来自上一阶段的 final_state）
+    # 2. T_nodes === nothing 且 y0 包含温度数据：从 y0 继承（状态向量传递）
+    # 3. 两者都不可用：使用初始温度
+    if haskey(case.mesh, "thermal2D")
+        nT_mesh = case.mesh["thermal2D"].nlen
         
-        # 多SPMe模式：同步温度场到状态向量中
-        if multi_spme && !isempty(case.multi_spme_layout)
-            nT = case.multi_spme_layout["nT"]
-            if length(T_nodes_carry) == nT
+        if T_nodes !== nothing && length(T_nodes) == nT_mesh
+            # 情况1：使用传入的温度场
+            T_nodes_carry = copy(T_nodes)
+            
+            # 多SPMe模式：同步温度场到状态向量中
+            if multi_spme && !isempty(case.multi_spme_layout)
                 thermal_range = case.multi_spme_layout["thermal_range"]
                 y0[thermal_range] .= T_nodes_carry
             end
-        end
-    elseif haskey(case.mesh, "thermal2D")
-        nT_mesh = case.mesh["thermal2D"].nlen
-        
-        # 检查是否应该重置温度场到初始温度
-        # 条件：T_nodes 被显式设为 nothing（通常表示用户请求重置）
-        # 且状态向量 y0 已经包含有效的温度场数据
-        should_reset_thermal = (T_nodes === nothing)
-        
-        if multi_spme && !isempty(case.multi_spme_layout)
-            # 多SPMe模式：检查状态向量是否包含温度场
+        elseif multi_spme && !isempty(case.multi_spme_layout)
+            # 情况2：多SPMe模式，从状态向量继承温度场
             thermal_range = case.multi_spme_layout["thermal_range"]
             has_valid_thermal = (length(y0) >= thermal_range[end])
             
-            if has_valid_thermal && should_reset_thermal
-                # 重置温度场到初始温度
-                T_nodes_carry = fill(case.param.cell.T0, nT_mesh)
-                y0[thermal_range] .= T_nodes_carry
-            elseif has_valid_thermal
-                # 从状态向量提取（继承）
-                T_nodes_carry = y0[thermal_range]
+            if has_valid_thermal
+                # 从状态向量提取（继承，不重置！）
+                T_nodes_carry = copy(y0[thermal_range])
             else
                 # 状态向量不包含温度场，使用初始温度
                 T_nodes_carry = fill(case.param.cell.T0, nT_mesh)
             end
         else
-            # 非多SPMe模式
+            # 情况3：非多SPMe模式或无有效温度数据，使用初始温度
             T_nodes_carry = fill(case.param.cell.T0, nT_mesh)
         end
     else

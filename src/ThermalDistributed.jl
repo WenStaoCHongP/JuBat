@@ -76,21 +76,11 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Flo
     MT = Assemble(Vi, Vj, Ni, Ni, ρc_weights, nnode)
     
     # ========== 刚度矩阵（各向异性）==========
-    # 计算各单元的等效热导率
-    lam_r_e, lam_t_e = zeros(Float64, ne), zeros(Float64, ne)
-    ϵ = 1e-12
-    @inbounds for e in 1:ne
-        f = @view fks[e, :]
-        # 径向：调和平均（串联）
-        denom = f[1]/max(param.NE.lambda, ϵ) + f[2]/max(param.SP.lambda, ϵ) + 
-                f[3]/max(param.PE.lambda, ϵ) + f[4]/max(param.PCC.lambda, ϵ) + f[5]/max(param.NCC.lambda, ϵ)
-        lam_r_e[e] = denom > 0 ? (1.0 / denom) : 0.0
-        # 切向：算术平均（并联）
-        lam_t_e[e] = f[1]*param.NE.lambda + f[2]*param.SP.lambda + 
-                     f[3]*param.PE.lambda + f[4]*param.PCC.lambda + f[5]*param.NCC.lambda
-    end
+    # 直接使用 Jellyroll.jl 中已计算的等效热导率（在 SetParams.jl 中已归一化）
+    λ_r = param.cell.lambda_r  # 等效径向热导率（归一化）
+    λ_t = param.cell.lambda_t  # 等效切向热导率（归一化）
     
-    # 在高斯点旋转得到 Kxx/Kxy/Kyy
+    # 在高斯点旋转得到 Kxx/Kxy/Kyy（使用统一的等效热导率）
     ngs = size(Ni, 1)
     gx, gy = mesh.gs.x[:,1], mesh.gs.x[:,2]
     
@@ -98,10 +88,10 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Flo
     @inbounds for g in 1:ngs
         θ = atan(gy[g], gx[g])
         c, s = cos(θ), sin(θ)
-        lr, lt = lam_r_e[ele_of_gp[g]], lam_t_e[ele_of_gp[g]]
-        Kxx[g] = lr*c*c + lt*s*s
-        Kxy[g] = (lt - lr)*s*c
-        Kyy[g] = lr*s*s + lt*c*c
+        # 所有单元使用相同的等效热导率
+        Kxx[g] = λ_r*c*c + λ_t*s*s
+        Kxy[g] = (λ_t - λ_r)*s*c
+        Kyy[g] = λ_r*s*s + λ_t*c*c
     end
     
     # 加负号与电化学约定统一

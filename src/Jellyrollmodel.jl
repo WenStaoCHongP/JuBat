@@ -166,8 +166,29 @@ function jellyroll_collector_seed_mesh(param_dim; nθ::Int=360, gsorder::Int=2, 
     areas = _compute_element_areas(mesh)
     __jr_element_areas[mesh] = areas
     
-    # 计算并缓存层权重（体积分数）
-    # 层序: [NE, SP, PE, PCC, NCC]
+    # 计算并缓存各单元的层面积权重
+    # 层序（从内到外）: PE → PCC → PE → SP → NE → NCC → NE → SP
+    # 输出顺序: [NE, SP, PE, PCC, NCC]
+    f_k = _compute_layer_area_weights(mesh, param_dim, p, θ)
+    __jr_layer_weights[mesh] = f_k
+    
+    return mesh
+end
+
+"""
+计算各单元的层面积权重（内部函数）
+
+对于螺旋扇形单元，各层面积比例取决于单元的径向位置：
+A_layer / A_total = (r_layer_out² - r_layer_in²) / (r_total_out² - r_total_in²)
+
+层序（从内到外）: PE → PCC → PE → SP → NE → NCC → NE → SP
+返回顺序: [NE, SP, PE, PCC, NCC]
+"""
+function _compute_layer_area_weights(mesh, param_dim, p, θ_array)
+    ne = size(mesh.element, 1)
+    a, b = p.a, p.b
+    
+    # 各层厚度
     t_PE = param_dim.PE.thickness
     t_NE = param_dim.NE.thickness
     t_SP = param_dim.SP.thickness
@@ -175,24 +196,84 @@ function jellyroll_collector_seed_mesh(param_dim; nθ::Int=360, gsorder::Int=2, 
     t_NCC = param_dim.NCC.thickness
     t_total = p.t_repeat
     
-    # 各层在完整周期中的体积分数
-    f_NE = 2 * t_NE / t_total
-    f_SP = 2 * t_SP / t_total
-    f_PE = 2 * t_PE / t_total
-    f_PCC = t_PCC / t_total
-    f_NCC = t_NCC / t_total
+    # 层序累积厚度（从内到外）：PE → PCC → PE → SP → NE → NCC → NE → SP
+    # 定义各材料层在周期内的径向范围
+    # 层1: PE      [0, t_PE]
+    # 层2: PCC     [t_PE, t_PE + t_PCC]
+    # 层3: PE      [t_PE + t_PCC, 2*t_PE + t_PCC]
+    # 层4: SP      [2*t_PE + t_PCC, 2*t_PE + t_PCC + t_SP]
+    # 层5: NE      [2*t_PE + t_PCC + t_SP, 2*t_PE + t_PCC + t_SP + t_NE]
+    # 层6: NCC     [2*t_PE + t_PCC + t_SP + t_NE, 2*t_PE + t_PCC + t_SP + t_NE + t_NCC]
+    # 层7: NE      [2*t_PE + t_PCC + t_SP + t_NE + t_NCC, 2*(t_PE + t_SP + t_NE) + t_PCC + t_NCC]
+    # 层8: SP      [2*(t_PE + t_SP + t_NE) + t_PCC + t_NCC, t_total]
+    
+    # 各材料的径向位置范围（相对于单元内边界）
+    r0_PE1 = 0.0
+    r1_PE1 = t_PE
+    r0_PCC = r1_PE1
+    r1_PCC = r0_PCC + t_PCC
+    r0_PE2 = r1_PCC
+    r1_PE2 = r0_PE2 + t_PE
+    r0_SP1 = r1_PE2
+    r1_SP1 = r0_SP1 + t_SP
+    r0_NE1 = r1_SP1
+    r1_NE1 = r0_NE1 + t_NE
+    r0_NCC = r1_NE1
+    r1_NCC = r0_NCC + t_NCC
+    r0_NE2 = r1_NCC
+    r1_NE2 = r0_NE2 + t_NE
+    r0_SP2 = r1_NE2
+    r1_SP2 = t_total  # 等于 r0_SP2 + t_SP
     
     f_k = zeros(Float64, ne, 5)
-    @inbounds for e in 1:ne
-        f_k[e, 1] = f_NE
-        f_k[e, 2] = f_SP
-        f_k[e, 3] = f_PE
-        f_k[e, 4] = f_PCC
-        f_k[e, 5] = f_NCC
-    end
-    __jr_layer_weights[mesh] = f_k
     
-    return mesh
+    @inbounds for e in 1:ne
+        # 单元对应的角度（取单元中心）
+        θ_e = 0.5 * (θ_array[e] + θ_array[e+1])
+        
+        # 单元内边界半径
+        r_in = a + b * θ_e
+        
+        # 计算面积权重的辅助函数
+        # A ∝ (r_out² - r_in²)，所以面积权重 = ((r_in+δr_out)² - (r_in+δr_in)²) / (t_total² + 2*r_in*t_total)
+        # 简化：对于小厚度，可以近似为 (δr_out - δr_in) / t_total * (r_in + (δr_out+δr_in)/2) / (r_in + t_total/2)
+        # 但为精确，使用完整公式
+        
+        r_total_in = r_in
+        r_total_out = r_in + t_total
+        A_total = r_total_out^2 - r_total_in^2  # ∝ 总面积
+        
+        # 计算各材料的面积权重
+        # PE = PE1 + PE2
+        A_PE1 = (r_in + r1_PE1)^2 - (r_in + r0_PE1)^2
+        A_PE2 = (r_in + r1_PE2)^2 - (r_in + r0_PE2)^2
+        A_PE = A_PE1 + A_PE2
+        
+        # PCC
+        A_PCC = (r_in + r1_PCC)^2 - (r_in + r0_PCC)^2
+        
+        # SP = SP1 + SP2
+        A_SP1 = (r_in + r1_SP1)^2 - (r_in + r0_SP1)^2
+        A_SP2 = (r_in + r1_SP2)^2 - (r_in + r0_SP2)^2
+        A_SP = A_SP1 + A_SP2
+        
+        # NE = NE1 + NE2
+        A_NE1 = (r_in + r1_NE1)^2 - (r_in + r0_NE1)^2
+        A_NE2 = (r_in + r1_NE2)^2 - (r_in + r0_NE2)^2
+        A_NE = A_NE1 + A_NE2
+        
+        # NCC
+        A_NCC = (r_in + r1_NCC)^2 - (r_in + r0_NCC)^2
+        
+        # 归一化
+        f_k[e, 1] = A_NE / A_total   # NE
+        f_k[e, 2] = A_SP / A_total   # SP
+        f_k[e, 3] = A_PE / A_total   # PE
+        f_k[e, 4] = A_PCC / A_total  # PCC
+        f_k[e, 5] = A_NCC / A_total  # NCC
+    end
+    
+    return f_k
 end
 
 # ========================================================================
@@ -240,34 +321,99 @@ function jellyroll_element_properties(mesh, param_dim)
     # 获取或计算层权重
     fks = jellyroll_get_layer_weights(mesh)
     if fks === nothing
-        p = jellyroll_spiral_params(param_dim)
-        ne = size(mesh.element, 1)
-        t_total = p.t_repeat
-        
-        t_PE = param_dim.PE.thickness
-        t_NE = param_dim.NE.thickness
-        t_SP = param_dim.SP.thickness
-        t_PCC = param_dim.PCC.thickness
-        t_NCC = param_dim.NCC.thickness
-        
-        f_NE = 2 * t_NE / t_total
-        f_SP = 2 * t_SP / t_total
-        f_PE = 2 * t_PE / t_total
-        f_PCC = t_PCC / t_total
-        f_NCC = t_NCC / t_total
-        
-        fks = zeros(Float64, ne, 5)
-        @inbounds for e in 1:ne
-            fks[e, 1] = f_NE
-            fks[e, 2] = f_SP
-            fks[e, 3] = f_PE
-            fks[e, 4] = f_PCC
-            fks[e, 5] = f_NCC
-        end
+        # 层权重未缓存，需要根据单元位置计算
+        fks = _compute_layer_area_weights_from_mesh(mesh, param_dim)
         __jr_layer_weights[mesh] = fks
     end
     
     return areas, fks
+end
+
+"""
+从网格节点坐标计算各单元的层面积权重（备用方法）
+
+当网格是通过其他方式创建（非 jellyroll_collector_seed_mesh）时使用
+"""
+function _compute_layer_area_weights_from_mesh(mesh, param_dim)
+    p = jellyroll_spiral_params(param_dim)
+    ne = size(mesh.element, 1)
+    a, b = p.a, p.b
+    t_total = p.t_repeat
+    
+    # 各层厚度
+    t_PE = param_dim.PE.thickness
+    t_NE = param_dim.NE.thickness
+    t_SP = param_dim.SP.thickness
+    t_PCC = param_dim.PCC.thickness
+    t_NCC = param_dim.NCC.thickness
+    
+    # 层序累积厚度（同 _compute_layer_area_weights）
+    r0_PE1 = 0.0
+    r1_PE1 = t_PE
+    r0_PCC = r1_PE1
+    r1_PCC = r0_PCC + t_PCC
+    r0_PE2 = r1_PCC
+    r1_PE2 = r0_PE2 + t_PE
+    r0_SP1 = r1_PE2
+    r1_SP1 = r0_SP1 + t_SP
+    r0_NE1 = r1_SP1
+    r1_NE1 = r0_NE1 + t_NE
+    r0_NCC = r1_NE1
+    r1_NCC = r0_NCC + t_NCC
+    r0_NE2 = r1_NCC
+    r1_NE2 = r0_NE2 + t_NE
+    r0_SP2 = r1_NE2
+    r1_SP2 = t_total
+    
+    fks = zeros(Float64, ne, 5)
+    
+    @inbounds for e in 1:ne
+        # 计算单元中心坐标
+        x_c = mean(mesh.node[mesh.element[e, :], 1])
+        y_c = mean(mesh.node[mesh.element[e, :], 2])
+        r_c = hypot(x_c, y_c)
+        
+        # 估算单元内边界半径（取内侧两个节点的平均半径）
+        # 对于 Q4 单元，节点 1 和 4 通常在内侧
+        r1 = hypot(mesh.node[mesh.element[e, 1], 1], mesh.node[mesh.element[e, 1], 2])
+        r4 = hypot(mesh.node[mesh.element[e, 4], 1], mesh.node[mesh.element[e, 4], 2])
+        r_in = min(r1, r4)
+        
+        # 计算面积权重
+        r_total_in = r_in
+        r_total_out = r_in + t_total
+        A_total = r_total_out^2 - r_total_in^2
+        
+        # PE = PE1 + PE2
+        A_PE1 = (r_in + r1_PE1)^2 - (r_in + r0_PE1)^2
+        A_PE2 = (r_in + r1_PE2)^2 - (r_in + r0_PE2)^2
+        A_PE = A_PE1 + A_PE2
+        
+        # PCC
+        A_PCC = (r_in + r1_PCC)^2 - (r_in + r0_PCC)^2
+        
+        # SP = SP1 + SP2
+        A_SP1 = (r_in + r1_SP1)^2 - (r_in + r0_SP1)^2
+        A_SP2 = (r_in + r1_SP2)^2 - (r_in + r0_SP2)^2
+        A_SP = A_SP1 + A_SP2
+        
+        # NE = NE1 + NE2
+        A_NE1 = (r_in + r1_NE1)^2 - (r_in + r0_NE1)^2
+        A_NE2 = (r_in + r1_NE2)^2 - (r_in + r0_NE2)^2
+        A_NE = A_NE1 + A_NE2
+        
+        # NCC
+        A_NCC = (r_in + r1_NCC)^2 - (r_in + r0_NCC)^2
+        
+        # 归一化
+        fks[e, 1] = A_NE / A_total
+        fks[e, 2] = A_SP / A_total
+        fks[e, 3] = A_PE / A_total
+        fks[e, 4] = A_PCC / A_total
+        fks[e, 5] = A_NCC / A_total
+    end
+    
+    return fks
 end
 
 """计算单元面积（内部函数）"""
