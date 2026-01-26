@@ -65,8 +65,7 @@ function main()
     opt.thermal_dim = "2D"
     opt.cool_method = "tab"
     
-    # ✨ 关键：启用多SPMe并行模式
-    opt.per_element_spme = true
+    # ✨ 当 thermalmodel = "distributed2D" 时自动启用多SPMe并行模式
     
     println("✓ 参数设置完成")
     @printf("  电流: %.2f A (%.2f C)\n", i, Crates)
@@ -135,8 +134,8 @@ function main()
     println("\n[3/7] 运行多SPMe并行求解器...")
     println("  观察截止电压行为...")
     
-    # 获取初始化的状态向量
-    if case.opt.per_element_spme
+    # 获取初始化的状态向量（当使用distributed2D时自动启用多SPMe）
+    if case.opt.thermalmodel == "distributed2D" && haskey(case.mesh, "thermal2D")
         y0 = JuBat.ModelInitialisation_MultiSPMe(case)
     else
         y0 = JuBat.ModelInitialisation_SimpleCoupling(case)

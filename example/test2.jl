@@ -34,7 +34,7 @@ opt.Nrp = 5
 opt.Current = x -> 5.0
 opt.time = [0 100]
 opt.thermalmodel = "distributed2D"
-opt.per_element_spme = true  # 启用多SPMe模式
+# 当 thermalmodel = "distributed2D" 时自动启用多SPMe模式
 
 # 需要创建thermal2D网格
 # 为了测试，我们创建一个简单的矩形网格

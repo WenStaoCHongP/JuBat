@@ -70,7 +70,7 @@ function main()
     opt.thermalmodel = "distributed2D"
     opt.thermal_dim = "2D"
     opt.cool_method = "tab"
-    opt.per_element_spme = true
+    # 当 thermalmodel = "distributed2D" 时自动启用多SPMe并行模式
     
     println("✓ 参数设置完成")
     

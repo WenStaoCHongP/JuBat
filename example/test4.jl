@@ -41,8 +41,8 @@ opt.time = [0 10]  # 10秒
 opt.dt = [1e-3 0.1]
 opt.dtType = "auto"
 opt.thermalmodel = "distributed2D"
-opt.per_element_spme = true  # 启用多SPMe模式
-# 调试输出（可选）：如需更多日志，可在库中开启 debug_coupling
+# 当 thermalmodel = "distributed2D" 时自动启用多SPMe模式
+# 调试输出：可设置 opt.debug_coupling = true 输出到 opt.debug_log_path
 opt.jacobi = "update"
 opt.solveType = "Crank-Nicolson"
 opt.thermal_enabled = true
@@ -149,12 +149,11 @@ end
 println("\n[2/4] 测试单SPMe模式对比...")
 
 case_single = deepcopy(case)
-case_single.opt.per_element_spme = false
-if hasproperty(case_single.opt, :debug_multi_spme)
-    case_single.opt.debug_multi_spme = false
-end
+# 使用 lumped 热模型触发单SPMe模式
+case_single.opt.thermalmodel = "lumped"
+case_single.opt.debug_coupling = false
 
-println("运行单SPMe模式...")
+println("运行单SPMe模式（lumped热模型）...")
 try
     global result_single
     result_single = JuBat.Solve(case_single)

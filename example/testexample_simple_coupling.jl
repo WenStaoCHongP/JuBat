@@ -64,11 +64,11 @@ function main()
     opt.thermal_dim = "2D"
     
     # ✨ 关键：启用简化耦合模式
-    opt.simple_thermal_coupling = true
-    opt.per_element_spme = false  # 关闭多SPMe模式
+    opt.simple_thermal_coupling = true  # 简化耦合模式优先级高于多SPMe
     
-    # 调试选项
-    opt.debug_simple_coupling = true
+    # 调试选项（输出到文件）
+    opt.debug_coupling = true
+    opt.debug_log_path = "output/simple_coupling_debug.log"
     
     println("✓ 参数设置完成")
     @printf("  电流: %.2f A (%.2f C)\n", i, Crates)
@@ -115,12 +115,13 @@ function main()
     println("\n[诊断] 初始状态分析:")
 
     # 获取初始化的状态向量
-    if case.opt.per_element_spme
-        # 多SPMe模式
+    # 简化耦合模式：simple_thermal_coupling = true
+    if case.opt.simple_thermal_coupling
+        y0 = ModelInitialisation_SimpleCoupling(case)
+    elseif case.opt.thermalmodel == "distributed2D" && haskey(case.mesh, "thermal2D")
         y0 = ModelInitialisation_MultiSPMe(case)
     else
-        # 简化耦合模式
-        y0 = ModelInitialisation_SimpleCoupling(case)
+        y0 = JuBat.ModelInitialisation(case)
     end
 
     # 提取颗粒浓度

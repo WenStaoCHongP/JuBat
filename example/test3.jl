@@ -35,7 +35,7 @@ opt.Nrp = 5
 opt.Current = x -> 5.0  # 5A恒流放电
 opt.time = [0 100]
 opt.thermalmodel = "distributed2D"
-opt.per_element_spme = true  # 启用多SPMe模式
+# 当 thermalmodel = "distributed2D" 时自动启用多SPMe模式
 opt.jacobi = "update"
 opt.solveType = "Crank-Nicolson"
 
@@ -227,9 +227,9 @@ end
 println("\n[5/5] 测试单SPMe vs 多SPMe模式切换...")
 
 try
-    # 单SPMe模式
+    # 单SPMe模式（使用 lumped 热模型）
     case_single = deepcopy(case)
-    case_single.opt.per_element_spme = false
+    case_single.opt.thermalmodel = "lumped"
     
     # 注意：单SPMe使用不同的初始化
     y0_single = JuBat.ModelInitialisation(case_single)
