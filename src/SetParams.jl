@@ -433,6 +433,30 @@ function NormaliseParam(param_dim::Params)
     param.cell.T0 = param_dim.cell.T0 / param.scale.T_ref 
     param.cell.area = param_dim.cell.area / param_dim.cell.area
     param.cell.volume = param_dim.cell.volume / param_dim.scale.L^3
+    
+    # ========== 热参数归一化（用于分布式热模型）==========
+    k_th = param_dim.scale.k_th
+    rho_c_th = param_dim.scale.rho_c_th
+    
+    # 各层热导率归一化 (lambda* = lambda / k_th)
+    param.PE.lambda = param_dim.PE.lambda / k_th
+    param.NE.lambda = param_dim.NE.lambda / k_th
+    param.SP.lambda = param_dim.SP.lambda / k_th
+    param.PCC.lambda = param_dim.PCC.lambda / k_th
+    param.NCC.lambda = param_dim.NCC.lambda / k_th
+    
+    # 各层热容归一化 (rho_c* = rho*c / rho_c_th)
+    param.PE.rho = (param_dim.PE.rho * param_dim.PE.heat_Q) / rho_c_th
+    param.NE.rho = (param_dim.NE.rho * param_dim.NE.heat_Q) / rho_c_th
+    param.SP.rho = (param_dim.SP.rho * param_dim.SP.heat_Q) / rho_c_th
+    param.PCC.rho = (param_dim.PCC.rho * param_dim.PCC.heat_Q) / rho_c_th
+    param.NCC.rho = (param_dim.NCC.rho * param_dim.NCC.heat_Q) / rho_c_th
+    
+    # 等效热导率归一化（使用 Jellyroll.jl 中已计算的值）
+    if hasproperty(param_dim.cell, :lambda_r) && param_dim.cell.lambda_r > 0
+        param.cell.lambda_r = param_dim.cell.lambda_r / k_th
+        param.cell.lambda_t = param_dim.cell.lambda_t / k_th
+    end
 
     #tab
     param.tab.length = param_dim.tab.length / param.scale.L

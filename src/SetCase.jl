@@ -86,28 +86,21 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
         index["electrolyte potential in positive electrode"] =  v0 .+ mesh_el.nlen .- collect(mesh_el_pe.nlen - 1:-1:0)
         index["electrolyte potential in separator"] =  v0 + mesh_el_ne.nlen - 1 .+ collect(1: mesh_el_sp.nlen)
     end
-    # 初始化布局字典，供多SPMe/简化耦合模式后续填充
-    case = Case(
-        param_dim,
-        param,
-        opt,
-        mesh,
-        index,
-        Dict{String,Any}(),
-        Dict{String,Any}(),
-        param.cell.T0,
-    )
+    case = Case(param_dim, param, opt, mesh, index)
     return case
 end
 
 
+"""
+    Case - 仿真案例结构体
+
+存储不变的参数和网格信息。
+动态状态（如电化学状态、温度场）应存储在 variables 字典中。
+"""
 mutable struct Case
     param_dim::Params                      # dimensional parameters
     param::Params                          # dimensionless parameters
     opt::Option                            # solver options
     mesh::Dict{String, Mesh}               # discretisation meshes
     index::Dict{String, Union{Array{Int64}, Int64}} # indices of unknowns
-    multi_spme_layout::Dict{String,Any}    # layout metadata for multi-SPMe (ne, n_chem, ranges, etc.)
-    simple_coupling_layout::Dict{String,Any} # layout metadata for single-SPMe coupling
-    shared_spme_temperature::Float64       # cached mean temperature (dimensionless)
 end
