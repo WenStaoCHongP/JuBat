@@ -321,8 +321,17 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
                 T_nodes_carry = fill(case.param.cell.T0, nT_mesh)
             end
         else
-            # 非多SPMe模式
-            T_nodes_carry = fill(case.param.cell.T0, nT_mesh)
+            # 非多SPMe模式：尝试从 y0 末尾提取温度（如果状态向量包含热场）
+            n_chem_base = case.mesh["negative particle"].nlen + 
+                          case.mesh["positive particle"].nlen + 
+                          case.mesh["electrolyte"].nlen
+            if length(y0) > n_chem_base
+                # y0 包含热场，从末尾提取
+                T_nodes_carry = y0[(end - nT_mesh + 1):end]
+            else
+                # 使用初始温度
+                T_nodes_carry = fill(case.param.cell.T0, nT_mesh)
+            end
         end
     else
         T_nodes_carry = Float64[]
