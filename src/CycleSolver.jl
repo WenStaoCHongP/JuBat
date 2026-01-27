@@ -430,8 +430,21 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
     terminated_by = :time
     t_actual = 0.0
     
+    # CZM 位移场初始化
+    u_czm_prev = nothing
+    if czm_mesh !== nothing
+        ndof_czm = 2 * czm_mesh.nnode
+        u_czm_prev = zeros(Float64, ndof_czm)
+    end
+    
+    # CZM 更新计数器（不需要每一步都更新，每 N 步更新一次即可）
+    czm_update_interval = 10  # 每 10 个时间步更新一次 CZM
+    step_count = 0
+    
     # 主循环
     while t < t_end_nd
+        step_count += 1
+        
         # 更新温度影响
         if case.opt.thermal_enabled && !isempty(T_nodes_carry)
             case.param.cell.T0 = mean(T_nodes_carry)
@@ -454,6 +467,27 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
                 T_max_phase = max(T_max_phase, T_max_current)
             end
         end
+        
+        # ============================================================
+        # CZM 损伤计算（周期性更新）
+        # ============================================================
+        if czm_mesh !== nothing && czm_params !== nothing && (step_count % czm_update_interval == 0)
+            # 每100步输出一次调试信息
+            debug_czm = (step_count % (czm_update_interval * 10) == 0)
+            
+            try
+                u_czm_prev, czm_converged = _update_czm_damage!(
+                    czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev;
+                    debug=debug_czm
+                )
+                if !czm_converged
+                    @debug "CZM solver did not converge at t=$(t * t0_scale)s"
+                end
+            catch e
+                @debug "CZM update failed at t=$(t * t0_scale)s: $e"
+            end
+        end
+        # ============================================================
         
         # 更新电压和容量
         V_current = variables["cell voltage"] * case.param.scale.phi
@@ -492,11 +526,24 @@ function _solve_phase_internal(case::Case, phase_type::PhaseType,
         end
     end
     
-    # CZM损伤计算（如果有）
+    # ============================================================
+    # 最终 CZM 损伤计算（确保最后一步也计算损伤）
+    # ============================================================
     D_max_end = D_max_init
     D_mean_end = D_mean_init
     if czm_mesh !== nothing && czm_params !== nothing && t_actual > 0
-        # 计算最终损伤状态
+        # 最后一次 CZM 更新（如果循环中没有刚更新）
+        if step_count % czm_update_interval != 0
+            try
+                u_czm_prev, _ = _update_czm_damage!(
+                    czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev
+                )
+            catch e
+                @debug "Final CZM update failed: $e"
+            end
+        end
+        
+        # 获取最终损伤统计
         stats = get_damage_statistics(czm_mesh)
         D_max_end = stats.max_D
         D_mean_end = stats.mean_D
@@ -998,6 +1045,179 @@ function apply_initial_soc!(case::Case, param_dim, soc::Float64)
     case.param.PE.cs0 = param_dim.PE.cs0 / param_dim.PE.cs_max
     
     return cs0_NE, cs0_PE
+end
+
+"""
+    _compute_czm_effective_params(case, param_dim)
+
+计算 CZM 求解所需的有效材料参数。
+
+# 返回
+- `E_eff`: 有效弹性模量 [Pa]
+- `ν_eff`: 有效泊松比 [-]
+- `α_eff`: 有效热膨胀系数 [1/K]
+- `β_n`: 负极扩散应变系数 [-]
+- `β_p`: 正极扩散应变系数 [-]
+"""
+function _compute_czm_effective_params(case::Case, param_dim)
+    # 有效弹性模量（厚度加权平均）
+    E_eff = (param_dim.NE.E * param_dim.NE.thickness + param_dim.PE.E * param_dim.PE.thickness) / 
+            (param_dim.NE.thickness + param_dim.PE.thickness)
+    
+    # 有效泊松比（厚度加权平均）
+    ν_eff = (param_dim.NE.nu * param_dim.NE.thickness + param_dim.PE.nu * param_dim.PE.thickness) / 
+            (param_dim.NE.thickness + param_dim.PE.thickness)
+    
+    # 有效热膨胀系数（厚度加权平均）
+    α_eff = (param_dim.NE.alphaT * param_dim.NE.thickness + param_dim.PE.alphaT * param_dim.PE.thickness) / 
+            (param_dim.NE.thickness + param_dim.PE.thickness)
+    
+    # 扩散应变系数 β = Ω/3（部分摩尔体积/3）
+    β_n = param_dim.NE.Omega / 3.0
+    β_p = param_dim.PE.Omega / 3.0
+    
+    return E_eff, ν_eff, α_eff, β_n, β_p
+end
+
+"""
+    _compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)
+
+计算 CZM 损伤计算所需的单元级应变输入。
+
+# 返回
+- `dT_elem`: 每个单元的温度变化 [K]
+- `Δsoc_n_elem`: 每个单元的负极 SOC 变化 [-]
+- `Δsoc_p_elem`: 每个单元的正极 SOC 变化 [-]
+"""
+function _compute_czm_strain_inputs(case::Case, variables::Dict, czm_mesh, T_nodes_carry)
+    ne = size(czm_mesh.bulk_element, 1)
+    param_dim = case.param_dim
+    
+    # 参考温度（维度值）
+    T_ref = param_dim.cell.T0
+    T_ref_scale = param_dim.scale.T_ref
+    
+    # 参考 SOC（归一化值）
+    soc_ref_n = case.param.NE.cs0
+    soc_ref_p = case.param.PE.cs0
+    
+    # 初始化输出数组
+    dT_elem = zeros(Float64, ne)
+    Δsoc_n_elem = zeros(Float64, ne)
+    Δsoc_p_elem = zeros(Float64, ne)
+    
+    # 提取温度场（转换为维度值）
+    if !isempty(T_nodes_carry) && length(T_nodes_carry) >= czm_mesh.nnode
+        # T_nodes_carry 是无量纲温度（T/T_ref）
+        for e in 1:ne
+            nodes = czm_mesh.bulk_element[e, :]
+            # 计算单元平均温度（无量纲）
+            T_elem_nd = 0.0
+            valid_nodes = 0
+            for n in nodes
+                if n <= length(T_nodes_carry)
+                    T_elem_nd += T_nodes_carry[n]
+                    valid_nodes += 1
+                end
+            end
+            if valid_nodes > 0
+                T_elem_nd /= valid_nodes
+                # 转换为有量纲温度变化 [K]
+                T_elem_dim = T_elem_nd * T_ref_scale
+                dT_elem[e] = T_elem_dim - T_ref
+            end
+        end
+    end
+    
+    # 提取 SOC 分布（如果 variables 中有）
+    if haskey(variables, "thermal2D element soc_n") && haskey(variables, "thermal2D element soc_p")
+        soc_n_elem = variables["thermal2D element soc_n"]
+        soc_p_elem = variables["thermal2D element soc_p"]
+        
+        # 处理数组维度（可能是 ne×1 或 ne×num）
+        if isa(soc_n_elem, AbstractMatrix)
+            soc_n_elem = soc_n_elem[:, end]
+            soc_p_elem = soc_p_elem[:, end]
+        end
+        
+        for e in 1:min(ne, length(soc_n_elem))
+            Δsoc_n_elem[e] = soc_n_elem[e] - soc_ref_n
+            Δsoc_p_elem[e] = soc_p_elem[e] - soc_ref_p
+        end
+    end
+    
+    return dT_elem, Δsoc_n_elem, Δsoc_p_elem
+end
+
+"""
+    _update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev; debug=false)
+
+更新 CZM 网格的损伤状态。
+
+# 参数
+- `czm_mesh`: CZM 网格对象
+- `czm_params`: CZM 参数（cohesive）
+- `case`: Case 对象
+- `variables`: 当前时间步的变量字典
+- `T_nodes_carry`: 当前温度场
+- `u_czm_prev`: 上一步的 CZM 位移场
+- `debug`: 是否输出调试信息
+
+# 返回
+- `u_czm`: 更新后的 CZM 位移场
+- `converged`: 是否收敛
+"""
+function _update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev; debug::Bool=false)
+    param_dim = case.param_dim
+    
+    # 计算有效材料参数
+    E_eff, ν_eff, α_eff, β_n, β_p = _compute_czm_effective_params(case, param_dim)
+    
+    # 计算应变输入
+    dT_elem, Δsoc_n_elem, Δsoc_p_elem = _compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)
+    
+    # 调试输出
+    if debug
+        @printf("  [CZM Debug] dT: max=%.2f K, min=%.2f K\n", maximum(dT_elem), minimum(dT_elem))
+        @printf("  [CZM Debug] Δsoc_n: max=%.4f, min=%.4f\n", maximum(Δsoc_n_elem), minimum(Δsoc_n_elem))
+        @printf("  [CZM Debug] Δsoc_p: max=%.4f, min=%.4f\n", maximum(Δsoc_p_elem), minimum(Δsoc_p_elem))
+        
+        # 计算等效应变
+        ε_max = maximum(abs.(α_eff .* dT_elem .+ β_n .* Δsoc_n_elem .+ β_p .* Δsoc_p_elem))
+        @printf("  [CZM Debug] ε_max=%.2e, α_eff=%.2e, β_n=%.2e, β_p=%.2e\n", ε_max, α_eff, β_n, β_p)
+    end
+    
+    # 外力向量（一般为零）
+    ndof = 2 * czm_mesh.nnode
+    F_ext = zeros(Float64, ndof)
+    
+    # 初始化位移（如果没有上一步的值）
+    if u_czm_prev === nothing || length(u_czm_prev) != ndof
+        u_czm_prev = zeros(Float64, ndof)
+    end
+    
+    # 调用 CZM 求解器
+    result = solve_czm_step(
+        czm_mesh, F_ext, E_eff, ν_eff, czm_params, param_dim, u_czm_prev;
+        α_eff=α_eff, β_n=β_n, β_p=β_p,
+        dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
+        max_iter=30, tol=1e-6
+    )
+    
+    # 调试输出：分离位移统计
+    if debug && result.converged
+        δ_n_max = maximum(result.separation_n)
+        δ_t_max = maximum(abs.(result.separation_t))
+        δ_0_n = czm_params.δ_0_n
+        δ_0_t = czm_params.δ_0_t
+        @printf("  [CZM Debug] δ_n_max=%.2e (%.1f%% of δ_0_n=%.2e)\n", δ_n_max, 100*δ_n_max/δ_0_n, δ_0_n)
+        @printf("  [CZM Debug] δ_t_max=%.2e (%.1f%% of δ_0_t=%.2e)\n", δ_t_max, 100*δ_t_max/δ_0_t, δ_0_t)
+        
+        D_max = maximum(result.damage)
+        @printf("  [CZM Debug] D_max=%.4f%%\n", D_max * 100)
+    end
+    
+    return result.displacement, result.converged
 end
 
 """
