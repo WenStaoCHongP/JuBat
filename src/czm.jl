@@ -216,7 +216,7 @@ function create_czm_mesh(thermal_mesh::Mesh, param_dim; tol::Float64=1e-8)
     # 按角度排序界面节点对
     sort!(interface_pairs, by = p -> atan(thermal_mesh.node[p[1], 2], thermal_mesh.node[p[1], 1]))
     
-    @info "Found coincident node pairs" n_pairs=length(interface_pairs)
+    @debug "Found coincident node pairs" n_pairs=length(interface_pairs)
     
     # 关键理解：在 jellyroll_collector_seed_mesh 生成的网格中，
     # 外螺旋节点 (n_out) 和内螺旋节点 (n_in) 是不同的节点编号，
@@ -260,7 +260,7 @@ function create_czm_mesh(thermal_mesh::Mesh, param_dim; tol::Float64=1e-8)
     czm_mesh.interface_nodes = [interface_pairs]
     czm_mesh.damage_states = damage_states
     
-    @info "Created CZM mesh" n_layers=czm_mesh.n_layers n_cohesive=n_cohesive nnode=czm_mesh.nnode
+    @debug "Created CZM mesh" n_layers=czm_mesh.n_layers n_cohesive=n_cohesive nnode=czm_mesh.nnode
     
     return czm_mesh
 end
@@ -525,7 +525,7 @@ function _create_cohesive_elements_direct(mesh::Mesh,
         push!(cohesive_elements, coh_elem)
     end
     
-    @info "Created cohesive elements directly" n_elements=length(cohesive_elements)
+    @debug "Created cohesive elements directly" n_elements=length(cohesive_elements)
     
     return cohesive_elements
 end
@@ -1681,7 +1681,7 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
     # 识别边界条件（与 mechanical.jl 保持一致）
     bc_nodes, inner_count, outer_count = identify_bc_nodes_czm(czm_mesh, param_dim)
     
-    @info "Boundary conditions identified" inner_nodes=inner_count outer_nodes=outer_count
+    @debug "Boundary conditions identified" inner_nodes=inner_count outer_nodes=outer_count
     
     bc_dofs = Int64[]
     bc_vals = Float64[]
@@ -1758,7 +1758,7 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
                 result.traction_t[i] = tractions[i][2]
             end
             
-            @info "Newton-Raphson converged" iterations=iter residual=R_norm
+            @debug "Newton-Raphson converged" iterations=iter residual=R_norm
             return result
         end
         
