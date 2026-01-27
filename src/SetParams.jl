@@ -202,6 +202,13 @@ end
     
     # 混合模式参数
     eta::Float64 = 1.0        # BK准则指数（Benzeggagh-Kenane）[-]
+    
+    # 疲劳损伤参数（循环累积损伤）
+    # 疲劳损伤增量: dD = fatigue_coeff * (δ_eff / δ_0_eff)^fatigue_exp
+    fatigue_enabled::Bool = true       # 是否启用疲劳损伤
+    fatigue_coeff::Float64 = 1e-4      # 疲劳损伤系数 [-]
+    fatigue_exp::Float64 = 2.0         # 疲劳损伤指数 [-]
+    fatigue_threshold::Float64 = 0.1   # 疲劳损伤起始阈值（δ_eff/δ_0 的比例）[-]
 end
 
 @with_kw mutable struct Scale

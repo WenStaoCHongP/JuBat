@@ -635,6 +635,12 @@ function bilinear_traction(δ_n::Float64, δ_t::Float64, damage_state::DamageSta
     δ_c_t = cohesive_params.δ_c_t
     η = cohesive_params.eta
     
+    # 疲劳参数
+    fatigue_enabled = hasproperty(cohesive_params, :fatigue_enabled) ? cohesive_params.fatigue_enabled : false
+    fatigue_coeff = hasproperty(cohesive_params, :fatigue_coeff) ? cohesive_params.fatigue_coeff : 1e-4
+    fatigue_exp = hasproperty(cohesive_params, :fatigue_exp) ? cohesive_params.fatigue_exp : 2.0
+    fatigue_threshold = hasproperty(cohesive_params, :fatigue_threshold) ? cohesive_params.fatigue_threshold : 0.1
+    
     # 已断裂检查
     if damage_state.fractured
         return 0.0, 0.0, 1.0
@@ -661,33 +667,57 @@ function bilinear_traction(δ_n::Float64, δ_t::Float64, damage_state::DamageSta
     # 计算当前损伤变量
     D = damage_state.D
     
-    if δ_eff > δ_max_hist  # 加载
+    # ================================================================
+    # 静态损伤：只有在 δ_eff 创新高时才增加
+    # ================================================================
+    if δ_eff > δ_max_hist  # 加载（创新高）
         if δ_eff <= δ_0_eff
-            # 弹性阶段
-            D = 0.0
+            # 弹性阶段：静态损伤为0，但可能有疲劳损伤
+            D_static = 0.0
         elseif δ_eff >= δ_c_eff
             # 完全断裂
-            D = 1.0
+            D_static = 1.0
         else
             # 损伤软化阶段
-            D = δ_c_eff * (δ_eff - δ_0_eff) / (δ_eff * (δ_c_eff - δ_0_eff))
+            D_static = δ_c_eff * (δ_eff - δ_0_eff) / (δ_eff * (δ_c_eff - δ_0_eff))
         end
+        
+        # 静态损伤取历史最大值
+        D = max(D, D_static)
         
         # 更新历史
         if update
             damage_state.δ_max_eff = δ_eff
             damage_state.δ_max_n = max(damage_state.δ_max_n, δ_n_pos)
             damage_state.δ_max_t = max(damage_state.δ_max_t, abs(δ_t))
-            damage_state.D = D
-            damage_state.accumulated_damage = max(damage_state.accumulated_damage, D)
-            
-            if D >= 1.0 - 1e-10
-                damage_state.fractured = true
-            end
         end
-    else
-        # 卸载：D保持不变，使用历史值
-        D = damage_state.D
+    end
+    
+    # ================================================================
+    # 疲劳损伤：即使 δ_eff 未创新高，也累积微小损伤
+    # ================================================================
+    if update && fatigue_enabled && δ_0_eff > 1e-15
+        δ_ratio = δ_eff / δ_0_eff
+        
+        # 只有当位移超过阈值时才累积疲劳损伤
+        if δ_ratio > fatigue_threshold
+            # 疲劳损伤增量（类似 Paris 定律）
+            # dD = C * (δ/δ_0)^m
+            dD_fatigue = fatigue_coeff * (δ_ratio - fatigue_threshold)^fatigue_exp
+            
+            # 累积疲劳损伤（不能超过1）
+            D = min(1.0, D + dD_fatigue)
+        end
+    end
+    
+    # 更新损伤状态
+    if update
+        damage_state.D = D
+        damage_state.accumulated_damage = max(damage_state.accumulated_damage, D)
+        
+        if D >= 1.0 - 1e-10
+            damage_state.fractured = true
+        end
     end
     
     # 计算牵引力

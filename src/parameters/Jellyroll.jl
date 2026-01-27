@@ -183,6 +183,14 @@ cohesive.K_t = cohesive.τ_max_t / cohesive.δ_0_t  # [Pa/m] ≈ 1.67e13 Pa/m
 # 混合模式参数
 cohesive.eta = 1.45           # BK准则指数（Benzeggagh-Kenane）[-]
 
+# 疲劳损伤参数
+# 疲劳损伤增量公式：dD = fatigue_coeff * (δ/δ_0 - threshold)^fatigue_exp
+# 这使得即使分离位移未创新高，损伤也会随循环累积
+cohesive.fatigue_enabled = true       # 启用疲劳损伤
+cohesive.fatigue_coeff = 1e-4         # 疲劳系数（控制累积速率）
+cohesive.fatigue_exp = 2.0            # 疲劳指数
+cohesive.fatigue_threshold = 0.1      # 疲劳阈值（δ/δ_0 > 0.1 时开始累积）
+
 # Now that PCC/NCC are defined, compute effective thermal conductivities
 cell.lambda_r = (NE.thickness + SP.thickness + PE.thickness + PCC.thickness + NCC.thickness) /(NE.thickness/NE.lambda + SP.thickness/SP.lambda + PE.thickness/PE.lambda + PCC.thickness/PCC.lambda + NCC.thickness/NCC.lambda)
 cell.lambda_t = (NE.thickness*NE.lambda + SP.thickness*SP.lambda + PE.thickness*PE.lambda + PCC.thickness*PCC.lambda + NCC.thickness*NCC.lambda) /(NE.thickness + SP.thickness + PE.thickness + PCC.thickness + NCC.thickness)
