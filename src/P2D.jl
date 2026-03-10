@@ -146,13 +146,9 @@ function P2D_potentials(case::Case, yt::Array{Float64}, t::Float64, K_pot::Spars
     element_ne = mesh_ne.element
     element_pe = mesh_pe.element
     Vp0 = u_p_gs[end] # this is reference value and will be corrected by iterations
-    # Ve = 0
+    # Ve = 0    
     stress_theta_n_surf_gs = variables["negative particle surface tangential stress at gauss point"]
     stress_theta_p_surf_gs = variables["positive particle surface tangential stress at gauss point"]
-    stress_rn_surf_gs = 0
-    stress_rp_surf_gs = 0
-    hydrostatic_stress_n_gs = (1/3) * (2 * stress_theta_n_surf_gs .+ stress_rn_surf_gs)
-    hydrostatic_stress_p_gs = (1/3) * (2 * stress_theta_p_surf_gs .+ stress_rp_surf_gs)
     for i = 1:iter_max
     # # relative potential        
         j_n_gs_old = variables["negative electrode interfacial current at Gauss point"]
@@ -176,8 +172,8 @@ function P2D_potentials(case::Case, yt::Array{Float64}, t::Float64, K_pot::Spars
         phis_p_gs_rel = sum(gs_pe.Ni .* phis_p_rel[element_pe[gs_pe.ele,:]], dims=2)
         phie_n_gs_rel = sum(gs_ne.Ni .* phie_n_rel[element_ne[gs_ne.ele,:]], dims=2)
         phie_p_gs_rel = sum(gs_pe.Ni .* phie_p_rel[element_pe[gs_pe.ele,:]], dims=2)
-        eta_n_gs_rel = phis_n_gs_rel - phie_n_gs_rel - u_n_gs .- hydrostatic_stress_n_gs .* case.param.NE.Omega 
-        eta_p_gs_rel = phis_p_gs_rel - phie_p_gs_rel - u_p_gs .- hydrostatic_stress_p_gs .* case.param.PE.Omega 
+        eta_n_gs_rel = phis_n_gs_rel - phie_n_gs_rel - u_n_gs - (2/3) * stress_theta_n_surf_gs * case.param.NE.Omega 
+        eta_p_gs_rel = phis_p_gs_rel - phie_p_gs_rel - u_p_gs - (2/3) * stress_theta_p_surf_gs * case.param.PE.Omega
     # # reference potential  
         I_np = IntV(case.param.NE.as .* j0_n_gs .* exp.(0.5 * eta_n_gs_rel ./ T), mesh_ne)
         I_nn = IntV(case.param.NE.as .* j0_n_gs .* exp.(-0.5 * eta_n_gs_rel ./ T), mesh_ne)
@@ -259,7 +255,7 @@ function P2D_variables(case::Case, yt::Array{Float64}, t::Float64)
     j0_n_gs =  param.NE.k * Arrhenius(param.NE.Eac_k, T) .* abs.(csn_surf_gs .* (1.0 .- csn_surf_gs) .* ce_n_gs) .^ 0.5
     j0_p_gs =  param.PE.k * Arrhenius(param.PE.Eac_k, T) .* abs.(csp_surf_gs .* (1.0 .- csp_surf_gs) .* ce_p_gs) .^ 0.5
     eta_p_gs = phis_p_gs - phie_p_gs - u_p_gs 
-    eta_n_gs = phis_n_gs - phie_n_gs - u_n_gs 
+    eta_n_gs = phis_n_gs - phie_n_gs - u_n_gs
     j_n_gs = j0_n_gs .* sinh.(0.5 * eta_n_gs ./ T) * 2.0
     j_p_gs = j0_p_gs .* sinh.(0.5 * eta_p_gs ./ T) * 2.0
     variables["negative electrode interfacial current density"] = j_n
@@ -289,4 +285,3 @@ function P2D_variables(case::Case, yt::Array{Float64}, t::Float64)
     variables["cell current"] =case.opt.Current(t * case.param.scale.t0) / case.param_dim.cell.I1C
     return variables
 end
-
