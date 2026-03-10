@@ -32,9 +32,63 @@ function SetMesh(domain::Any, num::Any, type::String, gsorder::Int64=4)
 
     if type in ["L2", "L3"]
         mesh = Mesh1D(domain, num, type, gsorder)
+    elseif type == "Q4"
+        mesh = Mesh2D(domain, num, type, gsorder)
     else
         error("Error: element type $type has not been implemented!\n")
     end
+    return mesh
+end
+
+function Mesh2D(domain::Vector{Float64}, num::Any, type::String="Q4", gsorder::Int64=2)
+    """
+        构建规则矩形区域的二维Q4网格
+        domain = [x0, x1, y0, y1]
+        num = [nx, ny] 或 Tuple(nx, ny)
+    """
+    dim = 2
+    @assert length(domain) == 4 "domain for Q4 must be [x0,x1,y0,y1]"
+    if isa(num, Tuple) || isa(num, NTuple{2,Int})
+        nx, ny = num
+    else
+        @assert length(num) == 2 "num for Q4 must have length 2"
+        nx = Int(num[1]); ny = Int(num[2])
+    end
+    x0, x1, y0, y1 = domain
+    dx = (x1 - x0)/nx
+    dy = (y1 - y0)/ny
+    # nodes: (nx+1)*(ny+1)
+    nnx = nx + 1; nny = ny + 1
+    nnode = nnx * nny
+    node = zeros(Float64, nnode, dim)
+    # ordering: loop j (y) outer, i (x) inner; index(i,j) = j*nnx + i + 1 ; i,j start at 0
+    for j in 0:ny
+        for i in 0:nx
+            idx = j*nnx + i + 1
+            node[idx,1] = x0 + i*dx
+            node[idx,2] = y0 + j*dy
+        end
+    end
+    # elements: nx * ny, node ordering consistent with Q4 reference (1:(i,j),2:(i+1,j),3:(i+1,j+1),4:(i,j+1))
+    ne = nx * ny
+    element = zeros(Int64, ne, 4)
+    e = 0
+    for j in 0:ny-1
+        for i in 0:nx-1
+            e += 1
+            n1 = j*nnx + i + 1
+            n2 = n1 + 1
+            n3 = n2 + nnx
+            n4 = n1 + nnx
+            # 逐元素赋值避免 Julia 对行切片的单值广播限制
+            element[e,1] = n1
+            element[e,2] = n2
+            element[e,3] = n3
+            element[e,4] = n4
+        end
+    end
+    gs = GetGS(element, node, gsorder, type)
+    mesh = Mesh(type, dim, node, nnode, element, gs)
     return mesh
 end
 
@@ -225,7 +279,7 @@ function GetGS(element::Array{Int64}, node::Array{Float64}, order::Int64, type::
     count0 = 0
     for e = 1:size(element, 1)
         sctr = element[e, points]
-        for i in eachindex(w)
+        for i = 1:size(w, 1)
             pt = q[i, :]
             N, dNdxi = LagrangeBasis(type, dimen, pt)
             J0 = dNdxi * node[sctr, 1:dimen]
@@ -237,7 +291,13 @@ function GetGS(element::Array{Int64}, node::Array{Float64}, order::Int64, type::
             xi[count0, 1:dimen] = pt
         end
     end
-    Ni, dNi = ShapeFunction1D(element, type, node, xi, ele)
+    if type in ["L2","L3"]
+        Ni, dNi = ShapeFunction1D(element, type, node, xi, ele)
+    elseif type == "Q4"
+        Ni, dNi = ShapeFunction2D(element, type, node, xi, ele)
+    else
+        error("Unsupported element type $type for shape functions")
+    end
     gs = GaussPoint(x, xi, weight, detJ, ele, Ni, dNi, order)
     return gs
 end
@@ -489,7 +549,48 @@ function ShapeFunction1D(element::Matrix{Int64}, type::String, node::Matrix{Floa
             dXdx = 2 ./ ele_length * ones(1, 2)
             dNidx = dNidX .* dXdx
     else
-            error("Error: element type $(mesh.type) has not been implemented!\n")
+            error("Error: element type $(type) has not been implemented in ShapeFunction1D!\n")
     end
     return Ni, dNidx 
+end
+
+"""
+    ShapeFunction2D: 目前仅实现 Q4 平面四节点单元形函数与物理梯度。
+    输入:
+        element, type, node, xi (总高斯点×2), ele_map (高斯点对应的单元索引)
+    输出:
+        Ni: (ngs × 4)
+        dNidx: (ngs × 8)  前4列 dN/dx, 后4列 dN/dy
+"""
+function ShapeFunction2D(element::Matrix{Int64}, type::String, node::Matrix{Float64}, xi::Array{Float64}, ele_map::Vector{Int64})
+    if type == "Q4"
+        total_gs = size(xi,1)
+        nnode_ele = 4
+        Ni = zeros(Float64, total_gs, nnode_ele)
+        dNidx = zeros(Float64, total_gs, nnode_ele * 2)
+        for g in 1:total_gs
+            xi_g  = xi[g,1]; eta_g = xi[g,2]
+            # 参考单元形函数 & 对局部坐标导数
+            Nloc = 0.25 * [(1 - xi_g)*(1 - eta_g);
+                           (1 + xi_g)*(1 - eta_g);
+                           (1 + xi_g)*(1 + eta_g);
+                           (1 - xi_g)*(1 + eta_g)]
+            dN_dxi = 0.25 * [-(1 - eta_g)    -(1 - xi_g);
+                              (1 - eta_g)    -(1 + xi_g);
+                              (1 + eta_g)     (1 + xi_g);
+                             -(1 + eta_g)     (1 - xi_g)]
+            e = ele_map[g]                                # 所属单元（在 element 中的行号）
+            sctr = element[e, :]
+            x_e = node[sctr, 1:2]                         # 4×2
+            J = transpose(dN_dxi) * x_e                   # 2×2 Jacobian
+            invJ = inv(J)
+            dN_dx = dN_dxi * invJ'                        # 4×2 物理梯度
+            Ni[g, :] = vec(Nloc)'
+            dNidx[g, 1:4] = dN_dx[:,1]'
+            dNidx[g, 5:8] = dN_dx[:,2]'
+        end
+        return Ni, dNidx
+    else
+        error("Error: element type $type not implemented in ShapeFunction2D!")
+    end
 end

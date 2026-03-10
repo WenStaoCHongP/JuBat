@@ -1,3 +1,16 @@
+"""
+    Thermal model type hierarchy (Phase A)
+    - ThermalModel: abstract base type for all thermal models
+    - ThermalLumpedModel: lumped-capacitance model marker
+    - ThermalDistributed1DModel / ThermalDistributed2DModel: distributed models markers
+    These model types will be used for dispatch in later phases.
+"""
+abstract type ThermalModel end
+
+struct ThermalLumpedModel <: ThermalModel end
+struct ThermalDistributed1DModel <: ThermalModel end
+struct ThermalDistributed2DModel <: ThermalModel end
+
 function ThermalLumped(case::Case, variables::Dict{String, Union{Array{Float64},Float64}})
     param = case.param
     t = variables["time"]
@@ -45,6 +58,11 @@ function ThermalLumped(case::Case, variables::Dict{String, Union{Array{Float64},
         Q_ohm_e = IntV(kappa_e_eff .* dphie_dx_gs .^ 2 - 2 * kappa_e_eff * T *  (1 - param.EL.tplus) .* param.EL.dlnf_dlnc(ce_gs) ./ ce_gs .* dcedx_gs .* dphie_dx_gs, mesh_el)
         Q_ohm = Q_ohm_n + Q_ohm_p + Q_ohm_e
     end
+    heat_internal_nd = Q_rxn + Q_ohm + Q_rev
+    heat_internal_W = heat_internal_nd * case.param.scale.I_typ * case.param.scale.phi
+    variables["thermal lumped internal heat"] = [heat_internal_nd]
+    variables["thermal lumped internal heat [W]"] = [heat_internal_W]
+    println("[ThermalLumped] 内热源 Q_rxn+Q_ohm+Q_rev = $(heat_internal_W) W (nd=$(heat_internal_nd))")
     q = param.cell.h * param.cell.cooling_surface .* (T -  param.cell.T_amb)
-    return MT, Q_rxn + Q_ohm + Q_rev - q
+    return MT, heat_internal_nd - q
 end

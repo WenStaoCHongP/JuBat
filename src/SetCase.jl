@@ -38,7 +38,7 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
             index["electrolyte lithium concentration in separator"] = v0 + mesh_el_ne.nlen .+ collect(1: mesh_el_sp.nlen)
             v0 += mesh_el.nlen
         end
-    elseif opt.model == "P2D" || opt.model == "sP2D"
+    elseif opt.model == "P2D"
         # negative particle
         mesh_np = SetMesh([0, param.NE.rs], opt.Nrn, opt.meshType, opt.gsorder)
         # positive particle
@@ -77,7 +77,7 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
         index["temperature"] = [v0 + 1]
         v0 += 1
     end
-    if opt.model == "P2D" || opt.model == "sP2D"
+    if opt.model == "P2D"
         index["negative electrode potential"] = v0 .+ collect(1:mesh_el_ne.nlen)
         index["positive electrode potential"] = v0 .+ mesh_el_ne.nlen .+ collect(1:mesh_el_pe.nlen)
         v0 += mesh_el_ne.nlen + mesh_el_pe.nlen
@@ -86,22 +86,18 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
         index["electrolyte potential in positive electrode"] =  v0 .+ mesh_el.nlen .- collect(mesh_el_pe.nlen - 1:-1:0)
         index["electrolyte potential in separator"] =  v0 + mesh_el_ne.nlen - 1 .+ collect(1: mesh_el_sp.nlen)
     end
-    # add citations
-    if opt.model == "sP2D"
-        opt.cite = vcat(opt.cite, "ai2024b")
-    end
-    if opt.meshType == "L3"
-        opt.cite = vcat(opt.cite, "ai2023")
-    end
-    case = Case(param_dim, param, opt, mesh, index)
+    # 初始化布局字典，供多SPMe/简化耦合模式后续填充
+    case = Case(param_dim, param, opt, mesh, index, Dict{String,Any}(), Dict{String,Any}())
     return case
 end
 
 
 mutable struct Case
-    param_dim::Params   # parameters
-    param::Params   # dimensionless parameters
-    opt::Option # option for solver
-    mesh::Dict{String, Mesh}    # mesh for discretisation
-    index::Dict{String, Union{Array{Int64}, Int64}} # the index of unknowns
+    param_dim::Params                      # dimensional parameters
+    param::Params                          # dimensionless parameters
+    opt::Option                            # solver options
+    mesh::Dict{String, Mesh}               # discretisation meshes
+    index::Dict{String, Union{Array{Int64}, Int64}} # indices of unknowns
+    multi_spme_layout::Dict{String,Any}    # 多SPMe模式的结构布局（初始化后不变）
+    simple_coupling_layout::Dict{String,Any} # 简化耦合模式的结构布局（初始化后不变）
 end

@@ -52,12 +52,14 @@
     rs::Float64 = 0
     as::Float64 = 0
     sig::Float64 = 0
+    # Mechanical/thermal properties for stress
+    E::Float64 = 0            # Young's modulus [Pa]
+    nu::Float64 = 0           # Poisson's ratio [-]
+    alphaT::Float64 = 0       # Thermal expansion coefficient [1/K]
+    Omega::Float64 = 0        # Partial molar volume [m^3/mol]
     Eac_D::Float64 = 0
     Eac_k::Float64 = 0
     alpha::Float64 = 0
-    Omega::Float64 = 0
-    nu::Float64 = 0
-    E::Float64 = 0
     U::Function = x-> 0.0
     dUdT::Function = x-> 0.0
     M_d::SparseArrays.SparseMatrixCSC{Float64, Int64} = spzeros(0,0)
@@ -115,18 +117,91 @@ end
     h::Float64 = 0
     T0::Float64 = 298.
     T_amb::Float64 = 0
+    # Jellyroll geometry (optional)
+    Rin::Float64 = 0.0
+    Rout::Float64 = 0.0
+    height::Float64 = 0.0
+    # Effective thermal conductivities for jellyroll (optional)
+    lambda_r::Float64 = 0.0
+    lambda_t::Float64 = 0.0
+    # Thermal mesh divisions for jellyroll top-view (optional)
+    Nr_th::Int = 0
+    Nθ_th::Int = 0
+    n_windings::Int = 0
 end
 
 @with_kw mutable struct Tab
     length::Float64 = 0
     width::Float64 = 0
     area::Float64 = 0
+    h::Float64 = 0
+    theta_pos::Vector{Float64} = Float64[]
+    theta_neg::Vector{Float64} = Float64[]
 end
 # param_dim.Tab.width = 0.75 * param_dim.Tab.length  
 # param_dim.Tab.area = param_dim.Tab.length * param_dim.Tab.width
 
 @with_kw mutable struct Binder
     rho::Float64 = 0
+end
+
+"""
+    Cohesive - 内聚力模型参数
+    
+    用于描述界面脱粘行为的双线性牵引力-分离本构关系。
+    支持法向（Mode I）和切向（Mode II）的混合模式断裂。
+    
+    # 法向参数 (Mode I - 张开模式)
+    - σ_max_n: 最大法向牵引力 [Pa]
+    - δ_0_n: 损伤起始分离位移 [m]
+    - δ_c_n: 临界（完全断裂）分离位移 [m]
+    - G_c_n: 法向断裂能 [J/m²]
+    - K_n: 法向初始刚度（惩罚刚度）[Pa/m]
+    
+    # 切向参数 (Mode II - 剪切模式)
+    - τ_max_t: 最大切向牵引力 [Pa]
+    - δ_0_t: 损伤起始切向位移 [m]
+    - δ_c_t: 临界切向位移 [m]
+    - G_c_t: 切向断裂能 [J/m²]
+    - K_t: 切向初始刚度 [Pa/m]
+    
+    # 混合模式参数
+    - eta: Benzeggagh-Kenane (BK) 准则指数 [-]
+    
+    # 双线性本构关系
+    ```
+         T (牵引力)
+         ^
+    T_max|     /\\
+         |    /  \\
+         |   /    \\
+         |  /      \\
+         | /        \\
+    -----+--+--------+------> δ (分离位移)
+         0  δ_0     δ_c
+    ```
+    
+    # 损伤演化
+    D = (δ_c * (δ_max - δ_0)) / (δ_max * (δ_c - δ_0))
+    其中 δ_max 是历史最大分离位移（用于加卸载判断）
+"""
+@with_kw mutable struct Cohesive
+    # 法向 (Mode I)
+    σ_max_n::Float64 = 0.0    # 最大法向牵引力 [Pa]
+    δ_0_n::Float64 = 0.0      # 损伤起始分离位移 [m]
+    δ_c_n::Float64 = 0.0      # 临界（完全断裂）分离位移 [m]
+    G_c_n::Float64 = 0.0      # 法向断裂能 [J/m²]
+    K_n::Float64 = 0.0        # 法向初始刚度（惩罚刚度）[Pa/m]
+    
+    # 切向 (Mode II)
+    τ_max_t::Float64 = 0.0    # 最大切向牵引力 [Pa]
+    δ_0_t::Float64 = 0.0      # 损伤起始切向位移 [m]
+    δ_c_t::Float64 = 0.0      # 临界切向位移 [m]
+    G_c_t::Float64 = 0.0      # 切向断裂能 [J/m²]
+    K_t::Float64 = 0.0        # 切向初始刚度 [Pa/m]
+    
+    # 混合模式参数
+    eta::Float64 = 1.0        # BK准则指数（Benzeggagh-Kenane）[-]
 end
 
 @with_kw mutable struct Scale
@@ -156,6 +231,18 @@ end
     R_cell::Float64 = 0
     E_n::Float64 = 0
     E_p::Float64 = 0
+    # --- Thermal scaling (Scheme B) ---
+    L_th::Float64 = 0          # characteristic thermal length
+    k_th::Float64 = 0          # reference thermal conductivity
+    rho_c_th::Float64 = 0      # reference volumetric heat capacity (rho * cp)
+    t_th::Float64 = 0          # thermal diffusion time scale rho_c_th L_th^2 / k_th
+    q_th::Float64 = 0          # reference volumetric heat source k_th*T_ref/L_th^2
+    h_th::Float64 = 0          # Biot number reference (h*L_th/k_th)
+    # --- Cohesive zone model scaling ---
+    σ_czm::Float64 = 0         # reference cohesive traction [Pa] (typically σ_max_n)
+    δ_czm::Float64 = 0         # reference separation displacement [m] (typically δ_c_n)
+    G_czm::Float64 = 0         # reference fracture energy [J/m²] (σ_czm * δ_czm)
+    K_czm::Float64 = 0         # reference cohesive stiffness [Pa/m] (σ_czm / δ_czm)
 end
 
 @with_kw mutable struct Params
@@ -169,6 +256,7 @@ end
     tab::Tab
     binder::Binder
     scale::Scale
+    cohesive::Cohesive = Cohesive()  # 内聚力模型参数（可选）
 end
 
 function ChooseCell(CellType::String="LG M50")
@@ -185,6 +273,8 @@ function ChooseCell(CellType::String="LG M50")
         include("../src/parameters/Northrop.jl") # pathof(JuBat)
     elseif CellType == "Enertech"
         include("../src/parameters/Enertech.jl") # pathof(JuBat)
+    elseif CellType == "Jellyroll"
+        include("../src/parameters/Jellyroll.jl") # pathof(JuBat)
     end
     param_dim.PE.eps_s = 1 - param_dim.PE.eps - param_dim.PE.eps_fi
     param_dim.NE.eps_s = 1 - param_dim.NE.eps - param_dim.NE.eps_fi
@@ -227,6 +317,18 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.k_p = param_dim.scale.j / param_dim.PE.cs_max / sqrt(param_dim.EL.ce0)
     param_dim.scale.k_n = param_dim.scale.j / param_dim.NE.cs_max / sqrt(param_dim.EL.ce0)
     param_dim.scale.R_cell = param_dim.scale.phi / param_dim.scale.I_typ
+    #Thermal scaling
+    param_dim.scale.L_th = param_dim.cell.Rout
+    param_dim.scale.k_th = param_dim.PE.lambda
+    param_dim.scale.rho_c_th = param_dim.cell.rho * param_dim.cell.heat_Q
+    param_dim.scale.q_th = param_dim.scale.k_th * param_dim.scale.T_ref / param_dim.scale.L_th^2
+    param_dim.scale.t_th = param_dim.scale.rho_c_th * param_dim.scale.L_th^2 / param_dim.scale.k_th
+    param_dim.scale.h_th = param_dim.cell.h * param_dim.scale.L_th / param_dim.scale.k_th  # Biot number
+    #Cohesive zone model scaling
+    param_dim.scale.σ_czm = param_dim.cohesive.σ_max_n
+    param_dim.scale.δ_czm = param_dim.cohesive.δ_c_n
+    param_dim.scale.G_czm = param_dim.scale.σ_czm * param_dim.scale.δ_czm
+    param_dim.scale.K_czm = param_dim.scale.σ_czm / param_dim.scale.δ_czm
     return param_dim
 end
 
@@ -248,17 +350,20 @@ function NormaliseParam(param_dim::Params)
     param.PE.eps = param_dim.PE.eps
     param.PE.eps_fi = param_dim.PE.eps_fi
     param.PE.brugg = param_dim.PE.brugg
-    param.PE.Omega = param_dim.PE.Omega * param_dim.PE.cs_max
-    param.PE.nu = param_dim.PE.nu
-    param.PE.E = param_dim.PE.E / param_dim.scale.E_p
     param.PE.k = param_dim.PE.k / param.scale.k_p
     param.PE.rs = param_dim.PE.rs / param.scale.r0
     param.PE.sig = param_dim.PE.sig / param.scale.sig
-    param.PE.U = x-> param_dim.PE.U(x) / param.scale.phi
-    param.PE.dUdT =x-> param_dim.PE.dUdT(x) / param.scale.phi * param.scale.T_ref
+    param.PE.E = param_dim.PE.E / param_dim.scale.E_p
+    param.PE.nu = param_dim.PE.nu
+    param.PE.alphaT = param_dim.PE.alphaT* param.scale.T_ref
+    param.PE.Omega = param_dim.PE.Omega * param_dim.PE.cs_max
+    param.PE.U = x-> Base.invokelatest(param_dim.PE.U, x) / param.scale.phi
+    param.PE.dUdT = x-> Base.invokelatest(param_dim.PE.dUdT, x) / param.scale.phi * param.scale.T_ref
     param.PE.as = param_dim.PE.as / param.scale.a0
     param.PE.Eac_D = param_dim.PE.Eac_D / param.scale.R / param.scale.T_ref
     param.PE.Eac_k = param_dim.PE.Eac_k / param.scale.R / param.scale.T_ref
+    param.PE.lambda = param_dim.PE.lambda / param.scale.k_th
+    param.PE.rho = (param_dim.PE.rho * param_dim.PE.heat_Q) / param.scale.rho_c_th
 
     # negative electrode
     param.NE.theta_100 = param_dim.NE.theta_100
@@ -269,38 +374,45 @@ function NormaliseParam(param_dim::Params)
     param.NE.eps = param_dim.NE.eps
     param.NE.eps_fi = param_dim.NE.eps_fi
     param.NE.brugg = param_dim.NE.brugg
-    param.NE.Omega = param_dim.NE.Omega * param_dim.NE.cs_max
-    param.NE.nu = param_dim.NE.nu
-    param.NE.E = param_dim.NE.E / param_dim.scale.E_n
     param.NE.k = param_dim.NE.k / param.scale.k_n
     param.NE.rs = param_dim.NE.rs / param.scale.r0
     param.NE.sig = param_dim.NE.sig / param.scale.sig
-    param.NE.U =x-> param_dim.NE.U(x) / param.scale.phi
-    param.NE.dUdT =x-> param_dim.NE.dUdT(x) / param.scale.phi * param.scale.T_ref
+    param.NE.E = param_dim.NE.E / param_dim.scale.E_n
+    param.NE.nu = param_dim.NE.nu
+    param.NE.alphaT = param_dim.NE.alphaT * param.scale.T_ref
+    param.NE.Omega = param_dim.NE.Omega * param_dim.NE.cs_max
+    param.NE.U = x-> Base.invokelatest(param_dim.NE.U, x) / param.scale.phi
+    param.NE.dUdT = x-> Base.invokelatest(param_dim.NE.dUdT, x) / param.scale.phi * param.scale.T_ref
     param.NE.as = param_dim.NE.as / param.scale.a0
     param.NE.Eac_D = param_dim.NE.Eac_D / param.scale.R / param.scale.T_ref
     param.NE.Eac_k = param_dim.NE.Eac_k / param.scale.R / param.scale.T_ref
+    param.NE.lambda = param_dim.NE.lambda / param.scale.k_th
+    param.NE.rho = (param_dim.NE.rho * param_dim.NE.heat_Q) / param.scale.rho_c_th
 
     # separator
     param.SP.thickness = param_dim.SP.thickness / param.scale.L
     param.SP.eps = param_dim.SP.eps
     param.SP.eps_fi = param_dim.SP.eps_fi
     param.SP.brugg = param_dim.SP.brugg
+    param.SP.lambda = param_dim.SP.lambda / param.scale.k_th
+    param.SP.rho = (param_dim.SP.rho * param_dim.SP.heat_Q) / param.scale.rho_c_th
 
     # positive current colloctor
     param.PCC.thickness = param_dim.PCC.thickness / param.scale.L
     param.PCC.sig =  param_dim.PCC.sig / param.scale.sig
-
+    param.PCC.lambda = param_dim.PCC.lambda / param.scale.k_th
+    param.PCC.rho = (param_dim.PCC.rho * param_dim.PCC.heat_Q) / param.scale.rho_c_th
     # negative current colloctor
     param.NCC.thickness = param_dim.NCC.thickness / param.scale.L
     param.NCC.sig = param_dim.NCC.sig / param.scale.sig
+    param.NCC.lambda = param_dim.NCC.lambda / param.scale.k_th
+    param.NCC.rho = (param_dim.NCC.rho * param_dim.NCC.heat_Q) / param.scale.rho_c_th
 
-    # electrolyte
-    param.EL.De = (x, y=1)-> param_dim.EL.De(x * param.scale.ce, y * param.scale.T_ref) / param.scale.De
-    param.EL.kappa = (x, y=1)-> param_dim.EL.kappa(x * param.scale.ce, y * param.scale.T_ref) / param.scale.kappa
+    # electrolyte (wrap with invokelatest to avoid world-age issues for closures from parameters)
+    param.EL.De = (x, y=1)-> Base.invokelatest(param_dim.EL.De, x * param.scale.ce, y * param.scale.T_ref) / param.scale.De
+    param.EL.kappa = (x, y=1)-> Base.invokelatest(param_dim.EL.kappa, x * param.scale.ce, y * param.scale.T_ref) / param.scale.kappa
     param.EL.tplus = param_dim.EL.tplus
     param.EL.ce0 = param_dim.EL.ce0 / param.scale.ce
-
 
     # cell
     param.cell.cooling_surface = param_dim.cell.cooling_surface / param_dim.cell.area
@@ -309,11 +421,33 @@ function NormaliseParam(param_dim::Params)
     param.cell.heat_Q = param_dim.cell.heat_Q * param_dim.cell.mass * param.scale.T_ref / param.scale.t0 / param.scale.phi / param.scale.I_typ
     param.cell.T_amb = param_dim.cell.T_amb / param.scale.T_ref 
     param.cell.T0 = param_dim.cell.T0 / param.scale.T_ref 
-    param.cell.area = param_dim.cell.area * param.scale.phi * param.scale.I_typ / param_dim.cell.capacity
-    param.cell.volume = param_dim.cell.volume * param.scale.phi / param.scale.L * param.scale.I_typ / param_dim.cell.capacity
-    param.cell.v_h = param_dim.cell.v_h / param.scale.phi
-    param.cell.v_l = param_dim.cell.v_l / param.scale.phi
+    param.cell.area = param_dim.cell.area / param_dim.cell.area
+    param.cell.volume = param_dim.cell.volume / param_dim.scale.L^3
+    param.cell.lambda_r = param_dim.cell.lambda_r / param.scale.k_th
+    param.cell.lambda_t = param_dim.cell.lambda_t / param.scale.k_th
 
+    #tab
+    param.tab.length = param_dim.tab.length / param.scale.L
+    param.tab.width = param_dim.tab.width / param.scale.L
+    param.tab.area = param_dim.tab.area / param.scale.L^2
+    param.tab.h = param_dim.tab.h * param.scale.T_ref / param.scale.phi / param.scale.I_typ
+    
+    # cohesive zone model 
+    # 法向参数归一化
+    param.cohesive.σ_max_n = param_dim.cohesive.σ_max_n / param_dim.scale.σ_czm
+    param.cohesive.δ_0_n = param_dim.cohesive.δ_0_n / param_dim.scale.δ_czm
+    param.cohesive.δ_c_n = param_dim.cohesive.δ_c_n / param_dim.scale.δ_czm
+    param.cohesive.G_c_n = param_dim.cohesive.G_c_n / param_dim.scale.G_czm
+    param.cohesive.K_n = param_dim.cohesive.K_n / param_dim.scale.K_czm
+    # 切向参数归一化
+    param.cohesive.τ_max_t = param_dim.cohesive.τ_max_t / param_dim.scale.σ_czm
+    param.cohesive.δ_0_t = param_dim.cohesive.δ_0_t / param_dim.scale.δ_czm
+    param.cohesive.δ_c_t = param_dim.cohesive.δ_c_t / param_dim.scale.δ_czm
+    param.cohesive.G_c_t = param_dim.cohesive.G_c_t / param_dim.scale.G_czm
+    param.cohesive.K_t = param_dim.cohesive.K_t / param_dim.scale.K_czm
+    # BK指数不需要归一化（无量纲）
+    param.cohesive.eta = param_dim.cohesive.eta
+    
     return param
 end
 
