@@ -34,6 +34,7 @@ PE.E = 375000000000.0
 PE.nu = 0.2
 PE.Omega = -7.28e-7
 
+
 # Negative Electrode
 NE = Electrode()
 NE.theta_100 = 0.910612
@@ -59,6 +60,7 @@ NE.dUdT = x-> 0 * x
 NE.E = 15000000000.0
 NE.nu = 0.3
 NE.Omega = 3.1e-6
+
 
 # Electrolyte
 EL = Electrolyte()
@@ -131,4 +133,5 @@ binder = Binder()
 scale = Scale()
 
 # assemble to "param_dim"
-param_dim = Params(PE, NE, EL, SP, cell, NCC, PCC, tab, binder, scale)
+cohesive = Cohesive()
+param_dim = Params(PE, NE, EL, SP, cell, NCC, PCC, tab, binder, scale, cohesive)

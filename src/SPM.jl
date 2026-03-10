@@ -20,7 +20,7 @@ function SPM(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
         mesh_np = case.mesh["negative particle"]
         mesh_pp = case.mesh["positive particle"]
         M_np, K_np = ElectrodeDiffusion(param.NE, mesh_np, mesh_np.nlen, csn_gs, theta_Mn)
-        M_pp, K_pp = ElectrodeDiffusion(param.PE, mesh_pp, mesh_pp.nlen, csp_gs, theta_Mp)   
+        M_pp, K_pp = ElectrodeDiffusion(param.PE, mesh_pp, mesh_pp.nlen, csp_gs, theta_Mp)  
         M_np .*= param.scale.ts_n / param_dim.scale.t0
         M_pp .*= param.scale.ts_p / param_dim.scale.t0
     end

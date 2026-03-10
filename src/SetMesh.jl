@@ -18,6 +18,33 @@ mutable struct Mesh
     gs::GaussPoint # Gauss points
 end
 
+# Abstract CZM types are used by CohesiveMesh and defined here to avoid
+# include-order issues with czm.jl.
+abstract type AbstractCohesiveElement end
+abstract type AbstractDamageState end
+
+mutable struct CohesiveMesh
+    bulk_mesh::Mesh                           # 原始固体网格
+    node::Matrix{Float64}                     # 扩展后节点坐标
+    nnode::Int64                              # 总节点数
+    bulk_element::Matrix{Int64}               # 更新后的固体单元连接关系
+    cohesive_elements::Vector{AbstractCohesiveElement} # 内聚力单元
+    n_cohesive::Int64                         # 内聚力单元数
+    n_layers::Int64                           # 卷绕圈数
+    node_map::Dict{Int64, Vector{Int64}}      # 原节点 → [分层后的节点们]
+    interface_nodes::Vector{Vector{Tuple{Int64,Int64}}} # 每个界面的节点对
+    damage_states::Vector{AbstractDamageState} # 损伤状态
+    
+    # 内部构造函数（空初始化）
+    function CohesiveMesh()
+        new(Mesh("Q4", 2, zeros(0,2), 0, zeros(Int64,0,4), 
+            GaussPoint(zeros(0,2), zeros(0,2), zeros(0), zeros(0), zeros(Int64,0), zeros(0,4), zeros(0,8), 2)),
+            zeros(0, 2), 0, zeros(Int64, 0, 4),
+            AbstractCohesiveElement[], 0, 0, Dict{Int64, Vector{Int64}}(),
+            Vector{Vector{Tuple{Int64,Int64}}}(), AbstractDamageState[])
+    end
+end
+
 function SetMesh(domain::Any, num::Any, type::String, gsorder::Int64=4)
 """
     A function to set up mesh
@@ -32,9 +59,65 @@ function SetMesh(domain::Any, num::Any, type::String, gsorder::Int64=4)
 
     if type in ["L2", "L3"]
         mesh = Mesh1D(domain, num, type, gsorder)
+    elseif type == "Q4"
+        mesh = Mesh2D(domain, num, type, gsorder)
+    elseif type == "COH2D4"
+        mesh = Mesh2D(domain, num, type, gsorder)
     else
         error("Error: element type $type has not been implemented!\n")
     end
+    return mesh
+end
+
+function Mesh2D(domain::Vector{Float64}, num::Any, type::String="Q4", gsorder::Int64=2)
+    """
+        构建规则矩形区域的二维Q4网格
+        domain = [x0, x1, y0, y1]
+        num = [nx, ny] 或 Tuple(nx, ny)
+    """
+    dim = 2
+    @assert length(domain) == 4 "domain for Q4 must be [x0,x1,y0,y1]"
+    if isa(num, Tuple) || isa(num, NTuple{2,Int})
+        nx, ny = num
+    else
+        @assert length(num) == 2 "num for Q4 must have length 2"
+        nx = Int(num[1]); ny = Int(num[2])
+    end
+    x0, x1, y0, y1 = domain
+    dx = (x1 - x0)/nx
+    dy = (y1 - y0)/ny
+    # nodes: (nx+1)*(ny+1)
+    nnx = nx + 1; nny = ny + 1
+    nnode = nnx * nny
+    node = zeros(Float64, nnode, dim)
+    # ordering: loop j (y) outer, i (x) inner; index(i,j) = j*nnx + i + 1 ; i,j start at 0
+    for j in 0:ny
+        for i in 0:nx
+            idx = j*nnx + i + 1
+            node[idx,1] = x0 + i*dx
+            node[idx,2] = y0 + j*dy
+        end
+    end
+    # elements: nx * ny, node ordering consistent with Q4 reference (1:(i,j),2:(i+1,j),3:(i+1,j+1),4:(i,j+1))
+    ne = nx * ny
+    element = zeros(Int64, ne, 4)
+    e = 0
+    for j in 0:ny-1
+        for i in 0:nx-1
+            e += 1
+            n1 = j*nnx + i + 1
+            n2 = n1 + 1
+            n3 = n2 + nnx
+            n4 = n1 + nnx
+            # 逐元素赋值避免 Julia 对行切片的单值广播限制
+            element[e,1] = n1
+            element[e,2] = n2
+            element[e,3] = n3
+            element[e,4] = n4
+        end
+    end
+    gs = GetGS(element, node, gsorder, type)
+    mesh = Mesh(type, dim, node, nnode, element, gs)
     return mesh
 end
 
@@ -202,6 +285,55 @@ function MultipleMesh(mesh::Mesh, n::Int64)
 end
 
 function GetGS(element::Array{Int64}, node::Array{Float64}, order::Int64, type::String, v=collect(1:size(element,1)))
+    if type == "COH2D4"
+        total_num = size(element, 1) * order
+        x = zeros(Float64, total_num, 2)
+        weight = zeros(Float64, total_num)
+        detJ = zeros(Float64, total_num)
+        ele = zeros(Int64, total_num)
+        xi = zeros(Float64, total_num, 1)
+
+        w, q = NCweight(order)
+        count0 = 0
+        for e = 1:size(element, 1)
+            sctr = element[e, 1:4]
+
+            x1 = node[sctr[1], 1]; y1 = node[sctr[1], 2]
+            x2 = node[sctr[2], 1]; y2 = node[sctr[2], 2]
+            x3 = node[sctr[3], 1]; y3 = node[sctr[3], 2]
+            x4 = node[sctr[4], 1]; y4 = node[sctr[4], 2]
+
+            x_m1 = 0.5 * (x1 + x4)
+            y_m1 = 0.5 * (y1 + y4)
+            x_m2 = 0.5 * (x2 + x3)
+            y_m2 = 0.5 * (y2 + y3)
+
+            dx = x_m2 - x_m1
+            dy = y_m2 - y_m1
+            L = sqrt(dx * dx + dy * dy)
+            if L < 1e-15
+                continue
+            end
+
+            for i = 1:length(w)
+                count0 += 1
+                xi_pt = q[i]
+                N1 = 0.5 * (1.0 - xi_pt)
+                N2 = 0.5 * (1.0 + xi_pt)
+                x[count0, 1] = N1 * x_m1 + N2 * x_m2
+                x[count0, 2] = N1 * y_m1 + N2 * y_m2
+                weight[count0] = w[i]
+                detJ[count0] = L / 2.0
+                ele[count0] = v[e]
+                xi[count0, 1] = xi_pt
+            end
+        end
+
+        Ni, dNi = ShapeFunction2D(element, type, node, xi, ele)
+        gs = GaussPoint(x, xi, weight, detJ, ele, Ni, dNi, order)
+        return gs
+    end
+
     if type == "L2" 
         dimen=1
         points = 1:2
@@ -225,7 +357,7 @@ function GetGS(element::Array{Int64}, node::Array{Float64}, order::Int64, type::
     count0 = 0
     for e = 1:size(element, 1)
         sctr = element[e, points]
-        for i in eachindex(w)
+        for i = 1:size(w, 1)
             pt = q[i, :]
             N, dNdxi = LagrangeBasis(type, dimen, pt)
             J0 = dNdxi * node[sctr, 1:dimen]
@@ -237,7 +369,13 @@ function GetGS(element::Array{Int64}, node::Array{Float64}, order::Int64, type::
             xi[count0, 1:dimen] = pt
         end
     end
-    Ni, dNi = ShapeFunction1D(element, type, node, xi, ele)
+    if type in ["L2","L3"]
+        Ni, dNi = ShapeFunction1D(element, type, node, xi, ele)
+    elseif type == "Q4"
+        Ni, dNi = ShapeFunction2D(element, type, node, xi, ele)
+    else
+        error("Unsupported element type $type for shape functions")
+    end
     gs = GaussPoint(x, xi, weight, detJ, ele, Ni, dNi, order)
     return gs
 end
@@ -456,6 +594,27 @@ function GSweight(order::Int64, dimen::Int64)
     return W, Q
 end
 
+function NCweight(order::Int64)
+    if order < 2 || order > 5
+        error("Newton-Cotes order $(order) not supported (2-5)")
+    end
+
+    if order == 2
+        q = [-1.0, 1.0]
+        w = [1.0, 1.0]
+    elseif order == 3
+        q = [-1.0, 0.0, 1.0]
+        w = [1.0 / 3.0, 4.0 / 3.0, 1.0 / 3.0]
+    elseif order == 4
+        q = [-1.0, -1.0 / 3.0, 1.0 / 3.0, 1.0]
+        w = [1.0 / 4.0, 3.0 / 4.0, 3.0 / 4.0, 1.0 / 4.0]
+    else
+        q = [-1.0, -0.5, 0.0, 0.5, 1.0]
+        w = [7.0 / 45.0, 32.0 / 45.0, 12.0 / 45.0, 32.0 / 45.0, 7.0 / 45.0]
+    end
+    return w, q
+end
+
 function ShapeFunction1D(element::Matrix{Int64}, type::String, node::Matrix{Float64}, xi::Array{Float64}, v::Vector{Int64})
     if type == "L3"
             # f1 = x-> (x .- 1).^2 / 4 
@@ -489,7 +648,92 @@ function ShapeFunction1D(element::Matrix{Int64}, type::String, node::Matrix{Floa
             dXdx = 2 ./ ele_length * ones(1, 2)
             dNidx = dNidX .* dXdx
     else
-            error("Error: element type $(mesh.type) has not been implemented!\n")
+            error("Error: element type $(type) has not been implemented in ShapeFunction1D!\n")
     end
     return Ni, dNidx 
+end
+
+"""
+    ShapeFunction2D: Q4 and COH2D4 shape functions and gradients.
+    输入:
+        element, type, node, xi (总高斯点×2), ele_map (高斯点对应的单元索引)
+    输出:
+        Ni: (ngs × 4)
+        dNidx: (ngs × 8)  前4列 dN/dx, 后4列 dN/dy
+"""
+function ShapeFunction2D(element::Matrix{Int64}, type::String, node::Matrix{Float64}, xi::Array{Float64}, ele_map::Vector{Int64})
+    if type == "Q4"
+        total_gs = size(xi,1)
+        nnode_ele = 4
+        Ni = zeros(Float64, total_gs, nnode_ele)
+        dNidx = zeros(Float64, total_gs, nnode_ele * 2)
+        for g in 1:total_gs
+            xi_g  = xi[g,1]; eta_g = xi[g,2]
+            Nloc = 0.25 * [(1 - xi_g)*(1 - eta_g);
+                           (1 + xi_g)*(1 - eta_g);
+                           (1 + xi_g)*(1 + eta_g);
+                           (1 - xi_g)*(1 + eta_g)]
+            dN_dxi = 0.25 * [-(1 - eta_g)    -(1 - xi_g);
+                              (1 - eta_g)    -(1 + xi_g);
+                              (1 + eta_g)     (1 + xi_g);
+                             -(1 + eta_g)     (1 - xi_g)]
+            e = ele_map[g]
+            sctr = element[e, :]
+            x_e = node[sctr, 1:2]
+            J = transpose(dN_dxi) * x_e
+            invJ = inv(J)
+            dN_dx = dN_dxi * invJ
+            Ni[g, :] = vec(Nloc)'
+            dNidx[g, 1:4] = dN_dx[:,1]'
+            dNidx[g, 5:8] = dN_dx[:,2]'
+        end
+        return Ni, dNidx
+    elseif type == "COH2D4"
+        total_gs = size(xi,1)
+        nnode_ele = 4
+        Ni = zeros(Float64, total_gs, nnode_ele)
+        dNidx = zeros(Float64, total_gs, nnode_ele * 2)
+        for g in 1:total_gs
+            xi_g = xi[g,1]
+            N1 = 0.5 * (1.0 - xi_g)
+            N2 = 0.5 * (1.0 + xi_g)
+
+            e = ele_map[g]
+            sctr = element[e, :]
+
+            x1 = node[sctr[1], 1]; y1 = node[sctr[1], 2]
+            x2 = node[sctr[2], 1]; y2 = node[sctr[2], 2]
+            x3 = node[sctr[3], 1]; y3 = node[sctr[3], 2]
+            x4 = node[sctr[4], 1]; y4 = node[sctr[4], 2]
+
+            x_m1 = 0.5 * (x1 + x4)
+            y_m1 = 0.5 * (y1 + y4)
+            x_m2 = 0.5 * (x2 + x3)
+            y_m2 = 0.5 * (y2 + y3)
+
+            dx = x_m2 - x_m1
+            dy = y_m2 - y_m1
+            L = sqrt(dx * dx + dy * dy)
+            if L < 1e-15
+                continue
+            end
+
+            dN_dxi = [-0.5, 0.5]
+            dN_ds = (2.0 / L) .* dN_dxi
+            t_x = dx / L
+            t_y = dy / L
+
+            dN1_dx = dN_ds[1] * t_x
+            dN1_dy = dN_ds[1] * t_y
+            dN2_dx = dN_ds[2] * t_x
+            dN2_dy = dN_ds[2] * t_y
+
+            Ni[g, :] = [N1, N2, N2, N1]
+            dNidx[g, 1:4] = [dN1_dx, dN2_dx, dN2_dx, dN1_dx]
+            dNidx[g, 5:8] = [dN1_dy, dN2_dy, dN2_dy, dN1_dy]
+        end
+        return Ni, dNidx
+    else
+        error("Error: element type $type not implemented in ShapeFunction2D!")
+    end
 end
