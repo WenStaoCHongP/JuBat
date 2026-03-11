@@ -71,49 +71,32 @@ function plot_temperature_cloud(mesh, T_nodes, out_path; title="Temperature Clou
 end
 
 function mean_temperature(result, mesh)
-    if haskey(result, "temperature [K]")
-        return result["temperature [K]"]
-    elseif haskey(result, "thermal2D T_nodes [K]")
-        T_nodes_hist = result["thermal2D T_nodes [K]"]
-        if ndims(T_nodes_hist) == 2
-            return vec(mean(T_nodes_hist; dims=1))
-        else
-            return [mean(T_nodes_hist)]
-        end
-    else
-        error("No temperature history available in result.")
-    end
+    return result["temperature [K]"]
 end
 
 function conservation_checks(result, mesh, areas, param_dim)
     checks = Dict{String, Float64}()
 
     # Charge conservation: area-weighted element current vs total current
-    if haskey(result, "thermal2D element current") && haskey(result, "cell current [A]")
-        I_e_hist = result["thermal2D element current"]
-        I_total = result["cell current [A]"]
-        w = areas ./ sum(areas)
-        I_e_weighted = vec(sum(I_e_hist .* w; dims=1))
-        err = maximum(abs.(I_e_weighted .- I_total) ./ max.(abs.(I_total), 1e-12))
-        checks["charge_conservation_rel"] = err
-    end
+    I_e_hist = result["thermal2D element current"]
+    I_total = result["cell current [A]"]
+    w = areas ./ sum(areas)
+    I_e_weighted = vec(sum(I_e_hist .* w; dims=1))
+    err = maximum(abs.(I_e_weighted .- I_total) ./ max.(abs.(I_total), 1e-12))
+    checks["charge_conservation_rel"] = err
 
     # Lithium inventory conservation: area-weighted soc_n + soc_p should be stable
-    if haskey(result, "thermal2D element soc_n") && haskey(result, "thermal2D element soc_p")
-        soc_n = result["thermal2D element soc_n"]
-        soc_p = result["thermal2D element soc_p"]
-        w = areas ./ sum(areas)
-        inv = vec(sum(soc_n .* w; dims=1)) + vec(sum(soc_p .* w; dims=1))
-        drift = maximum(abs.(inv .- inv[1]))
-        checks["lithium_inventory_drift"] = drift
-    end
+    soc_n = result["thermal2D element soc_n"]
+    soc_p = result["thermal2D element soc_p"]
+    inv = vec(sum(soc_n .* w; dims=1)) + vec(sum(soc_p .* w; dims=1))
+    drift = maximum(abs.(inv .- inv[1]))
+    checks["lithium_inventory_drift"] = drift
 
     # Energy balance (approx): heat generation - convective loss vs internal energy
-    if haskey(result, "heat_source_fields") && haskey(result, "time [s]")
-        q_hist = result["heat_source_fields"]
-        t = result["time [s]"]
-        cell = param_dim.cell
-        depth = cell.width
+    q_hist = result["heat_source_fields"]
+    t = result["time [s]"]
+    cell = param_dim.cell
+    depth = cell.width
 
         # total heat generation [W]
         q_total = vec(sum(q_hist .* areas; dims=1)) .* depth
@@ -123,25 +106,23 @@ function conservation_checks(result, mesh, areas, param_dim)
         q_loss = cell.h .* cell.cooling_surface .* (T_mean .- cell.T_amb)
 
         # integrate over time (trapezoid)
-        function trapz(t, y)
-            s = 0.0
-            @inbounds for k in 2:length(t)
-                s += 0.5 * (y[k] + y[k-1]) * (t[k] - t[k-1])
-            end
-            return s
+    function trapz(t, y)
+        s = 0.0
+        @inbounds for k in 2:length(t)
+            s += 0.5 * (y[k] + y[k-1]) * (t[k] - t[k-1])
         end
-
-        E_gen = trapz(t, q_total)
-        E_loss = trapz(t, q_loss)
-
-        m_total, cp_eff = effective_cp_mass(param_dim)
-        T0 = T_mean[1]
-        dU = m_total * cp_eff * (T_mean[end] - T0)
-
-        # relative energy residual
-        denom = max(abs(E_gen), 1e-12)
-        checks["energy_balance_rel"] = abs((E_gen - E_loss) - dU) / denom
+        return s
     end
+
+    E_gen = trapz(t, q_total)
+    E_loss = trapz(t, q_loss)
+
+    m_total, cp_eff = effective_cp_mass(param_dim)
+    T0 = T_mean[1]
+    dU = m_total * cp_eff * (T_mean[end] - T0)
+
+    denom = max(abs(E_gen), 1e-12)
+    checks["energy_balance_rel"] = abs((E_gen - E_loss) - dU) / denom
 
     return checks
 end
@@ -229,15 +210,13 @@ function main()
         end
 
         # 60 s temperature cloud
-        if haskey(result, "thermal2D T_nodes [K]") && haskey(result, "time [s]")
-            T_nodes_hist = result["thermal2D T_nodes [K]"]
-            t = result["time [s]"]
-            _, idx = findmin(abs.(t .- 60.0))
-            T_nodes_60 = ndims(T_nodes_hist) == 2 ? T_nodes_hist[:, idx] : T_nodes_hist
-            out_path = joinpath("output", @sprintf("spme_thermal_T60_%.1fC.png", c.crate))
-            plot_temperature_cloud(mesh, T_nodes_60, out_path;
-                title=@sprintf("T at 60 s (%.1fC)", c.crate))
-        end
+        T_nodes_hist = result["thermal2D T_nodes [K]"]
+        t = result["time [s]"]
+        _, idx = findmin(abs.(t .- 60.0))
+        T_nodes_60 = ndims(T_nodes_hist) == 2 ? T_nodes_hist[:, idx] : T_nodes_hist
+        out_path = joinpath("output", @sprintf("spme_thermal_T60_%.1fC.png", c.crate))
+        plot_temperature_cloud(mesh, T_nodes_60, out_path;
+            title=@sprintf("T at 60 s (%.1fC)", c.crate))
 
         # Mean temperature vs capacity
         T_mean = mean_temperature(result, mesh)
@@ -249,21 +228,9 @@ function main()
         # Conservation checks
         checks = conservation_checks(result, mesh, areas, param_dim)
         println("\n[Checks] ", @sprintf("%.1fC", c.crate))
-        if haskey(checks, "charge_conservation_rel")
-            @printf("  Charge conservation rel error: %.3e\n", checks["charge_conservation_rel"])
-        else
-            println("  Charge conservation: data not available")
-        end
-        if haskey(checks, "lithium_inventory_drift")
-            @printf("  Lithium inventory drift: %.3e\n", checks["lithium_inventory_drift"])
-        else
-            println("  Lithium inventory: data not available")
-        end
-        if haskey(checks, "energy_balance_rel")
-            @printf("  Energy balance rel error: %.3e\n", checks["energy_balance_rel"])
-        else
-            println("  Energy balance: data not available")
-        end
+        @printf("  Charge conservation rel error: %.3e\n", checks["charge_conservation_rel"])
+        @printf("  Lithium inventory drift: %.3e\n", checks["lithium_inventory_drift"])
+        @printf("  Energy balance rel error: %.3e\n", checks["energy_balance_rel"])
     end
 
     # Plot mean temperature vs capacity

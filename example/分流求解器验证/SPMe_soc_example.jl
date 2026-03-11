@@ -209,9 +209,8 @@ function main()
     println("\n[5/7] 单元级别截止状态分析...")
     println("="^60)
     
-    if haskey(result, "thermal2D element current")
-        I_e_hist = result["thermal2D element current"]
-        I_scale = case.param.scale.I_typ
+    I_e_hist = result["thermal2D element current"]
+    I_scale = case.param.scale.I_typ
         
         println("\n  【逐单元电流演化分析】")
         
@@ -273,34 +272,25 @@ function main()
         end
         
         # 检查截止相关的变量
-        if haskey(result, "thermal2D n_cutoff_elements")
-            n_cutoff_hist = result["thermal2D n_cutoff_elements"]
-            println("\n  【截止单元数历史】")
-            println("  注：如果此数据存在，表明系统支持单元级别截止追踪")
-            
-            max_cutoff = maximum(n_cutoff_hist)
-            @printf("  最大截止单元数: %d\n", max_cutoff)
-            
-            if max_cutoff > 0
-                first_cutoff_idx = findfirst(n_cutoff_hist .> 0)
-                @printf("  首次出现截止: t = %.1f s\n", t[first_cutoff_idx])
-            end
+        n_cutoff_hist = result["thermal2D n_cutoff_elements"]
+        println("\n  【截止单元数历史】")
+        println("  注：如果此数据存在，表明系统支持单元级别截止追踪")
+        
+        max_cutoff = maximum(n_cutoff_hist)
+        @printf("  最大截止单元数: %d\n", max_cutoff)
+        
+        if max_cutoff > 0
+            first_cutoff_idx = findfirst(n_cutoff_hist .> 0)
+            @printf("  首次出现截止: t = %.1f s\n", t[first_cutoff_idx])
         end
         
-        if haskey(result, "thermal2D active_mask")
-            active_mask_hist = result["thermal2D active_mask"]
-            n_active_final = sum(active_mask_hist[:, end])
-            @printf("\n  最终活跃单元数: %d / %d\n", n_active_final, ne)
-        end
-        
-    else
-        println("  ⚠ 未找到 thermal2D element current 数据")
-    end
+        active_mask_hist = result["thermal2D active_mask"]
+        n_active_final = sum(active_mask_hist[:, end])
+        @printf("\n  最终活跃单元数: %d / %d\n", n_active_final, ne)
     
     # SOC分析
-    if haskey(result, "thermal2D element soc_n") && haskey(result, "thermal2D element soc_p")
-        soc_n_hist = result["thermal2D element soc_n"]
-        soc_p_hist = result["thermal2D element soc_p"]
+    soc_n_hist = result["thermal2D element soc_n"]
+    soc_p_hist = result["thermal2D element soc_p"]
         
         println("\n  【单元SOC分布分析】（最终时刻）")
         soc_n_final = soc_n_hist[:, end]
@@ -317,9 +307,8 @@ function main()
         
         @printf("  SOC分布差异: 负极=%.4f, 正极=%.4f\n", soc_spread_n, soc_spread_p)
         
-        if soc_spread_n > 0.01 || soc_spread_p > 0.01
-            println("  → SOC存在明显的空间不均匀性，这可能导致某些单元先达到截止")
-        end
+    if soc_spread_n > 0.01 || soc_spread_p > 0.01
+        println("  → SOC存在明显的空间不均匀性，这可能导致某些单元先达到截止")
     end
     
     # ========================================================================
@@ -342,9 +331,8 @@ function main()
     println("  ✓ 保存: testexample_cutoff_voltage.png")
     
     # 图2：逐单元电流演化
-    if haskey(result, "thermal2D element current")
-        I_e_hist = result["thermal2D element current"]
-        I_scale = case.param.scale.I_typ
+    I_e_hist = result["thermal2D element current"]
+    I_scale = case.param.scale.I_typ
         
         # 选择几个代表性单元
         sample_elements = [1, round(Int, ne/4), round(Int, ne/2), round(Int, 3*ne/4), ne]
@@ -371,12 +359,10 @@ function main()
         
         savefig(p3, "testexample_current_heatmap.png")
         println("  ✓ 保存: testexample_current_heatmap.png")
-    end
     
     # 图4：SOC演化
-    if haskey(result, "thermal2D element soc_n") && haskey(result, "thermal2D element soc_p")
-        soc_n_hist = result["thermal2D element soc_n"]
-        soc_p_hist = result["thermal2D element soc_p"]
+    soc_n_hist = result["thermal2D element soc_n"]
+    soc_p_hist = result["thermal2D element soc_p"]
         
         # SOC均值和范围
         soc_n_mean = [mean(soc_n_hist[:, i]) for i in 1:num_steps]
@@ -401,21 +387,17 @@ function main()
         
         savefig(p4, "testexample_soc_evolution.png")
         println("  ✓ 保存: testexample_soc_evolution.png")
-    end
     
     # 图5：电流异质性演化
-    if haskey(result, "thermal2D element current")
-        I_e_hist = result["thermal2D element current"]
-        
-        cv_I = [std(I_e_hist[:, i]) / max(abs(mean(I_e_hist[:, i])), 1e-10) for i in 1:num_steps]
-        
-        p5 = plot(t, cv_I .* 100, xlabel="Time (s)", ylabel="CV of Current (%)", 
-                  label="Current Heterogeneity", linewidth=2, 
-                  title="Current Distribution Heterogeneity")
-        
-        savefig(p5, "testexample_current_heterogeneity.png")
-        println("  ✓ 保存: testexample_current_heterogeneity.png")
-    end
+    I_e_hist = result["thermal2D element current"]
+    cv_I = [std(I_e_hist[:, i]) / max(abs(mean(I_e_hist[:, i])), 1e-10) for i in 1:num_steps]
+    
+    p5 = plot(t, cv_I .* 100, xlabel="Time (s)", ylabel="CV of Current (%)", 
+              label="Current Heterogeneity", linewidth=2, 
+              title="Current Distribution Heterogeneity")
+    
+    savefig(p5, "testexample_current_heterogeneity.png")
+    println("  ✓ 保存: testexample_current_heterogeneity.png")
     
     # ========================================================================
     # 7. 总结
@@ -441,16 +423,14 @@ function main()
         println("       ★ 系统在整体电压达到截止电压时终止 (break)")
         
         # 检查是否有单元级别的差异
-        if haskey(result, "thermal2D element current")
-            I_e_final = result["thermal2D element current"][:, end]
-            cv_final = std(I_e_final) / max(abs(mean(I_e_final)), 1e-10)
-            
-            if cv_final > 0.1
-                println("       ★ 最终时刻单元电流存在明显差异 (CV=$(round(cv_final*100, digits=1))%)")
-                println("         这表明不同单元的放电深度不同")
-            else
-                println("       ★ 最终时刻单元电流分布较均匀 (CV=$(round(cv_final*100, digits=1))%)")
-            end
+        I_e_final = result["thermal2D element current"][:, end]
+        cv_final = std(I_e_final) / max(abs(mean(I_e_final)), 1e-10)
+        
+        if cv_final > 0.1
+            println("       ★ 最终时刻单元电流存在明显差异 (CV=$(round(cv_final*100, digits=1))%)")
+            println("         这表明不同单元的放电深度不同")
+        else
+            println("       ★ 最终时刻单元电流分布较均匀 (CV=$(round(cv_final*100, digits=1))%)")
         end
     end
     

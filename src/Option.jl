@@ -55,7 +55,7 @@ end
     solveType::String  = "Crank-Nicolson" # forward, backward or Crank-Nicolson
     outputType::String  = "auto" # auto or manual
     jacobi::String = "constant" # constant or update
-    thermalmodel::String  = "none" # none, lumped, distributed1D, distributed2D
+    thermalmodel::String  = "none" # none, lumped, distributed2D
     mechanicalmodel::String = "none" #none or full
     cite::Vector{String} = String[]
     # Thermal module

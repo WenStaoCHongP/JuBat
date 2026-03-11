@@ -150,7 +150,7 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_curren
         final_state["t_global"] = result.t_start + duration
 
         # 阶段末调用 CZM 求解器（CzmSolve.jl）更新损伤，避免在 CycleSolver 重复定义求解循环。
-        if czm_mesh !== nothing && czm_params !== nothing && haskey(final_state, "y")
+        if czm_mesh !== nothing && czm_params !== nothing
             y_end = final_state["y"]
             T_nodes_nd = get(final_state, "T_nodes", Float64[])
             t_end_nd = duration / case.param.scale.t0

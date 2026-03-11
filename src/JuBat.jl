@@ -16,9 +16,9 @@ include("SPM.jl")
 include("SPMe.jl") 
 include("P2D.jl") 
 include("Parallelsolution.jl")
+include("Tools.jl")
 include("Solve.jl")
 include("PostProcessing.jl")
-include("Tools.jl")
 include("Materialmatrix.jl")
 include("Thermal.jl")
 include("ThermalDistributed.jl")
@@ -42,13 +42,14 @@ export jellyroll_tab_node_indices, edge_boundary
 export jellyroll_element_centers
 export ring_mesh
 export setup_thermal2D_mesh
-export ThermalDistributed1D, ThermalDistributed2D, ThermalDistributed2D_BC
+export thermal2D_volume_average_temperature
+export ThermalDistributed2D, ThermalDistributed2D_BC
 export ThermalDistributed2D_Ring, ThermalRing2D_BC
 export ThermalPolar2D_Ring
 export identify_boundary_nodes, apply_convection_bc, apply_cool_method
 export heatQ_Source, compute_element_heat_sources, solve_branch_currents_newton
 export heatQ_Source_with_czm
-export ThermalModel, ThermalLumpedModel, ThermalDistributed1DModel, ThermalDistributed2DModel
+export ThermalModel, ThermalLumpedModel, ThermalDistributed2DModel
 export thermal_diffusion_stress_2D
 # CZM exports
 export CohesiveElement, CohesiveMesh, DamageState, CZMResult

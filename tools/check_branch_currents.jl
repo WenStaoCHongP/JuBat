@@ -46,8 +46,8 @@ function run_real_test()
         end
 
         # Prepare areas and temperatures (Te_prev)
-        if haskey(case.mesh, "thermal2D")
-            mesh = case.mesh["thermal2D"]
+        mesh = get(case.mesh, "thermal2D", nothing)
+        if mesh !== nothing
             ne = size(mesh.element, 1)
             areas = ones(Float64, ne) .* (1.0 / ne)
             Te_prev = ones(Float64, ne) .* case.param.cell.T0
@@ -69,9 +69,9 @@ function run_real_test()
                 vars_out, x, Vc = solve_branch_currents_newton(case, variables, yt, t, I_total, areas, Te_prev)
                 @printf("Result #%d: Vc=%.8g, sum(x)=%.8g, ne=%d\n", i, Vc, sum(x), length(x))
                 @printf("  status=%.1f, iters=%.1f, converged=%.1f\n",
-                        get(vars_out, "thermal2D Vsolve status", -1.0),
-                        get(vars_out, "thermal2D Vsolve iters", -1.0),
-                        get(vars_out, "thermal2D Vsolve converged", -1.0))
+                    vars_out["thermal2D Vsolve status"],
+                    vars_out["thermal2D Vsolve iters"],
+                    vars_out["thermal2D Vsolve converged"])
                 # print sample of x
                 for j in 1:min(8, length(x))
                     @printf("  x[%d]=%.6g\n", j, x[j])

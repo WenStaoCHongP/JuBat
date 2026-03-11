@@ -152,6 +152,24 @@ function element_nodal_mean(mesh::Mesh, nodal_values::AbstractVector{<:Real})
     return out
 end
 
+function thermal2D_volume_average_temperature(mesh::Mesh, T_nodes::AbstractVector{<:Real})
+    ngs = length(mesh.gs.detJ)
+    nloc = size(mesh.element, 2)
+    num = 0.0
+    den = 0.0
+    @inbounds for g in 1:ngs
+        e = mesh.gs.ele[g]
+        wJ = mesh.gs.weight[g] * mesh.gs.detJ[g]
+        nodes = mesh.element[e, :]
+        for i in 1:nloc
+            wi = wJ * mesh.gs.Ni[g, i]
+            num += wi * T_nodes[nodes[i]]
+            den += wi
+        end
+    end
+    return den > 0.0 ? num / den : mean(T_nodes)
+end
+
 """
     q4_center_gradients(node, elem_nodes)
 

@@ -300,18 +300,16 @@ function verify_system_level()
     end
 
     # 结果对比：分离位移与损伤
-    if haskey(results, "load_substep")
-        ref = results["load_substep"]
-        for method in methods
-            if method == "load_substep"
-                continue
-            end
-            res = results[method]
-            d_sep_n = maximum(abs.(res.separation_n .- ref.separation_n))
-            d_sep_t = maximum(abs.(res.separation_t .- ref.separation_t))
-            d_D = maximum(abs.(res.damage .- ref.damage))
-            println("  compare $(method) vs load_substep: max|Δδ_n|=$(d_sep_n), max|Δδ_t|=$(d_sep_t), max|ΔD|=$(d_D)")
+    ref = results["load_substep"]
+    for method in methods
+        if method == "load_substep"
+            continue
         end
+        res = results[method]
+        d_sep_n = maximum(abs.(res.separation_n .- ref.separation_n))
+        d_sep_t = maximum(abs.(res.separation_t .- ref.separation_t))
+        d_D = maximum(abs.(res.damage .- ref.damage))
+        println("  compare $(method) vs load_substep: max|Δδ_n|=$(d_sep_n), max|Δδ_t|=$(d_sep_t), max|ΔD|=$(d_D)")
     end
 
 end

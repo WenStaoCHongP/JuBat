@@ -143,8 +143,8 @@ function check_two_steps()
         I_e = Float64[]; Vc = NaN
         try
             # pre-check: if layer weights exist, ensure shape roughly matches ne x 5
-            if haskey(variables, "thermal2D layer_weights")
-                fks = variables["thermal2D layer_weights"]
+            fks = get(variables, "thermal2D layer_weights", nothing)
+            if fks !== nothing
                 # print diagnostics about fks for debugging
                 try
                     println("[diag] fks typeof=", typeof(fks), ", eltype=", (isa(fks, AbstractArray) ? eltype(fks) : "N/A"), ", ndims=", (isa(fks, AbstractArray) ? ndims(fks) : 0), ", size=", (isa(fks, AbstractArray) ? size(fks) : ()))
@@ -225,9 +225,11 @@ function check_two_steps()
                     end
 
                     # 同时打印变量中的端电压（若存在）
-                    if haskey(variables, "cell voltage")
+                    cv = get(variables, "cell voltage", nothing)
+                    if cv === nothing
+                        println("[diag] variables['cell voltage'] not present")
+                    else
                         try
-                            cv = variables["cell voltage"]
                             if isa(cv, AbstractArray)
                                 ncv = min(6, length(cv))
                                 println("[diag] variables[\"cell voltage\"] (nd) first $ncv = ", cv[1:ncv])
@@ -239,8 +241,6 @@ function check_two_steps()
                         catch err
                             @warn "打印 variables[\"cell voltage\"] 失败" err
                         end
-                    else
-                        println("[diag] variables['cell voltage'] not present")
                     end
                 end
             catch err
@@ -256,16 +256,17 @@ function check_two_steps()
             println("[diag] heatQ_Source inputs summary")
             println("[diag] variables keys=", sort(collect(keys(variables))))
             for key in ["thermal2D layer_weights", "thermal2D element current", "thermal2D element area", "T_nodes", "cell current"]
-                if haskey(variables, key)
-                    describe_value(key, variables[key])
-                else
+                val = get(variables, key, nothing)
+                if val === nothing
                     println("[diag] missing key ", key)
+                else
+                    describe_value(key, val)
                 end
             end
             describe_value("areas", areas)
             describe_value("T_e", T_e)
             variables = JuBat.heatQ_Source(case, variables, t, yt)
-            hs_ok = haskey(variables, "heat_source_fields")
+            hs_ok = get(variables, "heat_source_fields", nothing) !== nothing
         catch err
             @error "heatQ_Source failed" exception=(err, catch_backtrace())
             println("[diag] heatQ_Source failure diagnostics: mesh thermal2D element size=", size(case.mesh["thermal2D"].element))
@@ -332,8 +333,8 @@ function check_two_steps()
         keys_of_interest = ["negative electrode overpotential", "positive electrode overpotential", "negative particle surface lithium concentration", "positive particle surface lithium concentration", "cell current"]
         println("Variables presence & types (canonical names):")
         for k in keys_of_interest
-            if haskey(variables, k)
-                v = variables[k]
+            v = get(variables, k, nothing)
+            if v !== nothing
                 tname = typeof(v)
                 len = isa(v, AbstractArray) ? length(v) : 1
                 println(" - $k : type=", tname, ", len=", len)

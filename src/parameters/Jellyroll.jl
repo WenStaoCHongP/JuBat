@@ -11,11 +11,11 @@
 PE = Electrode()
 PE.theta_100 = 0.263849
 PE.theta_0 = 0.853974 
-PE.thickness = 77.03e-6   # Chen2020: Positive electrode thickness
-PE.lambda = 1.58  # Conductivity_ca (W/m/K, PyECN)
+PE.thickness = 75.6e-6   # Chen2020: Positive electrode thickness
+PE.lambda = 2.1  # Conductivity_ca (W/m/K, PE.lambda = 1.58)
 PE.Ds = 4.0e-15          # Chen2020: Positive particle diffusivity (assumed constant)
-PE.rho = 4870    # Density_ca (kg/m³)
-PE.heat_Q = 0.8401e3      # Specific_heat_capacity_ca (J/kg/K)
+PE.rho = 3262    # Density_ca (kg/m³)
+PE.heat_Q = 700      # Specific_heat_capacity_ca (J/kg/K)
 PE.eps = 0.335           # Chen2020: Positive electrode porosity
 PE.eps_fi = 0.025
 PE.brugg = 1.5           # Using electrolyte Bruggeman coefficient (Chen2020 electrolyte)
@@ -39,10 +39,10 @@ PE.dUdT = x-> 0 * x
 NE = Electrode()
 NE.theta_100 = 0.910612
 NE.theta_0 = 0.0263472 
-NE.thickness = 86.15e-6   # Chen2020: Negative electrode thickness
-NE.lambda = 1.04     # Conductivity_an (W/m/K, PyECN)
+NE.thickness = 85.2e-6   # Chen2020: Negative electrode thickness
+NE.lambda = 1.7     # Conductivity_an (W/m/K, PyECN)
 NE.Ds = 3.3e-14          # Chen2020: Negative particle diffusivity (constant)
-NE.rho = 2300      # Density_an (kg/m³)
+NE.rho = 1657      # Density_an (kg/m³)
 NE.heat_Q = 1.4374e3        # Specific_heat_capacity_an (J/kg/K)
 NE.eps = 0.25            # Chen2020: Negative electrode porosity
 NE.eps_fi = 0.0326
@@ -76,9 +76,9 @@ EL.ce0 = 1000
 # Separator
 SP = Separator()
 SP.thickness = 1.2e-5    # Chen2020 separator thickness
-SP.lambda = 0.344   # 热导率 (W/m/K)
-SP.rho = 1009      # 密度 (kg/m³)
-SP.heat_Q = 1.978e3        # Specific_heat_capacity_sep (J/kg/K)
+SP.lambda = 0.16   # 热导率 (W/m/K)
+SP.rho = 397      # 密度 (kg/m³)
+SP.heat_Q = 700        # Specific_heat_capacity_sep (J/kg/K)
 SP.eps = 0.47            # Chen2020 separator porosity
 SP.eps_fi = 0.
 SP.brugg = 1.5           # Chen2020 electrolyte Bruggeman for separator
@@ -86,16 +86,16 @@ SP.brugg = 1.5           # Chen2020 electrolyte Bruggeman for separator
 # Positive Current Collector 
 PCC = CurrentCollector()
 PCC.thickness = 16.33e-6
-PCC.lambda = 238.   # 热导率 (W/m/K)
-PCC.rho = 2770.    # 密度 (kg/m³)
-PCC.heat_Q = 8.75e2      # 比热容 (J/kg/K)
+PCC.lambda = 237.   # 热导率 (W/m/K)
+PCC.rho = 2700.    # 密度 (kg/m³)
+PCC.heat_Q = 8.97e2      # 比热容 (J/kg/K)
 PCC.sig =3.55e7
 
 # Negative Current Collector
 NCC = CurrentCollector()
 NCC.thickness = 12.00e-6
 NCC.lambda = 401.   # 热导率 (W/m/K)
-NCC.rho = 8933.    # 密度 (kg/m³)
+NCC.rho = 8960.    # 密度 (kg/m³)
 NCC.heat_Q = 3.85e2      # 比热容 (J/kg/K)
 NCC.sig = 5.96e7
 
@@ -115,6 +115,7 @@ cell.Rout = 0.021/2
 cell.Rin = 1.92e-3
 cell.length = 1.4672   # Using outer diameter proxy (not used by scaling below)
 cell.width = 7e-2
+cell.layer = 2 * (PE.thickness + NE.thickness + SP.thickness) + PCC.thickness + NCC.thickness
 cell.wrapper = 0
 cell.I1C = 5
 cell.no_layers = 1
@@ -123,16 +124,17 @@ cell.capacity = 5
 cell.area = cell.width * cell.length * cell.no_layers
 
 # 外表面对流面积（用于团簇热模型）
-cell.cooling_surface = 2π * cell.Rout * cell.width + 2 * π * cell.Rout^2
+cell.cooling_surface = 2π * cell.Rout * cell.width + 2 * π * (cell.Rout^2- cell.Rin^2)
 cell.v_h = 4.3
 cell.v_l = 2.5
 cell.volume = pi * ( (cell.Rout)^2 - (cell.Rin)^2 ) * cell.width  # π (R_out^2 - R_in^2) * height
 cell.mass = 0.07474345 # 质量 (kg)
 cell.rho = cell.mass / cell.volume
-cell.heat_Q = (2 * PE.rho * PE.heat_Q * PE.thickness +2 * NE.rho * NE.heat_Q * NE.thickness +2 * SP.rho * SP.heat_Q * SP.thickness +PCC.rho * PCC.heat_Q * PCC.thickness +NCC.rho * NCC.heat_Q * NCC.thickness) / (2 * PE.thickness + 2 * NE.thickness + 2 * SP.thickness + PCC.thickness + NCC.thickness)
+cell.layer = 2 * (PE.thickness + NE.thickness + SP.thickness) + PCC.thickness + NCC.thickness
+cell.heat_Q = (2 * PE.rho * PE.heat_Q * PE.thickness +2 * NE.rho * NE.heat_Q * NE.thickness +2 * SP.rho * SP.heat_Q * SP.thickness +PCC.rho * PCC.heat_Q * PCC.thickness +NCC.rho * NCC.heat_Q * NCC.thickness) / (2 * PE.rho * PE.thickness + 2 * NE.rho * NE.thickness + 2 * SP.rho * SP.thickness + PCC.rho * PCC.thickness + NCC.rho * NCC.thickness)
 cell.alphaT = 0.
 cell.h = 10.      # 对流换热系数 (W/m²/K)
-cell.T0 = 298      # 初始温度 (K)
+cell.T0 = 298.15      # 初始温度 (K)
 cell.T_amb = cell.T0
 
 # Binder
