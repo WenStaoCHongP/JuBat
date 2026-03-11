@@ -27,9 +27,7 @@ function main()
         for (i1,i2,a,b) in local_edges
             key = a < b ? (a,b) : (b,a)
             counts[key] = get(counts, key, 0) + 1
-            if !haskey(edge_meta, key)
-                edge_meta[key] = (e, (i1==1 && i2==2) ? 1 : (i1==2 && i2==3) ? 2 : (i1==3 && i2==4) ? 3 : 4, a, b)
-            end
+            get!(edge_meta, key, (e, (i1==1 && i2==2) ? 1 : (i1==2 && i2==3) ? 2 : (i1==3 && i2==4) ? 3 : 4, a, b))
         end
     end
 

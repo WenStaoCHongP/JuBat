@@ -122,6 +122,7 @@ end
     Rout::Float64 = 0.0
     height::Float64 = 0.0
     # Effective thermal conductivities for jellyroll (optional)
+    layer::Float64 = 0.0
     lambda_r::Float64 = 0.0
     lambda_t::Float64 = 0.0
     # Thermal mesh divisions for jellyroll top-view (optional)
@@ -287,8 +288,8 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.k_n = param_dim.scale.j / param_dim.NE.cs_max / sqrt(param_dim.EL.ce0)
     param_dim.scale.R_cell = param_dim.scale.phi / param_dim.scale.I_typ
     #Thermal scaling
-    param_dim.scale.L_th = param_dim.cell.Rout
-    param_dim.scale.k_th = param_dim.PE.lambda
+    param_dim.scale.L_th = param_dim.cell.layer
+    param_dim.scale.k_th = param_dim.cell.lambda_r
     param_dim.scale.rho_c_th = param_dim.cell.rho * param_dim.cell.heat_Q
     param_dim.scale.q_th = param_dim.scale.k_th * param_dim.scale.T_ref / param_dim.scale.L_th^2
     param_dim.scale.t_th = param_dim.scale.rho_c_th * param_dim.scale.L_th^2 / param_dim.scale.k_th

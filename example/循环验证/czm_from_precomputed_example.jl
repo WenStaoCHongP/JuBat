@@ -425,16 +425,15 @@ function main()
     centers = cohesive_centers(czm_mesh)
     damage_snapshots = damage_result["damage_snapshots"]
     for c in snapshot_cycles
-        if haskey(damage_snapshots, c)
-            D_snapshot = damage_snapshots[c]
-            pD = scatter(centers[:, 1], centers[:, 2],
-                         marker_z=D_snapshot,
-                         xlabel="x (m)", ylabel="y (m)",
-                         title="Damage Map after Cycle $c",
-                         colorbar_title="D", markersize=4)
-            savefig(pD, joinpath(output_dir, "czm_damage_cycle_$(c).png"))
-            println("  OK: 保存 output/czm_damage_cycle_$(c).png")
-        end
+        D_snapshot = get(damage_snapshots, c, nothing)
+        D_snapshot === nothing && continue
+        pD = scatter(centers[:, 1], centers[:, 2],
+                     marker_z=D_snapshot,
+                     xlabel="x (m)", ylabel="y (m)",
+                     title="Damage Map after Cycle $c",
+                     colorbar_title="D", markersize=4)
+        savefig(pD, joinpath(output_dir, "czm_damage_cycle_$(c).png"))
+        println("  OK: 保存 output/czm_damage_cycle_$(c).png")
     end
     
     # ========================================================================

@@ -264,7 +264,10 @@ function _detect_cutoff_elements(coeffs, ne::Int, V_MIN::Float64, V_MAX::Float64
 		"cutoff_type" => cutoff_type,
 		"all_ocv" => OCV .* phi_scale,
 		"V_MIN" => V_MIN * phi_scale,
-		"V_MAX" => V_MAX * phi_scale
+		"V_MAX" => V_MAX * phi_scale,
+		"nearest_cutoff_element" => 0,
+		"nearest_cutoff_ocv" => NaN,
+		"margin_to_cutoff" => NaN
 	)
     
 	# 找出最接近截止的单元（用于预警）
@@ -609,10 +612,8 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
 	variables["thermal2D cutoff_type"] = Float64.(cutoff_info["cutoff_type"])
     
 	# 最接近截止的单元信息（预警）
-	if haskey(cutoff_info, "nearest_cutoff_element")
-		variables["thermal2D nearest_cutoff_element"] = Float64(cutoff_info["nearest_cutoff_element"])
-		variables["thermal2D nearest_cutoff_ocv"] = cutoff_info["nearest_cutoff_ocv"]
-		variables["thermal2D margin_to_cutoff"] = cutoff_info["margin_to_cutoff"]
-	end
+	variables["thermal2D nearest_cutoff_element"] = Float64(cutoff_info["nearest_cutoff_element"])
+	variables["thermal2D nearest_cutoff_ocv"] = cutoff_info["nearest_cutoff_ocv"]
+	variables["thermal2D margin_to_cutoff"] = cutoff_info["margin_to_cutoff"]
 	return variables, I_e, V
 end

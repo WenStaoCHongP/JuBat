@@ -85,17 +85,15 @@ function main()
 		result = run.result
 		mesh = run.mesh
 
-		if haskey(result, "thermal2D T_nodes [K]") && haskey(result, "time [s]")
-			T_nodes_hist = result["thermal2D T_nodes [K]"]
-			t = result["time [s]"]
-			_, idx = findmin(abs.(t .- 60.0))
-			T_nodes_60 = ndims(T_nodes_hist) == 2 ? T_nodes_hist[:, idx] : T_nodes_hist
-			out_path = joinpath(out_dir, @sprintf("spme_thermal_T60_%.1fC.png", c.crate))
-			x = mesh.node[:, 1]
-			y = mesh.node[:, 2]
-			tris = quad_to_triangles(mesh.element)
-			tripcolor_field(x, y, tris, T_nodes_60, out_path)
-		end
+		T_nodes_hist = result["thermal2D T_nodes [K]"]
+		t = result["time [s]"]
+		_, idx = findmin(abs.(t .- 60.0))
+		T_nodes_60 = ndims(T_nodes_hist) == 2 ? T_nodes_hist[:, idx] : T_nodes_hist
+		out_path = joinpath(out_dir, @sprintf("spme_thermal_T60_%.1fC.png", c.crate))
+		x = mesh.node[:, 1]
+		y = mesh.node[:, 2]
+		tris = quad_to_triangles(mesh.element)
+		tripcolor_field(x, y, tris, T_nodes_60, out_path)
 	end
 end
 

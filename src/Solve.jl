@@ -274,7 +274,7 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
         # 1) 先用当前热场的均温影响动力学
         if case.opt.thermal_enabled && case.opt.thermalmodel == "distributed2D"
             # T_nodes_carry is dimensionless (T/T_ref) under Scheme B thermal scaling
-            Tm = mean(T_nodes_carry)  # dimensionless
+            Tm = thermal2D_volume_average_temperature(case.mesh["thermal2D"], T_nodes_carry)  # dimensionless
             case.param.cell.T0 = Tm  # SPMe expects dimensionless T
         end
 
@@ -425,21 +425,17 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
     
     # 附加热相关历史数据
     try
-        for key in ["thermal2D element current", "thermal2D eta_n_e", "thermal2D eta_p_e", "thermal2D element soc_n", "thermal2D element soc_p",
+        if case.opt.thermalmodel == "distributed2D"
+            for key in ["thermal2D element current", "thermal2D eta_n_e", "thermal2D eta_p_e", "thermal2D element soc_n", "thermal2D element soc_p",
+                    "thermal2D Q_rxn_NE [W/m3]", "thermal2D Q_rev_NE [W/m3]", "thermal2D Q_ohm_s_NE [W/m3]", "thermal2D Q_ohm_e_NE [W/m3]",
+                    "thermal2D Q_SP [W/m3]", "thermal2D Q_rxn_PE [W/m3]", "thermal2D Q_rev_PE [W/m3]", "thermal2D Q_ohm_s_PE [W/m3]",
+                    "thermal2D Q_ohm_e_PE [W/m3]", "thermal2D Q_PCC [W/m3]", "thermal2D Q_NCC [W/m3]",
                     "thermal2D element OCV", "thermal2D n_cutoff_elements", "thermal2D active_mask",
                     "thermal2D nearest_cutoff_element", "thermal2D nearest_cutoff_ocv", "thermal2D margin_to_cutoff"]
-            haskey(variables_hist, key) && (result[key] = variables_hist[key][:, 1:v])
-        end
-        if haskey(variables_hist, "heat_source_fields") && size(variables_hist["heat_source_fields"], 1) > 0
+                result[key] = variables_hist[key][:, 1:v]
+            end
             result["heat_source_fields"] = variables_hist["heat_source_fields"][:, 1:v]
-        end
-        if haskey(variables_hist, "average temperature") && size(variables_hist["average temperature"], 2) >= v
-            result["average temperature [K]"] = vec(variables_hist["average temperature"][1, 1:v])
-        end
-        if haskey(variables_hist, "total heat source") && size(variables_hist["total heat source"], 2) >= v
             result["total heat source [W]"] = vec(variables_hist["total heat source"][1, 1:v])
-        end
-        if haskey(variables_hist, "thermal2D temperature") && size(variables_hist["thermal2D temperature"], 2) >= v
             result["thermal2D temperature [K]"] = variables_hist["thermal2D temperature"][:, 1:v]
             result["thermal2D T_nodes history [K]"] = variables_hist["thermal2D temperature"][:, 1:v]
         end
@@ -461,7 +457,7 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
     print("finish the simulation\n") 
     errors = errors[1:v] 
     if return_final_state
-        V_final = haskey(variables, "cell voltage") ? variables["cell voltage"] * case.param.scale.phi : NaN
+        V_final = variables["cell voltage"] * case.param.scale.phi
         t_final = max(0.0, t * case.param.scale.t0)
         result["final_state"] = Dict{String, Any}(
             "y" => copy(y_old),
@@ -639,6 +635,17 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     
     # 6) 计算逐单元热源
     q_elem = zeros(Float64, ne)
+    q_rxn_ne = zeros(Float64, ne)
+    q_rev_ne = zeros(Float64, ne)
+    q_ohm_s_ne = zeros(Float64, ne)
+    q_ohm_e_ne = zeros(Float64, ne)
+    q_sp = zeros(Float64, ne)
+    q_rxn_pe = zeros(Float64, ne)
+    q_rev_pe = zeros(Float64, ne)
+    q_ohm_s_pe = zeros(Float64, ne)
+    q_ohm_e_pe = zeros(Float64, ne)
+    q_pcc = zeros(Float64, ne)
+    q_ncc = zeros(Float64, ne)
     eta_n_e = zeros(Float64, ne)
     eta_p_e = zeros(Float64, ne)
     dUdT_n_e = zeros(Float64, ne)
@@ -692,8 +699,19 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         # 集流体层
         Q_PCC = I_e_local^2 / (3.0 * param.PCC.sig) 
         Q_NCC = I_e_local^2 / (3.0 * param.NCC.sig) 
+        q_rxn_ne[e] = fks[e,1] * Q_rxn_NE
+        q_rev_ne[e] = fks[e,1] * Q_rev_NE
+        q_ohm_s_ne[e] = fks[e,1] * Q_ohm_s_NE
+        q_ohm_e_ne[e] = fks[e,1] * Q_ohm_e_NE
+        q_sp[e] = fks[e,2] * Q_SP
+        q_rxn_pe[e] = fks[e,3] * Q_rxn_PE
+        q_rev_pe[e] = fks[e,3] * Q_rev_PE
+        q_ohm_s_pe[e] = fks[e,3] * Q_ohm_s_PE
+        q_ohm_e_pe[e] = fks[e,3] * Q_ohm_e_PE
+        q_pcc[e] = fks[e,4] * Q_PCC
+        q_ncc[e] = fks[e,5] * Q_NCC
         # 按层权重聚合
-        q_elem[e] = fks[e,1]*Q_NE + fks[e,2]*Q_SP + fks[e,3]*Q_PE + fks[e,4]*Q_PCC + fks[e,5]*Q_NCC
+        q_elem[e] = q_rxn_ne[e] + q_rev_ne[e] + q_ohm_s_ne[e] + q_ohm_e_ne[e] + q_sp[e] + q_rxn_pe[e] + q_rev_pe[e] + q_ohm_s_pe[e] + q_ohm_e_pe[e] + q_pcc[e] + q_ncc[e]
         csn_data = vars_e["negative particle lithium concentration"]
         csp_data = vars_e["positive particle lithium concentration"]
         soc_n_elem[e] = mean(vec(csn_data))
@@ -712,12 +730,25 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 热源归一化（统一使用无量纲）
     q_ec_scale = case.param_dim.scale.I_typ * case.param_dim.scale.phi / case.param_dim.cell.volume
     q_elem_physical = q_elem .* q_ec_scale  # 物理热源 [W/m³]
+    variables["thermal2D Q_rxn_NE [W/m3]"] = q_rxn_ne .* q_ec_scale
+    variables["thermal2D Q_rev_NE [W/m3]"] = q_rev_ne .* q_ec_scale
+    variables["thermal2D Q_ohm_s_NE [W/m3]"] = q_ohm_s_ne .* q_ec_scale
+    variables["thermal2D Q_ohm_e_NE [W/m3]"] = q_ohm_e_ne .* q_ec_scale
+    variables["thermal2D Q_SP [W/m3]"] = q_sp .* q_ec_scale
+    variables["thermal2D Q_rxn_PE [W/m3]"] = q_rxn_pe .* q_ec_scale
+    variables["thermal2D Q_rev_PE [W/m3]"] = q_rev_pe .* q_ec_scale
+    variables["thermal2D Q_ohm_s_PE [W/m3]"] = q_ohm_s_pe .* q_ec_scale
+    variables["thermal2D Q_ohm_e_PE [W/m3]"] = q_ohm_e_pe .* q_ec_scale
+    variables["thermal2D Q_PCC [W/m3]"] = q_pcc .* q_ec_scale
+    variables["thermal2D Q_NCC [W/m3]"] = q_ncc .* q_ec_scale
+    variables["total heat source"] = sum(q_elem_physical .* areas) * case.param_dim.cell.width
     q_ref = case.param_dim.scale.q_th
     variables["heat_source_fields"] = q_elem_physical ./ q_ref
     
     # 7) 装配热学矩阵
     MT, KT, FT = ThermalDistributed2D(case, variables)
-    t_ratio =  case.param_dim.scale.t0 / case.param_dim.scale.t_th
+    # Thermal equation in electrochemical time coordinate uses (t_th / t0) on mass term.
+    t_ratio =  case.param_dim.scale.t_th / case.param_dim.scale.t0
     # 检查参数（只在初始调用时）
     if t < 1e-6
         (t_ratio < 0.001 || t_ratio > 1000.0) && @warn "时间尺度比异常" t_ratio=t_ratio
@@ -737,7 +768,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 电压取公共电压 Vc
     variables["cell voltage"] = Vc
     variables["time"] = t
-    variables["temperature"] = mean(T_nodes)  # 平均温度
+    variables["temperature"] = thermal2D_volume_average_temperature(case.mesh["thermal2D"], T_nodes)  # 体积平均温度
     variables["T_nodes"] = T_nodes
     variables["thermal2D temperature"] = T_nodes .* case.param_dim.scale.T_ref
     
@@ -850,7 +881,7 @@ function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
         # 装配热学矩阵并施加边界条件
         MT, KT, FT = ThermalDistributed2D(case, variables)
         # 时间尺度匹配：主求解器以 t0 为时间标尺，热模块以 t_th 为标尺，
-        t_ratio = case.param_dim.scale.t0 / case.param_dim.scale.t_th
+        t_ratio = case.param_dim.scale.t_th / case.param_dim.scale.t0
         MT = MT .* t_ratio
         KT, FT = ThermalDistributed2D_BC(KT, FT, case, t)
         # 拼接到主系统

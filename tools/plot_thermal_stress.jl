@@ -32,10 +32,6 @@ function main()
 
     # compute thermal stress (per-element)
     variables = JuBat.thermal_stress(case, variables)
-    if !haskey(variables, "thermal2D element thermal stress")
-        println("thermal2D element thermal stress not computed by thermal_stress")
-        return
-    end
     σ_elem = variables["thermal2D element thermal stress"]
 
     # element centers

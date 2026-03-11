@@ -50,7 +50,7 @@ function main()
     opt.mechanicalmodel = "full"
     
     # 时间设置
-    opt.time = [0.0, 3600]  # 仿真时间 (s)
+    opt.time = [0.0, 60]  # 仿真时间 (s)
     opt.dt = [0.5, 10]    # 时间步长范围 [dt_min, dt_max] (s)
     opt.dtType = "auto"     # 自动时间步长
     opt.jacobi = "update"
@@ -199,7 +199,7 @@ function main()
     num_steps = length(t)
 
     # 温度时间序列：使用求解器导出的电池温度标量历史
-    T_mean_series = haskey(result, "temperature [K]") ? result["temperature [K]"] : nothing
+    T_mean_series = result["temperature [K]"]
 
     println("OK: 结果提取完成")
     @printf("  总时间步数: %d\n", num_steps)
@@ -217,10 +217,9 @@ function main()
     stress_total_max_hist = zeros(Float64, num_steps)
     
     # 获取SOC和温度历史
-    if haskey(result, "thermal2D element soc_n") && (haskey(result, "thermal2D temperature [K]") || haskey(result, "thermal2D T_nodes [K]"))
-        soc_n_hist = result["thermal2D element soc_n"]
-        soc_p_hist = result["thermal2D element soc_p"]
-        T_nodes_hist_K = result["thermal2D temperature [K]"] 
+    soc_n_hist = result["thermal2D element soc_n"]
+    soc_p_hist = result["thermal2D element soc_p"]
+    T_nodes_hist_K = result["thermal2D temperature [K]"] 
         println("  计算$(num_steps)个时间步的应力场...")
         
         for step in 1:num_steps
@@ -266,21 +265,15 @@ function main()
         @printf("  总应力峰值范围: [%.2f, %.2f] MPa\n", 
                 minimum(filter(!isnan, stress_total_max_hist)), 
                 maximum(filter(!isnan, stress_total_max_hist)))
-    else
-        @warn "未找到SOC或温度历史数据，跳过时间历程应力计算"
-    end
     # 温度
-    if T_mean_series !== nothing
-        @printf("  初始温度: %.2f K (%.2f C)\n", T_mean_series[1], T_mean_series[1] - 273.15)
-        @printf("  最终温度: %.2f K (%.2f C)\n", T_mean_series[end], T_mean_series[end] - 273.15)
-        @printf("  温升: %.2f K\n", T_mean_series[end] - T_mean_series[1])
-    end
+    @printf("  初始温度: %.2f K (%.2f C)\n", T_mean_series[1], T_mean_series[1] - 273.15)
+    @printf("  最终温度: %.2f K (%.2f C)\n", T_mean_series[end], T_mean_series[end] - 273.15)
+    @printf("  温升: %.2f K\n", T_mean_series[end] - T_mean_series[1])
     
     # 多SPMe特有：逐单元变量
     println("\n  逐单元变量统计（最终时刻）:")
     
-    if haskey(result, "thermal2D element current")
-        I_e_hist = result["thermal2D element current"]
+    I_e_hist = result["thermal2D element current"]
         I_e_final_nd = I_e_hist[:, end]
         I_scale = case.param.scale.I_typ
         I_e_final = I_e_final_nd .* I_scale
@@ -296,34 +289,25 @@ function main()
         I_total_nd = I_total[end] / I_scale
         @printf("      电流守恒: I_total_nd=%.4e, sum(w*I_e)=%.4e, 误差=%.2e\n",
             I_total_nd, I_sum, abs(I_total_nd - I_sum))
-    else
-        println("    WARN: 未找到 thermal2D element current")
-    end
     
-    if haskey(result, "thermal2D eta_n_e")
-        eta_n_hist = result["thermal2D eta_n_e"]
-        eta_n_final = eta_n_hist[:, end]
-        @printf("    负极过电位 eta_n:\n")
-        @printf("      平均: %.4e V\n", mean(eta_n_final))
-        @printf("      极差: [%.4e, %.4e] V\n", minimum(eta_n_final), maximum(eta_n_final))
-    end
+    eta_n_hist = result["thermal2D eta_n_e"]
+    eta_n_final = eta_n_hist[:, end]
+    @printf("    负极过电位 eta_n:\n")
+    @printf("      平均: %.4e V\n", mean(eta_n_final))
+    @printf("      极差: [%.4e, %.4e] V\n", minimum(eta_n_final), maximum(eta_n_final))
     
-    if haskey(result, "thermal2D eta_p_e")
-        eta_p_hist = result["thermal2D eta_p_e"]
-        eta_p_final = eta_p_hist[:, end]
-        @printf("    正极过电位 eta_p:\n")
-        @printf("      平均: %.4e V\n", mean(eta_p_final))
-        @printf("      极差: [%.4e, %.4e] V\n", minimum(eta_p_final), maximum(eta_p_final))
-    end
+    eta_p_hist = result["thermal2D eta_p_e"]
+    eta_p_final = eta_p_hist[:, end]
+    @printf("    正极过电位 eta_p:\n")
+    @printf("      平均: %.4e V\n", mean(eta_p_final))
+    @printf("      极差: [%.4e, %.4e] V\n", minimum(eta_p_final), maximum(eta_p_final))
     
-    if haskey(result, "heat_source_fields")
-        q_hist = result["heat_source_fields"]
-        q_final = q_hist[:, end]
-        @printf("    热源分布:\n")
-        @printf("      平均: %.4e W/m^3\n", mean(q_final))
-        @printf("      标准差: %.4e W/m^3 (%.1f%%)\n", std(q_final), 100*std(q_final)/abs(mean(q_final)))
-        @printf("      极差: [%.4e, %.4e] W/m^3\n", minimum(q_final), maximum(q_final))
-    end
+    q_hist = result["heat_source_fields"]
+    q_final = q_hist[:, end]
+    @printf("    热源分布:\n")
+    @printf("      平均: %.4e W/m^3\n", mean(q_final))
+    @printf("      标准差: %.4e W/m^3 (%.1f%%)\n", std(q_final), 100*std(q_final)/abs(mean(q_final)))
+    @printf("      极差: [%.4e, %.4e] W/m^3\n", minimum(q_final), maximum(q_final))
     
     # ========================================================================
     # 5. 绘图（基本时间历程）
@@ -400,8 +384,7 @@ function main()
         println("  OK: 保存 testexample_stress_ratio.png")
     end
 
-    if haskey(result, "thermal2D element current")
-        I_e_hist = result["thermal2D element current"]
+    I_e_hist = result["thermal2D element current"]
         
         # 选择若干时间点绘制分布
         n_snapshots = min(5, num_steps)
@@ -432,15 +415,13 @@ function main()
                   title="Current Distribution Heterogeneity")
         savefig(p5, "testexample_current_heterogeneity.png")
         println("  OK: 保存 testexample_current_heterogeneity.png")
-    end
     
     # ========================================================================
     # 6. 最终温度场可视化（高分辨率）
     # ========================================================================
     println("\n[6/7] 生成最终温度场图像...")
     
-    if haskey(result, "thermal2D T_nodes [K]")
-        T_nodes_final = result["thermal2D T_nodes [K]"]
+    T_nodes_final = result["thermal2D T_nodes [K]"]
         
         # 使用节点坐标
         xnod = mesh_th.node[:,1]
@@ -523,9 +504,6 @@ function main()
         else
             println("  WARN: 无有效温度数据可视化")
         end
-    else
-        println("  WARN: 未找到最终温度场数据")
-    end
     
     println("\n" * "="^70)
     println("\n[6/7] 计算宏观热-扩散应力")
@@ -536,30 +514,18 @@ try
     variables = Dict{String, Union{Array{Float64},Float64}}()
     
     # 从 result 中提取温度场并转换为无量纲形式
-    if haskey(result, "thermal2D T_nodes [K]")
-        T_nodes_K = result["thermal2D T_nodes [K]"]
-        T_ref = case.param_dim.scale.T_ref
-        T_nodes = T_nodes_K ./ T_ref  # 转换为无量纲
-        variables["T_nodes"] = T_nodes
-        println("  OK: 温度场数据已加载")
-    else
-        @warn "未找到温度场数据 'thermal2D T_nodes [K]'"
-    end
+    T_nodes_K = result["thermal2D T_nodes [K]"]
+    T_ref = case.param_dim.scale.T_ref
+    T_nodes = T_nodes_K ./ T_ref  # 转换为无量纲
+    variables["T_nodes"] = T_nodes
+    println("  OK: 温度场数据已加载")
 
     # 从 result 中提取 SOC 数据
-    if haskey(result, "thermal2D element soc_n")
-        variables["thermal2D element soc_n"] = result["thermal2D element soc_n"][:, end]
-        println("  OK: 负极SOC数据已加载")
-    else
-        @warn "未找到负极SOC数据 'thermal2D element soc_n'"
-    end
+    variables["thermal2D element soc_n"] = result["thermal2D element soc_n"][:, end]
+    println("  OK: 负极SOC数据已加载")
     
-    if haskey(result, "thermal2D element soc_p")
-        variables["thermal2D element soc_p"] = result["thermal2D element soc_p"][:, end]
-        println("  OK: 正极SOC数据已加载")
-    else
-        @warn "未找到正极SOC数据 'thermal2D element soc_p'"
-    end
+    variables["thermal2D element soc_p"] = result["thermal2D element soc_p"][:, end]
+    println("  OK: 正极SOC数据已加载")
     
     variables = JuBat.thermal_diffusion_stress_2D(case, variables)
     
@@ -677,22 +643,18 @@ try
     println("OK: 位移场图保存至 output/thermal_diffusion_displacement_field.png")
     
     # 温度场
-    if haskey(variables, "T_nodes")
-        T_nodes_nd = variables["T_nodes"]
-        T_ref_scale = case.param_dim.scale.T_ref
-        T_elem_plot = JuBat.element_nodal_mean(mesh_th, T_nodes_nd) .* T_ref_scale
-        
-        p8 = scatter(x_elem, y_elem, marker_z=T_elem_plot,
-                     color=:hot, markersize=3,
-                     xlabel="x [m]", ylabel="y [m]",
-                     title="Temperature [K]", colorbar=true,
-                     aspect_ratio=:equal)
-        
-        savefig(p8, "output/thermal_field.png")
-        println("OK: 温度场图保存至 output/thermal_field.png")
-    else
-        println("WARN: 无法绘制温度场: T_nodes 数据不可用")
-    end
+    T_nodes_nd = variables["T_nodes"]
+    T_ref_scale = case.param_dim.scale.T_ref
+    T_elem_plot = JuBat.element_nodal_mean(mesh_th, T_nodes_nd) .* T_ref_scale
+    
+    p8 = scatter(x_elem, y_elem, marker_z=T_elem_plot,
+                 color=:hot, markersize=3,
+                 xlabel="x [m]", ylabel="y [m]",
+                 title="Temperature [K]", colorbar=true,
+                 aspect_ratio=:equal)
+    
+    savefig(p8, "output/thermal_field.png")
+    println("OK: 温度场图保存至 output/thermal_field.png")
     
 catch e
     println("ERROR: 应力计算失败:")
@@ -717,19 +679,15 @@ end
       - 电压降: $(V[1] - V[end]) V
     """)
     
-        if T_mean_series !== nothing
-        println("""
-            - 温升: $(T_mean_series[end] - T_mean_series[1]) K
-        """)
-    end
+    println("""
+        - 温升: $(T_mean_series[end] - T_mean_series[1]) K
+    """)
     
-    if haskey(result, "thermal2D element current")
         I_e_final = result["thermal2D element current"][:, end]
         cv_I = std(I_e_final) / mean(I_e_final)
         println("""
-      - 电流分布异质性 (CV): $(100*cv_I)%
-        """)
-    end
+            - 电流分布异质性 (CV): $(100*cv_I)%
+                """)
     
     println("""
     生成的图像：

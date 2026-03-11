@@ -294,9 +294,8 @@ function steady_residual(case, vars, T_vec, model, mesh_data)
         MT, KT, FT = JuBat.ThermalPolar2D_Ring(case, vars, mesh_data)
     else
         MT, KT, FT = JuBat.ThermalDistributed2D_Ring(case, vars)
-        if haskey(vars, "thermal2D outer_nodes")
-            KT, FT = JuBat.ThermalRing2D_BC(KT, FT, case, vars["thermal2D outer_nodes"], 0.0)
-        end
+        outer_nodes = get(vars, "thermal2D outer_nodes", Int[])
+        isempty(outer_nodes) || (KT, FT = JuBat.ThermalRing2D_BC(KT, FT, case, outer_nodes, 0.0))
     end
     r = KT * T_vec + FT
     r_l2 = sqrt(mean(r .^ 2))
@@ -309,9 +308,8 @@ function steady_solve(case, vars, model, mesh_data)
         MT, KT, FT = JuBat.ThermalPolar2D_Ring(case, vars, mesh_data)
     else
         MT, KT, FT = JuBat.ThermalDistributed2D_Ring(case, vars)
-        if haskey(vars, "thermal2D outer_nodes")
-            KT, FT = JuBat.ThermalRing2D_BC(KT, FT, case, vars["thermal2D outer_nodes"], 0.0)
-        end
+        outer_nodes = get(vars, "thermal2D outer_nodes", Int[])
+        isempty(outer_nodes) || (KT, FT = JuBat.ThermalRing2D_BC(KT, FT, case, outer_nodes, 0.0))
     end
     return -(KT \ FT)
 end

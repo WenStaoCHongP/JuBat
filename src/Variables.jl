@@ -95,6 +95,17 @@ function StandardVariables(case::Case, num::Int64)
         nT = case.mesh["thermal2D"].nlen
         # 覆盖热源历史为逐单元尺寸
         variables["heat_source_fields"] = zeros(Float64, ne, num)
+        variables["thermal2D Q_rxn_NE [W/m3]"] = zeros(Float64, ne, num)
+        variables["thermal2D Q_rev_NE [W/m3]"] = zeros(Float64, ne, num)
+        variables["thermal2D Q_ohm_s_NE [W/m3]"] = zeros(Float64, ne, num)
+        variables["thermal2D Q_ohm_e_NE [W/m3]"] = zeros(Float64, ne, num)
+        variables["thermal2D Q_SP [W/m3]"] = zeros(Float64, ne, num)
+        variables["thermal2D Q_rxn_PE [W/m3]"] = zeros(Float64, ne, num)
+        variables["thermal2D Q_rev_PE [W/m3]"] = zeros(Float64, ne, num)
+        variables["thermal2D Q_ohm_s_PE [W/m3]"] = zeros(Float64, ne, num)
+        variables["thermal2D Q_ohm_e_PE [W/m3]"] = zeros(Float64, ne, num)
+        variables["thermal2D Q_PCC [W/m3]"] = zeros(Float64, ne, num)
+        variables["thermal2D Q_NCC [W/m3]"] = zeros(Float64, ne, num)
         variables["thermal2D element current"] = zeros(Float64, ne, num)
         variables["thermal2D eta_n_e"] = zeros(Float64, ne, num)
         variables["thermal2D eta_p_e"] = zeros(Float64, ne, num)
@@ -103,12 +114,19 @@ function StandardVariables(case::Case, num::Int64)
         variables["thermal2D element soc_n"] = zeros(Float64, ne, num)
         variables["thermal2D element soc_p"] = zeros(Float64, ne, num)
         variables["thermal2D element voltages"] = zeros(Float64, ne, num)
+        variables["thermal2D element OCV"] = zeros(Float64, ne, num)
+        variables["thermal2D active_mask"] = zeros(Float64, ne, num)
         variables["thermal2D element thermal stress"] = zeros(Float64, ne, num)
         variables["thermal2D element diffusion stress"] = zeros(Float64, ne, num)
         variables["thermal2D element total stress"] = zeros(Float64, ne, num)
         variables["thermal2D element diffusion strain"] = zeros(Float64, ne, num)
         variables["thermal2D element thermal strain"] = zeros(Float64, ne, num)
         variables["thermal2D temperature"] = zeros(Float64, nT, num)
+        variables["thermal2D n_cutoff_elements"] = zeros(Float64, 1, num)
+        variables["thermal2D nearest_cutoff_element"] = zeros(Float64, 1, num)
+        variables["thermal2D nearest_cutoff_ocv"] = zeros(Float64, 1, num)
+        variables["thermal2D margin_to_cutoff"] = zeros(Float64, 1, num)
+        variables["total heat source"] = zeros(Float64, 1, num)
     end
     
     if case.opt.thermalmodel == "lumped"
@@ -141,33 +159,28 @@ function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Floa
         end
     end
     
-    # 仅更新历史中已存在的键，避免临时/额外键尺寸不匹配
-    for k in keys(variables_hist)
-        # 支持标量历史（1行）和向量历史（n行）
-        if isa(variables_hist[k], Array{Float64})
-            # 目标历史为矩阵 (nrows x num)
-            nrows = size(variables_hist[k], 1)
-            if haskey(variables, k)
-                val = variables[k]
-                if isa(val, Array{Float64})
-                    # 取列向量/首列并截断/填充
-                    col = ndims(val) == 1 ? val : val[:,1]
-                    if length(col) == nrows
-                        variables_hist[k][:, v] = col
-                    elseif nrows == 1 && length(col) >= 1
-                        variables_hist[k][1, v] = col[1]
-                    end
-                elseif isa(val, Float64)
-                    if nrows == 1
-                        variables_hist[k][1, v] = val
-                    end
+    hist_keys = Set(keys(variables_hist))
+    for (k, val) in pairs(variables)
+        k in hist_keys || continue
+        hist_val = variables_hist[k]
+        if isa(hist_val, Array{Float64})
+            nrows = size(hist_val, 1)
+            if isa(val, Array{Float64})
+                col = ndims(val) == 1 ? val : val[:, 1]
+                if length(col) == nrows
+                    hist_val[:, v] = col
+                elseif nrows == 1 && !isempty(col)
+                    hist_val[1, v] = col[1]
                 end
+            elseif isa(val, Float64) && nrows == 1
+                hist_val[1, v] = val
             end
-        elseif isa(variables_hist[k], Float64)
-            # 历史为标量
-            if haskey(variables, k)
-                val = variables[k]
-                variables_hist[k] = isa(val, Float64) ? val : (isa(val, Array{Float64}) ? (ndims(val) == 1 ? (length(val) > 0 ? val[1] : variables_hist[k]) : (size(val,1) > 0 ? val[1,1] : variables_hist[k])) : variables_hist[k])
+        elseif isa(hist_val, Float64)
+            if isa(val, Float64)
+                variables_hist[k] = val
+            elseif isa(val, Array{Float64})
+                col = ndims(val) == 1 ? val : val[:, 1]
+                isempty(col) || (variables_hist[k] = col[1])
             end
         end
     end

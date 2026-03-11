@@ -1,12 +1,3 @@
-function ThermalDistributed1D(case::Case, variables::Dict{String,Union{Array{Float64},Float64}})
-    mesh = case.mesh["thermal1D"]
-    nnode = mesh.nlen
-    MT = spzeros(nnode, nnode)
-    KT = spzeros(nnode, nnode)
-    FT = zeros(Float64, nnode)
-    return MT, KT, FT
-end
-
 function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Float64},Float64}})
     mesh = case.mesh["thermal2D"]
     param = case.param

@@ -22,18 +22,7 @@ function plot_mesh_outline(mesh, out_path)
 end
 
 function mean_temperature(result)
-	if haskey(result, "temperature [K]")
-		return result["temperature [K]"]
-	elseif haskey(result, "thermal2D T_nodes [K]")
-		T_nodes_hist = result["thermal2D T_nodes [K]"]
-		if ndims(T_nodes_hist) == 2
-			return vec(mean(T_nodes_hist; dims=1))
-		else
-			return [mean(T_nodes_hist)]
-		end
-	else
-		error("No temperature history available in result.")
-	end
+	return result["temperature [K]"]
 end
 
 function run_case(param_dim, crate, t_end; ntheta=80)
