@@ -112,10 +112,7 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
         t_end = RunTime[end]
     
     # 判断是否启用多SPMe模式（当使用分布式2D热模型时自动启用）
-    multi_spme_enabled = (
-        case.opt.model == "SPMe" &&
-        case.opt.thermalmodel == "distributed2D"
-    )
+    multi_spme_enabled = (case.opt.model == "SPMe" &&case.opt.thermalmodel == "distributed2D")
     
     # 允许从外部状态继续求解（用于循环阶段衔接）
     y0_input = initial_state === nothing ? nothing : get(initial_state, "y", nothing)
@@ -219,7 +216,7 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
         # 若启用 collector-seeded 逻辑，计算 layer_weights
         if case.opt.collector_seeded
             try
-                fks = jellyroll_element_properties(case.mesh["thermal2D"], case.param_dim)[2]
+                fks = jellyroll_element_properties(case.mesh["thermal2D"], case.param)[2]
                 variables["thermal2D layer_weights"] = fks
             catch err
                 @warn "Failed to set layer_weights: $err"
@@ -652,10 +649,10 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     dUdT_p_e = zeros(Float64, ne)
     soc_n_elem = zeros(Float64, ne)
     soc_p_elem = zeros(Float64, ne)
-    L_th = case.param_dim.scale.L_th
-    
+    # 使用统一长度尺度 L（替代旧的 L_th）
+
     # 获取 layer_weights（如果存在）
-    fks = jellyroll_element_properties(mesh_th, case.param_dim)[2]
+    fks = jellyroll_element_properties(mesh_th, case.param)[2]
     
     for e in 1:ne
         vars_e = variables_elems[e]
@@ -742,13 +739,14 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     variables["thermal2D Q_PCC [W/m3]"] = q_pcc .* q_ec_scale
     variables["thermal2D Q_NCC [W/m3]"] = q_ncc .* q_ec_scale
     variables["total heat source"] = sum(q_elem_physical .* areas) * case.param_dim.cell.width
-    q_ref = case.param_dim.scale.q_th
+    # 使用统一能量尺度的热源尺度参数 q（替代旧的 q_th）
+    q_ref = case.param_dim.scale.q
     variables["heat_source_fields"] = q_elem_physical ./ q_ref
     
     # 7) 装配热学矩阵
     MT, KT, FT = ThermalDistributed2D(case, variables)
-    # Thermal equation in electrochemical time coordinate uses (t_th / t0) on mass term.
-    t_ratio =  case.param_dim.scale.t_th / case.param_dim.scale.t0
+    # 统一时间尺度：电化学和热模型使用相同时间尺度 t0，时间比为 1
+    t_ratio = 1.0
     # 检查参数（只在初始调用时）
     if t < 1e-6
         (t_ratio < 0.001 || t_ratio > 1000.0) && @warn "时间尺度比异常" t_ratio=t_ratio
@@ -880,8 +878,8 @@ function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
         variables = heatQ_Source(case, variables, t, yt)
         # 装配热学矩阵并施加边界条件
         MT, KT, FT = ThermalDistributed2D(case, variables)
-        # 时间尺度匹配：主求解器以 t0 为时间标尺，热模块以 t_th 为标尺，
-        t_ratio = case.param_dim.scale.t_th / case.param_dim.scale.t0
+        # 统一时间尺度：电化学和热模型使用相同时间尺度 t0，时间比为 1
+        t_ratio = 1.0
         MT = MT .* t_ratio
         KT, FT = ThermalDistributed2D_BC(KT, FT, case, t)
         # 拼接到主系统

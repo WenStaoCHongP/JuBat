@@ -69,7 +69,9 @@ println("    czm_soh_threshold = $(opt.czm_soh_threshold)")
 # ========================================================================
 println("\n[3] 生成统一网格...")
 
-mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=60, gsorder=2)
+# 先创建Case以获取归一化参数
+case_temp = JuBat.SetCase(param_dim, opt)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(case_temp.param; nθ=60, gsorder=2)
 
 println("  热网格单元数: $(mesh_data.ne)")
 println("  热网格节点数: $(mesh_data.nnode)")

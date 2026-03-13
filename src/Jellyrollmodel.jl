@@ -1,16 +1,15 @@
-function jellyroll_collector_seed_mesh(param_dim; nθ::Int=360, gsorder::Int=2, phase::Float64=0.0, tol::Float64=1e-8)
-    Rin, Rout = param_dim.cell.Rin, param_dim.cell.Rout
-    t_repeat = param_dim.PCC.thickness + 2 * (param_dim.PE.thickness + param_dim.SP.thickness + param_dim.NE.thickness) + param_dim.NCC.thickness
-    a = Rin
-    b = t_repeat / (2 * pi)
+function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phase::Float64=0.0, tol::Float64=1e-8)
+    # 参数已归一化，直接使用无量纲值
+    a = param.cell.Rin
+    b = param.cell.layer / (2 * pi)
 
-    # 两条螺旋偏移：完整层序 [0, t_repeat]
+    # 两条螺旋偏移：完整层序 [0, param.cell.layer]
     s_in = 0.0
-    s_out = t_repeat
+    s_out = param.cell.layer
 
     # theta 范围裁剪
-    theta0 = max(0.0, (Rin - a - s_in) / b)
-    theta1 = min((Rout - a - s_out) / b, (Rout - a) / b)
+    theta0 = max(0.0, (param.cell.Rin - a - s_in) / b)
+    theta1 = min((param.cell.Rout - a - s_out) / b, (param.cell.Rout - a) / b)
     theta1 > theta0 || error("collector-seeded: no valid theta range [Rin, Rout]")
 
     # 等角度采样
@@ -90,7 +89,7 @@ function jellyroll_collector_seed_mesh(param_dim; nθ::Int=360, gsorder::Int=2, 
         y_c = mean(mesh_unmerged.node[nodes, 2])
         r_c = hypot(x_c, y_c)
 
-        layer = max(1, Int(floor((r_c - Rin) / t_repeat) + 1))
+        layer = max(1, Int(floor((r_c - param.cell.Rin) / param.cell.layer) + 1))
         element_layer[e] = layer
 
         n2, n3 = mesh_unmerged.element[e, 2], mesh_unmerged.element[e, 3]
@@ -98,7 +97,7 @@ function jellyroll_collector_seed_mesh(param_dim; nθ::Int=360, gsorder::Int=2, 
             hypot(mesh_unmerged.node[n2, 1], mesh_unmerged.node[n2, 2]) +
             hypot(mesh_unmerged.node[n3, 1], mesh_unmerged.node[n3, 2])
         )
-        is_inner_layer[e] = r_outer < (Rout - t_repeat * 0.1)
+        is_inner_layer[e] = r_outer < (param.cell.Rout - param.cell.layer * 0.1)
     end
 
     # 计算热单元到CZM单元的映射关系（使用未合并网格）
@@ -132,7 +131,7 @@ function jellyroll_collector_seed_mesh(param_dim; nθ::Int=360, gsorder::Int=2, 
     end
 
     # 识别极耳节点（使用未合并网格）
-    pos_tab_nodes, neg_tab_nodes = jellyroll_tab_node_indices(mesh_unmerged, param_dim)
+    pos_tab_nodes, neg_tab_nodes = jellyroll_tab_node_indices(mesh_unmerged, param)
 
     # 合并重合节点生成备选热网格
     node_orig = mesh_unmerged.node
@@ -201,7 +200,7 @@ end
 # ========================================================================
 
 """
-    jellyroll_element_properties(mesh, param_dim) -> (areas, layer_weights)
+    jellyroll_element_properties(mesh, param) -> (areas, layer_weights)
 
 计算各单元面积和各单元层面积权重。
 
@@ -218,7 +217,7 @@ PE → PCC → PE → SP → NE → NCC → NE → SP
 - 靠近中心（小半径）：内层（PE/PCC）面积占比略大
 - 靠近外侧（大半径）：外层（NE/NCC）面积占比略大
 """
-function jellyroll_element_properties(mesh, param_dim)
+function jellyroll_element_properties(mesh, param)
     ne = size(mesh.element, 1)
     
     # ============ 计算单元面积 ============
@@ -230,24 +229,18 @@ function jellyroll_element_properties(mesh, param_dim)
     end
     
     # ============ 计算层面积权重 ============
-    # 获取各层厚度
-    t_PE = param_dim.PE.thickness
-    t_NE = param_dim.NE.thickness
-    t_SP = param_dim.SP.thickness
-    t_PCC = param_dim.PCC.thickness
-    t_NCC = param_dim.NCC.thickness
     
     # 层序（从内到外）及其厚度
     # PE → PCC → PE → SP → NE → NCC → NE → SP
     layer_sequence = [
-        (:PE,  t_PE),   # 层1
-        (:PCC, t_PCC),  # 层2
-        (:PE,  t_PE),   # 层3
-        (:SP,  t_SP),   # 层4
-        (:NE,  t_NE),   # 层5
-        (:NCC, t_NCC),  # 层6
-        (:NE,  t_NE),   # 层7
-        (:SP,  t_SP),   # 层8
+        (:PE,  param.PE.thickness),   # 层1
+        (:PCC, param.PCC.thickness),  # 层2
+        (:PE,  param.PE.thickness),   # 层3
+        (:SP,  param.SP.thickness),   # 层4
+        (:NE,  param.NE.thickness),   # 层5
+        (:NCC, param.NCC.thickness),  # 层6
+        (:NE,  param.NE.thickness),   # 层7
+        (:SP,  param.SP.thickness),   # 层8
     ]
     
     # 输出权重矩阵：[NE, SP, PE, PCC, NCC]
@@ -322,12 +315,11 @@ function jellyroll_element_properties(mesh, param_dim)
             layer_weights[e, 5] = A_NCC / A_total  # NCC
         else
             # 回退到厚度权重
-            t_total = 2*t_NE + 2*t_SP + 2*t_PE + t_PCC + t_NCC
-            layer_weights[e, 1] = 2*t_NE / t_total
-            layer_weights[e, 2] = 2*t_SP / t_total
-            layer_weights[e, 3] = 2*t_PE / t_total
-            layer_weights[e, 4] = t_PCC / t_total
-            layer_weights[e, 5] = t_NCC / t_total
+            layer_weights[e, 1] = 2*param.NE.thickness / param.cell.layer
+            layer_weights[e, 2] = 2*param.SP.thickness / param.cell.layer
+            layer_weights[e, 3] = 2*param.PE.thickness / param.cell.layer
+            layer_weights[e, 4] = param.PCC.thickness / param.cell.layer
+            layer_weights[e, 5] = param.NCC.thickness / param.cell.layer
         end
     end
     
@@ -339,27 +331,25 @@ end
 # ========================================================================
 
 """
-    edge_boundary(mesh, nidx, param_dim; which=:inner/:outer, theta_range=nothing, tol=1e-4)
+    edge_boundary(mesh, nidx, param; which=:inner/:outer, theta_range=nothing, tol=1e-4)
 
 基于螺旋方程的精确边界节点识别。
 
 # 参数
 - `mesh`: 网格对象
 - `nidx`: 节点索引
-- `param_dim`: 参数对象
+- `param`: 无量纲参数对象
 - `which`: `:inner`（内螺旋）或 `:outer`（外螺旋）
 - `theta_range`: theta 范围，默认使用网格覆盖的完整角度区间
-- `tol`: 距离容差（m）
+- `tol`: 距离容差（无量纲）
 
 # 返回
 - `Bool`: 是否为边界节点
 """
-function edge_boundary(mesh, nidx::Int, param_dim; which::Symbol=:inner, theta_range::Union{Tuple{Float64,Float64},Nothing}=nothing, tol::Float64=1e-4)
-    Rin, Rout = param_dim.cell.Rin, param_dim.cell.Rout
-    t_repeat = param_dim.PCC.thickness + 2 * (param_dim.PE.thickness + param_dim.SP.thickness + param_dim.NE.thickness) + param_dim.NCC.thickness
-    a = Rin
-    b = t_repeat / (2 * pi)
-    offset = which === :inner ? 0.0 : (which === :outer ? t_repeat : error("which must be :inner or :outer"))
+function edge_boundary(mesh, nidx::Int, param; which::Symbol=:inner, theta_range::Union{Tuple{Float64,Float64},Nothing}=nothing, tol::Float64=1e-4)
+    a = param.cell.Rin
+    b = param.cell.layer / (2 * pi)
+    offset = which === :inner ? 0.0 : (which === :outer ? param.cell.layer : error("which must be :inner or :outer"))
     
     x, y = mesh.node[nidx, 1], mesh.node[nidx, 2]
     r = hypot(x, y)
@@ -367,9 +357,9 @@ function edge_boundary(mesh, nidx::Int, param_dim; which::Symbol=:inner, theta_r
     
     # 确定 theta 范围
     if theta_range === nothing
-        s_in, s_out = 0.0, t_repeat
+        s_in, s_out = 0.0, param.cell.layer
         theta_start = 0.0
-        theta_end = min((Rout - a - s_out) / bval, (Rout - a) / bval)
+        theta_end = min((param.cell.Rout - a - s_out) / bval, (param.cell.Rout - a) / bval)
         if which === :inner
             theta_min, theta_max = theta_start, min(theta_start + 2.0 * pi, theta_end)
         else
@@ -411,29 +401,30 @@ end
 # ========================================================================
 
 """
-    jellyroll_tab_node_indices(mesh, param_dim) -> (pos_indices, neg_indices)
+    jellyroll_tab_node_indices(mesh, param) -> (pos_indices, neg_indices)
 
 识别受极耳影响的节点索引。
 
 # 返回
 - `(pos_indices::Vector{Int}, neg_indices::Vector{Int})`
 """
-function jellyroll_tab_node_indices(mesh, param_dim)
+function jellyroll_tab_node_indices(mesh, param)
     @assert mesh.dimension == 2 "jellyroll_tab_node_indices 仅适用于 2D 网格"
 
-    Rin, Rout = param_dim.cell.Rin, param_dim.cell.Rout
-    t_repeat = param_dim.PCC.thickness + 2 * (param_dim.PE.thickness + param_dim.SP.thickness + param_dim.NE.thickness) + param_dim.NCC.thickness
-    a = Rin
-    b = t_repeat / (2 * pi)
-    tw = param_dim.tab.width
+    a = param.cell.Rin
+    b = param.cell.layer / (2 * pi)
+    tw = param.tab.width
+    Rin = param.cell.Rin
+    Rout = param.cell.Rout
 
     nn = size(mesh.node, 1)
+    t_repeat = param.cell.layer  # 一层完整卷绕的厚度
     theta_cum_in = [(hypot(mesh.node[i,1], mesh.node[i,2]) - a) / b for i in 1:nn]
     theta_cum_out = [(hypot(mesh.node[i,1], mesh.node[i,2]) - a - t_repeat) / b for i in 1:nn]
 
     pos_idx = Int[]
     theta_min, theta_max = minimum(theta_cum_in), maximum(theta_cum_in)
-    for theta0_orig in param_dim.tab.theta_pos
+    for theta0_orig in param.tab.theta_pos
         theta0 = Float64(theta0_orig)
         while theta0 > theta_max; theta0 -= 2.0 * pi; end
         while theta0 < theta_min; theta0 += 2.0 * pi; end
@@ -477,7 +468,7 @@ function jellyroll_tab_node_indices(mesh, param_dim)
 
     neg_idx = Int[]
     theta_min, theta_max = minimum(theta_cum_out), maximum(theta_cum_out)
-    for theta0_orig in param_dim.tab.theta_neg
+    for theta0_orig in param.tab.theta_neg
         theta0 = Float64(theta0_orig)
         while theta0 > theta_max; theta0 -= 2.0 * pi; end
         while theta0 < theta_min; theta0 += 2.0 * pi; end
@@ -534,7 +525,7 @@ end
 设置热网格并保存层间界面信息到新的case中。
 
 # 参数
-- `case`: Case对象
+- `case`: Case对象（包含无量纲参数 param）
 - `mesh_data`: 由 `jellyroll_collector_seed_mesh` 返回的网格数据
 - `use_merged`: 是否使用合并节点的网格（默认false，使用未合并节点）
 
@@ -544,8 +535,9 @@ end
 # 示例
 ```julia
 param_dim = JuBat.ChooseCell("Jellyroll")
+param = JuBat.NormaliseParam(param_dim)
 case = JuBat.SetCase(param_dim, opt)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(param; nθ=80, gsorder=2)
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 ```
 """

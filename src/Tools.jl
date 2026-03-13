@@ -49,7 +49,7 @@ function IntQ4(
     return nothing
 end
 
-function identify_boundary_nodes(mesh, param_dim, opt=nothing)
+function identify_boundary_nodes(mesh, param, opt=nothing)
     if mesh isa Mesh
         nnode = mesh.nlen
     elseif mesh isa CohesiveMesh
@@ -57,8 +57,8 @@ function identify_boundary_nodes(mesh, param_dim, opt=nothing)
     else
         error("identify_boundary_nodes: unsupported mesh type $(typeof(mesh))")
     end
-    Rin, Rout = param_dim.cell.Rin, param_dim.cell.Rout
-    t_repeat = param_dim.PCC.thickness + 2 * (param_dim.PE.thickness + param_dim.SP.thickness + param_dim.NE.thickness) + param_dim.NCC.thickness
+    Rin, Rout = param.cell.Rin, param.cell.Rout
+    t_repeat = param.PCC.thickness + 2 * (param.PE.thickness + param.SP.thickness + param.NE.thickness) + param.NCC.thickness
     a = Rin
     b = t_repeat / (2 * pi)
     bval = max(b, 1e-12)
@@ -69,8 +69,8 @@ function identify_boundary_nodes(mesh, param_dim, opt=nothing)
     theta_out_range = (max(theta1_mesh - 2.0 * pi, theta0_mesh), theta1_mesh)
     tol = 1e-4
 
-    is_inner = [edge_boundary(mesh, i, param_dim; which=:inner, theta_range=theta_in_range, tol=tol) for i in 1:nnode]
-    is_outer = [edge_boundary(mesh, i, param_dim; which=:outer, theta_range=theta_out_range, tol=tol) for i in 1:nnode]
+    is_inner = [edge_boundary(mesh, i, param; which=:inner, theta_range=theta_in_range, tol=tol) for i in 1:nnode]
+    is_outer = [edge_boundary(mesh, i, param; which=:outer, theta_range=theta_out_range, tol=tol) for i in 1:nnode]
     return is_inner, is_outer
 end
 

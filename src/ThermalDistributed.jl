@@ -1,50 +1,49 @@
 function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Float64},Float64}})
     mesh = case.mesh["thermal2D"]
-    param = case.param
-    scale = case.param_dim.scale
-    L_th = scale.L_th
-    
+    param = case.param  # 只使用无量纲参数
+
     nnode = mesh.nlen
     ne = size(mesh.element, 1)
-    
-    # 高斯积分数据
+
+    # 高斯积分数据（网格已无量纲，detJ 和 wJ 已是无量纲值）
     Ni = mesh.gs.Ni
     dNdx, dNdy = mesh.gs.dNidx[:, 1:4], mesh.gs.dNidx[:, 5:8]
     wJ = mesh.gs.weight .* mesh.gs.detJ
     Vi, Vj = mesh.element[mesh.gs.ele, :], mesh.element[mesh.gs.ele, :]
     ele_of_gp = mesh.gs.ele
-    
+
     # 获取层权重
-    fks = jellyroll_element_properties(mesh, case.param_dim)[2]
-    
+    fks = jellyroll_element_properties(mesh, case.param)[2]
+
     # ========== 质量矩阵 ==========
-    rho_c_weights = thermal_capacity_weights_2d(param, fks, ele_of_gp, wJ, L_th)
+    rho_c_weights = thermal_capacity_weights_2d(param, fks, ele_of_gp, wJ)
     MT = Assemble(Vi, Vj, Ni, Ni, rho_c_weights, nnode)
-    
+
     # ========== 刚度矩阵（各向异性）==========
     # 在高斯点旋转得到 Kxx/Kxy/Kyy
     gx, gy = mesh.gs.x[:, 1], mesh.gs.x[:, 2]
     k_xx, k_xy, k_yy = thermal_anisotropic_conductivity_2d(param, fks, ele_of_gp, gx, gy)
-    
+
     # 加负号与电化学约定统一
-    cxx = -k_xx .* (wJ ./ L_th^2)
-    cxy = -k_xy .* (wJ ./ L_th^2)
-    cyy = -k_yy .* (wJ ./ L_th^2)
-    
+    # 网格已无量纲，直接使用 wJ
+    cxx = -k_xx .* wJ
+    cxy = -k_xy .* wJ
+    cyy = -k_yy .* wJ
+
     KT_xx = Assemble(Vi, Vj, dNdx, dNdx, cxx, nnode)
     KT_xy = Assemble(Vi, Vj, dNdx, dNdy, cxy, nnode)
     KT_yx = Assemble(Vi, Vj, dNdy, dNdx, cxy, nnode)
     KT_yy = Assemble(Vi, Vj, dNdy, dNdy, cyy, nnode)
-    
+
     KT = KT_xx + KT_xy + KT_yx + KT_yy
-    
+
     # ========== 载荷向量 ==========
     FT = zeros(Float64, nnode)
     q_elem = variables["heat_source_fields"]
     q_gs = q_elem[ele_of_gp]
-    coeff_f = q_gs .* (wJ ./ L_th^2)
+    coeff_f = q_gs .* wJ
     FT .+= Assemble1D(Vi, Ni, coeff_f, nnode)
-    
+
     return MT, KT, FT
 end
 
@@ -52,14 +51,13 @@ function apply_convection_bc(KT, FT, mesh, is_outer, case)
     K = copy(KT)
     F = copy(FT)
 
-    scale = case.param_dim.scale
-    Bi = scale.h_th
+    Bi = case.param_dim.scale.h  # Biot 数（统一能量尺度）
     if Bi == 0
         return K, F
     end
 
-    L_th = scale.L_th
-    T_amb = case.param_dim.cell.T_amb / scale.T_ref
+    param = case.param
+    T_amb = param.cell.T_amb  # 已无量纲
 
     s_vals = (-0.577350269189626, 0.577350269189626)
     w_vals = (1.0, 1.0)
@@ -78,15 +76,17 @@ function apply_convection_bc(KT, FT, mesh, is_outer, case)
             key in seen && continue
             push!(seen, key)
 
-            L = hypot(x[b] - x[a], y[b] - y[a])
-            J = L / 2
+            # 网格已无量纲，边长也是无量纲的
+            L_edge = hypot(x[b] - x[a], y[b] - y[a])
+            J = L_edge / 2
 
             ke11, ke12, ke22 = 0.0, 0.0, 0.0
             fe1, fe2 = 0.0, 0.0
 
             for (s, w) in zip(s_vals, w_vals)
                 N1, N2 = 0.5 * (1 - s), 0.5 * (1 + s)
-                wt = Bi * w * (J / L_th)
+                # 无量纲边界积分：ds* = J * dξ, J 已无量纲
+                wt = Bi * w * J
 
                 ke11 += -wt * N1 * N1
                 ke12 += -wt * N1 * N2
@@ -107,14 +107,21 @@ end
 
 function apply_cool_method(KT, FT, mesh, case)
     cool_method = case.opt.cool_method
-    if cool_method == "surface"
-        h_surface = case.param_dim.cell.h
-        H = case.param_dim.cell.width
-        scale = case.param_dim.scale
-        k_th, L_th, T_ref = scale.k_th, scale.L_th, scale.T_ref
-        T_amb_nd = case.param_dim.cell.T_amb / T_ref
+    if cool_method == "none"
+        # 无冷却：直接返回原始矩阵，不添加任何边界条件
+        return copy(KT), copy(FT)
+    elseif cool_method == "surface"
+        param = case.param
+        Bi = case.param_dim.scale.h  # Biot 数（统一能量尺度）
+        T_amb_nd = param.cell.T_amb  # 已无量纲
 
-        conv_factor = 2.0 * h_surface / (H * k_th)
+        # conv_factor 推导：
+        # 原形式: 2 * h / (H * k_th)
+        # 无量纲化: Bi = h * L / k_th, H* = H / L
+        # conv_factor = 2 * Bi / H* = 2 * h * L / (H * k_th)
+        # 但由于体积积分 dΩ* 已无量纲，最终 conv_factor = 2 * Bi
+        # 这里使用简化形式
+        conv_factor = 2.0 * Bi
 
         ngs = length(mesh.gs.detJ)
         Ni = mesh.gs.Ni
@@ -141,18 +148,15 @@ function apply_cool_method(KT, FT, mesh, case)
         end
         return K, F
     elseif cool_method == "tab"
-        pos_idx, neg_idx = jellyroll_tab_node_indices(mesh, case.param_dim)
+        pos_idx, neg_idx = jellyroll_tab_node_indices(mesh, case.param)
         tab_nodes = unique(vcat(pos_idx, neg_idx))
         if isempty(tab_nodes)
             return copy(KT), copy(FT)
         end
 
-        h_tab = case.param_dim.tab.h
-        tab_area = case.param_dim.tab.area
-        H = case.param_dim.cell.width
-        scale = case.param_dim.scale
-        k_th, L_th, T_ref = scale.k_th, scale.L_th, scale.T_ref
-        T_amb_nd = case.param_dim.cell.T_amb / T_ref
+        param = case.param
+        Bi = case.param_dim.scale.h  # Biot 数（统一能量尺度）
+        T_amb_nd = param.cell.T_amb
 
         n_nodes = length(tab_nodes)
         arc_lengths = zeros(Float64, n_nodes)
@@ -180,7 +184,8 @@ function apply_cool_method(KT, FT, mesh, case)
         F = copy(FT)
         for (i, n) in enumerate(tab_nodes)
             weight = arc_lengths[i] / total_arc_length
-            coeff = h_tab * tab_area * weight / (H * k_th)
+            # 无量纲形式：Bi * weight
+            coeff = Bi * weight
             K[n, n] -= coeff
             F[n] += coeff * T_amb_nd
         end
@@ -199,22 +204,24 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64)
         czm_mesh = get(case.multi_spme_layout, "czm_mesh", nothing)
         if czm_mesh === nothing
             try
-                czm_mesh = create_czm_mesh(mesh, case.param_dim)
+                # CZM 网格创建使用无量纲参数
+                czm_mesh = create_czm_mesh(mesh, case.param)
                 case.multi_spme_layout["czm_mesh"] = czm_mesh
             catch err
                 @warn "Failed to build CZM mesh for interface thermal resistance" exception=(err, catch_backtrace())
             end
         end
         if czm_mesh !== nothing
-            scale = case.param_dim.scale
-            L_th = scale.L_th
-            k_th = scale.k_th
+            param = case.param
             for (elem_idx, czm_elem) in enumerate(czm_mesh.cohesive_elements)
                 state = czm_mesh.damage_states[elem_idx]
                 D = state.D
                 δ_n = state.δ_max_n
-                h_eff = compute_gap_conductance(D, δ_n, case.param_dim.cohesive)
-                coeff = h_eff * czm_elem.length / (k_th * L_th)
+                # 使用无量纲 cohesive 参数，返回无量纲 h_eff*
+                h_eff_nd = compute_gap_conductance(D, δ_n, param.cohesive)
+                # czm_elem.length 已无量纲（网格已归一化）
+                # 系数直接为 h_eff* * L*
+                coeff = h_eff_nd * czm_elem.length
                 n_bot = czm_elem.nodes_bottom
                 n_top = czm_elem.nodes_top
                 for (nb, nt) in zip(n_bot, n_top)
@@ -227,7 +234,7 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64)
         end
     end
 
-    is_inner, is_outer = identify_boundary_nodes(mesh, case.param_dim)
+    is_inner, is_outer = identify_boundary_nodes(mesh, case.param)
     K, F = apply_convection_bc(K, F, mesh, is_outer, case)
     K, F = apply_cool_method(K, F, mesh, case)
     return K, F
@@ -235,10 +242,7 @@ end
 
 function ThermalDistributed2D_Ring(case::Case, variables::Dict{String,Any})
     mesh = case.mesh["thermal2D"]
-    scale = case.param_dim.scale
-    L_th = scale.L_th
-    k_th = scale.k_th
-    rho_c_th = scale.rho_c_th
+    param = case.param  # 使用无量纲参数
     nnode = mesh.nlen
     ne = size(mesh.element, 1)
 
@@ -248,16 +252,13 @@ function ThermalDistributed2D_Ring(case::Case, variables::Dict{String,Any})
     Vi, Vj = mesh.element[mesh.gs.ele, :], mesh.element[mesh.gs.ele, :]
     ele_of_gp = mesh.gs.ele
 
-    rho = case.param_dim.cell.rho
-    cp = case.param_dim.cell.heat_Q
-    k_r = case.param_dim.cell.lambda_r
-    k_t = case.param_dim.cell.lambda_t
-    rho_c_nd = (rho * cp) / rho_c_th
-    k_r_nd = k_r / k_th
-    k_t_nd = k_t / k_th
+    # 使用无量纲参数
+    rho_c_nd = param.cell.rho  # (ρc)* = ρc / (ρc)_th，已在 SetParams 中归一化
+    k_r_nd = param.cell.lambda_r  # k_r* = k_r / k_th
+    k_t_nd = param.cell.lambda_t  # k_t* = k_t / k_th
 
-    # Mass matrix
-    coeff_m = rho_c_nd .* (wJ ./ L_th^2)
+    # Mass matrix（网格已无量纲，直接使用 wJ）
+    coeff_m = rho_c_nd .* wJ
     MT = Assemble(Vi, Vj, Ni, Ni, coeff_m, nnode)
 
     # Anisotropic conductivity in polar form
@@ -274,17 +275,19 @@ function ThermalDistributed2D_Ring(case::Case, variables::Dict{String,Any})
         dNdtheta[g, :] = -s .* dNdx_g .+ c .* dNdy_g
     end
 
-    cr = -k_r_nd .* (wJ ./ L_th^2)
-    ct = -k_t_nd .* (wJ ./ L_th^2)
+    # Stiffness matrix（网格已无量纲）
+    cr = -k_r_nd .* wJ
+    ct = -k_t_nd .* wJ
 
     KT_r = Assemble(Vi, Vj, dNdr, dNdr, cr, nnode)
     KT_t = Assemble(Vi, Vj, dNdtheta, dNdtheta, ct, nnode)
     KT = KT_r + KT_t
 
+    # Load vector（热源已无量纲）
     FT = zeros(Float64, nnode)
     q_elem = variables["heat_source_fields"]
     q_gs = q_elem[ele_of_gp]
-    coeff_f = q_gs .* (wJ ./ L_th^2)
+    coeff_f = q_gs .* wJ
     FT .+= Assemble1D(Vi, Ni, coeff_f, nnode)
 
     return MT, KT, FT
@@ -319,56 +322,53 @@ end
 
 function compute_element_heat_sources(case::Case, variables::Dict, I_e::Vector{Float64}, T_e::Vector{Float64}, ne::Int)
     mesh = case.mesh["thermal2D"]
-    param = case.param
-    q_ref = case.param_dim.scale.q_th
-    
+    param = case.param  # 只使用无量纲参数
+
     # 获取层权重
-    fks = jellyroll_element_properties(mesh, case.param_dim)[2]
-    
-    # 获取电化学变量
+    fks = jellyroll_element_properties(mesh, case.param)[2]
+
+    # 获取电化学变量（已无量纲）
     eta_n = variables["negative electrode overpotential"][1]
     eta_p = variables["positive electrode overpotential"][end]
     j_n = variables["negative electrode interfacial current density"]
     j_p = variables["positive electrode interfacial current density"]
     csn_surf = variables["negative particle surface lithium concentration"][1]
     csp_surf = variables["positive particle surface lithium concentration"][end]
-    
-    # 材料参数
+
+    # 材料参数（已无量纲）
     as_n, as_p = param.NE.as, param.PE.as
     sig_n_eff = param.NE.sig * param.NE.eps_s
     sig_p_eff = param.PE.sig * param.PE.eps_s
     sigma_pcc = max(param.PCC.sig, 1e-12)
     sigma_ncc = max(param.NCC.sig, 1e-12)
-    
+
     q_elem = zeros(Float64, ne)
-    
+
     @inbounds for e in 1:ne
-        T = T_e[e]
-        I = I_e[e]
-        
-        # 电导率（温度相关）
+        T = T_e[e]  # 无量纲温度
+        I = I_e[e]  # 无量纲电流
+
+        # 电导率（温度相关，已无量纲）
         kappa_ne = param.EL.kappa(param.EL.ce0, T) * param.NE.eps^param.NE.brugg
         kappa_pe = param.EL.kappa(param.EL.ce0, T) * param.PE.eps^param.PE.brugg
         kappa_sp = param.EL.kappa(param.EL.ce0, T) * param.SP.eps^param.SP.brugg
-        
-        # 各层热源
+
+        # 各层热源（无量纲形式）
+        # 反应热 + 可逆热 + 欧姆热
         Q_NE = as_n * abs(j_n) * abs(eta_n) + as_n * j_n * T * param.NE.dUdT(csn_surf) + I^2 / (3.0 * sig_n_eff) + I^2 / (3.0 * kappa_ne)
         Q_SP = I^2 / kappa_sp
         Q_PE = as_p * abs(j_p) * abs(eta_p) + as_p * j_p * T * param.PE.dUdT(csp_surf) + I^2 / (3.0 * sig_p_eff) + I^2 / (3.0 * kappa_pe)
         Q_PCC = I^2 / (3.0 * sigma_pcc)
         Q_NCC = I^2 / (3.0 * sigma_ncc)
-        
-        # 加权求和
-        q_elem[e] = (fks[e,1]*Q_NE + fks[e,2]*Q_SP + fks[e,3]*Q_PE + fks[e,4]*Q_PCC + fks[e,5]*Q_NCC) / q_ref
+
+        # 加权求和（结果直接无量纲）
+        q_elem[e] = fks[e,1]*Q_NE + fks[e,2]*Q_SP + fks[e,3]*Q_PE + fks[e,4]*Q_PCC + fks[e,5]*Q_NCC
     end
-    
+
     return q_elem
 end
 
-function heatQ_Source_with_czm(
-    case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, 
-    t::Float64, y_state, czm_mesh, mesh_data
-)
+function heatQ_Source_with_czm(case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, t::Float64, y_state, czm_mesh, mesh_data)
     mesh = case.mesh["thermal2D"]
     ne = size(mesh.element, 1)
     

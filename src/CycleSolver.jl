@@ -657,6 +657,7 @@ end
 """
 function _update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)
     param_dim = case.param_dim
+    param = case.param
 
     # 同步CZM模型选项（model1 or mix）
     czm_params.czm_model = case.opt.czm_model
@@ -684,7 +685,7 @@ function _update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carr
     arc_length_alpha = case.opt.czm_arc_length_alpha
 
     result, updated_czm_mesh = solve_czm_step(
-        czm_mesh, F_ext, E_eff, ν_eff, czm_params, param_dim, u_czm_prev;
+        czm_mesh, F_ext, E_eff, ν_eff, czm_params, param, u_czm_prev;
         α_eff=α_eff, β_n=β_n, β_p=β_p,
         dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
         max_iter=max_iter, tol=tol, n_load_steps=n_load_steps, arc_length_alpha=arc_length_alpha, iter_method=iter_method

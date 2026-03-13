@@ -85,7 +85,7 @@ function main()
     # 创建Jellyroll collector-seeded网格
     # 使用较少的单元数以便更清晰地观察单元级别的行为
     nθ = 40  # 周向单元数（减少以便观察）
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
     
