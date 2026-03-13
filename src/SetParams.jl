@@ -199,13 +199,12 @@ end
     R_cell::Float64 = 0
     E_n::Float64 = 0
     E_p::Float64 = 0
-    # --- Thermal scaling  ---
-    L_th::Float64 = 0          # characteristic thermal length
-    k_th::Float64 = 0          # reference thermal conductivity
-    rho_c_th::Float64 = 0      # reference volumetric heat capacity (rho * cp)
-    t_th::Float64 = 0          # thermal diffusion time scale rho_c_th L_th^2 / k_th
-    q_th::Float64 = 0          # reference volumetric heat source k_th*T_ref/L_th^2
-    h_th::Float64 = 0          # Biot number reference (h*L_th/k_th)
+    # --- Thermal scaling (统一能量尺度) ---
+    rho::Float64 = 0          # 密度尺度 = 电池平均密度 [kg/m³]
+    P_ref::Float64 = 0
+    lambda::Float64 = 0          # 导热率尺度参数 P_ref/(L*T_ref) [W/(m·K)]
+    q::Float64 = 0               # 热源尺度参数 P_ref/L^3 [W/m³]
+    h::Float64 = 0               # Biot 数 = h_cell*L/lambda_r (边界条件)
     # --- Cohesive zone model scaling ---
     σ_czm::Float64 = 0         # reference cohesive traction [Pa] (typically σ_max_n)
     δ_czm::Float64 = 0         # reference separation displacement [m] (typically δ_c_n)
@@ -255,6 +254,8 @@ function ChooseCell(CellType::String="LG M50")
             param_dim.PE.rho * param_dim.PE.thickness + param_dim.NE.rho * param_dim.NE.thickness +
             param_dim.SP.rho * param_dim.SP.thickness + param_dim.NCC.rho * param_dim.NCC.thickness + param_dim.PCC.rho * param_dim.PCC.thickness
         ) / (param_dim.PE.thickness + param_dim.NE.thickness + param_dim.SP.thickness + param_dim.NCC.thickness + param_dim.PCC.thickness)
+    else
+        param_dim.cell.rho = param_dim.cell.rho
     end
     if abs(param_dim.cell.heat_Q) < 1e-8
         param_dim.cell.heat_Q = (
@@ -264,6 +265,8 @@ function ChooseCell(CellType::String="LG M50")
         ) / (param_dim.PE.rho * param_dim.PE.thickness + param_dim.NE.rho * param_dim.NE.thickness + param_dim.SP.rho * param_dim.SP.thickness + 
         param_dim.NCC.rho * param_dim.NCC.thickness  + param_dim.PCC.rho * param_dim.PCC.thickness
         ) 
+    else
+        param_dim.cell.heat_Q = param_dim.cell.heat_Q
     end  
     param_dim.cell.mass = param_dim.cell.rho * param_dim.cell.volume
     param_dim.scale.I_typ = param_dim.cell.I1C
@@ -287,14 +290,11 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.k_p = param_dim.scale.j / param_dim.PE.cs_max / sqrt(param_dim.EL.ce0)
     param_dim.scale.k_n = param_dim.scale.j / param_dim.NE.cs_max / sqrt(param_dim.EL.ce0)
     param_dim.scale.R_cell = param_dim.scale.phi / param_dim.scale.I_typ
-    #Thermal scaling
-    param_dim.scale.L_th = param_dim.cell.layer
-    param_dim.scale.k_th = param_dim.cell.lambda_r
-    param_dim.scale.rho_c_th = param_dim.cell.rho * param_dim.cell.heat_Q
-    param_dim.scale.q_th = param_dim.scale.k_th * param_dim.scale.T_ref / param_dim.scale.L_th^2
-    param_dim.scale.t_th = param_dim.scale.rho_c_th * param_dim.scale.L_th^2 / param_dim.scale.k_th
-    param_dim.scale.h_th = param_dim.cell.h * param_dim.scale.L_th / param_dim.scale.k_th  # Biot number
-    #Cohesive zone model scaling
+    param_dim.scale.rho = param_dim.cell.rho
+    param_dim.scale.P_ref = param_dim.scale.phi * param_dim.scale.I_typ
+    param_dim.scale.lambda = param_dim.scale.P_ref / (param_dim.scale.L * param_dim.scale.T_ref)
+    param_dim.scale.h = param_dim.cell.h * param_dim.scale.L / param_dim.cell.lambda_r  # Biot 数
+    param_dim.scale.q = param_dim.scale.P_ref / param_dim.scale.L^3
     param_dim.scale.σ_czm = param_dim.cohesive.σ_max_n
     param_dim.scale.δ_czm = param_dim.cohesive.δ_c_n
     param_dim.scale.G_czm = param_dim.scale.σ_czm * param_dim.scale.δ_czm
@@ -332,8 +332,9 @@ function NormaliseParam(param_dim::Params)
     param.PE.as = param_dim.PE.as / param.scale.a0
     param.PE.Eac_D = param_dim.PE.Eac_D / param.scale.R / param.scale.T_ref
     param.PE.Eac_k = param_dim.PE.Eac_k / param.scale.R / param.scale.T_ref
-    param.PE.lambda = param_dim.PE.lambda / param.scale.k_th
-    param.PE.rho = (param_dim.PE.rho * param_dim.PE.heat_Q) / param.scale.rho_c_th
+    param.PE.lambda = param_dim.PE.lambda / param.scale.lambda
+    param.PE.rho = param_dim.PE.rho / param.scale.rho 
+    param.PE.heat_Q = param_dim.PE.heat_Q * param.scale.L^3 / (param.scale.lambda * param.scale.t0)
 
     # negative electrode
     param.NE.theta_100 = param_dim.NE.theta_100
@@ -356,27 +357,31 @@ function NormaliseParam(param_dim::Params)
     param.NE.as = param_dim.NE.as / param.scale.a0
     param.NE.Eac_D = param_dim.NE.Eac_D / param.scale.R / param.scale.T_ref
     param.NE.Eac_k = param_dim.NE.Eac_k / param.scale.R / param.scale.T_ref
-    param.NE.lambda = param_dim.NE.lambda / param.scale.k_th
-    param.NE.rho = (param_dim.NE.rho * param_dim.NE.heat_Q) / param.scale.rho_c_th
+    param.NE.lambda = param_dim.NE.lambda / param.scale.lambda
+    param.NE.rho = param_dim.NE.rho / param.scale.rho 
+    param.NE.heat_Q = param_dim.NE.heat_Q * param.scale.L^3 / (param.scale.lambda * param.scale.t0)
 
     # separator
     param.SP.thickness = param_dim.SP.thickness / param.scale.L
     param.SP.eps = param_dim.SP.eps
     param.SP.eps_fi = param_dim.SP.eps_fi
     param.SP.brugg = param_dim.SP.brugg
-    param.SP.lambda = param_dim.SP.lambda / param.scale.k_th
-    param.SP.rho = (param_dim.SP.rho * param_dim.SP.heat_Q) / param.scale.rho_c_th
+    param.SP.lambda = param_dim.SP.lambda / param.scale.lambda
+    param.SP.rho = param_dim.SP.rho / param.scale.rho 
+    param.SP.heat_Q = param_dim.SP.heat_Q * param.scale.L^3 / (param.scale.lambda * param.scale.t0)
 
     # positive current colloctor
     param.PCC.thickness = param_dim.PCC.thickness / param.scale.L
     param.PCC.sig =  param_dim.PCC.sig / param.scale.sig
-    param.PCC.lambda = param_dim.PCC.lambda / param.scale.k_th
-    param.PCC.rho = (param_dim.PCC.rho * param_dim.PCC.heat_Q) / param.scale.rho_c_th
+    param.PCC.lambda = param_dim.PCC.lambda / param.scale.lambda
+    param.PCC.rho = param_dim.PCC.rho / param.scale.rho 
+    param.PCC.heat_Q = param_dim.PCC.heat_Q * param.scale.L^3 / (param.scale.lambda * param.scale.t0)
     # negative current colloctor
     param.NCC.thickness = param_dim.NCC.thickness / param.scale.L
     param.NCC.sig = param_dim.NCC.sig / param.scale.sig
-    param.NCC.lambda = param_dim.NCC.lambda / param.scale.k_th
-    param.NCC.rho = (param_dim.NCC.rho * param_dim.NCC.heat_Q) / param.scale.rho_c_th
+    param.NCC.lambda = param_dim.NCC.lambda / param.scale.lambda
+    param.NCC.rho = param_dim.NCC.rho / param.scale.rho 
+    param.NCC.heat_Q = param_dim.NCC.heat_Q * param.scale.L^3 / (param.scale.lambda * param.scale.t0)
 
     # electrolyte (wrap with invokelatest to avoid world-age issues for closures from parameters)
     param.EL.De = (x, y=1)-> Base.invokelatest(param_dim.EL.De, x * param.scale.ce, y * param.scale.T_ref) / param.scale.De
@@ -388,13 +393,18 @@ function NormaliseParam(param_dim::Params)
     param.cell.cooling_surface = param_dim.cell.cooling_surface / param_dim.cell.area
     param.cell.h = param_dim.cell.h * param_dim.cell.area * param.scale.T_ref / param.scale.phi / param.scale.I_typ
     param.cell.mass = param_dim.cell.mass / param_dim.cell.mass
+    param.cell.rho = param_dim.cell.rho / param.scale.rho
     param.cell.heat_Q = param_dim.cell.heat_Q * param_dim.cell.mass * param.scale.T_ref / param.scale.t0 / param.scale.phi / param.scale.I_typ
     param.cell.T_amb = param_dim.cell.T_amb / param.scale.T_ref 
     param.cell.T0 = param_dim.cell.T0 / param.scale.T_ref 
     param.cell.area = param_dim.cell.area / param_dim.cell.area
     param.cell.volume = param_dim.cell.volume / param_dim.scale.L^3
-    param.cell.lambda_r = param_dim.cell.lambda_r / param.scale.k_th
-    param.cell.lambda_t = param_dim.cell.lambda_t / param.scale.k_th
+    param.cell.layer = param_dim.cell.layer / param.scale.L
+    param.cell.lambda_r = param_dim.cell.lambda_r / param.scale.lambda
+    param.cell.lambda_t = param_dim.cell.lambda_t / param.scale.lambda
+    param.cell.Rin = param_dim.cell.Rin / param.scale.L
+    param.cell.Rout = param_dim.cell.Rout / param.scale.L
+    param.cell.height = param_dim.cell.height / param.scale.L
 
     #tab
     param.tab.length = param_dim.tab.length / param.scale.L
@@ -419,11 +429,11 @@ function NormaliseParam(param_dim::Params)
     param.cohesive.eta = param_dim.cohesive.eta
 
     # interface thermal resistance parameters (dimensionless)
-    param.cohesive.h_c0 = param_dim.cohesive.h_c0 * param_dim.scale.L_th / param_dim.scale.k_th
-    param.cohesive.k_air = param_dim.cohesive.k_air / param_dim.scale.k_th
-    param.cohesive.lambda_m = param_dim.cohesive.lambda_m / param_dim.scale.L_th
+    param.cohesive.h_c0 = param_dim.cohesive.h_c0 * param_dim.scale.L / param_dim.scale.lambda
+    param.cohesive.k_air = param_dim.cohesive.k_air / param_dim.scale.lambda
+    param.cohesive.lambda_m = param_dim.cohesive.lambda_m / param_dim.scale.L
     param.cohesive.beta = param_dim.cohesive.beta
-    param.cohesive.threshold = param_dim.cohesive.threshold / param_dim.scale.L_th
+    param.cohesive.threshold = param_dim.cohesive.threshold / param_dim.scale.L
     
     return param
 end
