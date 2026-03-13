@@ -333,8 +333,14 @@ function NormaliseParam(param_dim::Params)
     param.PE.Eac_D = param_dim.PE.Eac_D / param.scale.R / param.scale.T_ref
     param.PE.Eac_k = param_dim.PE.Eac_k / param.scale.R / param.scale.T_ref
     param.PE.lambda = param_dim.PE.lambda / param.scale.lambda
-    param.PE.rho = param_dim.PE.rho / param.scale.rho 
-    param.PE.heat_Q = param_dim.PE.heat_Q * param.scale.L^3 / (param.scale.lambda * param.scale.t0)
+    param.PE.rho = param_dim.PE.rho / param.scale.rho
+    # 比热容归一化: c* = c * ρ_ref * L³ * T_ref / (t0 * P_ref)
+    # 其中 P_ref = phi * I_typ
+    # 注: param.PE.rho 存储无量纲密度 ρ* = ρ/ρ_ref
+    # param.PE.heat_Q 存储无量纲比热容 c*
+    # 体积热容 (ρc)* = ρ* · c* 在使用时计算
+    param.PE.heat_Q = param_dim.PE.heat_Q * param.scale.rho * param.scale.L^3 * param.scale.T_ref /
+                      (param.scale.t0 * param.scale.phi * param.scale.I_typ)
 
     # negative electrode
     param.NE.theta_100 = param_dim.NE.theta_100
@@ -358,8 +364,10 @@ function NormaliseParam(param_dim::Params)
     param.NE.Eac_D = param_dim.NE.Eac_D / param.scale.R / param.scale.T_ref
     param.NE.Eac_k = param_dim.NE.Eac_k / param.scale.R / param.scale.T_ref
     param.NE.lambda = param_dim.NE.lambda / param.scale.lambda
-    param.NE.rho = param_dim.NE.rho / param.scale.rho 
-    param.NE.heat_Q = param_dim.NE.heat_Q * param.scale.L^3 / (param.scale.lambda * param.scale.t0)
+    param.NE.rho = param_dim.NE.rho / param.scale.rho
+    # 比热容归一化: c* = c * ρ_ref * L³ * T_ref / (t0 * P_ref)
+    param.NE.heat_Q = param_dim.NE.heat_Q * param.scale.rho * param.scale.L^3 * param.scale.T_ref /
+                      (param.scale.t0 * param.scale.phi * param.scale.I_typ)
 
     # separator
     param.SP.thickness = param_dim.SP.thickness / param.scale.L
@@ -367,21 +375,27 @@ function NormaliseParam(param_dim::Params)
     param.SP.eps_fi = param_dim.SP.eps_fi
     param.SP.brugg = param_dim.SP.brugg
     param.SP.lambda = param_dim.SP.lambda / param.scale.lambda
-    param.SP.rho = param_dim.SP.rho / param.scale.rho 
-    param.SP.heat_Q = param_dim.SP.heat_Q * param.scale.L^3 / (param.scale.lambda * param.scale.t0)
+    param.SP.rho = param_dim.SP.rho / param.scale.rho
+    # 比热容归一化: c* = c * ρ_ref * L³ * T_ref / (t0 * P_ref)
+    param.SP.heat_Q = param_dim.SP.heat_Q * param.scale.rho * param.scale.L^3 * param.scale.T_ref /
+                      (param.scale.t0 * param.scale.phi * param.scale.I_typ)
 
     # positive current colloctor
     param.PCC.thickness = param_dim.PCC.thickness / param.scale.L
     param.PCC.sig =  param_dim.PCC.sig / param.scale.sig
     param.PCC.lambda = param_dim.PCC.lambda / param.scale.lambda
-    param.PCC.rho = param_dim.PCC.rho / param.scale.rho 
-    param.PCC.heat_Q = param_dim.PCC.heat_Q * param.scale.L^3 / (param.scale.lambda * param.scale.t0)
+    param.PCC.rho = param_dim.PCC.rho / param.scale.rho
+    # 比热容归一化: c* = c * ρ_ref * L³ * T_ref / (t0 * P_ref)
+    param.PCC.heat_Q = param_dim.PCC.heat_Q * param.scale.rho * param.scale.L^3 * param.scale.T_ref /
+                       (param.scale.t0 * param.scale.phi * param.scale.I_typ)
     # negative current colloctor
     param.NCC.thickness = param_dim.NCC.thickness / param.scale.L
     param.NCC.sig = param_dim.NCC.sig / param.scale.sig
     param.NCC.lambda = param_dim.NCC.lambda / param.scale.lambda
-    param.NCC.rho = param_dim.NCC.rho / param.scale.rho 
-    param.NCC.heat_Q = param_dim.NCC.heat_Q * param.scale.L^3 / (param.scale.lambda * param.scale.t0)
+    param.NCC.rho = param_dim.NCC.rho / param.scale.rho
+    # 比热容归一化: c* = c * ρ_ref * L³ * T_ref / (t0 * P_ref)
+    param.NCC.heat_Q = param_dim.NCC.heat_Q * param.scale.rho * param.scale.L^3 * param.scale.T_ref /
+                       (param.scale.t0 * param.scale.phi * param.scale.I_typ)
 
     # electrolyte (wrap with invokelatest to avoid world-age issues for closures from parameters)
     param.EL.De = (x, y=1)-> Base.invokelatest(param_dim.EL.De, x * param.scale.ce, y * param.scale.T_ref) / param.scale.De
