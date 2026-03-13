@@ -21,12 +21,9 @@ function main()
     centers = JuBat.jellyroll_element_centers(mesh)
     ne = size(mesh.element,1)
 
-    # get element layer weights if available (collector-seeded cached) or compute by sampling
-    fks = JuBat.jellyroll_get_layer_weights(mesh)
-    if fks === nothing
-        println("No cached layer weights found; sampling element areas to compute layer weights (may be slow)")
-        fks = JuBat.jellyroll_element_layer_weights(mesh, param_dim; nsamples_per_dim=6, logic=:spiral)
-    end
+    # get element layer weights using jellyroll_element_properties
+    areas, fks = JuBat.jellyroll_element_properties(mesh, param_dim)
+    println("Computed layer weights for $(ne) elements")
 
     # material lambdas (W/mK)
     λ_NE  = getfield(param_dim.NE,  :lambda)

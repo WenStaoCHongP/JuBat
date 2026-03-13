@@ -116,7 +116,7 @@ function main()
     opt.czm_enabled = true
 
     case = JuBat.SetCase(param_dim, opt)
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=80, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh = case.mesh["thermal2D"]
 

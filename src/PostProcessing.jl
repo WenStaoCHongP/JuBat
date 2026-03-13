@@ -94,9 +94,7 @@ function _state_concentration_variance(case::Case, y_state)
     return var(cs_n), var(cs_p)
 end
 
-function _postprocess_phase_result(case::Case, phase_type::PhaseType, solve_result::Dict, initial_state::Dict,
-                                   I_current::Float64, t_start::Float64,
-                                   D_max_init::Float64, D_mean_init::Float64, czm_mesh)
+function _postprocess_phase_result(case::Case, phase_type::PhaseType, solve_result::Dict, initial_state::Dict,I_current::Float64, t_start::Float64,D_max_init::Float64, D_mean_init::Float64, czm_mesh)
     time_hist = get(solve_result, "time [s]", Float64[])
     voltage_hist = get(solve_result, "cell voltage [V]", Float64[])
     duration = isempty(time_hist) ? get(case.opt.time, 2, 0.0) : time_hist[end]

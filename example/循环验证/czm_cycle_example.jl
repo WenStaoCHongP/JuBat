@@ -84,7 +84,7 @@ function main()
     
     # 热网格
     n_theta = 60
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=n_theta, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, gsorder=2)
     JuBat.setup_thermal2D_mesh!(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
     

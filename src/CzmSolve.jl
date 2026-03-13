@@ -19,7 +19,7 @@ end
 # ========================================================================
 
 """
-    newton_raphson_czm(czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param_dim;α_eff=0.0, β_n=0.0, β_p=0.0,dT_elem=nothing, Δsoc_n_elem=nothing, Δsoc_p_elem=nothing,max_iter=50, tol=1e-8, u0=nothing, n_load_steps=10)
+    newton_raphson_czm(czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param;α_eff=0.0, β_n=0.0, β_p=0.0,dT_elem=nothing, Δsoc_n_elem=nothing, Δsoc_p_elem=nothing,max_iter=50, tol=1e-8, u0=nothing, n_load_steps=10)
 
 Newton-Raphson nonlinear solver with load substeps.
 
@@ -27,7 +27,7 @@ Newton-Raphson nonlinear solver with load substeps.
 - `result`: CZMResult
 - `new_czm_mesh`: updated CZM mesh with damage states
 """
-function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_eff::Float64, ν_eff::Float64, cohesive_params::Cohesive, param_dim; α_eff::Float64=0.0, β_n::Float64=0.0, β_p::Float64=0.0, dT_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_n_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_p_elem::Union{Vector{Float64}, Nothing}=nothing, max_iter::Int=50, tol::Float64=1e-8, u0::Union{Vector{Float64},Nothing}=nothing, n_load_steps::Int=10)
+function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_eff::Float64, ν_eff::Float64, cohesive_params::Cohesive, param; α_eff::Float64=0.0, β_n::Float64=0.0, β_p::Float64=0.0, dT_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_n_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_p_elem::Union{Vector{Float64}, Nothing}=nothing, max_iter::Int=50, tol::Float64=1e-8, u0::Union{Vector{Float64},Nothing}=nothing, n_load_steps::Int=10)
     nnode = czm_mesh.nnode
     ndof = 2 * nnode
     n_coh = czm_mesh.n_cohesive
@@ -37,7 +37,7 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_ef
     u = copy(u0)
     damage_states = czm_mesh.damage_states
 
-    bc_nodes, inner_count, outer_count = identify_bc_nodes_czm(czm_mesh, param_dim)
+    bc_nodes, inner_count, outer_count = identify_bc_nodes_czm(czm_mesh, param)
     bc_dofs = Int64[]
     bc_vals = Float64[]
 
@@ -147,11 +147,11 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_ef
 end
 
 """
-    solve_czm_step(czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param_dim, u_prev; ...)
+    solve_czm_step(czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param, u_prev; ...)
 
 Solve a single CZM step with selectable iteration method.
 """
-function solve_czm_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_eff::Float64, ν_eff::Float64, cohesive_params::Cohesive, param_dim, u_prev::Vector{Float64}; α_eff::Float64=0.0, β_n::Float64=0.0, β_p::Float64=0.0, dT_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_n_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_p_elem::Union{Vector{Float64}, Nothing}=nothing, max_iter::Int=50, tol::Float64=1e-8, n_load_steps::Int=10, arc_length_alpha::Float64=1.0, iter_method::String="load_substep")
+function solve_czm_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_eff::Float64, ν_eff::Float64, cohesive_params::Cohesive, param, u_prev::Vector{Float64}; α_eff::Float64=0.0, β_n::Float64=0.0, β_p::Float64=0.0, dT_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_n_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_p_elem::Union{Vector{Float64}, Nothing}=nothing, max_iter::Int=50, tol::Float64=1e-8, n_load_steps::Int=10, arc_length_alpha::Float64=1.0, iter_method::String="load_substep")
     nnode = czm_mesh.nnode
     ndof = 2 * nnode
     n_coh = czm_mesh.n_cohesive
@@ -160,7 +160,7 @@ function solve_czm_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_eff::F
     u = copy(u_prev)
     damage_states = czm_mesh.damage_states
 
-    bc_nodes, inner_count, outer_count = identify_bc_nodes_czm(czm_mesh, param_dim)
+    bc_nodes, inner_count, outer_count = identify_bc_nodes_czm(czm_mesh, param)
     bc_dofs = Int64[]
     bc_vals = Float64[]
     for (node, bc_type) in bc_nodes
@@ -183,7 +183,7 @@ function solve_czm_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_eff::F
     method = lowercase(iter_method)
 
     if method == "load_substep"
-        result, new_czm_mesh = newton_raphson_czm(czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param_dim;
+        result, new_czm_mesh = newton_raphson_czm(czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param;
             α_eff=α_eff, β_n=β_n, β_p=β_p,
             dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
             max_iter=max_iter, tol=tol, u0=u, n_load_steps=n_load_steps)

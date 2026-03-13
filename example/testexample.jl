@@ -60,7 +60,7 @@ function main()
     opt.thermal_enabled = true
     opt.thermalmodel = "distributed2D"
     opt.thermal_dim = "2D"
-    opt.cool_method = "surface" #tab or surface
+    opt.cool_method = "none" #tab or surface
     
     # 关键：启用多SPMe并行模式
     opt.per_element_spme = true
@@ -85,7 +85,7 @@ function main()
     # 创建Jellyroll collector-seeded网格
     # n_theta: 周向单元数，影响角度分辨率和计算量
     n_theta = 80  # 高分辨率周向单元数
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=n_theta, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
     

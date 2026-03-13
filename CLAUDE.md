@@ -1,242 +1,334 @@
 # CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+本文档为 Claude Code 提供 JuBat 项目中 **Jellyroll 果冻卷电池 SPMe-二维分布式热-CZM 耦合模型**的开发指导。
 
-## Overview
+---
 
-JuBat is a Julia-based framework for battery modeling based on Newman's battery models, including P2D, SPM, and SPMe models. The framework uses 2nd order finite element method (FEM) for solving equations and supports electro-thermal-mechanical coupling with cohesive zone modeling (CZM) for degradation analysis.
+## 1. 项目概述
 
-Reference: W. Ai, Y. Liu, Improving the convergence rate of Newman's battery model using 2nd order finite element method, J. Energy Storage. 67 (2023) 107512.
+JuBat 是基于 Julia 的电池建模框架，采用二阶有限元方法 (FEM) 求解方程。本项目专注于 **Jellyroll（果冻卷）型号电池**的多物理场耦合仿真：
 
-## Development Workflow
+| 物理场 | 模型 | 技术文档 |
+|--------|------|----------|
+| 电化学 | SPMe (Single Particle Model with electrolyte) | `md/04_电化学模型_SPMe.md` |
+| 热学 | 二维分布式热模型 (各向异性导热) | `md/05_热模型_二维分布式.md` |
+| 力学 | 内聚力模型 (CZM) | `md/06_内聚力模型_CZM.md` |
+| 耦合 | 界面热阻模型 | `md/07_界面热阻模型.md` |
 
-### Running Examples
-```bash
-# Basic usage - include JuBat module and run examples
-julia example/minimal_example.jl
-julia example/cycle_example.jl
-julia example/czm_cycle_example.jl
-julia example/SPMe_Thermal_example.jl
-julia example/testexample.jl  # Full coupled simulation
-```
+**参考文献**: W. Ai, Y. Liu, Improving the convergence rate of Newman's battery model using 2nd order finite element method, J. Energy Storage. 67 (2023) 107512.
 
-### Module Structure
-The main module is defined in `src/JuBat.jl` with all submodules included. To use in scripts:
+---
+
+## 2. 技术文档索引
+
+详细技术文档位于 `md/` 目录，按层次组织：
+
+### 第一层：参数与基础 (01-03)
+| 编号 | 文档 | 内容 |
+|------|------|------|
+| 01 | `01_参数定义与归一化.md` | 物理参数、电化学/热学/机械归一化、Jellyroll专用参数 |
+| 02 | `02_几何与网格.md` | 阿基米德螺旋线、collector-seeded网格、COH2D4单元、CohesiveMesh结构 |
+| 03 | `03_边界条件.md` | 侧面/极耳冷却、界面热阻边界条件 |
+
+### 第二层：模型实现 (04-07)
+| 编号 | 文档 | 内容 |
+|------|------|------|
+| 04 | `04_电化学模型_SPMe.md` | 颗粒扩散、电解液守恒、Butler-Volmer、机械耦合 |
+| 05 | `05_热模型_二维分布式.md` | 能量方程、分层热源、各向异性导热、极坐标FVM |
+| 06 | `06_内聚力模型_CZM.md` | 双线性牵引-分离律、CZMResult结构、热-化学载荷 |
+| 07 | `07_界面热阻模型.md` | 间隙导热系数、损伤耦合、使用建议 |
+
+### 第三层：算法与求解 (08-10)
+| 编号 | 文档 | 内容 |
+|------|------|------|
+| 08 | `08_逐单元算法.md` | 多SPMe并行架构、状态向量设计、分层热源计算 |
+| 09 | `09_分流求解器.md` | Newton-Raphson分流、截止电压检测、CZM失效处理 |
+| 10 | `10_参数传递与模块架构.md` | Case/variables结构、CycleSolver、耦合数据流 |
+
+### 第四层：验证方案 (11-13)
+| 编号 | 文档 | 内容 |
+|------|------|------|
+| 11 | `11_电化学验证方案.md` | SPMe验证、验收标准 |
+| 12 | `12_热模型验证方案.md` | 圆环精确解、FVM验证 |
+| 13 | `13_耦合验证方案.md` | 电-热-CZM全耦合验证 |
+
+---
+
+## 3. 快速开始
+
+### 3.1 模块加载
+
 ```julia
 include("src/JuBat.jl")
 using .JuBat
 ```
 
-## Core Architecture
+### 3.2 基础仿真流程
 
-### Model Types
-- **P2D** (Pseudo-Two-Dimensional): Full electrochemical model with particle diffusion and electrolyte transport
-- **SPM** (Single Particle Model): Simplified model assuming electrolyte concentration uniformity
-- **SPMe** (Single Particle Model extended): Includes electrolyte dynamics
-
-### Coupling Capabilities
-- **Electro-thermal coupling**: Per-element SPMe with distributed 2D thermal model
-- **Electro-mechanical coupling**: Thermal and diffusion stress calculations
-- **CZM (Cohesive Zone Model)**: Interlayer degradation and fracture modeling
-- **Cycle solver**: Multi-cycle charge/discharge simulation with state management
-
-### Key Data Structures
-
-#### Case Configuration
 ```julia
-param_dim = JuBat.ChooseCell("LG M50" or "Jellyroll")
-opt = JuBat.Option()  # Configure model, time stepping, thermal/mechanical options
+# 1. 选择 Jellyroll 电池参数
+param_dim = JuBat.ChooseCell("Jellyroll")
+
+# 2. 配置选项
+opt = JuBat.Option()
+opt.model = "SPMe"
+opt.thermal_enabled = true
+opt.thermalmodel = "distributed2D"
+opt.per_element_spme = true
+opt.czm_enabled = true
+opt.mechanicalmodel = "full"
+
+# 3. 创建案例
 case = JuBat.SetCase(param_dim, opt)
-```
 
-#### Mesh Creation
-```julia
-# Standard 1D mesh (automatically created by SetCase)
-# Jellyroll collector-seeded mesh for thermal2D
+# 4. 创建热网格 (Jellyroll 专用)
 mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, gsorder=2)
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-```
 
-#### Main Solver
-```julia
+# 5. 求解
 result = JuBat.Solve(case)
-# Returns Dict with time, voltage, temperature, concentrations, stresses, etc.
 ```
 
-## Configuration Options
+### 3.3 循环仿真
 
-### Option Structure (`src/Option.jl`)
-Key fields:
-- `model`: "P2D", "SPM", or "SPMe"
-- `Np`, `Ns`, `Nn`: Grid points for positive electrode, separator, negative electrode
-- `Nrp`, `Nrn`: Radial grid points for positive/negative particles
-- `gsorder`: Order of Gaussian quadrature (affects accuracy)
-- `Current`: Function defining current profile I(t)
-- `time`: [t_start, t_end] simulation time range
-- `dt`: [dt_min, dt_max] adaptive time stepping range
-- `solveType`: "Crank-Nicolson", "forward", or "backward"
-
-### Thermal Options
-- `thermal_enabled`: Enable thermal coupling
-- `thermalmodel`: "none", "lumped", "distributed1D", "distributed2D"
-- `thermal_dim`: "1D" or "2D"
-- `cool_method`: "tab" or "surface" cooling
-- `per_element_spme`: Enable per-element SPMe for thermal coupling
-
-### Mechanical/CZM Options
-- `mechanicalmodel`: "none" or "full"
-- `czm_enabled`: Enable cohesive zone modeling
-- `czm_update_interval`: How often to update damage (1=every step)
-- `czm_iter_method`: "basic", "load_substep", or "arc_length"
-
-## Advanced Features
-
-### Multi-SPMe Parallel Architecture
-When `opt.per_element_spme=true`, each thermal element has its own SPMe model:
-- Current distribution solved via Newton-Raphson (`solve_branch_currents_newton`)
-- Per-element heat sources computed from overpotentials
-- Thermal variables passed back to electrochemical solver
-- See `src/Parallelsolution.jl` for implementation
-
-### Jellyroll Geometry
-Specialized mesh for spiral-wound batteries:
-- `jellyroll_collector_seed_mesh`: Creates Q4 mesh with collector-seeded semantics
-- `jellyroll_element_properties`: Returns layer weights, radii, angles for each element
-- Layer weights (`fks`) determine material properties per element
-- See `src/Jellyrollmodel.jl`
-
-### Cohesive Zone Model
-Models interlayer degradation:
-- `create_czm_mesh`: Creates cohesive elements at layer interfaces
-- `bilinear_traction`: Traction-separation law
-- `newton_raphson_czm`: Solve coupled electro-thermal-CZM system
-- Damage state tracked per element, affects thermal conductivity
-- See `src/czm.jl` and `src/CzmSolve.jl`
-
-### Cycle Solver
-Multi-cycle simulation with state management:
 ```julia
 cycle_opt = JuBat.CycleOption(
-    n_cycles=50,
-    I_charge=5.0, I_discharge=5.0,
-    t_charge=3600, t_discharge=3600,
-    V_upper=4.2, V_lower=2.5,
-    SOC_init=0.05
+    n_cycles = 50,
+    I_charge = 5.0,
+    I_discharge = 5.0,
+    t_charge = 3600,
+    t_discharge = 3600,
+    V_upper = 4.2,
+    V_lower = 2.5,
+    SOC_init = 0.05
 )
 result = JuBat.solve_cycling(case, cycle_opt)
 ```
-- Supports charge, rest, discharge phases
-- State preservation between cycles
-- Damage accumulation across cycles
-- See `src/CycleSolver.jl`
 
-## File Organization
+---
 
-### Core Model Files
-- `SetCase.jl`: Setup case configuration and mesh indices
-- `SetParams.jl`: Parameter normalization and scaling
-- `SetMesh.jl`: Mesh generation (1D L2/L3, 2D Q4 elements)
-- `Option.jl`: Option structure definitions
+## 4. 核心架构
 
-### Solver Files
-- `Solve.jl`: Main time-stepping solver
-- `SPM.jl`, `SPMe.jl`, `P2D.jl`: Model-specific implementations
-- `Parallelsolution.jl`: Multi-SPMe parallel solver with current distribution
-- `CzmSolve.jl`: CZM-specific solver
+### 4.1 多 SPMe 并行架构
 
-### Coupling Files
-- `Thermal.jl`, `ThermalDistributed.jl`: Thermal model implementations
-- `ThermalPolar2D.jl`: Polar coordinate thermal solver for ring geometry
-- `mechanical.jl`: Stress calculations (thermal and diffusion stress)
-- `czm.jl`: Cohesive zone model implementation
+当 `opt.per_element_spme = true` 时，每个热单元拥有独立的 SPMe 模型：
 
-### Supporting Files
-- `Variables.jl`: Variable initialization and storage
-- `PostProcessing.jl`: Result processing and visualization
-- `Tools.jl`: Utility functions
-- `Materialmatrix.jl`: Material property calculations
-- `Assemble.jl`: FEM assembly functions
+```
+状态向量结构:
+yt_global = [yt_chem[1]; yt_chem[2]; ...; yt_chem[ne]; T_nodes]
 
-### Parameter Files
-`src/parameters/`: Cell-specific parameter sets
-- `LG M50.jl`, `Enertech.jl`, `Northrop.jl`: Standard pouch cells
-- `Jellyroll.jl`, `Ring.jl`: Specialized geometries
+每个单元状态:
+yt_chem[e] = [cn_surf[1:Nrn]; cp_surf[1:Nrp]; ce[1:Nel]]
 
-## Debugging and Verification
-
-### Debug Options
-- `opt.debug_coupling=true`: Print detailed coupling logs
-- `opt.debug_log_path="output/debug.log"`: Write debug logs to file
-- Debug logs include prefactors, coefficients, voltages for each element
-
-### Verification Scripts
-`tools/`: Verification and debugging scripts
-- `verify_czm_system.jl`: Verify CZM implementation
-- `check_branch_currents.jl`: Verify current distribution
-- `check_thermal_kernels.jl`: Verify thermal model
-- Various mesh checking scripts
-
-### Documentation
-`docs/`: Technical documentation and verification notes
-- `SPMe_Thermal2D_Theory_vs_Code.md`: Theory-code comparison
-- `Jellyroll_Thermal_Nondim.md`: Nondimensionalization details
-- `CZM_Thermal_Coupling_Plan.md`: CZM coupling architecture
-
-## Common Patterns
-
-### Setting Up a Simulation
-1. Choose cell parameters: `param_dim = JuBat.ChooseCell("Jellyroll")`
-2. Configure options: `opt = JuBat.Option(); opt.model="SPMe"; opt.thermal_enabled=true`
-3. Create case: `case = JuBat.SetCase(param_dim, opt)`
-4. Create mesh (if thermal2D): `mesh_data = jellyroll_collector_seed_mesh(...)`
-5. Solve: `result = JuBat.Solve(case)`
-6. Plot: `plot(result["time [s]"], result["cell voltage [V]"])`
-
-### Accessing Results
-Results are stored as Dict with keys like:
-- `time [s]`: Time vector
-- `cell voltage [V]`: Cell voltage over time
-- `temperature`: Temperature field (if thermal enabled)
-- `negative particle lithium concentration`: Concentration profiles
-- Mechanical stress fields (if mechanical enabled)
-- Damage variables (if CZM enabled)
-
-### Modifying Current Profiles
-```julia
-# Constant current
-opt.Current = x -> 5.0  # 5A constant
-
-# Time-dependent current
-opt.Current = x -> (x < 1800) ? 5.0 : -5.0  # Charge then discharge
-
-# Multi-step profile
-opt.Current = x -> begin
-    if x < 3600; return 5.0
-    elseif x < 7200; return 0.0
-    else; return -5.0
-    end
-end
+矩阵结构:
+M_global = blockdiag(M_elems..., MT)
 ```
 
-## Important Notes
+详见 `md/08_逐单元算法.md`。
 
-### Dimensionless vs Dimensional
-- Internal calculations use dimensionless variables
-- Parameters are normalized in `NormaliseParam`
-- Results may need dimensionalization for interpretation
-- Reference values in `param_dim.scale` (T_ref, I_ref, etc.)
+### 4.2 Jellyroll 几何
 
-### Mesh Resolution
-- Higher `gsorder` (Gaussian quadrature order) = better accuracy, slower
-- Thermal mesh resolution controlled by `n_theta` in jellyroll mesh
-- Balance between accuracy and computational cost
+采用阿基米德螺旋线描述：`r(θ) = a + bθ`
 
-### Time Stepping
-- Use adaptive time stepping for stiff problems: `dtType="auto"`
-- Start with small `dt_min`, allow larger `dt_max`
-- Convergence issues: reduce `dt_max` or check parameters
+- 内半径 `a = R_in`
+- 螺旋增长率 `b = t_repeat / (2π)`
+- 层序: PE → PCC → PE → SP → NE → NCC → NE → SP
 
-### State Management
-- For cycle simulations, use `final_state` from one phase as `initial_state` for next
-- Damage state accumulates across cycles
-- Temperature can be reset between cycles with `reset_T_each_cycle=true`
+详见 `md/02_几何与网格.md`。
+
+### 4.3 耦合数据流
+
+```
+SPMe (电化学)
+    │ 传递内热源 q_e (反应热+可逆热+欧姆热)
+    ▼
+Thermal2D (热模型)
+    │ 传递单元均温 T_e
+    ▼
+SPMe (温度影响反应速率、电导率)
+    │
+    │ 传递扩散应力 + 热应力
+    ▼
+CZM (内聚力模型)
+    │ 传递损伤状态 D
+    ▼
+┌─────────────────────────────┐
+│ 分流求解器 (影响电流分布)    │
+│ 界面热阻模型 (影响层间导热)  │
+└─────────────────────────────┘
+```
+
+详见 `md/10_参数传递与模块架构.md`。
+
+---
+
+## 5. 关键配置选项
+
+### 5.1 Option 结构 (`src/Option.jl`)
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `model` | "SPM" | 模型类型，Jellyroll 用 "SPMe" |
+| `Nrp`, `Nrn` | 10 | 正/负极颗粒网格点数 |
+| `Np`, `Ns`, `Nn` | 10 | 电极/隔膜网格点数 |
+| `gsorder` | 2 | 高斯积分阶数 |
+| `Current` | x->5.0 | 电流函数 I(t) |
+| `time` | [0, 3600] | 仿真时间范围 |
+| `dt` | [1e-6, 10] | 自适应时间步范围 |
+| `solveType` | "Crank-Nicolson" | 时间离散格式 |
+
+### 5.2 热学选项
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `thermal_enabled` | false | 启用热耦合 |
+| `thermalmodel` | "none" | 热模型类型，用 "distributed2D" 或 "ring2D_polar" |
+| `cool_method` | "surface" | 冷却方式: "surface" 或 "tab" |
+| `per_element_spme` | false | 启用逐单元 SPMe |
+
+### 5.3 机械/CZM 选项
+
+| 字段 | 默认值 | 说明 |
+|------|--------|------|
+| `mechanicalmodel` | "none" | 机械模型，用 "full" |
+| `czm_enabled` | false | 启用 CZM |
+| `czm_update_interval` | 1 | 损伤更新间隔 |
+| `czm_iter_method` | "basic" | CZM 迭代方法 |
+
+---
+
+## 6. 输出变量
+
+### 6.1 基础变量
+
+| 键 | 类型 | 说明 |
+|----|------|------|
+| `time [s]` | Vector | 时间序列 |
+| `cell voltage [V]` | Vector | 端电压 |
+| `temperature` | Float64 | 体积平均温度 (K) |
+
+### 6.2 热学变量
+
+| 键 | 说明 |
+|----|------|
+| `thermal2D temperature [K]` | 节点温度场 |
+| `thermal2D element current` | 各单元电流 |
+| `thermal2D element area` | 各单元面积 |
+| `heat_source_fields` | 各单元热源 |
+
+### 6.3 分层热源 (W/m³)
+
+| 键 | 说明 |
+|----|------|
+| `thermal2D Q_rxn_NE [W/m3]` | 负极反应热 |
+| `thermal2D Q_rev_NE [W/m3]` | 负极可逆热 |
+| `thermal2D Q_SP [W/m3]` | 隔膜欧姆热 |
+| `thermal2D Q_rxn_PE [W/m3]` | 正极反应热 |
+| `thermal2D Q_PCC/NCC [W/m3]` | 集流体欧姆热 |
+
+### 6.4 CZM 变量
+
+| 键 | 说明 |
+|----|------|
+| `D_max` | 最大损伤值 |
+| `D_mean` | 平均损伤值 |
+| `n_fractured` | 完全断裂数量 |
+| `soh` | 健康状态 |
+
+---
+
+## 7. 代码文件组织
+
+### 7.1 核心求解
+
+| 文件 | 功能 |
+|------|------|
+| `src/Solve.jl` | 主求解器、CallModel_MultiSPMe |
+| `src/SPMe.jl` | SPMe 模型、SPMe_element |
+| `src/CycleSolver.jl` | 循环求解器、PhaseResult/CycleResult |
+
+### 7.2 热模型
+
+| 文件 | 功能 |
+|------|------|
+| `src/ThermalDistributed.jl` | 二维分布式热模型、边界条件 |
+| `src/ThermalPolar2D.jl` | 极坐标 FVM 求解器 |
+
+### 7.3 CZM
+
+| 文件 | 功能 |
+|------|------|
+| `src/czm.jl` | CZM 本构、create_czm_mesh |
+| `src/CzmSolve.jl` | Newton-Raphson CZM 求解 |
+| `src/mechanical.jl` | 应力计算 |
+
+### 7.4 Jellyroll
+
+| 文件 | 功能 |
+|------|------|
+| `src/Jellyrollmodel.jl` | 螺旋几何、collector-seeded网格 |
+| `src/parameters/Jellyroll.jl` | Jellyroll 参数集 |
+
+### 7.5 并行求解
+
+| 文件 | 功能 |
+|------|------|
+| `src/Parallelsolution.jl` | 分流求解器、solve_branch_currents_newton |
+
+---
+
+## 8. 调试与验证
+
+### 8.1 调试选项
+
+```julia
+opt.debug_coupling = true
+opt.debug_log_path = "output/debug.log"
+opt.debug_sample_elems = [1, 40, 80]  # 跟踪特定单元
+```
+
+### 8.2 常见问题
+
+| 问题 | 解决方案 |
+|------|----------|
+| 收敛困难 | 减小 `dt_max`，检查参数归一化 |
+| 温度异常 | 检查热源计算、边界条件 |
+| CZM 不收敛 | 降低 `czm_update_interval`，检查刚度参数 |
+| 截止电压误触发 | 检查分流求解器预因子 |
+
+---
+
+## 9. 开发约定
+
+### 9.1 无量纲化
+
+内部计算使用无量纲变量，参数在 `NormaliseParam` 中归一化：
+- 长度: `L_ref = L_th`
+- 时间: `t_ref = L_th² / α_th`
+- 温度: `T_ref`
+- 电流: `I_ref = I_typ`
+
+结果需通过 `param_dim.scale` 中的参考值还原。
+
+### 9.2 状态管理
+
+- 循环仿真中，`final_state` 作为下一相位的 `initial_state`
+- 损伤状态跨周期累积
+- 可通过 `reset_T_each_cycle = true` 重置温度
+
+### 9.3 网格分辨率
+
+- `nθ` 控制热网格周向分辨率 (典型值 80-200)
+- `gsorder` 控制积分精度 (2-3)
+- 平衡精度与计算成本
+
+---
+
+## 10. 示例文件
+
+| 文件 | 说明 |
+|------|------|
+| `example/minimal_example.jl` | 基础仿真 |
+| `example/SPMe_Thermal_example.jl` | 电化学-热耦合 |
+| `example/czm_cycle_example.jl` | CZM 循环仿真 |
+| `example/testexample.jl` | 全耦合仿真 |

@@ -257,7 +257,7 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     
     # 施加边界条件
     bc_nodes = Dict{Int, Symbol}()
-    is_inner, is_outer = identify_boundary_nodes(mesh, case.param_dim, case.opt)
+    is_inner, is_outer = identify_boundary_nodes(mesh, case.param, case.opt)
     for i in 1:nnode
         if is_inner[i] || is_outer[i]
             bc_nodes[i] = :fixed_xy
@@ -339,7 +339,7 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     end
     
     # 写入结果（转换为有量纲）
-    L_ref = param.scale.L_th
+    L_ref = param.scale.L  # 使用统一长度尺度
     new_variables = copy(variables)
     new_variables["displacement x"] = U_M[1:2:end] .* L_ref
     new_variables["displacement y"] = U_M[2:2:end] .* L_ref
