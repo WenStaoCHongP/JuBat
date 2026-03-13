@@ -7,17 +7,26 @@ Materialmatrix.jl - constitutive and gap-conductance models.
 # ========================================================================
 
 """
-	thermal_capacity_weights_2d(param, fks, ele_of_gp, wJ, L_th)
+	thermal_capacity_weights_2d(param, fks, ele_of_gp, wJ)
 
 Compute per-Gauss-point capacity weights for jellyroll 2D thermal assembly.
+
+网格已无量纲化，直接使用 wJ。
 """
-function thermal_capacity_weights_2d(param::Params, fks::Matrix{Float64}, ele_of_gp::Vector{Int64}, wJ::Vector{Float64}, L_th::Float64)
+function thermal_capacity_weights_2d(param::Params, fks::Matrix{Float64}, ele_of_gp::Vector{Int64}, wJ::Vector{Float64})
 	ne = size(fks, 1)
 	rho_c_e = zeros(Float64, ne)
 	@inbounds for e in 1:ne
-		rho_c_e[e] = fks[e, 1] * param.NE.rho + fks[e, 2] * param.SP.rho + fks[e, 3] * param.PE.rho + fks[e, 4] * param.PCC.rho + fks[e, 5] * param.NCC.rho
+		# 体积热容 (ρc)* = ρ* · c*
+		# param.layer.rho = 无量纲密度 ρ*
+		# param.layer.heat_Q = 无量纲比热容 c*
+		rho_c_e[e] = fks[e, 1] * (param.NE.rho * param.NE.heat_Q) +
+		             fks[e, 2] * (param.SP.rho * param.SP.heat_Q) +
+		             fks[e, 3] * (param.PE.rho * param.PE.heat_Q) +
+		             fks[e, 4] * (param.PCC.rho * param.PCC.heat_Q) +
+		             fks[e, 5] * (param.NCC.rho * param.NCC.heat_Q)
 	end
-	return rho_c_e[ele_of_gp] .* (wJ ./ L_th^2)
+	return rho_c_e[ele_of_gp] .* wJ
 end
 
 """
