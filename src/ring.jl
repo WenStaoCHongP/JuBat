@@ -4,31 +4,9 @@ if !isdefined(@__MODULE__, :ShapeFunction2D)
     include(joinpath(@__DIR__, "SetMesh.jl"))
 end
 
-"""
-    ring_mesh(param; ntheta, dr, nr, phase, gsorder)
-
-Build a Q4 ring mesh using equal-angle segmentation and radial seeding.
-Returns a NamedTuple with mesh and boundary node sets.
-
-# Arguments
-- `param`: Normalized parameter set (`case.param`) that provides
-           `param.cell.Rin` and `param.cell.Rout` in nondimensional form
-- `ntheta`: Number of angular divisions
-- `dr`: Nondimensional radial step size (used if nr is nothing)
-- `nr`: Number of radial divisions (overrides dr)
-- `phase`: Phase offset for theta [radians]
-- `gsorder`: Gauss integration order
-
-# Returns
-- `mesh`: Mesh struct with nondimensional node coordinates
-- `inner_nodes`, `outer_nodes`: Boundary node indices
-- `r`: Nondimensional radial coordinates
-- `theta`, `nr`, `ntheta`: Mesh metadata
-"""
 function ring_mesh(param;
     ntheta::Int=40,
-    dr::Union{Nothing,Float64}=nothing,
-    nr::Union{Nothing,Int}=nothing,
+    nr::Int=20,
     phase::Float64=0.0,
     gsorder::Int=2)
 
@@ -37,20 +15,17 @@ function ring_mesh(param;
 
     (Rout > Rin) || error("Rout must be greater than Rin")
     (ntheta >= 3) || error("ntheta must be >= 3")
+    (nr >= 1) || error("nr must be >= 1")
 
-    dr_eff = dr === nothing ? (Rout - Rin) / 20 : dr
-    (dr_eff > 0.0) || error("dr must be positive")
-
-    nr_eff = nr === nothing ? max(1, round(Int, (Rout - Rin) / dr_eff)) : max(1, nr)
-    r = collect(range(Rin, Rout; length=nr_eff + 1))
+    r = collect(range(Rin, Rout; length=nr + 1))
     theta = phase .+ collect(range(0.0, 2.0 * pi; length=ntheta + 1))[1:ntheta]
 
-    nnode = (nr_eff + 1) * ntheta
+    nnode = (nr + 1) * ntheta
     node = zeros(Float64, nnode, 2)
 
     idx(ir, it) = (ir - 1) * ntheta + it
 
-    for ir in 1:(nr_eff + 1)
+    for ir in 1:(nr + 1)
         for it in 1:ntheta
             n = idx(ir, it)
             node[n, 1] = r[ir] * cos(theta[it])
@@ -58,10 +33,10 @@ function ring_mesh(param;
         end
     end
 
-    ne = nr_eff * ntheta
+    ne = nr * ntheta
     element = zeros(Int64, ne, 4)
     e = 0
-    for ir in 1:nr_eff
+    for ir in 1:nr
         for it in 1:ntheta
             it_next = it == ntheta ? 1 : it + 1
             e += 1
@@ -93,7 +68,7 @@ function ring_mesh(param;
     mesh = Mesh("Q4", 2, node, nnode, element, gs)
 
     inner_nodes = [idx(1, it) for it in 1:ntheta]
-    outer_nodes = [idx(nr_eff + 1, it) for it in 1:ntheta]
+    outer_nodes = [idx(nr + 1, it) for it in 1:ntheta]
 
     return (
         mesh = mesh,
@@ -101,7 +76,7 @@ function ring_mesh(param;
         outer_nodes = outer_nodes,
         r = r,
         theta = vcat(theta, theta[1] + 2.0 * pi),
-        nr = nr_eff,
+        nr = nr,
         ntheta = ntheta
     )
 end

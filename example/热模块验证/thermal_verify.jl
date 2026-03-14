@@ -335,7 +335,8 @@ function solve_for_ntheta(param_dim, ntheta, dr, model)
 
     Rin = param_dim.cell.Rin
     Rout = param_dim.cell.Rout
-    mesh_data = JuBat.ring_mesh(case.param, ntheta=ntheta, dr=dr / scale.L, gsorder=2)
+    nr = round(Int, (Rout - Rin) / dr)
+    mesh_data = JuBat.ring_mesh(case.param, ntheta=ntheta, nr=nr, gsorder=2)
     mesh = mesh_data.mesh
     case.mesh["thermal2D"] = mesh
 
@@ -347,12 +348,13 @@ function solve_for_ntheta(param_dim, ntheta, dr, model)
     variables["T_nodes"] = fill(param_dim.cell.T0 / T_ref, mesh.nlen)
     variables["thermal2D outer_nodes"] = mesh_data.outer_nodes
     if model == "ring2D_polar"
-        variables["heat_source_nodes"] = fill(q0_nd, mesh.nlen)
+        ne = size(mesh.element, 1)
+        variables["heat_source_fields"] = fill(q0_nd, ne)
     end
 
     update_fn = (t, vars) -> begin
         if model == "ring2D_polar"
-            vars["heat_source_nodes"] = fill(q0_nd, mesh.nlen)
+            vars["heat_source_fields"] = fill(q0_nd, ne)
         else
             vars["heat_source_fields"] = compute_q_elem(mesh, q_func, t) ./ q_ref
         end
@@ -397,7 +399,8 @@ function run_case(param_dim, ntheta, dr, model, label)
 
     Rin = param_dim.cell.Rin
     Rout = param_dim.cell.Rout
-    mesh_data = JuBat.ring_mesh(case.param, ntheta=ntheta, dr=dr / scale.L, gsorder=2)
+    nr = round(Int, (Rout - Rin) / dr)
+    mesh_data = JuBat.ring_mesh(case.param, ntheta=ntheta, nr=nr, gsorder=2)
     mesh = mesh_data.mesh
     case.mesh["thermal2D"] = mesh
 
@@ -409,12 +412,13 @@ function run_case(param_dim, ntheta, dr, model, label)
     variables["T_nodes"] = fill(param_dim.cell.T0 / T_ref, mesh.nlen)
     variables["thermal2D outer_nodes"] = mesh_data.outer_nodes
     if model == "ring2D_polar"
-        variables["heat_source_nodes"] = fill(q0_nd, mesh.nlen)
+        ne = size(mesh.element, 1)
+        variables["heat_source_fields"] = fill(q0_nd, ne)
     end
 
     update_fn = (t, vars) -> begin
         if model == "ring2D_polar"
-            vars["heat_source_nodes"] = fill(q0_nd, mesh.nlen)
+            vars["heat_source_fields"] = fill(q0_nd, ne)
         else
             vars["heat_source_fields"] = compute_q_elem(mesh, q_func, t) ./ q_ref
         end
@@ -499,7 +503,8 @@ function run_case_data(param_dim, ntheta, dr, model)
 
     Rin = param_dim.cell.Rin
     Rout = param_dim.cell.Rout
-    mesh_data = JuBat.ring_mesh(case.param, ntheta=ntheta, dr=dr / scale.L, gsorder=2)
+    nr = round(Int, (Rout - Rin) / dr)
+    mesh_data = JuBat.ring_mesh(case.param, ntheta=ntheta, nr=nr, gsorder=2)
     mesh = mesh_data.mesh
     case.mesh["thermal2D"] = mesh
 
@@ -511,12 +516,13 @@ function run_case_data(param_dim, ntheta, dr, model)
     variables["T_nodes"] = fill(param_dim.cell.T0 / T_ref, mesh.nlen)
     variables["thermal2D outer_nodes"] = mesh_data.outer_nodes
     if model == "ring2D_polar"
-        variables["heat_source_nodes"] = fill(q0_nd, mesh.nlen)
+        ne = size(mesh.element, 1)
+        variables["heat_source_fields"] = fill(q0_nd, ne)
     end
 
     update_fn = (t, vars) -> begin
         if model == "ring2D_polar"
-            vars["heat_source_nodes"] = fill(q0_nd, mesh.nlen)
+            vars["heat_source_fields"] = fill(q0_nd, ne)
         else
             vars["heat_source_fields"] = compute_q_elem(mesh, q_func, t) ./ q_ref
         end

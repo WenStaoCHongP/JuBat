@@ -200,36 +200,25 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64)
     K = copy(KT)
     F = copy(FT)
 
-    if case.opt.czm_enabled
-        czm_mesh = get(case.multi_spme_layout, "czm_mesh", nothing)
-        if czm_mesh === nothing
-            try
-                # CZM 网格创建使用无量纲参数
-                czm_mesh = create_czm_mesh(mesh, case.param)
-                case.multi_spme_layout["czm_mesh"] = czm_mesh
-            catch err
-                @warn "Failed to build CZM mesh for interface thermal resistance" exception=(err, catch_backtrace())
-            end
-        end
-        if czm_mesh !== nothing
-            param = case.param
-            for (elem_idx, czm_elem) in enumerate(czm_mesh.cohesive_elements)
-                state = czm_mesh.damage_states[elem_idx]
-                D = state.D
-                δ_n = state.δ_max_n
-                # 使用无量纲 cohesive 参数，返回无量纲 h_eff*
-                h_eff_nd = compute_gap_conductance(D, δ_n, param.cohesive)
-                # czm_elem.length 已无量纲（网格已归一化）
-                # 系数直接为 h_eff* * L*
-                coeff = h_eff_nd * czm_elem.length
-                n_bot = czm_elem.nodes_bottom
-                n_top = czm_elem.nodes_top
-                for (nb, nt) in zip(n_bot, n_top)
-                    K[nb, nb] -= coeff
-                    K[nb, nt] += coeff
-                    K[nt, nb] += coeff
-                    K[nt, nt] -= coeff
-                end
+    if case.opt.czm_enabled && haskey(case.multi_spme_layout, "czm_mesh")
+        czm_mesh = case.multi_spme_layout["czm_mesh"]
+        param = case.param
+        for (elem_idx, czm_elem) in enumerate(czm_mesh.cohesive_elements)
+            state = czm_mesh.damage_states[elem_idx]
+            D = state.D
+            δ_n = state.δ_max_n
+            # 使用无量纲 cohesive 参数，返回无量纲 h_eff*
+            h_eff_nd = compute_gap_conductance(D, δ_n, param.cohesive)
+            # czm_elem.length 已无量纲（网格已归一化）
+            # 系数直接为 h_eff* * L*
+            coeff = h_eff_nd * czm_elem.length
+            n_bot = czm_elem.nodes_bottom
+            n_top = czm_elem.nodes_top
+            for (nb, nt) in zip(n_bot, n_top)
+                K[nb, nb] -= coeff
+                K[nb, nt] += coeff
+                K[nt, nb] += coeff
+                K[nt, nt] -= coeff
             end
         end
     end
@@ -375,7 +364,7 @@ function heatQ_Source_with_czm(case::Case, variables::Dict{String,Union{Array{Fl
     
     # 获取单元电流和温度
     I_e = variables["thermal2D element current"]
-    T_nodes = get(variables, "T_nodes", fill(case.param.cell.T0, mesh.nlen))
+    T_nodes = variables["T_nodes"]
     T_e = element_nodal_mean(mesh, T_nodes)
     
     # 获取活跃单元（未断裂退出的）
