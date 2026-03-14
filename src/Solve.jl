@@ -36,9 +36,9 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
     result = nothing
     try
         if case.opt.model == "thermal"
-            t0 = case.opt.time[1]
-            t_end = case.opt.time[end]
-            dt = case.opt.dt[1]
+            t0 = case.opt.time[1]/case.param.scale.t0
+            t_end = case.opt.time[end]/case.param.scale.t0
+            dt = case.opt.dt[1]/case.param.scale.t0
             vars = case.multi_spme_layout["thermal_variables"]
             update_fn = case.multi_spme_layout["thermal_update_fn"]
             record = case.multi_spme_layout["thermal_record"]
