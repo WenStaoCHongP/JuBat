@@ -6,9 +6,10 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
     """
 
     if opt.model == "thermal"
+        param = NormaliseParam(param_dim)
         mesh = Dict{String, Mesh}()
         index = Dict{String, Union{Array{Int64}, Int64}}()
-        return Case(param_dim, param_dim, opt, mesh, index, Dict{String,Any}())
+        return Case(param_dim, param, opt, mesh, index, Dict{String,Any}())
     end
 
     param = NormaliseParam(param_dim)

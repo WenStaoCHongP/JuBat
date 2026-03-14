@@ -1,8 +1,9 @@
 using LinearAlgebra, Statistics, Plots, SparseArrays
+using Printf
 import PyPlot
 
 if !isdefined(Main, :JuBat)
-    include(joinpath(@__DIR__, "..", "src", "JuBat.jl"))
+    include(joinpath(@__DIR__, "..", "..", "src", "JuBat.jl"))
 end
 
 function compute_q_elem(mesh, q_func, t)
@@ -101,7 +102,7 @@ function rt_connectivity(nr, ntheta)
     return element
 end
 
-function rt_fem_assemble(r_nodes, theta_nodes, element, k_r, k_t, rho, cp, q0, h, T_amb)
+function rt_fem_assemble(r_nodes, theta_nodes, element, k_r, k_t, q0, Bi, T_amb)
     ntheta = length(theta_nodes)
     nr = length(r_nodes) - 1
     nnode = length(r_nodes) * ntheta
@@ -136,7 +137,7 @@ function rt_fem_assemble(r_nodes, theta_nodes, element, k_r, k_t, rho, cp, q0, h
                 for a in 1:4
                     ia = nodes[a]
                     Na = N[a]
-                    M[ia] += rho * cp * Na * Na * r_g * w
+                    M[ia] += Na * Na * r_g * w
                     F[ia] += q0 * Na * r_g * w
                     for b in 1:4
                         ib = nodes[b]
@@ -165,9 +166,9 @@ function rt_fem_assemble(r_nodes, theta_nodes, element, k_r, k_t, rho, cp, q0, h
             Jedge = r_edge * dtheta_ds
             wt = w * Jedge
             for (a, Na, ia) in ((1, N1, n1), (2, N2, n2))
-                F[ia] += h * T_amb * Na * wt
+                F[ia] += Bi * T_amb * Na * wt
                 for (b, Nb, ib) in ((1, N1, n1), (2, N2, n2))
-                    push!(I, ia); push!(J, ib); push!(V, -h * Na * Nb * wt)
+                    push!(I, ia); push!(J, ib); push!(V, -Bi * Na * Nb * wt)
                 end
             end
         end
@@ -181,19 +182,24 @@ end
 function run_rtheta_fem_case(param_dim, ntheta, dr, label)
     Rin = param_dim.cell.Rin
     Rout = param_dim.cell.Rout
-    r_nodes, theta_nodes, nr = rt_mesh(Rin, Rout, ntheta, dr)
+    scale = param_dim.scale
+    param = JuBat.NormaliseParam(param_dim)
+
+    Rin_nd = param.cell.Rin
+    Rout_nd = param.cell.Rout
+    dr_nd = dr / scale.L
+    r_nodes, theta_nodes, nr = rt_mesh(Rin_nd, Rout_nd, ntheta, dr_nd)
     element = rt_connectivity(nr, ntheta)
 
-    k_r = param_dim.cell.lambda_r
-    k_t = param_dim.cell.lambda_t
-    rho = param_dim.cell.rho
-    cp = param_dim.cell.heat_Q
-    h = param_dim.cell.h
-    T_f = param_dim.cell.T_amb
-    q0 = 2.0e5
+    k_r = param.cell.lambda_r
+    k_t = param.cell.lambda_t
+    Bi = scale.h
+    T_f_nd = param.cell.T_amb
+    q0_nd = 2.0e5 / scale.q
 
-    MT, KT, F = rt_fem_assemble(r_nodes, theta_nodes, element, k_r, k_t, rho, cp, q0, h, T_f)
-    T = -(KT \ F)
+    MT, KT, F = rt_fem_assemble(r_nodes, theta_nodes, element, k_r, k_t, q0_nd, Bi, T_f_nd)
+    T_nd = -(KT \ F)
+    T = T_nd .* scale.T_ref
 
     # Build cartesian coords for plotting
     nnode = length(r_nodes) * ntheta
@@ -202,8 +208,8 @@ function run_rtheta_fem_case(param_dim, ntheta, dr, label)
     for ir in 1:length(r_nodes)
         for it in 1:ntheta
             idx = (ir - 1) * ntheta + it
-            x[idx] = r_nodes[ir] * cos(theta_nodes[it])
-            y[idx] = r_nodes[ir] * sin(theta_nodes[it])
+            x[idx] = r_nodes[ir] * scale.L * cos(theta_nodes[it])
+            y[idx] = r_nodes[ir] * scale.L * sin(theta_nodes[it])
         end
     end
 
@@ -322,17 +328,19 @@ function solve_for_ntheta(param_dim, ntheta, dr, model)
     opt.time = [0.0, 3600]
     opt.dt = [1.0, 10]
     case = JuBat.SetCase(param_dim, opt)
-    Rin = param_dim.cell.Rin
-    Rout = param_dim.cell.Rout
-    mesh_data = JuBat.ring_mesh(Rin=Rin, Rout=Rout, ntheta=ntheta, dr=dr, gsorder=2)
-    mesh = mesh_data.mesh
-    case.mesh["thermal2D"] = mesh
 
     scale = param_dim.scale
     T_ref = scale.T_ref
-    q_th = scale.q_th
+    q_ref = scale.q  # 统一能量尺度热源参考 (P_ref / L^3)
+
+    Rin = param_dim.cell.Rin
+    Rout = param_dim.cell.Rout
+    mesh_data = JuBat.ring_mesh(case.param, ntheta=ntheta, dr=dr / scale.L, gsorder=2)
+    mesh = mesh_data.mesh
+    case.mesh["thermal2D"] = mesh
+
     q0 = 2.0e5
-    q0_nd = q0 / q_th
+    q0_nd = q0 / q_ref
     q_func = (r, theta, t) -> q0
 
     variables = Dict{String,Any}()
@@ -346,7 +354,7 @@ function solve_for_ntheta(param_dim, ntheta, dr, model)
         if model == "ring2D_polar"
             vars["heat_source_nodes"] = fill(q0_nd, mesh.nlen)
         else
-            vars["heat_source_fields"] = compute_q_elem(mesh, q_func, t) ./ q_th
+            vars["heat_source_fields"] = compute_q_elem(mesh, q_func, t) ./ q_ref
         end
     end
 
@@ -358,11 +366,12 @@ function solve_for_ntheta(param_dim, ntheta, dr, model)
     result = JuBat.Solve(case)
     T = result.T_nodes .* T_ref
 
-    r_nodes = hypot.(mesh.node[:, 1], mesh.node[:, 2])
+    # Convert normalized coordinates back to dimensional for exact solution comparison
+    r_nodes_dim = hypot.(mesh.node[:, 1], mesh.node[:, 2]) .* scale.L
     k_r = param_dim.cell.lambda_r
     h = param_dim.cell.h
     T_f = param_dim.cell.T_amb
-    T_exact = analytical_solution_ring.(r_nodes, q0, k_r, h, Rin, Rout, T_f)
+    T_exact = analytical_solution_ring.(r_nodes_dim, q0, k_r, h, Rin, Rout, T_f)
     err = T .- T_exact
     err_l2 = sqrt(mean(err .^ 2))
     err_linf = maximum(abs.(err))
@@ -382,17 +391,18 @@ function run_case(param_dim, ntheta, dr, model, label)
 
     case = JuBat.SetCase(param_dim, opt)
 
+    scale = param_dim.scale
+    T_ref = scale.T_ref
+    q_ref = scale.q  # 统一能量尺度热源参考 (P_ref / L^3)
+
     Rin = param_dim.cell.Rin
     Rout = param_dim.cell.Rout
-    mesh_data = JuBat.ring_mesh(Rin=Rin, Rout=Rout, ntheta=ntheta, dr=dr, gsorder=2)
+    mesh_data = JuBat.ring_mesh(case.param, ntheta=ntheta, dr=dr / scale.L, gsorder=2)
     mesh = mesh_data.mesh
     case.mesh["thermal2D"] = mesh
 
-    scale = param_dim.scale
-    T_ref = scale.T_ref
-    q_th = scale.q_th
     q0 = 2.0e5
-    q0_nd = q0 / q_th
+    q0_nd = q0 / q_ref
     q_func = (r, theta, t) -> q0
 
     variables = Dict{String,Any}()
@@ -406,7 +416,7 @@ function run_case(param_dim, ntheta, dr, model, label)
         if model == "ring2D_polar"
             vars["heat_source_nodes"] = fill(q0_nd, mesh.nlen)
         else
-            vars["heat_source_fields"] = compute_q_elem(mesh, q_func, t) ./ q_th
+            vars["heat_source_fields"] = compute_q_elem(mesh, q_func, t) ./ q_ref
         end
     end
 
@@ -418,33 +428,36 @@ function run_case(param_dim, ntheta, dr, model, label)
     result = JuBat.Solve(case)
     T = result.T_nodes .* T_ref
 
-    out_dir = normpath(joinpath(@__DIR__, "..", "output", "thermal_verify", label))
+    out_dir = normpath(joinpath(@__DIR__, "..", "..", "output", "thermal_verify", label))
     isdir(out_dir) || mkpath(out_dir)
     plot_mesh_outline(mesh, out_dir)
 
     r_prof, T_r = radial_profile(mesh, T)
+    r_prof_dim = r_prof .* scale.L  # Convert to dimensional for exact solution
     k_r = param_dim.cell.lambda_r
     h = param_dim.cell.h
     T_f = param_dim.cell.T_amb
-    T_r_exact = analytical_solution_ring.(r_prof, q0, k_r, h, Rin, Rout, T_f)
-    p_r = Plots.plot(r_prof, T_r, xlabel="r [m]", ylabel="T [K]", lw=2, label="FEM",
+    T_r_exact = analytical_solution_ring.(r_prof_dim, q0, k_r, h, Rin, Rout, T_f)
+    p_r = Plots.plot(r_prof_dim, T_r, xlabel="r [m]", ylabel="T [K]", lw=2, label="FEM",
         title="Radial Temperature Profile")
-    Plots.plot!(p_r, r_prof, T_r_exact, lw=2, linestyle=:dash, label="Exact")
+    Plots.plot!(p_r, r_prof_dim, T_r_exact, lw=2, linestyle=:dash, label="Exact")
     savefig(p_r, joinpath(out_dir, "ring_temperature_radial.png"))
 
     x = mesh.node[:, 1]
     y = mesh.node[:, 2]
     tris = quad_to_triangles(mesh.element)
+    Rin_nd = Rin / scale.L  # Normalized for mask calculation
+    Rout_nd = Rout / scale.L
     tripcolor_field(x, y, tris, T, joinpath(out_dir, "ring_temperature_field.png");
-        title="Ring Temperature Field", cmap="hot", Rin=Rin, Rout=Rout)
+        title="Ring Temperature Field", cmap="hot", Rin=Rin_nd, Rout=Rout_nd)
 
     theta_prof, T_theta = angular_profile(mesh, T)
     p_theta = Plots.plot(theta_prof, T_theta, xlabel="theta [rad]", ylabel="T [K]", lw=2,
         title="Angular Temperature Profile")
     savefig(p_theta, joinpath(out_dir, "ring_temperature_angular.png"))
 
-    r_nodes = hypot.(mesh.node[:, 1], mesh.node[:, 2])
-    T_exact = analytical_solution_ring.(r_nodes, q0, k_r, h, Rin, Rout, T_f)
+    r_nodes_dim = hypot.(mesh.node[:, 1], mesh.node[:, 2]) .* scale.L
+    T_exact = analytical_solution_ring.(r_nodes_dim, q0, k_r, h, Rin, Rout, T_f)
     err = T .- T_exact
     err_l2 = sqrt(mean(err .^ 2))
     err_linf = maximum(abs.(err))
@@ -464,7 +477,7 @@ function run_case(param_dim, ntheta, dr, model, label)
     worst_r = radius_variation_report(mesh, T)
 
     tripcolor_field(x, y, tris, err, joinpath(out_dir, "ring_temperature_error.png");
-        title="Temperature Error (T - T_exact)", cmap="coolwarm", Rin=Rin, Rout=Rout)
+        title="Temperature Error (T - T_exact)", cmap="coolwarm", Rin=Rin_nd, Rout=Rout_nd)
 
 
     return (out_dir=out_dir, ang_range=ang_range, ang_std=ang_std)
@@ -480,17 +493,18 @@ function run_case_data(param_dim, ntheta, dr, model)
 
     case = JuBat.SetCase(param_dim, opt)
 
+    scale = param_dim.scale
+    T_ref = scale.T_ref
+    q_ref = scale.q  # 统一能量尺度热源参考 (P_ref / L^3)
+
     Rin = param_dim.cell.Rin
     Rout = param_dim.cell.Rout
-    mesh_data = JuBat.ring_mesh(Rin=Rin, Rout=Rout, ntheta=ntheta, dr=dr, gsorder=2)
+    mesh_data = JuBat.ring_mesh(case.param, ntheta=ntheta, dr=dr / scale.L, gsorder=2)
     mesh = mesh_data.mesh
     case.mesh["thermal2D"] = mesh
 
-    scale = param_dim.scale
-    T_ref = scale.T_ref
-    q_th = scale.q_th
     q0 = 2.0e5
-    q0_nd = q0 / q_th
+    q0_nd = q0 / q_ref
     q_func = (r, theta, t) -> q0
 
     variables = Dict{String,Any}()
@@ -504,7 +518,7 @@ function run_case_data(param_dim, ntheta, dr, model)
         if model == "ring2D_polar"
             vars["heat_source_nodes"] = fill(q0_nd, mesh.nlen)
         else
-            vars["heat_source_fields"] = compute_q_elem(mesh, q_func, t) ./ q_th
+            vars["heat_source_fields"] = compute_q_elem(mesh, q_func, t) ./ q_ref
         end
     end
 
@@ -517,32 +531,53 @@ function run_case_data(param_dim, ntheta, dr, model)
     T = result.T_nodes .* T_ref
 
     r_prof, T_r = radial_profile(mesh, T)
+    r_prof_dim = r_prof .* scale.L  # Convert to dimensional for exact solution
     k_r = param_dim.cell.lambda_r
     h = param_dim.cell.h
     T_f = param_dim.cell.T_amb
-    T_r_exact = analytical_solution_ring.(r_prof, q0, k_r, h, Rin, Rout, T_f)
+    T_r_exact = analytical_solution_ring.(r_prof_dim, q0, k_r, h, Rin, Rout, T_f)
     ang_range, ang_std = angular_variation(mesh, T)
 
-    return (mesh=mesh, mesh_data=mesh_data, T=T, r_prof=r_prof, T_r=T_r,
-        T_r_exact=T_r_exact, ang_range=ang_range, ang_std=ang_std)
+    r_nodes_dim = hypot.(mesh.node[:, 1], mesh.node[:, 2]) .* scale.L
+    T_exact = analytical_solution_ring.(r_nodes_dim, q0, k_r, h, Rin, Rout, T_f)
+    err = T .- T_exact
+    err_l2 = sqrt(mean(err .^ 2))
+    err_linf = maximum(abs.(err))
+    err_rel = err_l2 / max(1e-12, maximum(abs.(T_exact)))
+
+    update_fn !== nothing && update_fn(opt.time[end], variables)
+    T_exact_nd = T_exact ./ T_ref
+    res_l2, res_linf = steady_residual(case, variables, T_exact_nd, model, mesh_data)
+
+    return (mesh=mesh, mesh_data=mesh_data, T=T, r_prof=r_prof_dim, T_r=T_r,
+        T_r_exact=T_r_exact, ang_range=ang_range, ang_std=ang_std,
+        err_l2=err_l2, err_linf=err_linf, err_rel=err_rel,
+        res_l2=res_l2, res_linf=res_linf,
+        Tmin=minimum(T), Tmax=maximum(T))
 end
 
 function run_rtheta_fem_data(param_dim, ntheta, dr)
     Rin = param_dim.cell.Rin
     Rout = param_dim.cell.Rout
-    r_nodes, theta_nodes, nr = rt_mesh(Rin, Rout, ntheta, dr)
+    scale = param_dim.scale
+    param = JuBat.NormaliseParam(param_dim)
+
+    Rin_nd = param.cell.Rin
+    Rout_nd = param.cell.Rout
+    dr_nd = dr / scale.L
+    r_nodes, theta_nodes, nr = rt_mesh(Rin_nd, Rout_nd, ntheta, dr_nd)
     element = rt_connectivity(nr, ntheta)
 
-    k_r = param_dim.cell.lambda_r
-    k_t = param_dim.cell.lambda_t
-    rho = param_dim.cell.rho
-    cp = param_dim.cell.heat_Q
-    h = param_dim.cell.h
-    T_f = param_dim.cell.T_amb
+    k_r_nd = param.cell.lambda_r
+    k_t_nd = param.cell.lambda_t
+    Bi = scale.h
+    T_f_nd = param.cell.T_amb
     q0 = 2.0e5
+    q0_nd = q0 / scale.q
 
-    MT, KT, F = rt_fem_assemble(r_nodes, theta_nodes, element, k_r, k_t, rho, cp, q0, h, T_f)
-    T = -(KT \ F)
+    MT, KT, F = rt_fem_assemble(r_nodes, theta_nodes, element, k_r_nd, k_t_nd, q0_nd, Bi, T_f_nd)
+    T_nd = -(KT \ F)
+    T = T_nd .* scale.T_ref
 
     nnode = length(r_nodes) * ntheta
     x = zeros(Float64, nnode)
@@ -550,43 +585,103 @@ function run_rtheta_fem_data(param_dim, ntheta, dr)
     for ir in 1:length(r_nodes)
         for it in 1:ntheta
             idx = (ir - 1) * ntheta + it
-            x[idx] = r_nodes[ir] * cos(theta_nodes[it])
-            y[idx] = r_nodes[ir] * sin(theta_nodes[it])
+            x[idx] = r_nodes[ir] * scale.L * cos(theta_nodes[it])
+            y[idx] = r_nodes[ir] * scale.L * sin(theta_nodes[it])
         end
     end
 
-    r_prof = r_nodes
+    r_prof = r_nodes .* scale.L
     T_r = [mean(T[(ir - 1) * ntheta + 1:ir * ntheta]) for ir in 1:length(r_nodes)]
+    k_r = param_dim.cell.lambda_r
+    h = param_dim.cell.h
+    T_f = param_dim.cell.T_amb
     T_r_exact = analytical_solution_ring.(r_prof, q0, k_r, h, Rin, Rout, T_f)
     ang_range, ang_std = angular_variation((node = hcat(x, y),), T)
 
+    r_nodes_dim = hypot.(x, y)
+    T_exact = analytical_solution_ring.(r_nodes_dim, q0, k_r, h, Rin, Rout, T_f)
+    err = T .- T_exact
+    err_l2 = sqrt(mean(err .^ 2))
+    err_linf = maximum(abs.(err))
+    err_rel = err_l2 / max(1e-12, maximum(abs.(T_exact)))
+
+    res = KT * T_nd + F
+    res_l2 = sqrt(mean(res .^ 2))
+    res_linf = maximum(abs.(res))
+
     return (x=x, y=y, element=element, T=T, r_prof=r_prof, T_r=T_r,
-        T_r_exact=T_r_exact, ang_range=ang_range, ang_std=ang_std)
+        T_r_exact=T_r_exact, ang_range=ang_range, ang_std=ang_std,
+        err_l2=err_l2, err_linf=err_linf, err_rel=err_rel,
+        res_l2=res_l2, res_linf=res_linf,
+        Tmin=minimum(T), Tmax=maximum(T))
+end
+
+function print_check_summary(tag, data)
+    println("\n[Check] " * tag)
+    @printf("  T range [K]         : [%.6f, %.6f]\n", data.Tmin, data.Tmax)
+    @printf("  Error L2 [K]        : %.6e\n", data.err_l2)
+    @printf("  Error Linf [K]      : %.6e\n", data.err_linf)
+    @printf("  Error Rel [-]       : %.6e\n", data.err_rel)
+    @printf("  Angular range [K]   : %.6e\n", data.ang_range)
+    @printf("  Angular std [K]     : %.6e\n", data.ang_std)
+    @printf("  Residual L2 [-]     : %.6e\n", data.res_l2)
+    @printf("  Residual Linf [-]   : %.6e\n", data.res_linf)
+end
+
+function print_consistency_checks(fem, polar, fem_rt)
+    println("\n[Check] Cross-method consistency")
+    l2_polar_rt = sqrt(mean((polar.T .- fem_rt.T).^2))
+    linf_polar_rt = maximum(abs.(polar.T .- fem_rt.T))
+    l2_fem_polar = sqrt(mean((fem.T .- polar.T).^2))
+    linf_fem_polar = maximum(abs.(fem.T .- polar.T))
+
+    @printf("  Polar vs r-theta FEM L2 [K]   : %.6e\n", l2_polar_rt)
+    @printf("  Polar vs r-theta FEM Linf [K] : %.6e\n", linf_polar_rt)
+    @printf("  Q4 FEM vs Polar L2 [K]        : %.6e\n", l2_fem_polar)
+    @printf("  Q4 FEM vs Polar Linf [K]      : %.6e\n", linf_fem_polar)
+
+    if l2_polar_rt < 1e-2 && polar.err_rel < 0.2 && fem_rt.err_rel < 0.2
+        println("  Status: PASS (polar and r-theta FEM are mutually consistent)")
+    else
+        println("  Status: WARN (check heat source / boundary scaling)")
+    end
+
+    if fem.err_rel > 0.2 && l2_fem_polar > 5.0
+        println("  Q4 FEM Note: large deviation from polar/r-theta baseline, likely assembly/model mismatch instead of unit scaling.")
+    end
 end
 
 
 function main()
     param_dim = JuBat.ChooseCell("Ring")
+    scale = param_dim.scale
     Rin = param_dim.cell.Rin
     Rout = param_dim.cell.Rout
+    Rin_nd = Rin / scale.L  # Normalized for mask calculation
+    Rout_nd = Rout / scale.L
     ntheta = 40
     dr = (Rout - Rin) / 20
-    out_root = normpath(joinpath(@__DIR__, "..", "output", "thermal_verify"))
+    out_root = normpath(joinpath(@__DIR__, "..", "..", "output", "thermal_verify"))
     isdir(out_root) || mkpath(out_root)
 
     fem = run_case_data(param_dim, ntheta, dr, "ring2D")
     polar = run_case_data(param_dim, ntheta, dr, "ring2D_polar")
     fem_rt = run_rtheta_fem_data(param_dim, ntheta, dr)
 
+    print_check_summary("FEM (Q4)", fem)
+    print_check_summary("Polar FVM", polar)
+    print_check_summary("r-theta FEM", fem_rt)
+    print_consistency_checks(fem, polar, fem_rt)
+
     # Mesh outline (FEM mesh)
     plot_mesh_outline(fem.mesh, out_root)
 
-    # Temperature fields (three methods)
+    # Temperature fields (three methods) - use normalized Rin/Rout for mask
     tris_fem = quad_to_triangles(fem.mesh.element)
     tripcolor_field(fem.mesh.node[:, 1], fem.mesh.node[:, 2], tris_fem, fem.T,
-        joinpath(out_root, "ring_temperature_field_fem.png"); title="FEM (Q4) Temperature", cmap="hot", Rin=Rin, Rout=Rout)
+        joinpath(out_root, "ring_temperature_field_fem.png"); title="FEM (Q4) Temperature", cmap="hot", Rin=Rin_nd, Rout=Rout_nd)
     tripcolor_field(fem.mesh.node[:, 1], fem.mesh.node[:, 2], tris_fem, polar.T,
-        joinpath(out_root, "ring_temperature_field_polar.png"); title="Polar FVM Temperature", cmap="hot", Rin=Rin, Rout=Rout)
+        joinpath(out_root, "ring_temperature_field_polar.png"); title="Polar FVM Temperature", cmap="hot", Rin=Rin_nd, Rout=Rout_nd)
     tris_rt = quad_to_triangles(fem_rt.element)
     tripcolor_field(fem_rt.x, fem_rt.y, tris_rt, fem_rt.T,
         joinpath(out_root, "ring_temperature_field_fem_rt.png"); title="r-θ FEM Temperature", cmap="hot", Rin=Rin, Rout=Rout)

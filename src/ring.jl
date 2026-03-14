@@ -5,23 +5,43 @@ if !isdefined(@__MODULE__, :ShapeFunction2D)
 end
 
 """
-    ring_mesh(; Rin, Rout, ntheta, dr, nr, phase, gsorder)
+    ring_mesh(param; ntheta, dr, nr, phase, gsorder)
 
 Build a Q4 ring mesh using equal-angle segmentation and radial seeding.
 Returns a NamedTuple with mesh and boundary node sets.
+
+# Arguments
+- `param`: Normalized parameter set (`case.param`) that provides
+           `param.cell.Rin` and `param.cell.Rout` in nondimensional form
+- `ntheta`: Number of angular divisions
+- `dr`: Nondimensional radial step size (used if nr is nothing)
+- `nr`: Number of radial divisions (overrides dr)
+- `phase`: Phase offset for theta [radians]
+- `gsorder`: Gauss integration order
+
+# Returns
+- `mesh`: Mesh struct with nondimensional node coordinates
+- `inner_nodes`, `outer_nodes`: Boundary node indices
+- `r`: Nondimensional radial coordinates
+- `theta`, `nr`, `ntheta`: Mesh metadata
 """
-function ring_mesh(; Rin::Float64=1.92e-3,
-    Rout::Float64=0.021/2,
+function ring_mesh(param;
     ntheta::Int=40,
-    dr::Float64=(0.021/2 - 1.92e-3) / 20,
+    dr::Union{Nothing,Float64}=nothing,
     nr::Union{Nothing,Int}=nothing,
     phase::Float64=0.0,
     gsorder::Int=2)
 
+    Rin = param.cell.Rin
+    Rout = param.cell.Rout
+
     (Rout > Rin) || error("Rout must be greater than Rin")
     (ntheta >= 3) || error("ntheta must be >= 3")
 
-    nr_eff = nr === nothing ? max(1, round(Int, (Rout - Rin) / dr)) : max(1, nr)
+    dr_eff = dr === nothing ? (Rout - Rin) / 20 : dr
+    (dr_eff > 0.0) || error("dr must be positive")
+
+    nr_eff = nr === nothing ? max(1, round(Int, (Rout - Rin) / dr_eff)) : max(1, nr)
     r = collect(range(Rin, Rout; length=nr_eff + 1))
     theta = phase .+ collect(range(0.0, 2.0 * pi; length=ntheta + 1))[1:ntheta]
 

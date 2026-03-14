@@ -252,8 +252,9 @@ function ThermalDistributed2D_Ring(case::Case, variables::Dict{String,Any})
     Vi, Vj = mesh.element[mesh.gs.ele, :], mesh.element[mesh.gs.ele, :]
     ele_of_gp = mesh.gs.ele
 
-    # 使用无量纲参数
-    rho_c_nd = param.cell.rho  # (ρc)* = ρc / (ρc)_th，已在 SetParams 中归一化
+    # 使用统一无量纲体积热容定义，与 ThermalPolar2D_Ring 保持一致
+    # C* = param.cell.heat_Q, V* = param.cell.volume, (ρc)* = C* / V*
+    rho_c_nd = param.cell.heat_Q / max(param.cell.volume, 1e-30)
     k_r_nd = param.cell.lambda_r  # k_r* = k_r / k_th
     k_t_nd = param.cell.lambda_t  # k_t* = k_t / k_th
 
