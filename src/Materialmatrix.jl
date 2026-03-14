@@ -38,11 +38,12 @@ function thermal_anisotropic_conductivity_2d(param::Params,fks::Matrix{Float64},
 	ne = size(fks, 1)
 	lam_r_e = zeros(Float64, ne)
 	lam_t_e = zeros(Float64, ne)
-	eps = 1e-12
 	@inbounds for e in 1:ne
 		f = @view fks[e, :]
-		denom = f[1] / max(param.NE.lambda, eps) + f[2] / max(param.SP.lambda, eps) + f[3] / max(param.PE.lambda, eps) + f[4] / max(param.PCC.lambda, eps) + f[5] / max(param.NCC.lambda, eps)
-		lam_r_e[e] = denom > 0 ? (1.0 / denom) : 0.0
+		# 径向热导率：串联热阻模型，要求各层热导率 > 0
+		denom = f[1] / param.NE.lambda + f[2] / param.SP.lambda + f[3] / param.PE.lambda + f[4] / param.PCC.lambda + f[5] / param.NCC.lambda
+		denom > 0 || error("thermal_anisotropic_conductivity_2d: element $e has zero radial thermal conductivity (check lambda values)")
+		lam_r_e[e] = 1.0 / denom
 		lam_t_e[e] = f[1] * param.NE.lambda + f[2] * param.SP.lambda + f[3] * param.PE.lambda + f[4] * param.PCC.lambda + f[5] * param.NCC.lambda
 	end
 
@@ -318,7 +319,7 @@ function compute_gap_conductance(D::Float64, δ_n::Float64, cohesive)
 		h_c0 * (1.0 - D_clamped) + k_air / (delta + delta0)
 	end
 
-	denom = max(denom, 1e-30)
+	denom > 0 || error("compute_gap_conductance: zero or negative denominator (h_c0=$h_c0, k_air=$k_air, delta=$delta)")
 	return 1.0 / denom
 end
 

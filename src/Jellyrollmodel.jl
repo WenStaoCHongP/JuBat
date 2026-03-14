@@ -93,10 +93,7 @@ function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phas
         element_layer[e] = layer
 
         n2, n3 = mesh_unmerged.element[e, 2], mesh_unmerged.element[e, 3]
-        r_outer = 0.5 * (
-            hypot(mesh_unmerged.node[n2, 1], mesh_unmerged.node[n2, 2]) +
-            hypot(mesh_unmerged.node[n3, 1], mesh_unmerged.node[n3, 2])
-        )
+        r_outer = 0.5 * (hypot(mesh_unmerged.node[n2, 1], mesh_unmerged.node[n2, 2])+hypot(mesh_unmerged.node[n3, 1], mesh_unmerged.node[n3, 2]))
         is_inner_layer[e] = r_outer < (param.cell.Rout - param.cell.layer * 0.1)
     end
 
@@ -305,22 +302,14 @@ function jellyroll_element_properties(mesh, param)
         
         # 总面积
         A_total = A_NE + A_SP + A_PE + A_PCC + A_NCC
-        
+        A_total > 0 || error("jellyroll_element_properties: element $e has zero total area")
+
         # 归一化得到权重
-        if A_total > 0
-            layer_weights[e, 1] = A_NE / A_total   # NE
-            layer_weights[e, 2] = A_SP / A_total   # SP
-            layer_weights[e, 3] = A_PE / A_total   # PE
-            layer_weights[e, 4] = A_PCC / A_total  # PCC
-            layer_weights[e, 5] = A_NCC / A_total  # NCC
-        else
-            # 回退到厚度权重
-            layer_weights[e, 1] = 2*param.NE.thickness / param.cell.layer
-            layer_weights[e, 2] = 2*param.SP.thickness / param.cell.layer
-            layer_weights[e, 3] = 2*param.PE.thickness / param.cell.layer
-            layer_weights[e, 4] = param.PCC.thickness / param.cell.layer
-            layer_weights[e, 5] = param.NCC.thickness / param.cell.layer
-        end
+        layer_weights[e, 1] = A_NE / A_total   # NE
+        layer_weights[e, 2] = A_SP / A_total   # SP
+        layer_weights[e, 3] = A_PE / A_total   # PE
+        layer_weights[e, 4] = A_PCC / A_total  # PCC
+        layer_weights[e, 5] = A_NCC / A_total  # NCC
     end
     
     return areas, layer_weights
@@ -331,7 +320,7 @@ end
 # ========================================================================
 
 """
-    edge_boundary(mesh, nidx, param; which=:inner/:outer, theta_range=nothing, tol=1e-4)
+    edge_boundary(mesh, nidx, param; which=:inner/:outer, theta_range, tol=1e-4)
 
 基于螺旋方程的精确边界节点识别。
 
@@ -340,45 +329,33 @@ end
 - `nidx`: 节点索引
 - `param`: 无量纲参数对象
 - `which`: `:inner`（内螺旋）或 `:outer`（外螺旋）
-- `theta_range`: theta 范围，默认使用网格覆盖的完整角度区间
+- `theta_range`: theta 范围 (theta_min, theta_max)
 - `tol`: 距离容差（无量纲）
 
 # 返回
 - `Bool`: 是否为边界节点
 """
-function edge_boundary(mesh, nidx::Int, param; which::Symbol=:inner, theta_range::Union{Tuple{Float64,Float64},Nothing}=nothing, tol::Float64=1e-4)
+function edge_boundary(mesh, nidx::Int, param; which::Symbol=:inner, theta_range::Tuple{Float64,Float64}, tol::Float64=1e-4)
     a = param.cell.Rin
     b = param.cell.layer / (2 * pi)
     offset = which === :inner ? 0.0 : (which === :outer ? param.cell.layer : error("which must be :inner or :outer"))
-    
+
     x, y = mesh.node[nidx, 1], mesh.node[nidx, 2]
     r = hypot(x, y)
-    bval = max(b, 1e-12)
-    
-    # 确定 theta 范围
-    if theta_range === nothing
-        s_in, s_out = 0.0, param.cell.layer
-        theta_start = 0.0
-        theta_end = min((param.cell.Rout - a - s_out) / bval, (param.cell.Rout - a) / bval)
-        if which === :inner
-            theta_min, theta_max = theta_start, min(theta_start + 2.0 * pi, theta_end)
-        else
-            theta_min, theta_max = max(theta_end - 2.0 * pi, theta_start), theta_end
-        end
-    else
-        theta_min, theta_max = theta_range
-    end
-    
+    b > 0 || error("edge_boundary: param.cell.layer must be positive, got $(param.cell.layer)")
+
+    theta_min, theta_max = theta_range
+
     # 计算累计角度
-    theta_cum = (r - a - offset) / bval
+    theta_cum = (r - a - offset) / b
     (theta_cum < theta_min || theta_cum > theta_max) && return false
-    
+
     # 验证距离
     r_theo = a + b * theta_cum + offset
     x_theo = r_theo * cos(theta_cum)
     y_theo = r_theo * sin(theta_cum)
     dist = hypot(x - x_theo, y - y_theo)
-    
+
     return dist <= tol
 end
 
@@ -541,12 +518,10 @@ mesh_data = JuBat.jellyroll_collector_seed_mesh(param; nθ=80, gsorder=2)
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 ```
 """
-function setup_thermal2D_mesh(case, mesh_data; use_merged::Union{Nothing,Bool}=nothing)
+function setup_thermal2D_mesh(case, mesh_data; use_merged::Bool=false)
     case_new = deepcopy(case)
 
-    # 选择使用哪个网格（默认: czm_enabled=false 使用合并网格）
-    use_merged_flag = use_merged === nothing ? !case_new.opt.czm_enabled : use_merged
-    if use_merged_flag
+    if use_merged
         mesh_th = mesh_data.thermal2D_merged
         interface_pairs = Tuple{Int64, Int64}[]
     else
@@ -566,7 +541,7 @@ function setup_thermal2D_mesh(case, mesh_data; use_merged::Union{Nothing,Bool}=n
     ne = size(mesh_th.element, 1)
     nnode = mesh_th.nlen
     n_pairs = length(interface_pairs)
-    @debug "Thermal2D mesh setup" ne=ne nnode=nnode n_interface_pairs=n_pairs use_merged=use_merged_flag
+    @debug "Thermal2D mesh setup" ne=ne nnode=nnode n_interface_pairs=n_pairs use_merged=use_merged
 
     return case_new
 end
