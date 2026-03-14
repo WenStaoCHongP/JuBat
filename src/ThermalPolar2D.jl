@@ -36,7 +36,8 @@ function ThermalPolar2D_Ring(case::Case, variables::Dict{String,Any}, mesh_data)
     # where C* is total heat capacity and V* is normalized volume
     V_nd = param.cell.volume  # V* = V / L³
     C_nd = param.cell.heat_Q  # C* = m·c·T_ref/(t0·P_ref)
-    rho_c_nd = C_nd / max(V_nd, 1e-30)  # (ρc)* = C*/V*
+    V_nd > 0 || error("ThermalPolar2D_Ring: param.cell.volume must be positive, got $V_nd")
+    rho_c_nd = C_nd / V_nd  # (ρc)* = C*/V*
 
     # Anisotropic conductivities (already normalized)
     k_r_nd = param.cell.lambda_r  # k_r* = k_r · L · T_ref / P_ref
@@ -100,7 +101,8 @@ function ThermalPolar2D_Ring(case::Case, variables::Dict{String,Any}, mesh_data)
             # --- Radial conduction (inner neighbor) ---
             if ir > 1
                 # Conductance: a = k* · r_face · Δθ / Δr
-                a_rm = k_r_nd * r_imh * dtheta / max(dr_im, 1e-30)
+                dr_im > 0 || error("ThermalPolar2D_Ring: radial spacing dr_im must be positive at ir=$ir, got $dr_im")
+                a_rm = k_r_nd * r_imh * dtheta / dr_im
                 push!(I, idx); push!(J, idx); push!(V, -a_rm)
                 idxm = (ir - 2) * ntheta + it
                 push!(I, idx); push!(J, idxm); push!(V, a_rm)
@@ -108,7 +110,8 @@ function ThermalPolar2D_Ring(case::Case, variables::Dict{String,Any}, mesh_data)
 
             # --- Radial conduction (outer neighbor) ---
             if ir < length(r_nodes)
-                a_rp = k_r_nd * r_iph * dtheta / max(dr_ip, 1e-30)
+                dr_ip > 0 || error("ThermalPolar2D_Ring: radial spacing dr_ip must be positive at ir=$ir, got $dr_ip")
+                a_rp = k_r_nd * r_iph * dtheta / dr_ip
                 push!(I, idx); push!(J, idx); push!(V, -a_rp)
                 idxp = ir * ntheta + it
                 push!(I, idx); push!(J, idxp); push!(V, a_rp)
@@ -124,7 +127,8 @@ function ThermalPolar2D_Ring(case::Case, variables::Dict{String,Any}, mesh_data)
             itp = it == ntheta ? 1 : it + 1
             itm = it == 1 ? ntheta : it - 1
             # Conductance: a = k_t* · Δr_face / (r · Δθ)
-            a_t = k_t_nd * area_theta_nd / max(r_i * dtheta, 1e-30)
+            r_i > 0 || error("ThermalPolar2D_Ring: radial position r_i must be positive at ir=$ir, got $r_i")
+            a_t = k_t_nd * area_theta_nd / (r_i * dtheta)
             push!(I, idx); push!(J, idx); push!(V, -2.0 * a_t)
             push!(I, idx); push!(J, (ir - 1) * ntheta + itp); push!(V, a_t)
             push!(I, idx); push!(J, (ir - 1) * ntheta + itm); push!(V, a_t)
