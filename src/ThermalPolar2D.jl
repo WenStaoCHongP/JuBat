@@ -56,25 +56,17 @@ function ThermalPolar2D_Ring(case::Case, variables::Dict{String,Any}, mesh_data)
     M = zeros(Float64, nnode)
 
     # --- Heat source mapping: element -> node ---
+    q_elem = variables["heat_source_fields"]
     q_node = zeros(Float64, nnode)
-    q_elem = get(variables, "heat_source_fields", nothing)
-    q_nodes = get(variables, "heat_source_nodes", nothing)
-    if q_elem !== nothing
-        counts = zeros(Int, nnode)
-        for e in 1:size(mesh.element, 1)
-            for n in mesh.element[e, :]
-                q_node[n] += q_elem[e]
-                counts[n] += 1
-            end
+    counts = zeros(Int, nnode)
+    for e in 1:size(mesh.element, 1)
+        for n in mesh.element[e, :]
+            q_node[n] += q_elem[e]
+            counts[n] += 1
         end
-        for i in 1:nnode
-            counts[i] > 0 && (q_node[i] /= counts[i])
-        end
-    elseif q_nodes !== nothing
-        q_node = q_nodes
-        length(q_node) == nnode || error("heat_source_nodes length mismatch")
-    else
-        error("Missing heat source: set heat_source_fields or heat_source_nodes")
+    end
+    for i in 1:nnode
+        counts[i] > 0 && (q_node[i] /= counts[i])
     end
 
     # --- FVM assembly over radial rings ---
