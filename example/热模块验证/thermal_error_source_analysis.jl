@@ -151,8 +151,8 @@ function main()
     H = case.param_dim.cell.width
     V_total = case.param_dim.cell.volume
 
-    # JuBat 物理热源标度
-    q_ref = case.param_dim.scale.q_th
+    # JuBat 物理热源标度（统一能量尺度）
+    q_ref = case.param_dim.scale.q  # P_ref / L^3
     q_phys_hist = q_nd_hist .* q_ref
 
     # 外边界对流项

@@ -99,7 +99,7 @@ function run_distributed2d_result()
     end
 
     H = case.param_dim.cell.width
-    q_ref = case.param_dim.scale.q_th
+    q_ref = case.param_dim.scale.q  # 统一能量尺度热源参考 (P_ref / L^3)
     q_phys_hist = q_nd_hist .* q_ref
 
     T_vol = zeros(Float64, length(t))
