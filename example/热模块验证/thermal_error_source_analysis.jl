@@ -155,6 +155,9 @@ function main()
     q_ref = case.param_dim.scale.q  # P_ref / L^3
     q_phys_hist = q_nd_hist .* q_ref
 
+    # 几何尺度参数（网格坐标已归一化，需要转换为物理尺度）
+    scale_L = case.param_dim.scale.L  # 长度尺度 [m]
+
     # 外边界对流项
     Rout = case.param_dim.cell.Rout
     outer_edges = get_outer_edges(mesh, Rout)
@@ -181,28 +184,31 @@ function main()
         T_vol[k] = sum(T_elem .* A_elem) / max(1e-12, A_total)
 
         # 内热源总功率：∫ q dV
+        # 注意：A_elem 是无量纲面积 (dA* = dA/L²)，需要乘以 L² 转换为物理面积
         q_phys = q_phys_hist[:, k]
-        P_internal[k] = sum(q_phys .* A_elem) * H
+        P_internal[k] = sum(q_phys .* A_elem) * H * scale_L^2
 
         for key in component_keys
             q_comp = result[key][:, k]
-            P_components[key][k] = sum(q_comp .* A_elem) * H
+            P_components[key][k] = sum(q_comp .* A_elem) * H * scale_L^2
         end
 
         # 外圆周对流散热：∫ h(T-Tamb)dA
+        # 注意：mesh.node 是无量纲坐标，边长 L 是无量纲的，需要乘以 scale_L 转换为物理长度
         p_out = 0.0
         for (a, b) in outer_edges
             xa, ya = mesh.node[a, 1], mesh.node[a, 2]
             xb, yb = mesh.node[b, 1], mesh.node[b, 2]
             L = hypot(xb - xa, yb - ya)
             T_edge = 0.5 * (T_nodes[a] + T_nodes[b])
-            p_out += h * L * H * (T_edge - Tamb)
+            p_out += h * L * scale_L * H * (T_edge - Tamb)
         end
         P_boundary_outer[k] = p_out
 
         # surface 模式额外分布式散热（对应 ThermalDistributed.jl 里的 conv_factor）
         # 等效物理形式：2h/H * ∫(T-Tamb)dV = 2h * ∫(T-Tamb)dA
-        P_boundary_surface[k] = 2.0 * h * sum((T_elem .- Tamb) .* A_elem)
+        # 注意：A_elem 是无量纲面积，需要乘以 L² 转换为物理面积
+        P_boundary_surface[k] = 2.0 * h * sum((T_elem .- Tamb) .* A_elem) * scale_L^2
 
         P_boundary_total[k] = P_boundary_outer[k] + P_boundary_surface[k]
         P_net_jubat[k] = P_internal[k] - P_boundary_total[k]
