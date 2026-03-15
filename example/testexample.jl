@@ -60,7 +60,7 @@ function main()
     opt.thermal_enabled = true
     opt.thermalmodel = "distributed2D"
     opt.thermal_dim = "2D"
-    opt.cool_method = "none" #tab or surface
+    opt.cool_method = "surface" #tab or surface
     
     # 关键：启用多SPMe并行模式
     opt.per_element_spme = true
