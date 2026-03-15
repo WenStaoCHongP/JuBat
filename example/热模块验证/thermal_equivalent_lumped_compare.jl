@@ -102,6 +102,9 @@ function run_distributed2d_result()
     q_ref = case.param_dim.scale.q  # 统一能量尺度热源参考 (P_ref / L^3)
     q_phys_hist = q_nd_hist .* q_ref
 
+    # 几何尺度参数（网格坐标已归一化，需要转换为物理尺度）
+    scale_L = case.param_dim.scale.L  # 长度尺度 [m]
+
     T_vol = zeros(Float64, length(t))
     P_internal = zeros(Float64, length(t))
     P_boundary_eq = zeros(Float64, length(t))
@@ -130,10 +133,11 @@ function run_distributed2d_result()
         T_nodes = T_nodes_hist[:, k]
         T_elem = JuBat.element_nodal_mean(mesh, T_nodes)
         T_vol[k] = sum(T_elem .* A_elem) / max(1e-12, sum(A_elem))
-        P_internal[k] = sum(q_phys_hist[:, k] .* A_elem) * H
-        P_rxn[k] = sum((q_rxn_ne[:, k] .+ q_rxn_pe[:, k]) .* A_elem) * H
-        P_reversible[k] = sum((q_rev_ne[:, k] .+ q_rev_pe[:, k]) .* A_elem) * H
-        P_ohmic[k] = sum((q_ohm_s_ne[:, k] .+ q_ohm_e_ne[:, k] .+ q_sp[:, k] .+ q_ohm_s_pe[:, k] .+ q_ohm_e_pe[:, k] .+ q_pcc[:, k] .+ q_ncc[:, k]) .* A_elem) * H
+        # 注意：A_elem 是无量纲面积 (dA* = dA/L²)，需要乘以 L² 转换为物理面积
+        P_internal[k] = sum(q_phys_hist[:, k] .* A_elem) * H * scale_L^2
+        P_rxn[k] = sum((q_rxn_ne[:, k] .+ q_rxn_pe[:, k]) .* A_elem) * H * scale_L^2
+        P_reversible[k] = sum((q_rev_ne[:, k] .+ q_rev_pe[:, k]) .* A_elem) * H * scale_L^2
+        P_ohmic[k] = sum((q_ohm_s_ne[:, k] .+ q_ohm_e_ne[:, k] .+ q_sp[:, k] .+ q_ohm_s_pe[:, k] .+ q_ohm_e_pe[:, k] .+ q_pcc[:, k] .+ q_ncc[:, k]) .* A_elem) * H * scale_L^2
         P_boundary_eq[k] = h * A_cool * (T_vol[k] - Tamb)
         P_net[k] = P_internal[k] - P_boundary_eq[k]
     end
