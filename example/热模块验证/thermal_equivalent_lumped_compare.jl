@@ -9,7 +9,7 @@
 
 using LinearAlgebra, Statistics, Printf, CSV, Plots
 
-include(joinpath(@__DIR__, "../src/JuBat.jl"))
+include(joinpath(@__DIR__, "../../src/JuBat.jl"))
 using .JuBat
 
 function interp_linear(x::Vector{Float64}, y::Vector{Float64}, xi::Vector{Float64})
@@ -48,6 +48,31 @@ function derivative_centered(t::Vector{Float64}, y::Vector{Float64})
     return dy
 end
 
+function get_outer_edges(mesh, Rout::Float64)
+    x = mesh.node[:, 1]
+    y = mesh.node[:, 2]
+    r = sqrt.(x .^ 2 .+ y .^ 2)
+    tol = max(1e-8, 1e-4 * Rout)
+    is_outer = abs.(r .- Rout) .<= tol
+
+    seen = Set{Tuple{Int, Int}}()
+    edges = Tuple{Int, Int}[]
+
+    @inbounds for e in 1:size(mesh.element, 1)
+        n1, n2, n3, n4 = mesh.element[e, :]
+        for (a, b) in ((n1, n2), (n2, n3), (n3, n4), (n4, n1))
+            if is_outer[a] && is_outer[b]
+                key = a < b ? (a, b) : (b, a)
+                if !(key in seen)
+                    push!(seen, key)
+                    push!(edges, key)
+                end
+            end
+        end
+    end
+    return edges
+end
+
 function build_option(; thermalmodel::String)
     opt = JuBat.Option()
     opt.model = "SPMe"
@@ -60,7 +85,7 @@ function build_option(; thermalmodel::String)
     opt.dimension = 1
     opt.mechanicalmodel = "none"
     opt.Current = _ -> 5.0
-    opt.time = [0.0, 60.0]
+    opt.time = [0.0, 3600.0]
     opt.dt = [0.5, 10.0]
     opt.dtType = "auto"
     opt.jacobi = "update"
@@ -107,15 +132,18 @@ function run_distributed2d_result()
 
     T_vol = zeros(Float64, length(t))
     P_internal = zeros(Float64, length(t))
-    P_boundary_eq = zeros(Float64, length(t))
+    P_boundary_outer = zeros(Float64, length(t))
+    P_boundary_surface = zeros(Float64, length(t))
+    P_boundary_total = zeros(Float64, length(t))
     P_net = zeros(Float64, length(t))
     P_rxn = zeros(Float64, length(t))
     P_ohmic = zeros(Float64, length(t))
     P_reversible = zeros(Float64, length(t))
 
     h = case.param_dim.cell.h
-    A_cool = case.param_dim.cell.cooling_surface
     Tamb = case.param_dim.cell.T_amb
+    Rout = case.param_dim.cell.Rout
+    outer_edges = get_outer_edges(mesh, Rout)
 
     q_rxn_ne = result["thermal2D Q_rxn_NE [W/m3]"]
     q_rxn_pe = result["thermal2D Q_rxn_PE [W/m3]"]
@@ -138,11 +166,28 @@ function run_distributed2d_result()
         P_rxn[k] = sum((q_rxn_ne[:, k] .+ q_rxn_pe[:, k]) .* A_elem) * H * scale_L^2
         P_reversible[k] = sum((q_rev_ne[:, k] .+ q_rev_pe[:, k]) .* A_elem) * H * scale_L^2
         P_ohmic[k] = sum((q_ohm_s_ne[:, k] .+ q_ohm_e_ne[:, k] .+ q_sp[:, k] .+ q_ohm_s_pe[:, k] .+ q_ohm_e_pe[:, k] .+ q_pcc[:, k] .+ q_ncc[:, k]) .* A_elem) * H * scale_L^2
-        P_boundary_eq[k] = h * A_cool * (T_vol[k] - Tamb)
-        P_net[k] = P_internal[k] - P_boundary_eq[k]
+
+        # 外圆周对流散热：∫ h(T-Tamb)dA_outer
+        # mesh.node 是无量纲坐标，边长需乘 scale_L 转换为物理长度
+        p_out = 0.0
+        for (a, b) in outer_edges
+            xa, ya = mesh.node[a, 1], mesh.node[a, 2]
+            xb, yb = mesh.node[b, 1], mesh.node[b, 2]
+            L_edge = hypot(xb - xa, yb - ya)
+            T_edge = 0.5 * (T_nodes[a] + T_nodes[b])
+            p_out += h * L_edge * scale_L * H * (T_edge - Tamb)
+        end
+        P_boundary_outer[k] = p_out
+
+        # surface 模式分布式散热：2h/H * ∫(T-Tamb)dV = 2h * ∫(T-Tamb)dA
+        # A_elem 是无量纲面积，需乘 L² 转换为物理面积
+        P_boundary_surface[k] = 2.0 * h * sum((T_elem .- Tamb) .* A_elem) * scale_L^2
+
+        P_boundary_total[k] = P_boundary_outer[k] + P_boundary_surface[k]
+        P_net[k] = P_internal[k] - P_boundary_total[k]
     end
 
-    return t, T_vol, P_internal, P_boundary_eq, P_net, P_rxn, P_ohmic, P_reversible
+    return t, T_vol, P_internal, P_boundary_total, P_net, P_rxn, P_ohmic, P_reversible
 end
 
 function run_lumped_result()
@@ -184,7 +229,7 @@ function main()
     Pnetlp_i = interp_linear(tlp, Pnetlp, t2d)
 
     # PyBaMM 温度与等效净热源
-    ref_tbl = CSV.File(joinpath(@__DIR__, "../src/data/pybamm_SPMe_LGM50_1.0C.csv"))
+    ref_tbl = CSV.File(joinpath(@__DIR__, "../../src/data/pybamm_SPMe_LGM50_1.0C.csv"))
     tref = Float64.(getproperty(ref_tbl, Symbol("time [s]")))
     Tref = Float64.(getproperty(ref_tbl, Symbol("temperature [K]")))
     Tref_i = interp_linear(tref, Tref, t2d)
@@ -226,7 +271,9 @@ function main()
     @printf("  Lumped ΔT: %.6f K\n", Tlp_i[end] - Tlp_i[1])
     @printf("  PyBaMM ΔT: %.6f K\n", Tref_i[end] - Tref_i[1])
 
-    out_csv = joinpath(@__DIR__, "../output/thermal_equivalent_lumped_compare.csv")
+    out_dir = joinpath(@__DIR__, "../../output")
+    isdir(out_dir) || mkpath(out_dir)
+    out_csv = joinpath(out_dir, "thermal_equivalent_lumped_compare.csv")
     open(out_csv, "w") do io
         println(io, "time_s,T_2d_equiv_K,T_lumped_K,T_pybamm_K,Pin_2d_W,Pout_2d_W,Pnet_2d_W,Pin_lumped_W,Pout_lumped_W,Pnet_lumped_W,Pnet_pybamm_equiv_W,P_rxn_2d_W,P_ohm_2d_W,P_rev_2d_W,Q_total_pybamm_W,Q_ohmic_pybamm_W,Q_irreversible_pybamm_W,Q_reversible_pybamm_W")
         @inbounds for k in eachindex(t2d)
@@ -239,12 +286,12 @@ function main()
     pT = plot(t2d, T2d, label="2D equivalent lumped T", linewidth=2, xlabel="Time (s)", ylabel="Temperature (K)", title="Temperature Comparison")
     plot!(pT, t2d, Tlp_i, label="Thermal.jl lumped T", linewidth=2)
     plot!(pT, t2d, Tref_i, label="PyBaMM T", linewidth=2, linestyle=:dash)
-    savefig(pT, joinpath(@__DIR__, "../output/thermal_equivalent_temperature_compare.png"))
+    savefig(pT, joinpath(out_dir, "thermal_equivalent_temperature_compare.png"))
 
     pP = plot(t2d, Pnet2d, label="2D equivalent net", linewidth=2, xlabel="Time (s)", ylabel="Power (W)", title="Net Heat Source Comparison")
     plot!(pP, t2d, Pnetlp_i, label="Thermal.jl lumped net", linewidth=2)
     plot!(pP, t2d, Pnet_ref, label="PyBaMM equivalent net", linewidth=2, linestyle=:dash)
-    savefig(pP, joinpath(@__DIR__, "../output/thermal_equivalent_power_compare.png"))
+    savefig(pP, joinpath(out_dir, "thermal_equivalent_power_compare.png"))
 
     pC = plot(t2d, Prxn2d, label="JuBat reaction", linewidth=2, xlabel="Time (s)", ylabel="Power (W)", title="Heat Components Comparison")
     plot!(pC, t2d, Pohm2d, label="JuBat ohmic", linewidth=2)
@@ -252,7 +299,7 @@ function main()
     plot!(pC, t2d, Qirrev_ref_i, label="PyBaMM irreversible", linewidth=2, linestyle=:dash)
     plot!(pC, t2d, Qohm_ref_i, label="PyBaMM ohmic", linewidth=2, linestyle=:dash)
     plot!(pC, t2d, Qrev_ref_i, label="PyBaMM reversible", linewidth=2, linestyle=:dash)
-    savefig(pC, joinpath(@__DIR__, "../output/thermal_equivalent_component_compare.png"))
+    savefig(pC, joinpath(out_dir, "thermal_equivalent_component_compare.png"))
 
     println("\n已写出: output/thermal_equivalent_lumped_compare.csv")
     println("已写出: output/thermal_equivalent_temperature_compare.png")

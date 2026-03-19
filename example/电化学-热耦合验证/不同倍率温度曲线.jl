@@ -1,5 +1,5 @@
 using LinearAlgebra, SparseArrays, Statistics, Plots, Printf, CSV
-root_dir = abspath(joinpath(@__DIR__, ".."))
+root_dir = abspath(joinpath(@__DIR__, "..", ".."))
 example_dir = @__DIR__
 cd(example_dir)
 src_dir = joinpath(root_dir, "src")
