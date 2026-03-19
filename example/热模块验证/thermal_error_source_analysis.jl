@@ -110,7 +110,7 @@ function main()
     opt.thermal_enabled = true
     opt.thermalmodel = "distributed2D"
     opt.thermal_dim = "2D"
-    opt.cool_method = "surface"
+    opt.cool_method = "none"
     opt.per_element_spme = true
     opt.debug_coupling = false
     opt.czm_enabled = true

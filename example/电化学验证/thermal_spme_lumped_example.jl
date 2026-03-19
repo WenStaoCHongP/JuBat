@@ -1,6 +1,7 @@
 using Plots, CSV
 
-include("../src/JuBat.jl")
+const PROJECT_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
+include(joinpath(PROJECT_ROOT, "src", "JuBat.jl"))
 
 function build_case(cell_name::String)
     param_dim = JuBat.ChooseCell(cell_name)
@@ -25,7 +26,7 @@ function build_case(cell_name::String)
 end
 
 function main()
-    ref_path = joinpath(@__DIR__, "..", "src", "data", "pybamm_SPMe_LGM50_1.0C.csv")
+    ref_path = joinpath(PROJECT_ROOT, "src", "data", "pybamm_SPMe_LGM50_1.0C.csv")
     ref_tbl = CSV.File(ref_path)
     ref_capacity = Float64.(getproperty(ref_tbl, Symbol("capacity [A.h]")))
     ref_voltage = Float64.(getproperty(ref_tbl, Symbol("voltage [V]")))

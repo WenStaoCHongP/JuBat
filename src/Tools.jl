@@ -26,12 +26,7 @@ end
 Generic Q4 element quadrature driver. The callback receives local coordinates,
 integration weight `w`, spatial gradients, and `detJ`.
 """
-function IntQ4(
-    f::Function,
-    x_e::AbstractVector{<:Real},
-    y_e::AbstractVector{<:Real};
-    order::Int=2,
-)
+function IntQ4(f::Function,x_e::AbstractVector{<:Real},y_e::AbstractVector{<:Real};order::Int=2)
     w, q = GSweight(order, 2)
     node_e = hcat(collect(Float64, x_e), collect(Float64, y_e))
     for i in eachindex(w)

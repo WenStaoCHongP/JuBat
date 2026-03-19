@@ -1,6 +1,6 @@
 using LinearAlgebra, SparseArrays, Statistics, Plots, Printf
 import PyPlot
-root_dir = abspath(joinpath(@__DIR__, ".."))
+root_dir = abspath(joinpath(@__DIR__, "..", ".."))
 example_dir = @__DIR__
 cd(example_dir)
 src_dir = joinpath(root_dir, "src")
@@ -51,7 +51,7 @@ function run_case(param_dim, crate, t_end; ntheta=80)
 	opt.thermal_enabled = true
 	opt.thermalmodel = "distributed2D"
 	opt.thermal_dim = "2D"
-	opt.cool_method = "surface"
+	opt.cool_method = "none"
 
 	opt.per_element_spme = true
 	opt.mechanicalmodel = "none"
@@ -74,7 +74,7 @@ end
 function main()
 	param_dim = JuBat.ChooseCell("Jellyroll")
 	cases = [
-		(crate=1.0, t_end=3600.0)
+		(crate=1.0, t_end=60)
 	]
 
 	out_dir = joinpath(root_dir, "output")

@@ -1,7 +1,6 @@
 function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Float64},Float64}})
     mesh = case.mesh["thermal2D"]
     param = case.param  # 只使用无量纲参数
-
     nnode = mesh.nlen
     ne = size(mesh.element, 1)
 
@@ -113,15 +112,8 @@ function apply_cool_method(KT, FT, mesh, case)
     elseif cool_method == "surface"
         param = case.param
         Bi = case.param_dim.scale.h  # Biot 数（统一能量尺度）
-        T_amb_nd = param.cell.T_amb  # 已无量纲
-
-        # conv_factor 推导：
-        # 原形式: 2 * h / (H * k_th)
-        # 无量纲化: Bi = h * L / k_th, H* = H / L
-        # conv_factor = 2 * Bi / H* = 2 * h * L / (H * k_th)
-        # 但由于体积积分 dΩ* 已无量纲，最终 conv_factor = 2 * Bi
-        # 这里使用简化形式
-        conv_factor = 2.0 * Bi
+        # conv_factor = 2 * Bi / H* 
+        conv_factor = 2.0 * Bi / param.cell.width
 
         ngs = length(mesh.gs.detJ)
         Ni = mesh.gs.Ni
@@ -143,7 +135,7 @@ function apply_cool_method(KT, FT, mesh, case)
                     Nj_g = Ni[g, j]
                     K[ni, nj] -= wt * Ni_g * Nj_g
                 end
-                F[ni] += wt * T_amb_nd * Ni_g
+                F[ni] += wt * param.cell.T_amb * Ni_g
             end
         end
         return K, F
@@ -155,9 +147,6 @@ function apply_cool_method(KT, FT, mesh, case)
         end
 
         param = case.param
-        Bi = case.param_dim.scale.h  # Biot 数（统一能量尺度）
-        T_amb_nd = param.cell.T_amb
-
         n_nodes = length(tab_nodes)
         arc_lengths = zeros(Float64, n_nodes)
         if n_nodes == 1
@@ -185,9 +174,9 @@ function apply_cool_method(KT, FT, mesh, case)
         for (i, n) in enumerate(tab_nodes)
             weight = arc_lengths[i] / total_arc_length
             # 无量纲形式：Bi * weight
-            coeff = Bi * weight
+            coeff = param.tab.h * param.tab.area * weight / param.cell.width
             K[n, n] -= coeff
-            F[n] += coeff * T_amb_nd
+            F[n] += coeff * param.cell.T_amb
         end
         return K, F
     end
@@ -241,11 +230,8 @@ function ThermalDistributed2D_Ring(case::Case, variables::Dict{String,Any})
     Vi, Vj = mesh.element[mesh.gs.ele, :], mesh.element[mesh.gs.ele, :]
     ele_of_gp = mesh.gs.ele
 
-    # 使用统一无量纲体积热容定义，与 ThermalPolar2D_Ring 保持一致
     # C* = param.cell.heat_Q, V* = param.cell.volume, (ρc)* = C* / V*
-    rho_c_nd = param.cell.heat_Q / max(param.cell.volume, 1e-30)
-    k_r_nd = param.cell.lambda_r  # k_r* = k_r / k_th
-    k_t_nd = param.cell.lambda_t  # k_t* = k_t / k_th
+    rho_c_nd = param.cell.heat_Q / param.cell.volume
 
     # Mass matrix（网格已无量纲，直接使用 wJ）
     coeff_m = rho_c_nd .* wJ
@@ -266,8 +252,8 @@ function ThermalDistributed2D_Ring(case::Case, variables::Dict{String,Any})
     end
 
     # Stiffness matrix（网格已无量纲）
-    cr = -k_r_nd .* wJ
-    ct = -k_t_nd .* wJ
+    cr = -param.cell.lambda_r .* wJ
+    ct = -param.cell.lambda_t .* wJ
 
     KT_r = Assemble(Vi, Vj, dNdr, dNdr, cr, nnode)
     KT_t = Assemble(Vi, Vj, dNdtheta, dNdtheta, ct, nnode)

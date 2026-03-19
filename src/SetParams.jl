@@ -120,7 +120,6 @@ end
     # Jellyroll geometry (optional)
     Rin::Float64 = 0.0
     Rout::Float64 = 0.0
-    height::Float64 = 0.0
     # Effective thermal conductivities for jellyroll (optional)
     layer::Float64 = 0.0
     lambda_r::Float64 = 0.0
@@ -405,7 +404,7 @@ function NormaliseParam(param_dim::Params)
     param.cell.lambda_t = param_dim.cell.lambda_t / param.scale.lambda
     param.cell.Rin = param_dim.cell.Rin / param.scale.L
     param.cell.Rout = param_dim.cell.Rout / param.scale.L
-    param.cell.height = param_dim.cell.height / param.scale.L
+    param.cell.width = param_dim.cell.width / param.scale.L
 
     #tab
     param.tab.length = param_dim.tab.length / param.scale.L
