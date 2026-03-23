@@ -424,16 +424,30 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
     try
         if case.opt.thermalmodel == "distributed2D"
             for key in ["thermal2D element current", "thermal2D eta_n_e", "thermal2D eta_p_e", "thermal2D element soc_n", "thermal2D element soc_p",
-                    "thermal2D Q_rxn_NE [W/m3]", "thermal2D Q_rev_NE [W/m3]", "thermal2D Q_ohm_s_NE [W/m3]", "thermal2D Q_ohm_e_NE [W/m3]",
-                    "thermal2D Q_SP [W/m3]", "thermal2D Q_rxn_PE [W/m3]", "thermal2D Q_rev_PE [W/m3]", "thermal2D Q_ohm_s_PE [W/m3]",
-                    "thermal2D Q_ohm_e_PE [W/m3]", "thermal2D Q_PCC [W/m3]", "thermal2D Q_NCC [W/m3]",
+                    "thermal2D q_rxn_ne", "thermal2D q_rev_ne", "thermal2D q_ohm_s_ne", "thermal2D q_ohm_e_ne",
+                    "thermal2D q_sp", "thermal2D q_rxn_pe", "thermal2D q_rev_pe", "thermal2D q_ohm_s_pe", "thermal2D q_ohm_e_pe",
+                    "thermal2D q_pcc", "thermal2D q_ncc",
                     "thermal2D element OCV", "thermal2D n_cutoff_elements", "thermal2D active_mask",
                     "thermal2D nearest_cutoff_element", "thermal2D nearest_cutoff_ocv", "thermal2D margin_to_cutoff"]
                 result[key] = variables_hist[key][:, 1:v]
             end
             result["heat_source_fields"] = variables_hist["heat_source_fields"][:, 1:v]
             result["total heat source [W]"] = vec(variables_hist["total heat source"][1, 1:v])
-            result["thermal2D temperature [K]"] = variables_hist["thermal2D temperature"][:, 1:v]
+
+            # 热源物理单位转换（无量纲 → 物理单位)
+            q_scale = case.param_dim.scale.q
+            result["thermal2D Q_rxn_NE [W/m3]"] = variables_hist["thermal2D q_rxn_ne"][:, 1:v] .* q_scale
+            result["thermal2D Q_rev_NE [W/m3]"] = variables_hist["thermal2D q_rev_ne"][:, 1:v] .* q_scale
+            result["thermal2D Q_ohm_s_NE [W/m3]"] = variables_hist["thermal2D q_ohm_s_ne"][:, 1:v] .* q_scale
+            result["thermal2D Q_ohm_e_NE [W/m3]"] = variables_hist["thermal2D q_ohm_e_ne"][:, 1:v] .* q_scale
+            result["thermal2D Q_SP [W/m3]"] = variables_hist["thermal2D q_sp"][:, 1:v] .* q_scale
+            result["thermal2D Q_rxn_PE [W/m3]"] = variables_hist["thermal2D q_rxn_pe"][:, 1:v] .* q_scale
+            result["thermal2D Q_rev_PE [W/m3]"] = variables_hist["thermal2D q_rev_pe"][:, 1:v] .* q_scale
+            result["thermal2D Q_ohm_s_PE [W/m3]"] = variables_hist["thermal2D q_ohm_s_pe"][:, 1:v] .* q_scale
+            result["thermal2D Q_ohm_e_PE [W/m3]"] = variables_hist["thermal2D q_ohm_e_pe"][:, 1:v] .* q_scale
+            result["thermal2D Q_PCC [W/m3]"] = variables_hist["thermal2D q_pcc"][:, 1:v] .* q_scale
+            result["thermal2D Q_NCC [W/m3]"] = variables_hist["thermal2D q_ncc"][:, 1:v] .* q_scale
+            result["thermal2D temperature [K]"] = variables_hist["thermal2D temperature"][:, 1:v]            
             result["thermal2D T_nodes history [K]"] = variables_hist["thermal2D temperature"][:, 1:v]
         end
         if case.opt.thermal_enabled
@@ -630,118 +644,28 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     K_chem = blockdiag(K_elems...)
     F_chem = vcat(F_elems...)
     
-    # 6) 计算逐单元热源
-    q_elem = zeros(Float64, ne)
-    q_rxn_ne = zeros(Float64, ne)
-    q_rev_ne = zeros(Float64, ne)
-    q_ohm_s_ne = zeros(Float64, ne)
-    q_ohm_e_ne = zeros(Float64, ne)
-    q_sp = zeros(Float64, ne)
-    q_rxn_pe = zeros(Float64, ne)
-    q_rev_pe = zeros(Float64, ne)
-    q_ohm_s_pe = zeros(Float64, ne)
-    q_ohm_e_pe = zeros(Float64, ne)
-    q_pcc = zeros(Float64, ne)
-    q_ncc = zeros(Float64, ne)
-    eta_n_e = zeros(Float64, ne)
-    eta_p_e = zeros(Float64, ne)
-    dUdT_n_e = zeros(Float64, ne)
-    dUdT_p_e = zeros(Float64, ne)
-    soc_n_elem = zeros(Float64, ne)
-    soc_p_elem = zeros(Float64, ne)
-    # 使用统一长度尺度 L（替代旧的 L_th）
+    # 6) 计算逐单元热源（调用 ThermalDistributed.jl 中的统一函数)
+    if case.opt.czm_enabled == true
+        variables = compute_heat_sources_with_czm(case, variables, variables_elems, I_e, Te_prev, areas, czm_mesh, mesh_th)
+    else
+        variables = compute_heat_sources(case, variables, variables_elems, I_e, Te_prev, areas; per_element_spme=true)
+    end
 
-    # 获取 layer_weights（如果存在）
-    fks = jellyroll_element_properties(mesh_th, case.param)[2]
-    
+    # 保存辅助变量（用于调试）
     for e in 1:ne
         vars_e = variables_elems[e]
-        # 提取逐单元变量
-        eta_n_e[e] = vars_e["negative electrode overpotential"][1]
-        eta_p_e[e] = vars_e["positive electrode overpotential"][end]
+        variables["thermal2D eta_n_e"][e] = vars_e["negative electrode overpotential"][1]
+        variables["thermal2D eta_p_e"][e] = vars_e["positive electrode overpotential"][end]
         cn_surf_e = vars_e["negative particle surface lithium concentration"][1]
         cp_surf_e = vars_e["positive particle surface lithium concentration"][end]
-        dUdT_n_e[e] = param.NE.dUdT(cn_surf_e)[1]
-        dUdT_p_e[e] = param.PE.dUdT(cp_surf_e)[1]
-        # 当前单元的温度和电流
-        T_e = Te_prev[e]
-        I_e_local = I_e[e]
-        # 界面电流密度（从单元 variables_e 获取）
-        j_n_e = vars_e["negative electrode interfacial current density"]
-        j_p_e = vars_e["positive electrode interfacial current density"]
-        # 比表面积
-        as_n = param.NE.as
-        as_p = param.PE.as
-        # 有效电导率
-        sig_n_eff = param.NE.sig * param.NE.eps_s
-        sig_p_eff = param.PE.sig * param.PE.eps_s
-        kappa_ne = param.EL.kappa(param.EL.ce0, T_e) * param.NE.eps ^ param.NE.brugg
-        kappa_pe = param.EL.kappa(param.EL.ce0, T_e) * param.PE.eps ^ param.PE.brugg
-        kappa_sp = param.EL.kappa(param.EL.ce0, T_e) * param.SP.eps ^ param.SP.brugg
-        # 分层计算热源
-        # 负极层
-        Q_rxn_NE = as_n * abs(j_n_e) * abs(eta_n_e[e])  # 反应热：a_s * j * η
-        Q_rev_NE = as_n * j_n_e * T_e * dUdT_n_e[e]     # 可逆热：a_s * j * T * dU/dT
-        Q_ohm_s_NE = I_e_local^2 / (3.0 * sig_n_eff)    # 固相欧姆热：I²/(3σ)
-        Q_ohm_e_NE = I_e_local^2 / (3.0 * kappa_ne)     # 液相欧姆热：I²/(3κ)
-        Q_NE = Q_rxn_NE + Q_rev_NE + Q_ohm_s_NE + Q_ohm_e_NE
-        # 隔膜层（SP）- 仅液相欧姆热
-        Q_SP = I_e_local^2 / kappa_sp  # 隔膜欧姆热：I²/κ（无1/3因子）
-        # 正极层（PE）
-        Q_rxn_PE = as_p * abs(j_p_e) * abs(eta_p_e[e])  # 反应热
-        Q_rev_PE = as_p * j_p_e * T_e * dUdT_p_e[e]     # 可逆热
-        Q_ohm_s_PE = I_e_local^2 / (3.0 * sig_p_eff)    # 固相欧姆热
-        Q_ohm_e_PE = I_e_local^2 / (3.0 * kappa_pe)     # 液相欧姆热
-        Q_PE = Q_rxn_PE + Q_rev_PE + Q_ohm_s_PE + Q_ohm_e_PE
-        # 集流体层
-        Q_PCC = I_e_local^2 / (3.0 * param.PCC.sig) 
-        Q_NCC = I_e_local^2 / (3.0 * param.NCC.sig) 
-        q_rxn_ne[e] = fks[e,1] * Q_rxn_NE
-        q_rev_ne[e] = fks[e,1] * Q_rev_NE
-        q_ohm_s_ne[e] = fks[e,1] * Q_ohm_s_NE
-        q_ohm_e_ne[e] = fks[e,1] * Q_ohm_e_NE
-        q_sp[e] = fks[e,2] * Q_SP
-        q_rxn_pe[e] = fks[e,3] * Q_rxn_PE
-        q_rev_pe[e] = fks[e,3] * Q_rev_PE
-        q_ohm_s_pe[e] = fks[e,3] * Q_ohm_s_PE
-        q_ohm_e_pe[e] = fks[e,3] * Q_ohm_e_PE
-        q_pcc[e] = fks[e,4] * Q_PCC
-        q_ncc[e] = fks[e,5] * Q_NCC
-        # 按层权重聚合
-        q_elem[e] = q_rxn_ne[e] + q_rev_ne[e] + q_ohm_s_ne[e] + q_ohm_e_ne[e] + q_sp[e] + q_rxn_pe[e] + q_rev_pe[e] + q_ohm_s_pe[e] + q_ohm_e_pe[e] + q_pcc[e] + q_ncc[e]
+        variables["thermal2D dUdT_n_e"][e] = param.NE.dUdT(cn_surf_e)[1]
+        variables["thermal2D dUdT_p_e"][e] = param.PE.dUdT(cp_surf_e)[1]
         csn_data = vars_e["negative particle lithium concentration"]
         csp_data = vars_e["positive particle lithium concentration"]
-        soc_n_elem[e] = mean(vec(csn_data))
-        soc_p_elem[e] = mean(vec(csp_data))
+        variables["thermal2D element soc_n"][e] = mean(vec(csn_data))
+        variables["thermal2D element soc_p"][e] = mean(vec(csp_data))
     end
-    variables["thermal2D element soc_n"] = soc_n_elem
-    variables["thermal2D element soc_p"] = soc_p_elem
-    # 写入逐单元变量到 variables（用于调试和后处理）
     variables["thermal2D element current"] = I_e
-    variables["thermal2D eta_n_e"] = eta_n_e
-    variables["thermal2D eta_p_e"] = eta_p_e
-    variables["thermal2D dUdT_n_e"] = dUdT_n_e
-    variables["thermal2D dUdT_p_e"] = dUdT_p_e
-    
-    # 无量纲化热源
-    # 热源归一化（统一使用无量纲）
-    q_ec_scale = case.param_dim.scale.I_typ * case.param_dim.scale.phi / case.param_dim.cell.volume
-    q_elem_physical = q_elem .* q_ec_scale  # 物理热源 [W/m³]
-    variables["thermal2D Q_rxn_NE [W/m3]"] = q_rxn_ne .* q_ec_scale
-    variables["thermal2D Q_rev_NE [W/m3]"] = q_rev_ne .* q_ec_scale
-    variables["thermal2D Q_ohm_s_NE [W/m3]"] = q_ohm_s_ne .* q_ec_scale
-    variables["thermal2D Q_ohm_e_NE [W/m3]"] = q_ohm_e_ne .* q_ec_scale
-    variables["thermal2D Q_SP [W/m3]"] = q_sp .* q_ec_scale
-    variables["thermal2D Q_rxn_PE [W/m3]"] = q_rxn_pe .* q_ec_scale
-    variables["thermal2D Q_rev_PE [W/m3]"] = q_rev_pe .* q_ec_scale
-    variables["thermal2D Q_ohm_s_PE [W/m3]"] = q_ohm_s_pe .* q_ec_scale
-    variables["thermal2D Q_ohm_e_PE [W/m3]"] = q_ohm_e_pe .* q_ec_scale
-    variables["thermal2D Q_PCC [W/m3]"] = q_pcc .* q_ec_scale
-    variables["thermal2D Q_NCC [W/m3]"] = q_ncc .* q_ec_scale
-    variables["total heat source"] = sum(q_elem_physical .* areas) * case.param_dim.cell.width
-    # 使用统一能量尺度的热源尺度参数 q（替代旧的 q_th）
-    q_ref = case.param_dim.scale.q
-    variables["heat_source_fields"] = q_elem_physical ./ q_ref
     
     # 7) 装配热学矩阵
     MT, KT, FT = ThermalDistributed2D(case, variables)
@@ -871,8 +795,8 @@ function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
         end
         # 使用非线性分流求解器求每单元电流（不进行面积分流回退）
         variables, _Ie, _Vc = solve_branch_currents_newton(case, variables, yt, t, I_total, areas, Te_prev, nothing; deactivated_elements=deactivated_elements_loc)
-        # 更新热源（统一在 CallModel 内完成）
-        variables = heatQ_Source(case, variables, t, yt)
+        # 更新热源（调用 ThermalDistributed.jl 中的统一函数）
+        variables = compute_heat_sources(case, variables, nothing, _Ie, Te_prev, areas; per_element_spme=false)
         # 装配热学矩阵并施加边界条件
         MT, KT, FT = ThermalDistributed2D(case, variables)
         # 统一时间尺度：电化学和热模型使用相同时间尺度 t0，时间比为 1

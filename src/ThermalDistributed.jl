@@ -278,38 +278,26 @@ function ThermalRing2D_BC(KT, FT, case::Case, outer_nodes, t::Float64)
     return apply_convection_bc(KT, FT, mesh, is_outer, case)
 end
 
-function heatQ_Source(case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, t::Float64, y_state)
+function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union{Vector{<:Dict}, Nothing},I_e::Vector{Float64}, T_e::Vector{Float64},areas::Vector{Float64}; per_element_spme::Bool=false)
     mesh = case.mesh["thermal2D"]
     ne = size(mesh.element, 1)
-    
-    # 获取单元电流和温度
-    I_e = variables["thermal2D element current"]
-    T_nodes = variables["T_nodes"]
-    T_e = element_nodal_mean(mesh, T_nodes)
-    
-    # 计算热源
-    q_elem = compute_element_heat_sources(case, variables, I_e, T_e, ne)
-    
-    # 写入 variables
-    variables["heat_source_fields"] = q_elem
-    
-    return variables
-end
-
-function compute_element_heat_sources(case::Case, variables::Dict, I_e::Vector{Float64}, T_e::Vector{Float64}, ne::Int)
-    mesh = case.mesh["thermal2D"]
-    param = case.param  # 只使用无量纲参数
+    param = case.param
 
     # 获取层权重
-    fks = jellyroll_element_properties(mesh, case.param)[2]
+    fks = jellyroll_element_properties(mesh, param)[2]
 
-    # 获取电化学变量（已无量纲）
-    eta_n = variables["negative electrode overpotential"][1]
-    eta_p = variables["positive electrode overpotential"][end]
-    j_n = variables["negative electrode interfacial current density"]
-    j_p = variables["positive electrode interfacial current density"]
-    csn_surf = variables["negative particle surface lithium concentration"][1]
-    csp_surf = variables["positive particle surface lithium concentration"][end]
+    # 从 variables 获取预分配的数组
+    q_rxn_ne = variables["thermal2D q_rxn_ne"]
+    q_rev_ne = variables["thermal2D q_rev_ne"]
+    q_ohm_s_ne = variables["thermal2D q_ohm_s_ne"]
+    q_ohm_e_ne = variables["thermal2D q_ohm_e_ne"]
+    q_sp = variables["thermal2D q_sp"]
+    q_rxn_pe = variables["thermal2D q_rxn_pe"]
+    q_rev_pe = variables["thermal2D q_rev_pe"]
+    q_ohm_s_pe = variables["thermal2D q_ohm_s_pe"]
+    q_ohm_e_pe = variables["thermal2D q_ohm_e_pe"]
+    q_pcc = variables["thermal2D q_pcc"]
+    q_ncc = variables["thermal2D q_ncc"]
 
     # 材料参数（已无量纲）
     as_n, as_p = param.NE.as, param.PE.as
@@ -318,59 +306,122 @@ function compute_element_heat_sources(case::Case, variables::Dict, I_e::Vector{F
     sigma_pcc = max(param.PCC.sig, 1e-12)
     sigma_ncc = max(param.NCC.sig, 1e-12)
 
-    q_elem = zeros(Float64, ne)
+    q_total = zeros(Float64, ne)
 
     @inbounds for e in 1:ne
-        T = T_e[e]  # 无量纲温度
-        I = I_e[e]  # 无量纲电流
+        # 获取电化学变量（根据 per_element_spme 判断）
+        if per_element_spme && variables_elems !== nothing
+            vars_e = variables_elems[e]
+            eta_n = vars_e["negative electrode overpotential"][1]
+            eta_p = vars_e["positive electrode overpotential"][end]
+            j_n = vars_e["negative electrode interfacial current density"]
+            j_p = vars_e["positive electrode interfacial current density"]
+            cn_surf = vars_e["negative particle surface lithium concentration"][1]
+            cp_surf = vars_e["positive particle surface lithium concentration"][end]
+        else
+            eta_n = variables["negative electrode overpotential"][1]
+            eta_p = variables["positive electrode overpotential"][end]
+            j_n = variables["negative electrode interfacial current density"]
+            j_p = variables["positive electrode interfacial current density"]
+            cn_surf = variables["negative particle surface lithium concentration"][1]
+            cp_surf = variables["positive particle surface lithium concentration"][end]
+        end
 
-        # 电导率（温度相关，已无量纲）
+        T = T_e[e]
+        I_local = I_e[e]
+
+        # 电导率（温度相关，无量纲）
         kappa_ne = param.EL.kappa(param.EL.ce0, T) * param.NE.eps^param.NE.brugg
         kappa_pe = param.EL.kappa(param.EL.ce0, T) * param.PE.eps^param.PE.brugg
         kappa_sp = param.EL.kappa(param.EL.ce0, T) * param.SP.eps^param.SP.brugg
 
-        # 各层热源（无量纲形式）
-        # 反应热 + 可逆热 + 欧姆热
-        Q_NE = as_n * abs(j_n) * abs(eta_n) + as_n * j_n * T * param.NE.dUdT(csn_surf) + I^2 / (3.0 * sig_n_eff) + I^2 / (3.0 * kappa_ne)
-        Q_SP = I^2 / kappa_sp
-        Q_PE = as_p * abs(j_p) * abs(eta_p) + as_p * j_p * T * param.PE.dUdT(csp_surf) + I^2 / (3.0 * sig_p_eff) + I^2 / (3.0 * kappa_pe)
-        Q_PCC = I^2 / (3.0 * sigma_pcc)
-        Q_NCC = I^2 / (3.0 * sigma_ncc)
+        # 计算各层热源分量（无量纲）
+        # 负极层
+        Q_rxn_NE = as_n * abs(j_n) * abs(eta_n)
+        Q_rev_NE = as_n * j_n * T * param.NE.dUdT(cn_surf)[1]
+        Q_ohm_s_NE = I_local^2 / (3.0 * sig_n_eff)
+        Q_ohm_e_NE = I_local^2 / (3.0 * kappa_ne)
 
-        # 加权求和（结果直接无量纲）
-        q_elem[e] = fks[e,1]*Q_NE + fks[e,2]*Q_SP + fks[e,3]*Q_PE + fks[e,4]*Q_PCC + fks[e,5]*Q_NCC
+        # 隔膜层
+        Q_SP = I_local^2 / kappa_sp
+
+        # 正极层
+        Q_rxn_PE = as_p * abs(j_p) * abs(eta_p)
+        Q_rev_PE = as_p * j_p * T * param.PE.dUdT(cp_surf)[1]
+        Q_ohm_s_PE = I_local^2 / (3.0 * sig_p_eff)
+        Q_ohm_e_PE = I_local^2 / (3.0 * kappa_pe)
+
+        # 集流体层
+        Q_PCC = I_local^2 / (3.0 * sigma_pcc)
+        Q_NCC = I_local^2 / (3.0 * sigma_ncc)
+
+        # 按层权重分配并存储（无量纲）
+        q_rxn_ne[e] = fks[e,1] * Q_rxn_NE
+        q_rev_ne[e] = fks[e,1] * Q_rev_NE
+        q_ohm_s_ne[e] = fks[e,1] * Q_ohm_s_NE
+        q_ohm_e_ne[e] = fks[e,1] * Q_ohm_e_NE
+        q_sp[e] = fks[e,2] * Q_SP
+        q_rxn_pe[e] = fks[e,3] * Q_rxn_PE
+        q_rev_pe[e] = fks[e,3] * Q_rev_PE
+        q_ohm_s_pe[e] = fks[e,3] * Q_ohm_s_PE
+        q_ohm_e_pe[e] = fks[e,3] * Q_ohm_e_PE
+        q_pcc[e] = fks[e,4] * Q_PCC
+        q_ncc[e] = fks[e,5] * Q_NCC
+
+        # 总热源
+        q_total[e] = q_rxn_ne[e] + q_rev_ne[e] + q_ohm_s_ne[e] + q_ohm_e_ne[e] + q_sp[e] + q_rxn_pe[e] + q_rev_pe[e] + q_ohm_s_pe[e] + q_ohm_e_pe[e] + q_pcc[e] + q_ncc[e]
     end
 
-    return q_elem
+    # 写入 variables
+    variables["heat_source_fields"] = q_total * case.param_dim.scale.L^3 / case.param_dim.cell.volume
+    variables["thermal2D q_rxn_ne"] = q_rxn_ne * case.param_dim.scale.L^3 / case.param_dim.cell.volume
+    variables["thermal2D q_rev_ne"] = q_rev_ne * case.param_dim.scale.L^3 / case.param_dim.cell.volume
+    variables["thermal2D q_ohm_s_ne"] = q_ohm_s_ne * case.param_dim.scale.L^3 / case.param_dim.cell.volume
+    variables["thermal2D q_ohm_e_ne"] = q_ohm_e_ne * case.param_dim.scale.L^3 / case.param_dim.cell.volume
+    variables["thermal2D q_sp"] = q_sp * case.param_dim.scale.L^3 / case.param_dim.cell.volume
+    variables["thermal2D q_rxn_pe"] = q_rxn_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
+    variables["thermal2D q_rev_pe"] = q_rev_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
+    variables["thermal2D q_ohm_s_pe"] = q_ohm_s_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
+    variables["thermal2D q_ohm_e_pe"] = q_ohm_e_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
+    variables["thermal2D q_pcc"] = q_pcc * case.param_dim.scale.L^3 / case.param_dim.cell.volume
+    variables["thermal2D q_ncc"] = q_ncc * case.param_dim.scale.L^3 / case.param_dim.cell.volume
+
+    # 总功率（无量纲：q* * A*）
+    variables["total heat source"] = [sum(q_total .* areas) * case.param_dim.scale.L^3 / case.param_dim.cell.volume]
+
+    return variables
 end
 
-function heatQ_Source_with_czm(case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, t::Float64, y_state, czm_mesh, mesh_data)
-    mesh = case.mesh["thermal2D"]
-    ne = size(mesh.element, 1)
-    
-    # 获取单元电流和温度
-    I_e = variables["thermal2D element current"]
-    T_nodes = variables["T_nodes"]
-    T_e = element_nodal_mean(mesh, T_nodes)
-    
-    # 获取活跃单元（未断裂退出的）
+function compute_heat_sources_with_czm(case::Case, variables::Dict,variables_elems::Union{Vector{<:Dict}, Nothing},I_e::Vector{Float64}, T_e::Vector{Float64},areas::Vector{Float64}, czm_mesh, mesh_data)
+    # 先计算所有单元的热源
+    variables = compute_heat_sources(case, variables, variables_elems, I_e, T_e, areas; per_element_spme=true)
+
+    # 获取活跃单元
     active_elements = get_active_elements(czm_mesh, mesh_data)
-    
-    q_elem = compute_element_heat_sources(case, variables, I_e, T_e, ne)
-    is_active = zeros(Bool, ne)
+    ne = length(variables["heat_source_fields"])
+
+    # 创建活跃掩码
+    is_active = falses(ne)
     for e in active_elements
-        is_active[e] = true
-    end
-    for e in 1:ne
-        if !is_active[e]
-            q_elem[e] = 0.0
+        if 1 <= e <= ne
+            is_active[e] = true
         end
     end
-    
-    # 写入variables
-    variables["heat_source_fields"] = q_elem
+
+    # 将非活跃单元的热源设为零
+    q_total = variables["heat_source_fields"]
+    for e in 1:ne
+        if !is_active[e]
+            q_total[e] = 0.0
+        end
+    end
+
+    variables["heat_source_fields"] = q_total
     variables["active_elements"] = active_elements
-    
+
+    # 更新总功率（仅活跃单元）
+    variables["total heat source"] = [sum(q_total .* areas)]
+
     return variables
 end
 

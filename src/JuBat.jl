@@ -47,8 +47,7 @@ export ThermalDistributed2D, ThermalDistributed2D_BC
 export ThermalDistributed2D_Ring, ThermalRing2D_BC
 export ThermalPolar2D_Ring
 export identify_boundary_nodes, apply_convection_bc, apply_cool_method
-export heatQ_Source, compute_element_heat_sources, solve_branch_currents_newton
-export heatQ_Source_with_czm
+export compute_heat_sources, compute_heat_sources_with_czm, solve_branch_currents_newton
 export ThermalModel, ThermalLumpedModel, ThermalDistributed2DModel
 export thermal_diffusion_stress_2D
 # CZM exports
