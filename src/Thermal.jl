@@ -45,10 +45,8 @@ function ThermalLumped(case::Case, variables::Dict{String, Union{Array{Float64},
         Q_ohm_e = IntV(kappa_e_eff .* dphie_dx_gs .^ 2 - 2 * kappa_e_eff * T *  (1 - param.EL.tplus) .* param.EL.dlnf_dlnc(ce_gs) ./ ce_gs .* dcedx_gs .* dphie_dx_gs, mesh_el)
         Q_ohm = Q_ohm_n + Q_ohm_p + Q_ohm_e
     end
-    heat_internal_nd = Q_rxn + Q_ohm + Q_rev
-    heat_internal_W = heat_internal_nd * case.param.scale.I_typ * case.param.scale.phi
-    variables["thermal lumped internal heat"] = [heat_internal_nd]
-    variables["thermal lumped internal heat [W]"] = [heat_internal_W]
+    Q_in = Q_rxn + Q_ohm + Q_rev
+    variables["thermal lumped internal heat"] = [Q_in]
     q = param.cell.h * param.cell.cooling_surface .* (T -  param.cell.T_amb)
-    return MT, heat_internal_nd - q
+    return MT, Q_in - q
 end

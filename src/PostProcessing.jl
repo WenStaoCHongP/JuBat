@@ -47,8 +47,29 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
     end
 
     if case.opt.thermalmodel == "lumped"
-        result["thermal lumped internal heat [nd]"] = vec(variables["thermal lumped internal heat"][1, 1:v])
-        result["thermal lumped internal heat [W]"] = vec(variables["thermal lumped internal heat [W]"][1, 1:v])
+        result["thermal lumped internal heat [W/m^3]"] = vec(variables["thermal lumped internal heat"][1, 1:v]) * case.param.scale.q    
+    elseif case.opt.thermalmodel == "distributed2D"
+        result["thermal2D Q_rxn_NE [W/m3]"] = variables["thermal2D q_rxn_ne"][:, 1:v] * case.param.scale.q
+        result["thermal2D Q_rev_NE [W/m3]"] = variables["thermal2D q_rev_ne"][:, 1:v] * case.param.scale.q
+        result["thermal2D Q_ohm_s_NE [W/m3]"] = variables["thermal2D q_ohm_s_ne"][:, 1:v] * case.param.scale.q
+        result["thermal2D Q_ohm_e_NE [W/m3]"] = variables["thermal2D q_ohm_e_ne"][:, 1:v] * case.param.scale.q
+        result["thermal2D Q_SP [W/m3]"] = variables["thermal2D q_sp"][:, 1:v] * case.param.scale.q
+        result["thermal2D Q_rxn_PE [W/m3]"] = variables["thermal2D q_rxn_pe"][:, 1:v] * case.param.scale.q
+        result["thermal2D Q_rev_PE [W/m3]"] = variables["thermal2D q_rev_pe"][:, 1:v] * case.param.scale.q
+        result["thermal2D Q_ohm_s_PE [W/m3]"] = variables["thermal2D q_ohm_s_pe"][:, 1:v] * case.param.scale.q
+        result["thermal2D Q_ohm_e_PE [W/m3]"] = variables["thermal2D q_ohm_e_pe"][:, 1:v] * case.param.scale.q
+        result["thermal2D Q_PCC [W/m3]"] = variables["thermal2D q_pcc"][:, 1:v] * case.param.scale.q
+        result["thermal2D Q_NCC [W/m3]"] = variables["thermal2D q_ncc"][:, 1:v] * case.param.scale.q
+        result["thermal2D temperature [K]"] = variables["thermal2D temperature"][:, 1:v] * case.param.scale.T_ref
+    end
+    if case.opt.czm_enabled == true
+        result["CZM damage [0-1]"] = variables["CZM damage"][:, 1:v]
+        result["CZM displacement x [m]"] = variables["CZM displacement x"][:, 1:v] * case.param.scale.r0
+        result["CZM displacement y [m]"] = variables["CZM displacement y"][:, 1:v] * case.param.scale.r0
+        result["CZM traction normal [Pa]"] = variables["CZM traction normal"][:, 1:v] * case.param.scale.E_n
+        result["CZM traction tangent [Pa]"] = variables["CZM traction tangent"][:, 1:v] * case.param.scale.E_p
+        result["CZM separation normal [m]"] = variables["CZM separation normal"][:, 1:v] * case.param.scale.r0
+        result["CZM separation tangent [m]"] = variables["CZM separation tangent"][:, 1:v] * case.param.scale.r0
     end
     return result
 end

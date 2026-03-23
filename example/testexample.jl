@@ -47,10 +47,10 @@ function main()
     opt.Nrp = 10 # 正极颗粒径向网格数
     opt.gsorder = 2
     opt.dimension = 1
-    opt.mechanicalmodel = "full"
+    opt.mechanicalmodel = "none"
     
     # 时间设置
-    opt.time = [0.0, 3600]  # 仿真时间 (s)
+    opt.time = [0.0, 60]  # 仿真时间 (s)
     opt.dt = [0.5, 10]    # 时间步长范围 [dt_min, dt_max] (s)
     opt.dtType = "auto"     # 自动时间步长
     opt.jacobi = "update"
@@ -68,7 +68,7 @@ function main()
     # 调试选项（输出到文件）
     opt.debug_coupling = true
     opt.debug_log_path = "output/simple_coupling_debug.log"
-    opt.czm_enabled = true
+    opt.czm_enabled = false
     
     println("OK: 参数设置完成")
     @printf("  电流: %.2f A (%.2f C)\n", i, Crates)
