@@ -17,14 +17,7 @@ function thermal_capacity_weights_2d(param::Params, fks::Matrix{Float64}, ele_of
 	ne = size(fks, 1)
 	rho_c_e = zeros(Float64, ne)
 	@inbounds for e in 1:ne
-		# 体积热容 (ρc)* = ρ* · c*
-		# param.layer.rho = 无量纲密度 ρ*
-		# param.layer.heat_Q = 无量纲比热容 c*
-		rho_c_e[e] = fks[e, 1] * (param.NE.rho * param.NE.heat_Q) +
-		             fks[e, 2] * (param.SP.rho * param.SP.heat_Q) +
-		             fks[e, 3] * (param.PE.rho * param.PE.heat_Q) +
-		             fks[e, 4] * (param.PCC.rho * param.PCC.heat_Q) +
-		             fks[e, 5] * (param.NCC.rho * param.NCC.heat_Q)
+		rho_c_e[e] = fks[e, 1] * (param.NE.rho * param.NE.heat_Q) + fks[e, 2] * (param.SP.rho * param.SP.heat_Q) + fks[e, 3] * (param.PE.rho * param.PE.heat_Q) + fks[e, 4] * (param.PCC.rho * param.PCC.heat_Q) + fks[e, 5] * (param.NCC.rho * param.NCC.heat_Q)
 	end
 	return rho_c_e[ele_of_gp] .* wJ
 end
@@ -56,7 +49,7 @@ function thermal_anisotropic_conductivity_2d(param::Params,fks::Matrix{Float64},
 		c, s = cos(theta), sin(theta)
 		lr, lt = lam_r_e[ele_of_gp[g]], lam_t_e[ele_of_gp[g]]
 		k_xx[g] = lr * c * c + lt * s * s
-		k_xy[g] = (lr - lt) * s * c
+		k_xy[g] = (lt - lr) * s * c
 		k_yy[g] = lr * s * s + lt * c * c
 	end
 

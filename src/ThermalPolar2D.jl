@@ -1,25 +1,3 @@
-"""
-    ThermalPolar2D_Ring(case, variables, mesh_data)
-
-Polar finite-volume assembly for ring geometry (r-theta grid).
-Uses unified energy scale normalization (same as ThermalDistributed2D).
-
-Unified normalization scheme:
-- Length: L* = L / scale.L (electrode stack thickness)
-- Time: t* = t / scale.t0 (3600 s)
-- Temperature: T* = T / scale.T_ref (298 K)
-- Power: P_ref = scale.phi * scale.I_typ (electrochemical power)
-- Volumetric heat capacity: (ρc)* = ρc · L³ · T_ref / (t0 · P_ref)
-- Conductivity: k* = k · L · T_ref / P_ref
-- Biot number: Bi = h_cell · L / lambda_r
-
-Assembly form: M dT/dt = KT T + F
-where KT contains negative sign convention.
-
-Expected:
-- mesh_data from ring_mesh with L=scale.L (r_nodes already normalized)
-- variables["heat_source_fields"] element source (normalized)
-"""
 function ThermalPolar2D_Ring(case::Case, variables::Dict{String,Any}, mesh_data)
     mesh = case.mesh["thermal2D"]
     param = case.param  # Use normalized parameters
@@ -44,7 +22,7 @@ function ThermalPolar2D_Ring(case::Case, variables::Dict{String,Any}, mesh_data)
     k_t_nd = param.cell.lambda_t  # k_t* = k_t · L · T_ref / P_ref
 
     # Boundary condition parameters
-    Bi = scale.h  # Biot number = h_cell · L / lambda_r
+    Bi = scale.h * param.cell.lambda_r
     T_amb_nd = param.cell.T_amb  # Normalized ambient temperature
 
     nnode = length(r_nodes) * ntheta

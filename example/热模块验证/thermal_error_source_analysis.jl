@@ -95,7 +95,7 @@ function main()
     opt.Nrp = 10
     opt.gsorder = 2
     opt.dimension = 1
-    opt.mechanicalmodel = "full"
+    opt.mechanicalmodel = "none"
 
     crates = 1.0
     iapp = 5.0 * crates
@@ -110,10 +110,10 @@ function main()
     opt.thermal_enabled = true
     opt.thermalmodel = "distributed2D"
     opt.thermal_dim = "2D"
-    opt.cool_method = "none"
+    opt.cool_method = "surface"
     opt.per_element_spme = true
     opt.debug_coupling = false
-    opt.czm_enabled = true
+    opt.czm_enabled = false
 
     case = JuBat.SetCase(param_dim, opt)
     mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=80, gsorder=2)

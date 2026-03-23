@@ -616,8 +616,8 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     variables_elems = Vector{Dict{String,Union{Array{Float64},Float64}}}(undef, ne)
     
     # 可选：并行化（如果Julia配置了多线程）
-    # Threads.@threads for e in 1:ne
-    for e in 1:ne
+    Threads.@threads for e in 1:ne
+    #for e in 1:ne
         M_e, K_e, F_e, vars_e = SPMe_element(case, yt_chem[e], t, e;I_e = I_e[e],T_e = Te_prev[e],jacobi = jacobi)
         M_elems[e] = sparse(M_e)
         K_elems[e] = sparse(K_e)
@@ -780,10 +780,7 @@ end
 function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
     # 判断是否应该启用多SPMe模式
     # 当使用分布式2D热模型时自动启用多SPMe
-    should_use_multi_spme = (
-        case.opt.model == "SPMe" &&
-        case.opt.thermalmodel == "distributed2D"
-    )
+    should_use_multi_spme = (case.opt.model == "SPMe" && case.opt.thermalmodel == "distributed2D")
     
     # 如果应该使用多SPMe但布局为空，尝试从状态向量长度推断
     if should_use_multi_spme && isempty(case.multi_spme_layout)
