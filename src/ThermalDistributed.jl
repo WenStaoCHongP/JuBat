@@ -50,7 +50,7 @@ function apply_convection_bc(KT, FT, mesh, is_outer, case)
     K = copy(KT)
     F = copy(FT)
 
-    Bi = case.param_dim.scale.h  # Biot 数（统一能量尺度）
+    Bi = case.param_dim.scale.h * case.param.cell.lambda_r  # Biot 数（统一能量尺度）
     if Bi == 0
         return K, F
     end

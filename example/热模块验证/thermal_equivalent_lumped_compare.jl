@@ -48,12 +48,9 @@ function derivative_centered(t::Vector{Float64}, y::Vector{Float64})
     return dy
 end
 
-function get_outer_edges(mesh, Rout::Float64)
-    x = mesh.node[:, 1]
-    y = mesh.node[:, 2]
-    r = sqrt.(x .^ 2 .+ y .^ 2)
-    tol = max(1e-8, 1e-4 * Rout)
-    is_outer = abs.(r .- Rout) .<= tol
+function get_outer_edges(mesh, param)
+    # 使用 JuBat 内置的边界节点识别函数
+    is_inner, is_outer = JuBat.identify_boundary_nodes(mesh, param)
 
     seen = Set{Tuple{Int, Int}}()
     edges = Tuple{Int, Int}[]
@@ -70,10 +67,10 @@ function get_outer_edges(mesh, Rout::Float64)
             end
         end
     end
-    return edges
+    return edges, is_outer
 end
 
-function build_option(; thermalmodel::String)
+function build_option(; thermalmodel::String="distributed2D")
     opt = JuBat.Option()
     opt.model = "SPMe"
     opt.Nn = 10
@@ -91,12 +88,11 @@ function build_option(; thermalmodel::String)
     opt.jacobi = "update"
     opt.solveType = "Crank-Nicolson"
     opt.thermal_enabled = true
-    opt.thermalmodel = thermalmodel
-    opt.thermal_dim = thermalmodel == "distributed2D" ? "2D" : "1D"
+    opt.thermalmodel = thermalmodel  # 使用传入的参数
     opt.cool_method = "surface"
-    opt.per_element_spme = (thermalmodel == "distributed2D")
+    opt.per_element_spme = true
     opt.debug_coupling = false
-    opt.czm_enabled = (thermalmodel == "distributed2D")
+    opt.czm_enabled = false
     return opt
 end
 
@@ -131,6 +127,7 @@ function run_distributed2d_result()
     scale_L = case.param_dim.scale.L  # 长度尺度 [m]
 
     T_vol = zeros(Float64, length(t))
+    T_edge_avg = zeros(Float64, length(t))  # 边界平均温度诊断
     P_internal = zeros(Float64, length(t))
     P_boundary_outer = zeros(Float64, length(t))
     P_boundary_surface = zeros(Float64, length(t))
@@ -143,7 +140,28 @@ function run_distributed2d_result()
     h = case.param_dim.cell.h
     Tamb = case.param_dim.cell.T_amb
     Rout = case.param_dim.cell.Rout
-    outer_edges = get_outer_edges(mesh, Rout)
+    outer_edges, is_outer = get_outer_edges(mesh, case.param)
+
+    # 调试输出：检查边界边识别
+    r_nodes = sqrt.(mesh.node[:, 1].^2 .+ mesh.node[:, 2].^2)
+    n_outer_nodes = count(is_outer)
+    println("\n[边界边识别调试]")
+    println("  Rout (有量纲): $Rout m")
+    println("  网格坐标范围: x ∈ [$(minimum(mesh.node[:,1])), $(maximum(mesh.node[:,1]))], y ∈ [$(minimum(mesh.node[:,2])), $(maximum(mesh.node[:,2]))]")
+    println("  无量纲半径范围: r ∈ [$(minimum(r_nodes)), $(maximum(r_nodes))]")
+    println("  识别到的外边界节点数量: $n_outer_nodes")
+    println("  识别到的外边界边数量: $(length(outer_edges))")
+
+    # 详细检查外边界节点
+    outer_node_indices = findall(is_outer)
+    println("\n[外边界节点详情（前10个）]")
+    println("  节点ID |     x     |     y     |    r    |")
+    for i in 1:min(10, length(outer_node_indices))
+        idx = outer_node_indices[i]
+        x, y = mesh.node[idx, 1], mesh.node[idx, 2]
+        r = hypot(x, y)
+        @printf("  %5d | %9.4f | %9.4f | %7.4f |\n", idx, x, y, r)
+    end
 
     q_rxn_ne = result["thermal2D Q_rxn_NE [W/m3]"]
     q_rxn_pe = result["thermal2D Q_rxn_PE [W/m3]"]
@@ -170,14 +188,20 @@ function run_distributed2d_result()
         # 外圆周对流散热：∫ h(T-Tamb)dA_outer
         # mesh.node 是无量纲坐标，边长需乘 scale_L 转换为物理长度
         p_out = 0.0
+        total_edge_length = 0.0
+        weighted_T_edge = 0.0  # 边长加权边界温度
         for (a, b) in outer_edges
             xa, ya = mesh.node[a, 1], mesh.node[a, 2]
             xb, yb = mesh.node[b, 1], mesh.node[b, 2]
             L_edge = hypot(xb - xa, yb - ya)
             T_edge = 0.5 * (T_nodes[a] + T_nodes[b])
             p_out += h * L_edge * scale_L * H * (T_edge - Tamb)
+            weighted_T_edge += T_edge * L_edge
+            total_edge_length += L_edge
         end
         P_boundary_outer[k] = p_out
+        # 计算边长加权的边界平均温度
+        T_edge_avg[k] = total_edge_length > 0 ? weighted_T_edge / total_edge_length : Tamb
 
         # surface 模式分布式散热：2h/H * ∫(T-Tamb)dV = 2h * ∫(T-Tamb)dA
         # A_elem 是无量纲面积，需乘 L² 转换为物理面积
@@ -187,7 +211,32 @@ function run_distributed2d_result()
         P_net[k] = P_internal[k] - P_boundary_total[k]
     end
 
-    return t, T_vol, P_internal, P_boundary_total, P_net, P_rxn, P_ohmic, P_reversible
+    # 诊断输出：最终时刻的温度场分布
+    T_nodes_final = T_nodes_hist[:, end]
+    println("\n[最终时刻温度场诊断]")
+    println("  总节点数: $(length(T_nodes_final))")
+    println("  温度范围: T ∈ [$(minimum(T_nodes_final)), $(maximum(T_nodes_final))] K")
+    println("  体积平均温度: $(T_vol[end]) K")
+
+    # 外边界节点温度统计
+    T_outer_nodes = T_nodes_final[outer_node_indices]
+    println("\n[外边界节点温度统计]")
+    println("  外边界节点温度范围: T ∈ [$(minimum(T_outer_nodes)), $(maximum(T_outer_nodes))] K")
+    println("  外边界节点平均温度: $(mean(T_outer_nodes)) K")
+    println("  外边界节点温度标准差: $(std(T_outer_nodes)) K")
+
+    # 内部节点温度统计
+    inner_node_indices = findall(.!is_outer)
+    T_inner_nodes = T_nodes_final[inner_node_indices]
+    println("\n[内部节点温度统计]")
+    println("  内部节点温度范围: T ∈ [$(minimum(T_inner_nodes)), $(maximum(T_inner_nodes))] K")
+    println("  内部节点平均温度: $(mean(T_inner_nodes)) K")
+
+    # 温度梯度分析
+    println("\n[温度梯度分析]")
+    println("  外边界/内部 温度差: $(mean(T_inner_nodes) - mean(T_outer_nodes)) K")
+
+    return t, T_vol, T_edge_avg, P_internal, P_boundary_total, P_net, P_rxn, P_ohmic, P_reversible
 end
 
 function run_lumped_result()
@@ -219,7 +268,7 @@ function main()
     println("2D 等效集总量 vs Thermal.jl(lumped) 对比")
     println("="^90)
 
-    t2d, T2d, Pin2d, Pout2d, Pnet2d, Prxn2d, Pohm2d, Prev2d = run_distributed2d_result()
+    t2d, T2d, T_edge, Pin2d, Pout2d, Pnet2d, Prxn2d, Pohm2d, Prev2d = run_distributed2d_result()
     tlp, Tlp, Pinlp, Poutlp, Pnetlp = run_lumped_result()
 
     # 将 lumped 插值到 2D 时间轴
@@ -271,19 +320,92 @@ function main()
     @printf("  Lumped ΔT: %.6f K\n", Tlp_i[end] - Tlp_i[1])
     @printf("  PyBaMM ΔT: %.6f K\n", Tref_i[end] - Tref_i[1])
 
+    # ====== 边界温度诊断输出 ======
+    println("\n" * "="^90)
+    println("边界温度 T_edge 诊断")
+    println("="^90)
+
+    p_dim = JuBat.ChooseCell("Jellyroll")
+    Tamb = p_dim.cell.T_amb
+    h = p_dim.cell.h
+    A_cool = p_dim.cell.cooling_surface
+
+    # 选择关键时间点进行诊断
+    key_times = [0, div(length(t2d), 4), div(length(t2d), 2), 3*div(length(t2d), 4), length(t2d)]
+
+    println("\n[关键时间点边界温度分析]")
+    println("时间(s) | T_vol(K) | T_edge(K) | ΔT=T_vol-T_edge(K) | T_vol-Tamb(K) | T_edge-Tamb(K) | 散热比")
+    println("-" * repeat("-", 95))
+
+    for idx in key_times
+        if idx < 1; idx = 1; end
+        if idx > length(t2d); idx = length(t2d); end
+
+        T_v = T2d[idx]
+        T_e = T_edge[idx]
+        dT = T_v - T_e
+        dT_vol = T_v - Tamb
+        dT_edge = T_e - Tamb
+
+        # 散热比 = (T_edge - Tamb) / (T_vol - Tamb)
+        dissipation_ratio = dT_vol > 1e-6 ? dT_edge / dT_vol : 0.0
+
+        @printf("%7.1f | %8.2f | %9.2f | %18.2f | %13.2f | %14.2f | %6.2f%%\n",
+                t2d[idx], T_v, T_e, dT, dT_vol, dT_edge, dissipation_ratio * 100)
+    end
+
+    # 计算等效集总散热和实际散热对比
+    println("\n[等效集总散热 vs 实际散热分析]")
+    println("时间(s) | Pout_2d(W) | P_equiv(W) | 散热效率 | 理论 h_eff/W/m²K")
+    println("-" * repeat("-", 70))
+
+    for idx in key_times
+        if idx < 1; idx = 1; end
+        if idx > length(t2d); idx = length(t2d); end
+
+        T_v = T2d[idx]
+        T_e = T_edge[idx]
+        dT_vol = T_v - Tamb
+        dT_edge = T_e - Tamb
+
+        # 实际 2D 散热
+        P_actual = Pout2d[idx]
+
+        # 等效集总散热 = h * A_cool * (T_vol - Tamb)
+        P_equiv = h * A_cool * dT_vol
+
+        # 散热效率
+        eff = P_equiv > 1e-12 ? P_actual / P_equiv : 0.0
+
+        # 理论等效换热系数 h_eff = h * (T_vol - Tamb) / (T_edge - Tamb)
+        h_eff = dT_edge > 1e-6 ? h * dT_vol / dT_edge : h
+
+        @printf("%7.1f | %10.4f | %10.4f | %8.2f%% | %15.2f\n",
+                t2d[idx], P_actual, P_equiv, eff * 100, h_eff)
+    end
+
+    println("\n[诊断结论]")
+    @printf("  - 边界温度比平均温度低: %.2f - %.2f K (时间范围 0-%.0f s)\n",
+            minimum(T2d .- T_edge), maximum(T2d .- T_edge), t2d[end])
+    @printf("  - 平均散热效率: %.2f%% (2D实际散热 / 等效集总散热)\n",
+            mean(Pout2d ./ (h .* A_cool .* (T2d .- Tamb) .+ 1e-12)) * 100)
+    @printf("  - 建议: 使用等效换热系数 h_eff ≈ %.1f × h 可使 2D 散热与集总模型等效\n",
+            mean((T2d .- Tamb) ./ (T_edge .- Tamb .+ 1e-6)))
+
     out_dir = joinpath(@__DIR__, "../../output")
     isdir(out_dir) || mkpath(out_dir)
     out_csv = joinpath(out_dir, "thermal_equivalent_lumped_compare.csv")
     open(out_csv, "w") do io
-        println(io, "time_s,T_2d_equiv_K,T_lumped_K,T_pybamm_K,Pin_2d_W,Pout_2d_W,Pnet_2d_W,Pin_lumped_W,Pout_lumped_W,Pnet_lumped_W,Pnet_pybamm_equiv_W,P_rxn_2d_W,P_ohm_2d_W,P_rev_2d_W,Q_total_pybamm_W,Q_ohmic_pybamm_W,Q_irreversible_pybamm_W,Q_reversible_pybamm_W")
+        println(io, "time_s,T_2d_equiv_K,T_edge_K,T_lumped_K,T_pybamm_K,Pin_2d_W,Pout_2d_W,Pnet_2d_W,Pin_lumped_W,Pout_lumped_W,Pnet_lumped_W,Pnet_pybamm_equiv_W,P_rxn_2d_W,P_ohm_2d_W,P_rev_2d_W,Q_total_pybamm_W,Q_ohmic_pybamm_W,Q_irreversible_pybamm_W,Q_reversible_pybamm_W")
         @inbounds for k in eachindex(t2d)
-            @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g\n",
-                t2d[k], T2d[k], Tlp_i[k], Tref_i[k], Pin2d[k], Pout2d[k], Pnet2d[k], Pinlp_i[k], Poutlp_i[k], Pnetlp_i[k], Pnet_ref[k],
+            @printf(io, "%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g,%.10g\n",
+                t2d[k], T2d[k], T_edge[k], Tlp_i[k], Tref_i[k], Pin2d[k], Pout2d[k], Pnet2d[k], Pinlp_i[k], Poutlp_i[k], Pnetlp_i[k], Pnet_ref[k],
                 Prxn2d[k], Pohm2d[k], Prev2d[k], Qtotal_ref_i[k], Qohm_ref_i[k], Qirrev_ref_i[k], Qrev_ref_i[k])
         end
     end
 
     pT = plot(t2d, T2d, label="2D equivalent lumped T", linewidth=2, xlabel="Time (s)", ylabel="Temperature (K)", title="Temperature Comparison")
+    plot!(pT, t2d, T_edge, label="2D boundary T_edge", linewidth=2, linestyle=:dot)
     plot!(pT, t2d, Tlp_i, label="Thermal.jl lumped T", linewidth=2)
     plot!(pT, t2d, Tref_i, label="PyBaMM T", linewidth=2, linestyle=:dash)
     savefig(pT, joinpath(out_dir, "thermal_equivalent_temperature_compare.png"))

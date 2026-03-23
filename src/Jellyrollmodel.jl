@@ -497,14 +497,19 @@ end
 # ========================================================================
 
 """
-    setup_thermal2D_mesh(case, mesh_data; use_merged=false)
+    setup_thermal2D_mesh(case, mesh_data; use_merged=nothing)
 
 设置热网格并保存层间界面信息到新的case中。
 
 # 参数
-- `case`: Case对象（包含无量纲参数 param）
+- `case`: Case对象（包含无量纲参数 param 和选项 opt）
 - `mesh_data`: 由 `jellyroll_collector_seed_mesh` 返回的网格数据
-- `use_merged`: 是否使用合并节点的网格（默认false，使用未合并节点）
+- `use_merged`: 是否使用合并节点的网格
+  - `nothing`（默认）：根据 CZM 是否启用自动决定
+    - CZM 未启用 → 使用合并网格（保证径向导热路径）
+    - CZM 启用 → 使用未合并网格 + 界面热阻模型
+  - `true`: 强制使用合并网格
+  - `false`: 强制使用未合并网格
 
 # 说明
 此函数返回新的case对象，保持原case不变。
@@ -518,8 +523,14 @@ mesh_data = JuBat.jellyroll_collector_seed_mesh(param; nθ=80, gsorder=2)
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 ```
 """
-function setup_thermal2D_mesh(case, mesh_data; use_merged::Bool=false)
+function setup_thermal2D_mesh(case, mesh_data; use_merged::Union{Bool,Nothing}=nothing)
     case_new = deepcopy(case)
+
+    # 根据 CZM 启用状态自动决定是否使用合并网格
+    if isnothing(use_merged)
+        use_merged = !getfield(case_new.opt, :czm_enabled)
+        @debug "Auto-selecting thermal mesh" czm_enabled=case_new.opt.czm_enabled use_merged=use_merged
+    end
 
     if use_merged
         mesh_th = mesh_data.thermal2D_merged
