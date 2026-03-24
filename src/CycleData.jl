@@ -164,8 +164,10 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
         # 导出数据（按间隔）
         if step_count % export_interval == 0
             # 提取SOC数据
-            soc_n = copy(variables_new["thermal2D element soc_n"])
-            soc_p = copy(variables_new["thermal2D element soc_p"])
+            soc_n_raw = variables_new["thermal2D element soc_n"]
+            soc_p_raw = variables_new["thermal2D element soc_p"]
+            soc_n = isa(soc_n_raw, AbstractMatrix) ? copy(vec(soc_n_raw[:, end])) : copy(vec(soc_n_raw))
+            soc_p = isa(soc_p_raw, AbstractMatrix) ? copy(vec(soc_p_raw[:, end])) : copy(vec(soc_p_raw))
             
             # 使用步间中点温度导出，抑制 Crank-Nicolson 常见的奇偶步伪振荡。
             T_nodes_out = step_count == 1 ? T_nodes_carry : 0.5 .* (T_nodes_prev_export .+ T_nodes_carry)

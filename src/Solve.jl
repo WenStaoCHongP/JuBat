@@ -151,9 +151,7 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
             end
         elseif case.opt.thermalmodel == "distributed2D"
             nT = case.mesh["thermal2D"].nlen
-            n_chem_base = case.mesh["negative particle"].nlen +
-                          case.mesh["positive particle"].nlen +
-                          case.mesh["electrolyte"].nlen
+            n_chem_base = case.mesh["negative particle"].nlen + case.mesh["positive particle"].nlen + case.mesh["electrolyte"].nlen
             if length(y0) == n_chem_base
                 T_seed = (T_nodes_input !== nothing && length(T_nodes_input) == nT) ? vec(T_nodes_input) : fill(case.param.cell.T0, nT)
                 y0 = [y0; T_seed]
@@ -211,8 +209,6 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
             T_nodes = fill(case.param.cell.T0, nnode_th)
         end
         variables["T_nodes"] = T_nodes
-        # 记录有量纲温度场，确保第1个历史步不为空/不为零列。
-        variables["thermal2D temperature"] = T_nodes .* case.param_dim.scale.T_ref
         # 若启用 collector-seeded 逻辑，计算 layer_weights
         if case.opt.collector_seeded
             try
@@ -293,8 +289,6 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
                 T_nodes = y_c[(end - nT + 1):end]
                 variables["T_nodes"] = T_nodes
                 T_nodes_carry = T_nodes
-                Tref = case.param_dim.scale.T_ref
-                variables["thermal2D temperature"] = T_nodes .* Tref
             end
         end
         error_y = ErrorEstimation(case, y_old, y_new, dt_min/dt) 
@@ -447,13 +441,27 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
             result["thermal2D Q_ohm_e_PE [W/m3]"] = variables_hist["thermal2D q_ohm_e_pe"][:, 1:v] .* q_scale
             result["thermal2D Q_PCC [W/m3]"] = variables_hist["thermal2D q_pcc"][:, 1:v] .* q_scale
             result["thermal2D Q_NCC [W/m3]"] = variables_hist["thermal2D q_ncc"][:, 1:v] .* q_scale
-            result["thermal2D temperature [K]"] = variables_hist["thermal2D temperature"][:, 1:v]            
-            result["thermal2D T_nodes history [K]"] = variables_hist["thermal2D temperature"][:, 1:v]
+
+            # 节点温度时间序列
+            Tref = case.param_dim.scale.T_ref
+            T_nodes_hist = variables_hist["T_nodes"][:, 1:v] .* Tref
+            result["thermal2D temperature at nodes [K]"] = T_nodes_hist
+
+            # 单元温度时间序列（节点平均）
+            mesh_th = case.mesh["thermal2D"]
+            ne = size(mesh_th.element, 1)
+            n_t = size(T_nodes_hist, 2)
+            T_elem_temp_hist = zeros(Float64, ne, n_t)
+            for ti in 1:n_t
+                T_nodes_t = variables_hist["T_nodes"][:, ti]
+                T_elem_temp_hist[:, ti] = element_nodal_mean(mesh_th, T_nodes_t)
+            end
+            result["thermal2D temperature [K]"] = T_elem_temp_hist .* Tref
         end
         if case.opt.thermal_enabled
             if isa(T_nodes_carry, Array{Float64}) && length(T_nodes_carry) == case.mesh["thermal2D"].nlen
                 Tref = case.param_dim.scale.T_ref
-                result["thermal2D T_nodes [K]"] = T_nodes_carry .* Tref
+                result["thermal2D final temperature at nodes [K]"] = T_nodes_carry .* Tref
                 result["thermal2D nodes xy [m]"] = case.mesh["thermal2D"].node
             end
             if !isempty(T_elem_hist) && length(T_elem_hist) == length(time_hist)
@@ -692,8 +700,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     variables["time"] = t
     variables["temperature"] = thermal2D_volume_average_temperature(case.mesh["thermal2D"], T_nodes)  # 体积平均温度
     variables["T_nodes"] = T_nodes
-    variables["thermal2D temperature"] = T_nodes .* case.param_dim.scale.T_ref
-    
+
     # 可选：添加单元电压分布（用于诊断）
     variables["thermal2D element voltages"] = [variables_elems[e]["cell voltage"] for e in 1:ne]
     

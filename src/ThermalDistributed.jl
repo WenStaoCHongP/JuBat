@@ -385,8 +385,6 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
     variables["thermal2D q_ohm_e_pe"] = q_ohm_e_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
     variables["thermal2D q_pcc"] = q_pcc * case.param_dim.scale.L^3 / case.param_dim.cell.volume
     variables["thermal2D q_ncc"] = q_ncc * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-
-    # 总功率（无量纲：q* * A*）
     variables["total heat source"] = [sum(q_total .* areas) * case.param_dim.scale.L^3 / case.param_dim.cell.volume]
 
     return variables

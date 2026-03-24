@@ -3,7 +3,7 @@ function ThermalLumped(case::Case, variables::Dict{String, Union{Array{Float64},
     t = variables["time"]
     T = variables["temperature"][1]
     MT = param.cell.mass * param.cell.heat_Q * ones(1,1)    
-    if case.opt.model == "SPM" || case.opt.model == "SPMe"
+    if case.opt.model == "SPM" 
         I_app = variables["cell current"]
         eta_n = variables["negative electrode overpotential"][1]
         eta_p = variables["positive electrode overpotential"][end]
@@ -12,6 +12,34 @@ function ThermalLumped(case::Case, variables::Dict{String, Union{Array{Float64},
         Q_ohm = 0
         Q_rxn = abs(I_app * (eta_p - eta_n) ) # reaction heat is always positive
         Q_rev = abs(I_app) * T * (param.PE.dUdT(csp_surf) - param.NE.dUdT(csn_surf)) 
+    elseif case.opt.model == "SPMe"
+        I_app = variables["cell current"]
+        eta_n = variables["negative electrode overpotential"][1]
+        eta_p = variables["positive electrode overpotential"][end]
+        csn_surf = variables["negative particle surface lithium concentration"][1]
+        csp_surf = variables["positive particle surface lithium concentration"][end]
+        ce_n_gs = variables["electrolyte lithium concentration at negative electrode Gauss point"]
+        ce_p_gs = variables["electrolyte lithium concentration at positive electrode Gauss point"]
+        ce_sp_gs = variables["electrolyte lithium concentration at separator Gauss point"]
+        mesh_ne = case.mesh["negative electrode"]
+        mesh_pe = case.mesh["positive electrode"]
+        mesh_sp = case.mesh["separator"]
+        sig_n_eff = param.NE.sig * param.NE.eps_s
+        sig_p_eff = param.PE.sig * param.PE.eps_s
+        kappa_ne_gs = param.EL.kappa(ce_n_gs, T) * param.NE.eps ^ param.NE.brugg
+        kappa_pe_gs = param.EL.kappa(ce_p_gs, T) * param.PE.eps ^ param.PE.brugg
+        kappa_sp_gs = param.EL.kappa(ce_sp_gs, T) * param.SP.eps ^ param.SP.brugg
+        kappa_ne_av = IntV(kappa_ne_gs, mesh_ne) / param.NE.thickness
+        kappa_pe_av = IntV(kappa_pe_gs, mesh_pe) / param.PE.thickness
+        kappa_sp_av = IntV(kappa_sp_gs, mesh_sp) / param.SP.thickness
+        dphi_S = I_app / 3 * (param.NE.thickness / param.NE.sig + param.PE.thickness / param.PE.sig)
+        R_EL = param.NE.thickness / (3.0 * kappa_ne_av) + param.SP.thickness / kappa_sp_av + param.PE.thickness / (3.0 * kappa_pe_av)
+        csn_av = IntV(ce_n_gs, mesh_ne) / param.NE.thickness
+        csp_av = IntV(ce_p_gs, mesh_pe) / param.PE.thickness
+        dphi_e = 2.0 * T * (1 - param.EL.tplus) * (csp_av - csn_av) / param.EL.ce0 - I_app * R_EL - dphi_S
+        Q_ohm = -I_app * (dphi_S + dphi_e)
+        Q_rxn = abs(I_app * (eta_p - eta_n) ) # reaction heat is always positive
+        Q_rev = abs(I_app) * T * (param.PE.dUdT(csp_surf) - param.NE.dUdT(csn_surf))
     else
         eta_n_gs = variables["negative electrode overpotential at Gauss point"]
         eta_p_gs = variables["positive electrode overpotential at Gauss point"]
