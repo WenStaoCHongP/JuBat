@@ -11,14 +11,12 @@
 3. **文件过长**：620 行代码集中在一个文件，难以维护
 
 ## 重构目标
-
 1. 调试函数使用 `debug_` 前缀，其余函数不使用前缀
 2. 消除冗余逻辑，提取复用函数
 3. 模块化拆分，保持单一职责原则
 4. 保持 API 兼容，`solve_branch_currents_newton` 签名不变
 
 ## 文件结构
-
 ```
 src/
 ├── Parallelsolution/
@@ -27,7 +25,8 @@ src/
 │   ├── electrochem.jl     # 电化学计算
 │   ├── branch_model.jl    # 分支电压模型
 │   ├── solver.jl          # 牛顿求解器
-│   └── init.jl            # 初始化和边界检查
+│   ├── init.jl            # 初始化
+│   └── bounds.jl          # 边界检测（从 init.jl 分离）
 └── Parallelsolution.jl    # 主入口
 ```
 
@@ -47,54 +46,75 @@ struct BranchCoefficients
     C5::Float64      # 欧姆电阻
 end
 
-# 预计算因子
+# 零值（用于初始化）
+Base.zero(c::BranchCoefficients) = = BranchCoefficients(0.0, 1.0, 1.0, 1.0, 1.0)
+Base.zero(coeffs::Vector{BranchCoefficients}) = [Base.zero(c) for c in coeffs]
+
+# 预计算因子（不含调试数据）
 struct ElectrochemicalPrefactors
     prefactor_n::Float64
     prefactor_p::Float64
     csn_av::Float64
     csp_av::Float64
     u_n_ref_val::Float64
-    u_p_ref_val_val::Float64
+    u_p_ref_val::Float64
     du_n_dT_val::Float64
     du_p_dT_val::Float64
     c_sigma::Float64
 end
-
+# 调试数据（独立结构体）
+struct DebugConcentrationData
+    cn_surf::Vector{Float64}
+    cp_surf::Vector{Float64}
+    ce_n_gs::Vector{Float64}
+    ce_p_gs::Vector{Float64}
+end
+# 截止信息
+struct CutoffInfo
+    cutoff_elements::Vector{Int}
+    cutoff_ocv::Vector{Float64}
+    cutoff_type::Vector{Int}
+    all_ocv::Vector{Float64}
+    V_MIN::Float64
+    V_MAX::Float64
+    nearest_cutoff_element::Int
+    nearest_cutoff_ocv::Float64
+    margin_to_cutoff::Float64
+end
 # 求解器状态
 mutable struct SolverState
     I_e::Vector{Float64}      # 单元电流
     V::Float64                # 公共电压
     active_mask::BitVector    # 活跃单元掩码
     converged::Bool           # 收敛标志
-    iterations::Int           # 迭代次数
+    last_iter::Int            # 迭代次数
 end
 ```
-
 ### debug.jl
 
-调试函数（使用 `debug_` 前缀）：
+调试函数（使用 `debug_` 前缀）
 
 ```julia
 """
-    debug_check_prefactors(...)
+    debug_check_prefactors(prefactors, debug_data)
 
 检查并报告预计算值中的 NaN/Inf（仅调试模式启用）
 """
-function debug_check_prefactors(prefactors, cn_surf, cp_surf, ce_n_gs, ce_p_gs)
+function debug_check_prefactors(prefactors::ElectrochemicalPrefactors, debug_data::DebugConcentrationData)
     # 实现...
 end
 
 """
-    debug_check_coefficients(...)
+    debug_check_coefficients(e, coeff, T_e, j0_n, j0_p, u_n, u_p)
 
 检查单元系数是否有效
 """
-function debug_check_coefficients(e, coeff, T_e, j0_n, j0_p, u_n, u_p)
+function debug_check_coefficients(e, coeff::BranchCoefficients, T_e, j0_n, j0_p, u_n, u_p)
     # 实现...
 end
 
 """
-    debug_check_voltage(...)
+    debug_check_voltage(V, V_branches, I_e, coeffs, I_total, ne)
 
 检查初始电压是否有效
 """
@@ -102,10 +122,9 @@ function debug_check_voltage(V, V_branches, I_e, coeffs, I_total, ne)
     # 实现...
 end
 ```
-
 ### electrochem.jl
 
-电化学计算函数（无前缀）：
+电化学计算函数（无前缀）
 
 ```julia
 """
@@ -122,6 +141,7 @@ scalarize(x) = isa(x, Number) ? Float64(x) : Float64(x[1])
 """
 function compute_prefactors(variables, param, mesh_ne, mesh_pe)
     # 实现...
+    return ElectrochemicalPrefactors(...), DebugConcentrationData(...)
 end
 
 """
@@ -129,24 +149,22 @@ end
 
 计算单个单元的电化学系数
 """
-function compute_element_coefficients(e, T_e, param, prefactors, T_ref)
+function compute_element_coefficients(e, T_e, param, prefactors::ElectrochemicalPrefactors, T_ref)
     # 实现...
+    return BranchCoefficients(...)
 end
-
 """
     compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref)
 
 批量计算所有单元的系数
 """
 function compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref)
-    # 使用 map 或广播替代循环
     return map(e -> compute_element_coefficients(e, Te_prev[e], param, prefactors, T_ref), 1:ne)
 end
 ```
-
 ### branch_model.jl
 
-分支电压模型（无前缀）：
+分支电压模型（无前缀）
 
 ```julia
 """
@@ -154,38 +172,35 @@ end
 
 计算分支电压 V = C1 + C2*(asinh(α_p*I) - asinh(α_n*I)) - C5*I
 """
-function branch_voltage(coeff, I::Float64)
+function branch_voltage(coeff::BranchCoefficients, I::Float64)
     apI = coeff.alpha_p * I
     anI = coeff.alpha_n * I
     return coeff.C1 + coeff.C2 * (asinh(apI) - asinh(anI)) - coeff.C5 * I
 end
-
 """
     branch_dVdI(coeff, I::Float64)
 
 计算分支电压对电流的导数 dV/dI
 """
-function branch_dVdI(coeff, I::Float64)
+function branch_dVdI(coeff::BranchCoefficients, I::Float64)
     apI = coeff.alpha_p * I
     anI = coeff.alpha_n * I
     denom_p = sqrt(1.0 + apI * apI)
     denom_n = sqrt(1.0 + anI * anI)
     return coeff.C2 * (coeff.alpha_p / denom_p - coeff.alpha_n / denom_n) - coeff.C5
 end
-
 """
     compute_all_branch_voltages(coeffs, I_e)
 
 计算所有单元的分支电压（消除冗余计算）
 """
-function compute_all_branch_voltages(coeffs, I_e)
+function compute_all_branch_voltages(coeffs::Vector{BranchCoefficients}, I_e::Vector{Float64})
     return [branch_voltage(coeffs[e], I_e[e]) for e in 1:length(I_e)]
 end
 ```
-
 ### solver.jl
 
-牛顿求解器（无前缀）：
+牛顿求解器（无前缀）
 
 ```julia
 """
@@ -196,20 +211,18 @@ end
 function line_search(I_e, V, ΔI, ΔV, I_trial, ne; max_attempts=12)
     # 实现...
 end
-
 """
     newton_iteration!(state, ne, w, I_total, coeffs; tol_V=1e-8, tol_I=1e-10, max_iters=25)
 
 牛顿迭代主循环（支持部分单元截止）
 """
-function newton_iteration!(state, ne, w, I_total, coeffs; kwargs...)
+function newton_iteration!(state::SolverState, ne, w, I_total, coeffs; kwargs...)
     # 实现...
 end
 ```
-
 ### init.jl
 
-初始化和边界检查（无前缀）：
+初始化（无前缀）
 
 ```julia
 """
@@ -220,7 +233,6 @@ end
 function initialize_currents(ne, w, I_total, x_prev)
     # 实现...
 end
-
 """
     normalize_currents!(I_e, w, I_total, active_idx)
 
@@ -229,7 +241,6 @@ end
 function normalize_currents!(I_e, w, I_total, active_idx)
     # 实现...
 end
-
 """
     detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
 
@@ -237,23 +248,40 @@ end
 """
 function detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
     # 实现...
+    return active_mask, n_cutoff, cutoff_info::CutoffInfo
 end
-
 """
-    check_voltage_bounds(V, V_MIN, V_MAX, phi_scale)
+    merge_active_masks!(active_mask, deactivated_mask)
 
-检查电压边界
+合并截止电压掩码和 CZM 失效掩码
 """
-function check_voltage_bounds(V, V_MIN, V_MAX, phi_scale)
-    # 实现...
+function merge_active_masks!(active_mask::BitVector, deactivated_mask::BitVector)
+    active_mask .&= .!deactivated_mask
+    return active_mask, sum(.!active_mask)
 end
+"""
+    compute_inactive_reason(deactivated_mask, active_mask)
 
+计算非活跃原因编码
+"""
+function compute_inactive_reason(deactivated_mask::BitVector, active_mask::BitVector)
+    ne = length(active_mask)
+    inactive_reason = zeros(Float64, ne)
+    for e in 1:ne
+        if deactivated_mask[e]
+            inactive_reason[e] = 2.0  # CZM断裂失效
+        elseif !active_mask[e]
+            inactive_reason[e] = 1.0  # 电压截止
+        end
+    end
+    return inactive_reason
+end
 """
     compute_initial_voltage(coeffs, I_e, active_idx, ne)
 
 计算初始电压（消除重复计算）
 """
-function compute_initial_voltage(coeffs, I_e, active_idx, ne)
+function compute_initial_voltage(coeffs::Vector{BranchCoefficients}, I_e, active_idx, ne)
     if isempty(active_idx)
         return sum(c.C1 for c in coeffs) / ne
     else
@@ -262,7 +290,26 @@ function compute_initial_voltage(coeffs, I_e, active_idx, ne)
     end
 end
 ```
+### bounds.jl
 
+边界检测（从 init.jl 分离）
+
+```julia
+"""
+    check_voltage_bounds(V, V_MIN, V_MAX, phi_scale)
+
+检查电压边界
+"""
+function check_voltage_bounds(V, V_MIN, V_MAX, phi_scale)
+    V_phys = V * phi_scale
+    if V < V_MIN
+        return false, 1, V_phys, V_MIN * phi_scale  # 放电截止
+    elseif V > V_MAX
+        return false, 2, V_phys, V_MAX * phi_scale  # 充电截止
+    end
+    return true, 0, V_phys, 0.0
+end
+```
 ### Parallelsolution.jl（主入口）
 
 ```julia
@@ -273,6 +320,7 @@ include("Parallelsolution/electrochem.jl")
 include("Parallelsolution/branch_model.jl")
 include("Parallelsolution/solver.jl")
 include("Parallelsolution/init.jl")
+include("Parallelsolution/bounds.jl")
 
 """
     solve_branch_currents_newton(case, variables, yt, t, I_total, areas, Te_prev, x_prev; deactivated_elements=nothing)
@@ -287,12 +335,54 @@ function solve_branch_currents_newton(case::Case, variables, yt, t, I_total, are
     # 2. 计算预因子
     # 3. 计算系数
     # 4. 检测截止单元
-    # 5. 初始化电流
-    # 6. 牛顿迭代
-    # 7. 归一化
-    # 8. 边界检查
-    # 9. 写入结果
+    # 5. 合并活跃掩码
+    # 6. 初始化电流
+    # 7. 牛顿迭代
+    # 8. 归一化
+    # 9. 边界检查
+    # 10. 写入结果
 end
+
+"""
+    write_results_to_variables!(variables, I_e, V, converged, last_iter, active_mask, cutoff_info, ...)
+
+写入结果到 variables 字典
+"""
+function write_results_to_variables!(variables, I_e, V, converged, last_iter, active_mask, cutoff_info, deactivated_mask, inactive_reason, phi_scale, I_typ, V_phys, voltage_in_bounds, cutoff_type_global)
+    # 实现...
+end
+```
+## 数据流
+
+```mermaid
+flowchart TB
+    subgraph initPhase["初始化阶段"]
+        A["输入参数"] --> B["initialize_currents"]
+        A --> C["detect_cutoff_elements"]
+        C --> D["merge_active_masks"]
+        A --> E["创建 deactivated_mask"]
+        E --> D
+    end
+    
+    subgraph computePhase["计算阶段"]
+        B --> F["compute_prefactors"]
+        F --> G["compute_all_coefficients"]
+        G --> H["compute_initial_voltage"]
+    end
+    
+    subgraph solvePhase["求解阶段"]
+        H --> I["newton_iteration"]
+        I --> J{"收敛?"}
+        J -->|否| K["line_search"]
+        K --> I
+        J -->|是| L["normalize_currents"]
+    end
+    
+    subgraph outputPhase["输出阶段"]
+        L --> M["check_voltage_bounds"]
+        M --> N["compute_inactive_reason"]
+        N --> O["write_results_to_variables"]
+    end
 ```
 
 ## 消除的冗余
@@ -302,49 +392,24 @@ end
 | V_branches 重复计算 | L521-532, L535 | 提取为 `compute_initial_voltage()` |
 | 归一化逻辑分散 | `_initialize_currents`, L551-574 | 统一到 `normalize_currents!()` |
 | 系数计算循环 | `_compute_all_coefficients` | 使用 `map` 替代 |
-| active_mask 合并分散 | L494-502 | 提取为 `merge_active_masks()` |
-
-## 数据流
-
-```mermaid
-flowchart TB
-    subgraph init_phase["初始化阶段"]
-        A[输入参数] --> B[initialize_currents]
-        A --> C[detect_cutoff_elements]
-        C --> D[merge_active_masks]
-    end
-    
-    subgraph compute_phase["计算阶段"]
-        B --> E[compute_prefactors]
-        E --> F[compute_all_coefficients]
-        F --> G[compute_initial_voltage]
-    end
-    
-    subgraph solve_phase["求解阶段"]
-        G --> H[newton_iteration]
-        H --> I{收敛?}
-        I -->|否| J[line_search]
-        J --> H
-        I -->|是| K[normalize_currents]
-    end
-    
-    subgraph output_phase["输出阶段"]
-        K --> L[check_voltage_bounds]
-        L --> M[写入 variables]
-    end
-```
+| active_mask 合并分散 | L494-502 | 提取为 `merge_active_masks!()` |
+| inactive_reason 计算 | L594-602 | 提取为 `compute_inactive_reason()` |
+| variables 写入分散 | L579-617 | 提取为 `write_results_to_variables!()` |
 
 ## 兼容性保证
-
 1. **API 不变**：`solve_branch_currents_newton` 函数签名保持不变
 2. **导出不变**：`JuBat.jl` 中的 export 语句不需要修改
 3. **行为不变**：数值结果与原实现完全一致
 
-## 测试验证
+4. **内部 API 清晰**： 模块化后函数名更清晰，易于维护
 
+## 测试验证
 1. 运行现有示例脚本确认功能正常
 2. 对比重构前后的数值结果
 3. 检查调试模式输出
+4. 验证边界检测逻辑正确
+
+5. 验证 CZM 失效单元处理
 
 ## 文件修改清单
 
@@ -356,4 +421,5 @@ flowchart TB
 | `src/Parallelsolution/branch_model.jl` | 新建 |
 | `src/Parallelsolution/solver.jl` | 新建 |
 | `src/Parallelsolution/init.jl` | 新建 |
+| `src/Parallelsolution/bounds.jl` | 新建 |
 | `src/Parallelsolution.jl` | 重写（仅包含主函数和 include 语句）|
