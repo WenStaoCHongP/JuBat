@@ -77,12 +77,19 @@
 
 所有输出温度通过 `case.param_dim.scale.T_ref` 乘以无量纲值得到开尔文温度。
 
+**节点到单元温度平均**：
+```julia
+# 对于单元 e，温度为该单元所有节点的平均值
+T_elem[e] = mean(T_nodes[mesh.element[e, :]])
+```
+使用现有函数 `element_nodal_mean(mesh, T_nodes)` 或手动实现。
+
 ## 3. 需要修改的文件
 
 | 文件 | 修改内容 |
 |------|----------|
 | `src/Variables.jl` | 删除 `"thermal2D temperature"` 定义（L99, L127），删除 `"T_prev"`（L98） |
-| `src/Solve.jl` | 更新输出键名，移除对 `"thermal2D temperature"` 的写入，确保 `"T_nodes"` 存储无量纲值 |
+| `src/Solve.jl` | 重构输出部分（L450-456），删除冗余键，添加节点到单元平均计算 |
 | `src/PostProcessing.jl` | 统一输出键名格式，修复双重转换问题 |
 | `src/CycleData.jl` | 更新 `final_state` 中的温度键名，确保使用 `"T_nodes"` |
 | `src/Mechanical.jl` | 确认使用 `"T_nodes"`（当前已正确） |
