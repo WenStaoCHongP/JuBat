@@ -60,17 +60,19 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
         result["thermal2D Q_ohm_e_PE [W/m3]"] = variables["thermal2D q_ohm_e_pe"][:, 1:v] * case.param.scale.q
         result["thermal2D Q_PCC [W/m3]"] = variables["thermal2D q_pcc"][:, 1:v] * case.param.scale.q
         result["thermal2D Q_NCC [W/m3]"] = variables["thermal2D q_ncc"][:, 1:v] * case.param.scale.q
-        result["thermal2D temperature [K]"] = variables["thermal2D temperature"][:, 1:v] * case.param.scale.T_ref
+        result["thermal2D temperature at nodes [K]"] = variables["T_nodes"][:, 1:v] * case.param_dim.scale.T_ref
     end
+    """
     if case.opt.czm_enabled == true
-        result["CZM damage [0-1]"] = variables["CZM damage"][:, 1:v]
-        result["CZM displacement x [m]"] = variables["CZM displacement x"][:, 1:v] * case.param.scale.r0
-        result["CZM displacement y [m]"] = variables["CZM displacement y"][:, 1:v] * case.param.scale.r0
-        result["CZM traction normal [Pa]"] = variables["CZM traction normal"][:, 1:v] * case.param.scale.E_n
-        result["CZM traction tangent [Pa]"] = variables["CZM traction tangent"][:, 1:v] * case.param.scale.E_p
-        result["CZM separation normal [m]"] = variables["CZM separation normal"][:, 1:v] * case.param.scale.r0
-        result["CZM separation tangent [m]"] = variables["CZM separation tangent"][:, 1:v] * case.param.scale.r0
+        result["czm damage [0-1]"] = variables["czm damage"][:, 1:v]
+        result["czm displacement x [m]"] = variables["czm displacement x"][:, 1:v] * case.param.scale.r0
+        result["czm displacement y [m]"] = variables["czm displacement y"][:, 1:v] * case.param.scale.r0
+        result["czm traction normal [Pa]"] = variables["czm traction normal"][:, 1:v] * case.param.scale.E_n
+        result["czm traction tangent [Pa]"] = variables["czm traction tangent"][:, 1:v] * case.param.scale.E_p
+        result["czm separation normal [m]"] = variables["czm separation normal"][:, 1:v] * case.param.scale.r0
+        result["czm separation tangent [m]"] = variables["czm separation tangent"][:, 1:v] * case.param.scale.r0
     end
+    """
     return result
 end
 

@@ -162,14 +162,17 @@ function SPMe_variables(case::Case, yt::Array{Float64}, t::Float64; I_app::Union
     eta_p = 2.0 * T * asinh.(j_p / 2.0 / j0_p_av)
 
     ## another implementation in pybamm
-    dphi_S =  I_app / 3 * (param.NE.thickness / param.NE.sig + param.PE.thickness / param.PE.sig)    
-    kappa_ne = param.EL.kappa(param.EL.ce0, T) * param.NE.eps ^ param.NE.brugg
-    kappa_pe = param.EL.kappa(param.EL.ce0, T) * param.PE.eps ^ param.PE.brugg
-    kappa_sp = param.EL.kappa(param.EL.ce0, T) * param.SP.eps ^ param.SP.brugg
-    R_EL = param.NE.thickness / kappa_ne / 3.0  + param.SP.thickness / kappa_sp + param.PE.thickness / kappa_pe / 3.0
+    dphi_S = I_app / 3 * (param.NE.thickness / param.NE.sig + param.PE.thickness / param.PE.sig)    
+    kappa_ne_gs = param.EL.kappa(ce_n_gs, T) * param.NE.eps ^ param.NE.brugg
+    kappa_pe_gs = param.EL.kappa(ce_p_gs, T) * param.PE.eps ^ param.PE.brugg
+    kappa_sp_gs = param.EL.kappa(ce_sp_gs, T) * param.SP.eps ^ param.SP.brugg
+    kappa_ne_av = IntV(kappa_ne_gs, mesh_ne) / param.NE.thickness
+    kappa_pe_av = IntV(kappa_pe_gs, mesh_pe) / param.PE.thickness
+    kappa_sp_av = IntV(kappa_sp_gs, mesh_sp) / param.SP.thickness
+    R_EL = param.NE.thickness / (3.0 * kappa_ne_av) + param.SP.thickness / kappa_sp_av + param.PE.thickness / (3.0 * kappa_pe_av)
     csn_av = IntV(ce_n_gs, mesh_ne) / param.NE.thickness
     csp_av = IntV(ce_p_gs, mesh_pe) / param.PE.thickness
-    dphi_e = 2.0 * T * (1 - param.EL.tplus) * (csp_av - csn_av)/param.EL.ce0 .- I_app * R_EL .- dphi_S
+    dphi_e = 2.0 * T * (1 - param.EL.tplus) * (csp_av - csn_av) / param.EL.ce0 - I_app * R_EL - dphi_S
 
     u_n = param.NE.U(cn_surf) .+ (T .- case.param.cell.T0) .* param.NE.dUdT(cn_surf)
     u_p = param.PE.U(cp_surf) .+ (T .- case.param.cell.T0) .* param.PE.dUdT(cp_surf)   

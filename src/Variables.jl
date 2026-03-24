@@ -86,13 +86,15 @@ function StandardVariables(case::Case, num::Int64)
     end
 
     variables["temperature"] = zeros(Float64, length(case.index["temperature"]), num)
-    variables["T_nodes"] = zeros(Float64, 0, num)
-    variables["T_prev"] = zeros(Float64, 0, num)
-    variables["heat_source_fields"] = zeros(Float64, 0, num)
-    if case.opt.model == "SPMe" && case.opt.thermalmodel == "distributed2D"
+    
+    if case.opt.thermalmodel == "lumped"
+        variables["thermal lumped internal heat"] = zeros(Float64, 1, num)
+    end
+
+    if case.opt.thermalmodel == "distributed2D"
         ne = size(case.mesh["thermal2D"].element, 1)
         nT = case.mesh["thermal2D"].nlen
-        # 覆盖热源历史为逐单元尺寸
+        variables["T_nodes"] = zeros(Float64, nT, num)
         variables["heat_source_fields"] = zeros(Float64, ne, num)
         variables["thermal2D q_rxn_ne"] = zeros(Float64, ne, num)
         variables["thermal2D q_rev_ne"] = zeros(Float64, ne, num)
@@ -120,25 +122,18 @@ function StandardVariables(case::Case, num::Int64)
         variables["thermal2D element total stress"] = zeros(Float64, ne, num)
         variables["thermal2D element diffusion strain"] = zeros(Float64, ne, num)
         variables["thermal2D element thermal strain"] = zeros(Float64, ne, num)
-        variables["thermal2D temperature"] = zeros(Float64, nT, num)
         variables["thermal2D n_cutoff_elements"] = zeros(Float64, 1, num)
         variables["thermal2D nearest_cutoff_element"] = zeros(Float64, 1, num)
         variables["thermal2D nearest_cutoff_ocv"] = zeros(Float64, 1, num)
         variables["thermal2D margin_to_cutoff"] = zeros(Float64, 1, num)
         variables["total heat source"] = zeros(Float64, 1, num)
-    end
-    
-    if case.opt.thermalmodel == "lumped"
-        variables["thermal lumped internal heat"] = zeros(Float64, 1, num)
-        variables["thermal lumped internal heat [W]"] = zeros(Float64, 1, num)
-    end
-
-    if case.opt.thermalmodel == "distributed2D"
-        nT = case.mesh["thermal2D"].nlen
         variables["thermal2D displacement x"] = zeros(Float64, nT, num)
         variables["thermal2D displacement y"] = zeros(Float64, nT, num)
     end
-
+    if case.opt.czm_enabled == true
+        variables["negative electrode cohesive zone damage"] = zeros(Float64, Nn, num) 
+        variables["positive electrode cohesive zone damage"] = zeros(Float64, Np, num)
+    end 
     return variables
 end
 
