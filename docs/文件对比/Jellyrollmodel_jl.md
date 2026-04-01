@@ -63,3 +63,9 @@
 - **与CZM耦合**：`czm_element_map` 建立热单元到内聚力单元的映射，使损伤状态能影响界面热阻。`interface_pairs` 用于CZM网格创建（`create_czm_mesh`）。当CZM启用时，使用未合并网格保留界面自由度。
 
 - **关键设计决策**：`use_merged` 参数控制网格选择策略——CZM未启用时使用合并网格（消除界面节点重复，保证径向导热连续），CZM启用时使用未合并网格（保留界面自由度，通过界面热阻模型处理层间传热）。
+
+## 后续变更 (2026-04-01)
+
+- **新增 `JellyrollMesh` 结构体**（约 16 行）：在文件顶部定义了带显式类型标注的字段，替代了原先的 `NamedTuple` 返回方式。结构体包含热网格、合并网格、界面节点对、CZM 映射、层信息、极耳节点等所有字段。
+- **变更 `jellyroll_collector_seed_mesh` 返回类型**：返回值从 `NamedTuple` 改为 `JellyrollMesh` 结构体实例。这消除了无类型 `NamedTuple` 返回模式，提供了更好的类型稳定性和 IDE 支持。
+- **下游影响**：所有调用 `jellyroll_collector_seed_mesh` 的代码（`setup_thermal2D_mesh`、示例脚本等）自动兼容，因为结构体支持与 `NamedTuple` 相同的字段访问语法。

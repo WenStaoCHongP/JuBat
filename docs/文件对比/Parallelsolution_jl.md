@@ -185,3 +185,13 @@ Parallelsolution.jl 是**电-热耦合的关键桥梁**，它解决了多单元�
 - `_debug_check_`* 系列调试函数 — 纯诊断工具，可独立移除
 - `_line_search` — 通用数值算法，可独立使用
 
+## 后续变更 (2026-04-01)
+
+- **移除 3 个调试函数**（约 73 行）：
+  - `_debug_check_prefactors`（原第 7 行）— 检查电化学预因子中 NaN/Inf 的调试打印函数
+  - `_debug_check_coefficients`（原第 33 行）— 检查单元系数有效性的调试打印函数
+  - `_debug_check_initial_voltage`（原第 55 行）— 检查初始电压分布合理性的调试打印函数
+- 这些函数使用大量 emoji 标记输出，仅用于开发阶段调试，无生产价值。
+- **核心求解器函数不变**：`_compute_electrochemical_prefactors`、`_compute_element_coefficients`、`_newton_iteration!`、`solve_branch_currents_newton` 等核心函数均未修改。
+- **行数变化**：从 619 行减少至约 546 行。
+
