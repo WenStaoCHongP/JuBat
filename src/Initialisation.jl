@@ -235,6 +235,5 @@ function MultiSPMe_update_state(y::Vector{Float64},case::Case;element_index::Uni
         end
         y_new[thermal_range] .= thermal_nodes
     end
-
     return y_new
 end

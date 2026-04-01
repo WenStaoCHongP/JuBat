@@ -1,3 +1,19 @@
+struct JellyrollMesh
+    thermal2D::Mesh
+    thermal2D_merged::Mesh
+    merge_map::Vector{Int}
+    interface_pairs::Vector{Tuple{Int,Int}}
+    czm_element_map::Dict{Int,Vector{Int}}
+    element_layer::Vector{Int}
+    is_inner_layer::Vector{Bool}
+    inner_nodes::Vector{Int}
+    outer_nodes::Vector{Int}
+    pos_tab_nodes::Vector{Int}
+    neg_tab_nodes::Vector{Int}
+    ne::Int
+    nnode::Int
+end
+
 function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phase::Float64=0.0, tol::Float64=1e-8)
     # 参数已归一化，直接使用无量纲值
     a = param.cell.Rin
@@ -173,23 +189,8 @@ function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phas
 
     gs_new = GetGS(element_new, node_new, gsorder, "Q4")
     thermal2D_merged = Mesh("Q4", 2, node_new, nnode_new, element_new, gs_new)
-
-    return (
-        thermal2D = mesh_unmerged,
-        thermal2D_merged = thermal2D_merged,
-        Jellyroll_czm = mesh_unmerged,
-        merge_map = merge_map,
-        interface_pairs = interface_pairs,
-        czm_element_map = czm_element_map,
-        element_layer = element_layer,
-        is_inner_layer = is_inner_layer,
-        inner_nodes = inner_nodes,
-        outer_nodes = outer_nodes,
-        pos_tab_nodes = pos_tab_nodes,
-        neg_tab_nodes = neg_tab_nodes,
-        ne = ne,
-        nnode = nnode
-    )
+    Jellyroll_Mesh = JellyrollMesh(mesh_unmerged, thermal2D_merged, merge_map, interface_pairs,czm_element_map, element_layer, is_inner_layer,inner_nodes, outer_nodes, pos_tab_nodes, neg_tab_nodes,ne, nnode)
+    return Jellyroll_Mesh
 end
 
 # ========================================================================

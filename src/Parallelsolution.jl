@@ -2,85 +2,12 @@
 # solve_branch_currents_newton - 辅助函数
 # ========================================================================
 
-# 调试输出函数
-"""检查并报告 NaN/Inf 值（调试用）"""
-function _debug_check_prefactors(prefactor_n, prefactor_p, csn_av, csp_av, u_n_ref_val, u_p_ref_val, du_n_dT_val, du_p_dT_val, c_sigma, cn_surf, cp_surf, ce_n_gs, ce_p_gs)
-	has_nan = !isfinite(prefactor_n) || !isfinite(prefactor_p) || !isfinite(csn_av) || !isfinite(csp_av) || !isfinite(u_n_ref_val) || !isfinite(u_p_ref_val) || !isfinite(c_sigma)
-    
-	if !has_nan
-		return false
-	end
-    
-	println("\n" * "="^80)
-	println("❌ [DEBUG] 预计算值包含 NaN/Inf")
-	println("="^80)
-	println("📊 预因子: prefactor_n=$prefactor_n, prefactor_p=$prefactor_p")
-	println("📊 平均浓度: csn_av=$csn_av, csp_av=$csp_av")
-	println("📊 开路电位: u_n=$u_n_ref_val, u_p=$u_p_ref_val")
-	println("📊 温度系数: du_n_dT=$du_n_dT_val, du_p_dT=$du_p_dT_val")
-	println("📊 电导: c_sigma=$c_sigma")
-	println("\n💡 输入浓度前5个值:")
-	println("  cn_surf: $(cn_surf[1:min(5,end)])")
-	println("  cp_surf: $(cp_surf[1:min(5,end)])")
-	println("  ce_n_gs: $(ce_n_gs[1:min(5,end)])")
-	println("  ce_p_gs: $(ce_p_gs[1:min(5,end)])")
-	println("="^80 * "\n")
-    
-	return true
-end
-
-"""检查单元系数是否有效"""
-function _debug_check_coefficients(e, has_nan_prefactor, C1, C2, alpha_p, alpha_n, C5, T_e, j0_n, j0_p, u_n_val_T, u_p_val_T)
-	if has_nan_prefactor || e > 1
-		return  # 只打印第一个异常单元，且预计算值正常时
-	end
-    
-	has_nan_coeff = !isfinite(C1) || !isfinite(C2) || !isfinite(alpha_p) || !isfinite(alpha_n) || !isfinite(C5)
-    
-	if !has_nan_coeff
-		return
-	end
-    
-	println("\n" * "="^80)
-	println("❌ [DEBUG] 单元 $e 系数异常")
-	println("="^80)
-	println("📊 T_e=$T_e, j0_n=$j0_n, j0_p=$j0_p")
-	println("📊 u_n(T)=$u_n_val_T, u_p(T)=$u_p_val_T")
-	println("📊 系数: C1=$C1, C2=$C2")
-	println("   alpha_p=$alpha_p, alpha_n=$alpha_n, C5=$C5")
-	println("="^80 * "\n")
-end
-
-"""检查初始电压是否有效"""
-function _debug_check_initial_voltage(has_nan_prefactor, V, V_branches, I_e, coeffs, I_total, ne)
-	if has_nan_prefactor || isfinite(V)
-		return
-	end
-    
-	println("\n" * "="^80)
-	println("❌ [DEBUG] 初始电压异常: V=$V")
-	println("="^80)
-	println("  I_total=$I_total, ne=$ne")
-	println("  前3个异常单元:")
-    
-	count = 0
-	for e in 1:ne
-		if !isfinite(V_branches[e]) && count < 3
-			count += 1
-			println("  单元 $e: V=$(V_branches[e]), I=$(I_e[e])")
-			println("    C1=$(coeffs[e].C1), C2=$(coeffs[e].C2)")
-			println("    α_p=$(coeffs[e].alpha_p), α_n=$(coeffs[e].alpha_n)")
-		end
-	end
-	println("="^80 * "\n")
-end
-
 # 电化学计算函数
 """标量化：将数组转为标量（取第一个元素）"""
-_scalarize(x) = isa(x, Number) ? Float64(x) : Float64(x[1])
+scalarize(x) = isa(x, Number) ? Float64(x) : Float64(x[1])
 
 """计算电化学预因子"""
-function _compute_electrochemical_prefactors(variables, param, mesh_ne, mesh_pe)
+function compute_prefactors(variables, param, mesh_ne, mesh_pe)
 	cn_surf = variables["negative particle surface lithium concentration"]
 	cp_surf = variables["positive particle surface lithium concentration"]
 	ce_n_gs = variables["electrolyte lithium concentration at negative electrode Gauss point"]
@@ -99,10 +26,10 @@ function _compute_electrochemical_prefactors(variables, param, mesh_ne, mesh_pe)
 	du_p_dT = param.PE.dUdT(cp_surf)
     
 	# 标量化
-	u_n_ref_val = _scalarize(u_n_ref)
-	u_p_ref_val = _scalarize(u_p_ref)
-	du_n_dT_val = _scalarize(du_n_dT)
-	du_p_dT_val = _scalarize(du_p_dT)
+	u_n_ref_val = scalarize(u_n_ref)
+	u_p_ref_val = scalarize(u_p_ref)
+	du_n_dT_val = scalarize(du_n_dT)
+	du_p_dT_val = scalarize(du_p_dT)
     
 	# 固相电导
 	c_sigma = (param.NE.thickness / param.NE.sig + param.PE.thickness / param.PE.sig) / 3.0
@@ -116,7 +43,7 @@ function _compute_electrochemical_prefactors(variables, param, mesh_ne, mesh_pe)
 end
 
 """计算单个单元的电化学系数"""
-function _compute_element_coefficients(e, T_e, param, prefactors, T_ref, debug_mode=false)
+function compute_element_coefficients(e, T_e, param, prefactors, T_ref)
 	# 交换电流密度
 	arr_n = Arrhenius(param.NE.Eac_k, T_e)
 	arr_p = Arrhenius(param.PE.Eac_k, T_e)
@@ -139,34 +66,29 @@ function _compute_element_coefficients(e, T_e, param, prefactors, T_ref, debug_m
 	alpha_p = -1.0 / (2.0 * j0_p * param.PE.as * param.PE.thickness)
 	alpha_n = 1.0 / (2.0 * j0_n * param.NE.as * param.NE.thickness)
 	C5 = R_EL + prefactors.c_sigma
-    
-	# 调试检查（仅第一个异常单元）
-	if debug_mode
-		_debug_check_coefficients(e, false, C1, C2, alpha_p, alpha_n, C5, T_e, j0_n, j0_p, u_n, u_p)
-	end
-    
+
 	return (C1=C1, C2=C2, alpha_p=alpha_p, alpha_n=alpha_n, C5=C5)
 end
 
 """批量计算所有单元的系数"""
-function _compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref, debug_mode=false)
+function compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref)
 	coeffs = Vector{NamedTuple{(:C1,:C2,:alpha_p,:alpha_n,:C5)}}(undef, ne)
 	for e in 1:ne
-		coeffs[e] = _compute_element_coefficients(e, Te_prev[e], param, prefactors, T_ref, debug_mode)
+		coeffs[e] = compute_element_coefficients(e, Te_prev[e], param, prefactors, T_ref)
 	end
 	return coeffs
 end
 
 # 分支电压模型
 """计算分支电压 V = C1 + C2*(asinh(α_p*I) - asinh(α_n*I)) - C5*I"""
-function _branch_voltage(coeff, I::Float64)
+function branch_voltage(coeff, I::Float64)
 	apI = coeff.alpha_p * I
 	anI = coeff.alpha_n * I
 	return coeff.C1 + coeff.C2 * (asinh(apI) - asinh(anI)) - coeff.C5 * I
 end
 
 """计算分支电压对电流的导数 dV/dI"""
-function _branch_dVdI(coeff, I::Float64)
+function branch_dVdI(coeff, I::Float64)
 	apI = coeff.alpha_p * I
 	anI = coeff.alpha_n * I
 	denom_p = sqrt(1.0 + apI * apI)
@@ -176,7 +98,7 @@ end
 
 # 初始化和边界检查
 """初始化单元电流猜测"""
-function _initialize_currents(ne, w, I_total, x_prev)
+function initialize_currents(ne, w, I_total, x_prev)
 	I_e = x_prev !== nothing && length(x_prev) == ne ? copy(x_prev) : (w .* I_total)
     
 	# 归一化到满足总电流约束
@@ -191,7 +113,7 @@ function _initialize_currents(ne, w, I_total, x_prev)
 end
 
 """检查电压边界"""
-function _check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e, context="")
+function check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e, context="")
 	V_phys = V * phi_scale
 	V_MIN_phys = V_MIN * phi_scale
 	V_MAX_phys = V_MAX * phi_scale
@@ -209,7 +131,7 @@ end
 
 # 牛顿迭代求解器
 """
-	_detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
+	detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
 
 检测达到截止电压的单元。
 
@@ -223,7 +145,7 @@ end
 - 放电时 (I_total > 0)：如果单元的 OCV <= V_MIN，该单元已完全放电
 - 静置时 (I_total ≈ 0)：所有单元都是活跃的
 """
-function _detect_cutoff_elements(coeffs, ne::Int, V_MIN::Float64, V_MAX::Float64, I_total::Float64, phi_scale::Float64)
+function detect_cutoff_elements(coeffs, ne::Int, V_MIN::Float64, V_MAX::Float64, I_total::Float64, phi_scale::Float64)
 	active_mask = trues(ne)
     
 	# 计算各单元的开路电压 (OCV = C1，当 I=0 时的电压)
@@ -291,7 +213,7 @@ end
 当所有单元都活跃时（n_cutoff=0），行为与原实现完全一致。
 当有截止单元时，只对活跃单元求解，截止单元电流保持为 0。
 """
-function _newton_iteration!(I_e, V, ne, w, I_total, coeffs; tol_V=1e-8, tol_I=1e-10, max_iters=25,active_mask::Union{Nothing, BitVector}=nothing)
+function newton_iteration(I_e, V, ne, w, I_total, coeffs; tol_V=1e-8, tol_I=1e-10, max_iters=25,active_mask::Union{Nothing, BitVector}=nothing)
 	converged = false
 	last_iter = 0
 	F = zeros(Float64, ne)
@@ -319,9 +241,9 @@ function _newton_iteration!(I_e, V, ne, w, I_total, coeffs; tol_V=1e-8, tol_I=1e
         
 		# 计算残差和雅可比
 		for e in 1:ne
-			V_e = _branch_voltage(coeffs[e], I_e[e])
+			V_e = branch_voltage(coeffs[e], I_e[e])
 			F[e] = V_e - V
-			dFdI[e] = _branch_dVdI(coeffs[e], I_e[e])
+			dFdI[e] = branch_dVdI(coeffs[e], I_e[e])
             
 			# 防止奇异雅可比
 			if abs(dFdI[e]) < 1e-12
@@ -367,7 +289,7 @@ function _newton_iteration!(I_e, V, ne, w, I_total, coeffs; tol_V=1e-8, tol_I=1e
 		end
         
 		# 线搜索
-		λ, V_trial = _line_search(I_e, V, ΔI, ΔV, I_trial, ne)
+		λ, V_trial = line_search(I_e, V, ΔI, ΔV, I_trial, ne)
 		λ == 0.0 && break
 
 		# 更新
@@ -388,7 +310,7 @@ function _newton_iteration!(I_e, V, ne, w, I_total, coeffs; tol_V=1e-8, tol_I=1e
 end
 
 """线搜索：确保更新后的值有效"""
-function _line_search(I_e, V, ΔI, ΔV, I_trial, ne; max_attempts=12)
+function line_search(I_e, V, ΔI, ΔV, I_trial, ne; max_attempts=12)
 	λ = 1.0
     
 	for attempt in 1:max_attempts
@@ -472,26 +394,14 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
 	param = case.param
 	mesh_ne = case.mesh["negative electrode"]
 	mesh_pe = case.mesh["positive electrode"]
-	prefactors = _compute_electrochemical_prefactors(variables, param, mesh_ne, mesh_pe)
-    
-	# 调试：检查预因子
-	debug_mode = case.opt.debug_coupling
-	has_nan_prefactor = _debug_check_prefactors(
-		prefactors.prefactor_n, prefactors.prefactor_p, 
-		prefactors.csn_av, prefactors.csp_av,
-		prefactors.u_n_ref_val, prefactors.u_p_ref_val,
-		prefactors.du_n_dT_val, prefactors.du_p_dT_val,
-		prefactors.c_sigma,
-		prefactors.cn_surf, prefactors.cp_surf, 
-		prefactors.ce_n_gs, prefactors.ce_p_gs
-	)
-    
+	prefactors = compute_prefactors(variables, param, mesh_ne, mesh_pe)
+
 	# 3. 计算各单元系数
 	T_ref = case.param.cell.T0
-	coeffs = _compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref, debug_mode)
+	coeffs = compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref)
     
 	# 4. 检测达到截止电压的单元
-	active_mask, n_cutoff, cutoff_info = _detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
+	active_mask, n_cutoff, cutoff_info = detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
 	# 4b. 合并CZM失效单元到活跃掩码
 	# 失效单元不参与电化学反应
 	for e in 1:ne
@@ -502,7 +412,7 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
 	n_inactive_total = sum(.!active_mask)
 
 	# 5. 初始化电流猜测
-	I_e = _initialize_currents(ne, w, I_total, x_prev)
+	I_e = initialize_currents(ne, w, I_total, x_prev)
     
 	# 活跃单元索引
 	active_idx = findall(active_mask)
@@ -520,28 +430,24 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
 	# 计算初始电压
 	if all_active
 		# 所有单元活跃：使用原始逻辑
-		V_branches = [_branch_voltage(coeffs[e], I_e[e]) for e in 1:ne]
+		V_branches = [branch_voltage(coeffs[e], I_e[e]) for e in 1:ne]
 		V = sum(V_branches) / ne
 	elseif !isempty(active_idx)
 		# 有截止单元：使用活跃单元的平均值
-		V_branches = [_branch_voltage(coeffs[e], I_e[e]) for e in active_idx]
+		V_branches = [branch_voltage(coeffs[e], I_e[e]) for e in active_idx]
 		V = sum(V_branches) / length(active_idx)
 	else
 		# 所有单元都达到截止，使用 OCV 的平均值作为公共电压
 		V = sum(coeffs[e].C1 for e in 1:ne) / ne
 	end
     
-	# 调试：检查初始电压
-	V_branches_all = [_branch_voltage(coeffs[e], I_e[e]) for e in 1:ne]
-	_debug_check_initial_voltage(has_nan_prefactor, V, V_branches_all, I_e, coeffs, I_total, ne)
-    
 	# 6. 牛顿迭代求解
 	if all_active
 		# 所有单元活跃
-		V, converged, last_iter = _newton_iteration!(I_e, V, ne, w, I_total, coeffs)
+		V, converged, last_iter = newton_iteration(I_e, V, ne, w, I_total, coeffs)
 	elseif !isempty(active_idx)
 		# 有非活跃单元（截止或失效）：传入 active_mask
-		V, converged, last_iter = _newton_iteration!(I_e, V, ne, w, I_total, coeffs; active_mask=active_mask)
+		V, converged, last_iter = newton_iteration(I_e, V, ne, w, I_total, coeffs; active_mask=active_mask)
 	else
 		# 所有单元都非活跃
 		converged = true
@@ -574,7 +480,7 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
 	end
     
 	# 8. 边界检查
-	voltage_in_bounds, cutoff_type_global, V_phys, V_limit = _check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e)
+	voltage_in_bounds, cutoff_type_global, V_phys, V_limit = check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e)
     
 	# 9. 写入结果
 	variables["thermal2D element current"] = I_e

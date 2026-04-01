@@ -1,41 +1,5 @@
 function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothing, return_final_state::Bool=false)
-    # 将调试输出统一写入 output 目录下的日志文件（可通过 opt.debug_to_file 关闭）
-    enable_file_log = true
-    if hasproperty(case.opt, :debug_to_file)
-        try
-            enable_file_log = Bool(getfield(case.opt, :debug_to_file))
-        catch
-            enable_file_log = true
-        end
-    end
-    log_io = nothing
-    log_file = ""
-    old_out = stdout
-    old_err = stderr
-    if enable_file_log
-        log_dir = normpath(joinpath(@__DIR__, "..", "output"))
-        try
-            isdir(log_dir) || mkpath(log_dir)
-            # 使用 epoch 秒作为时间戳，避免依赖 Dates 标准库的 import
-            timestamp = string(round(Int, time()))
-            log_file = joinpath(log_dir, "debug_$(timestamp).log")
-            log_io = open(log_file, "w")
-            println(log_io, "===== JuBat Debug Log $(timestamp) =====")
-            flush(log_io)
-            redirect_stdout(log_io)
-            redirect_stderr(log_io)
-        catch err
-            # 如果日志初始化失败，则回退为标准控制台输出
-            try
-                log_io !== nothing && close(log_io)
-            catch
-            end
-            log_io = nothing
-        end
-    end
-    result = nothing
-    try
-        if case.opt.model == "thermal"
+    if case.opt.model == "thermal"
             t0 = case.opt.time[1]/case.param.scale.t0
             t_end = case.opt.time[end]/case.param.scale.t0
             dt = case.opt.dt[1]/case.param.scale.t0
@@ -187,12 +151,7 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
 
     t = t0
     vt = 2  
-    v = 1 
-    # DEBUG: 检查初始状态向量（只在有问题时打印）
-    nan_in_y0 = sum(.!isfinite.(y0))
-    if nan_in_y0 > 0
-        @warn "初始状态向量包含 $(nan_in_y0) 个 NaN/Inf，长度 $(length(y0))"
-    end
+    v = 1
     M_old, K_old, F_old, variables, y_phi= CallModel(case, y0, t, jacobi="update")
     # 打印初始信息
     V_init = variables["cell voltage"] * case.param.scale.phi
@@ -222,30 +181,10 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
     # 持久化热场（跨 CallModel 迭代携带）
     T_nodes_carry = case.opt.thermal_enabled && case.opt.thermalmodel == "distributed2D" ? variables["T_nodes"] : Float64[]
 
-    # 跟踪元素温度（用于调试/作图）
-    track_elem_index = 0
-    T_elem_hist, time_hist = Float64[], Float64[]
-    if case.opt.thermal_enabled
-        ne_track = size(case.mesh["thermal2D"].element, 1)
-        if ne_track > 0
-            idx_env = try parse(Int, get(ENV, "JUBAT_TRACK_ELEM", "")) catch; nothing end
-            track_elem_index = Int(clamp(idx_env !== nothing ? idx_env : round(ne_track/2), 1, ne_track))
-            nodes_e0 = case.mesh["thermal2D"].element[track_elem_index, :]
-            Te0 = length(T_nodes_carry) == case.mesh["thermal2D"].nlen ? sum(T_nodes_carry[nodes_e0]) / length(nodes_e0) : case.param.cell.T0
-            push!(T_elem_hist, Te0)
-            push!(time_hist, t0 * case.param.scale.t0)
-        end
-    end
-
     dt_init = 1e-8
     vc = 1:size(M_old,1)
     y_c = (M_old - K_old * dt_init) \ (M_old * y0[vc] + F_old * dt_init)
     y_old = vcat(y_c, y_phi)
-    # 检查初始求解步骤
-    nan_in_yold = sum(.!isfinite.(y_old))
-    if nan_in_yold > 0 || (multi_spme_enabled && maximum(abs.(y_old)) > 100.0)
-        @warn "初始求解步骤异常: NaN=$(nan_in_yold), 范围=[$(minimum(y_old)), $(maximum(y_old))]"
-    end
     Variable_update!(variables_hist, variables, v)
     t += dt 
     if case.opt.jacobi == "constant"
@@ -305,16 +244,6 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
                 if abs(t - RunTime[vt]) < 1e-7
                     vt = min(vt + 1, length(RunTime)) 
                 end
-                # 同步跟踪元素温度（在提交此时间步后、时间推进前记录）
-                if track_elem_index > 0 && isa(variables["T_nodes"], Array{Float64})
-                    nodes_e = case.mesh["thermal2D"].element[track_elem_index, :]
-                    Tn_now = variables["T_nodes"]
-                    if length(Tn_now) == case.mesh["thermal2D"].nlen
-                        Te_now = sum(Tn_now[nodes_e]) / length(nodes_e)
-                        push!(T_elem_hist, Te_now)
-                        push!(time_hist, t * case.param.scale.t0)
-                    end
-                end
             end
             
             # adjust time incremental step dt
@@ -363,14 +292,6 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
                 # 获取截止单元详细信息
                 first_cutoff_element = Int(variables["thermal2D cutoff_elements"][1])
                 first_cutoff_ocv = variables["thermal2D cutoff_ocv"][1]
-                
-                # 打印首个截止单元信息
-                println("\n[Solve] ★ 首个单元达到截止电压:")
-                println("  时间: $(round(first_cutoff_time, digits=2)) s")
-                println("  单元: $first_cutoff_element")
-                println("  OCV: $(round(first_cutoff_ocv, digits=4)) V")
-                println("  截止电压: $v_l V")
-                println("  当前整体电压: $(round(V_cell, digits=4)) V")
             end
             
             total_cutoff_count = n_cutoff
@@ -380,7 +301,6 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
             
             # 检查是否所有单元都截止
             if ne_total > 0 && n_cutoff >= ne_total
-                println("\n[Solve] ★★ 所有单元 ($ne_total) 都已达到截止电压，终止仿真")
                 termination_reason = "all_elements_cutoff"
                 break
             end
@@ -388,11 +308,9 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
         
         # 整体电压截止检测（备用）
         if V_cell < v_l
-            println("\n[Solve] ★ 整体电压 $(round(V_cell, digits=4)) V 低于截止电压 $v_l V")
             termination_reason = "voltage_cutoff_low"
             break
         elseif V_cell > v_h
-            println("\n[Solve] ★ 整体电压 $(round(V_cell, digits=4)) V 高于截止电压 $v_h V")
             termination_reason = "voltage_cutoff_high"
             break
         end
@@ -464,11 +382,6 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
                 result["thermal2D final temperature at nodes [K]"] = T_nodes_carry .* Tref
                 result["thermal2D nodes xy [m]"] = case.mesh["thermal2D"].node
             end
-            if !isempty(T_elem_hist) && length(T_elem_hist) == length(time_hist)
-                result["thermal2D tracked element index"] = track_elem_index
-                result["thermal2D tracked element time [s]"] = time_hist
-                result["thermal2D tracked element T [K]"] = T_elem_hist .* case.param_dim.scale.T_ref
-            end
         end
     catch
         # non-fatal
@@ -484,19 +397,6 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
             "V" => V_final,
             "t_global" => t_final
         )
-    end
-    # 延后返回，以便执行 finally 中的日志恢复
-    finally
-        if log_io !== nothing
-            # 恢复标准输出/错误到控制台
-            redirect_stdout(old_out)
-            redirect_stderr(old_err)
-            try
-                close(log_io)
-            catch
-            end
-            println("Debug log saved to $(log_file)")
-        end
     end
     return result
 end
@@ -537,15 +437,6 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     ne = layout["ne"]
     n_chem = layout["n_chem"]
     nT = layout["nT"]
-    # 检查输入状态向量
-    nan_count = sum(.!isfinite.(yt))
-    if nan_count > 0
-        chem_range = 1:(ne * n_chem)
-        thermal_range = (ne * n_chem + 1):(ne * n_chem + nT)
-        nan_chem = sum(.!isfinite.(yt[chem_range]))
-        nan_thermal = sum(.!isfinite.(yt[thermal_range]))
-        @warn "CallModel_MultiSPMe 收到 NaN 状态向量" t=t total_nan=nan_count chem_nan=nan_chem thermal_nan=nan_thermal
-    end
     mesh_th = case.mesh["thermal2D"]
     param = case.param
     
@@ -555,17 +446,6 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 1) 解析状态向量
     # 提取热场
     T_nodes = MultiSPMe_get_thermal_dofs(yt, case)
-    # 温度场检查
-    if length(T_nodes) > 0
-        nan_count_here = sum(.!isfinite.(T_nodes))
-        abnormal_count = sum(abs.(T_nodes) .> 10.0)
-        large_deviation_count = sum(abs.(T_nodes .- 1.0) .> 5.0)
-        
-        if nan_count_here > 0 || abnormal_count > 0 || large_deviation_count > 0
-            T_min, T_max = extrema(T_nodes)
-            @warn "温度场异常" t=t range=(T_min,T_max) nan=nan_count_here abnormal=abnormal_count large_dev=large_deviation_count
-        end
-    end
     # 提取每个单元的电化学状态
     yt_chem = Vector{Vector{Float64}}(undef, ne)
     for e in 1:ne
@@ -586,12 +466,6 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     @inbounds for e in 1:ne
         nds = mesh_th.element[e, :]
         Te_prev[e] = sum(T_nodes[nds]) / length(nds)
-    end
-      # 检查温度场
-    nan_count_nodes = sum(.!isfinite.(T_nodes))
-    nan_count_elem = sum(.!isfinite.(Te_prev))
-    if nan_count_nodes > 0 || nan_count_elem > 0
-        @warn "温度场包含 NaN/Inf" T_nodes_nan=nan_count_nodes Te_prev_nan=nan_count_elem
     end
     # 3) 分流求解（获取 I_e）
     # 使用与 SPMe 变量一致的电流无量纲尺度（param.scale.I_typ）
@@ -679,13 +553,6 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     MT, KT, FT = ThermalDistributed2D(case, variables)
     # 统一时间尺度：电化学和热模型使用相同时间尺度 t0，时间比为 1
     t_ratio = 1.0
-    # 检查参数（只在初始调用时）
-    if t < 1e-6
-        (t_ratio < 0.001 || t_ratio > 1000.0) && @warn "时间尺度比异常" t_ratio=t_ratio
-        q_elem = variables["heat_source_fields"]
-        q_max = maximum(abs.(q_elem))
-        q_max > 100.0 && @warn "无量纲热源过大" q_max=q_max q_range=extrema(q_elem)
-    end
     MT = MT .* t_ratio
     KT, FT = ThermalDistributed2D_BC(KT, FT, case, t)
     

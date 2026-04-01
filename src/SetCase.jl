@@ -5,13 +5,6 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
         Output: case 
     """
 
-    if opt.model == "thermal"
-        param = NormaliseParam(param_dim)
-        mesh = Dict{String, Mesh}()
-        index = Dict{String, Union{Array{Int64}, Int64}}()
-        return Case(param_dim, param, opt, mesh, index, Dict{String,Any}())
-    end
-
     param = NormaliseParam(param_dim)
     # |--negative--|--separator--|--positive--|
     if opt.model == "SPM" || opt.model == "SPMe"
