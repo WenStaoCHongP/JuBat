@@ -302,10 +302,6 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
                     discharge_result.duration, discharge_result.V_start,
                     discharge_result.V_end, discharge_result.capacity,
                     discharge_result.terminated_by)
-            # 调试：打印放电阶段后的状态信息
-            y_out = get(current_state, "y", nothing)
-            V_out = get(current_state, "V", NaN)
-            @printf("    → V_out=%.3fV, y_len=%d\n", V_out, y_out === nothing ? 0 : length(y_out))
         end
         
         # ============ 阶段2: 静置1 ============
@@ -331,11 +327,6 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
             
             if verbose
                 @printf("%.1fs, T_max=%.2fK\n", rest1_result.duration, rest1_result.T_max)
-                y_out = get(current_state, "y", nothing)
-                V_out = get(current_state, "V", NaN)
-                @printf("    → V_out=%.3fV, y_len=%d", V_out, y_out === nothing ? 0 : length(y_out))
-                # no-op
-                println()
             end
         else
             # 静置时间 = 0：跳过静置阶段，直接继承上一阶段状态
@@ -362,10 +353,6 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
         end
         if verbose
             print("  [充电] ")
-            # 调试：打印传入充电阶段的状态
-            y_in = get(current_state, "y", nothing)
-            V_in = get(current_state, "V", NaN)
-            @printf("(V_in=%.3fV, y_len=%d) ", V_in, y_in === nothing ? 0 : length(y_in))
         end
         
         charge_result = solve_phase(

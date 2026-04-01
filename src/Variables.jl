@@ -94,7 +94,10 @@ function StandardVariables(case::Case, num::Int64)
     if case.opt.thermalmodel == "distributed2D"
         ne = size(case.mesh["thermal2D"].element, 1)
         nT = case.mesh["thermal2D"].nlen
-        variables["T_nodes"] = zeros(Float64, nT, num)
+        variables["thermal2D temperature"] = zeros(Float64, ne, num)
+        variables["thermal2D temperature at nodes"] = zeros(Float64, nT, num)
+        variables["thermal2D temperature history"] = zeros(Float64, ne, num)
+        variables["thermal2D temperature  at nodes history"] = zeros(Float64, nT, num)
         variables["heat_source_fields"] = zeros(Float64, ne, num)
         variables["thermal2D q_rxn_ne"] = zeros(Float64, ne, num)
         variables["thermal2D q_rev_ne"] = zeros(Float64, ne, num)
