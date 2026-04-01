@@ -91,3 +91,15 @@
 ### 哪些变更是独立的
 - `Variable_update!` 的类型安全改进属于通用健壮性增强，独立于耦合需求
 - 温度变量无条件创建属于代码简化，独立于耦合需求
+
+## 后续变更 (2026-04-01)
+
+- `T_nodes` 变量初始化从单一变量拆分为 4 个独立变量：
+  - **旧** (1 行): `variables["T_nodes"] = zeros(Float64, nT, num)`
+  - **新** (4 行):
+    - `variables["thermal2D temperature"]` — 单元温度
+    - `variables["thermal2D temperature at nodes"]` — 节点温度
+    - `variables["thermal2D temperature history"]` — 单元温度历史
+    - `variables["thermal2D temperature at nodes history"]` — 节点温度历史
+- 此变更提供单元温度和节点温度的独立追踪，支持更精细的温度场分析
+- 文件行数从约 181 行增加到约 185 行
