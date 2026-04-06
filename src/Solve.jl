@@ -3,9 +3,9 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
             t0 = case.opt.time[1]/case.param.scale.t0
             t_end = case.opt.time[end]/case.param.scale.t0
             dt = case.opt.dt[1]/case.param.scale.t0
-            vars = case.multi_spme_layout["thermal_variables"]
-            update_fn = case.multi_spme_layout["thermal_update_fn"]
-            record = case.multi_spme_layout["thermal_record"]
+            vars = case.thermal_extras["thermal_variables"]
+            update_fn = case.thermal_extras["thermal_update_fn"]
+            record = case.thermal_extras["thermal_record"]
 
             if case.opt.solveType == "Crank-Nicolson"
                 theta = 0.5
@@ -27,7 +27,7 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
 
             update_fn !== nothing && update_fn(t0, vars)
             if case.opt.thermalmodel == "ring2D_polar"
-                mesh_data = case.multi_spme_layout["polar_mesh_data"]
+                mesh_data = case.thermal_extras["polar_mesh_data"]
                 MT_old, KT_old, FT_old = ThermalPolar2D_Ring(case, vars, mesh_data)
             elseif case.opt.thermalmodel == "ring2D"
                 MT_old, KT_old, FT_old = ThermalDistributed2D_Ring(case, vars)
@@ -42,7 +42,7 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
                 update_fn !== nothing && update_fn(t, vars)
 
                 if case.opt.thermalmodel == "ring2D_polar"
-                    mesh_data = case.multi_spme_layout["polar_mesh_data"]
+                    mesh_data = case.thermal_extras["polar_mesh_data"]
                     MT_new, KT_new, FT_new = ThermalPolar2D_Ring(case, vars, mesh_data)
                 elseif case.opt.thermalmodel == "ring2D"
                     MT_new, KT_new, FT_new = ThermalDistributed2D_Ring(case, vars)
@@ -100,13 +100,8 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
             n_chem = Nrn + Nrp + Nel
             expected_multi_len = ne * n_chem + nT
 
-            if isempty(case.multi_spme_layout)
-                case.multi_spme_layout["ne"] = ne
-                case.multi_spme_layout["n_chem"] = n_chem
-                case.multi_spme_layout["nT"] = nT
-                case.multi_spme_layout["n_total"] = expected_multi_len
-                case.multi_spme_layout["chem_range"] = 1:(ne * n_chem)
-                case.multi_spme_layout["thermal_range"] = (ne * n_chem + 1):(ne * n_chem + nT)
+            if case.layout === nothing
+                case.layout = MultiSPMeLayout(ne, n_chem, nT)
             end
 
             if length(y0) != expected_multi_len
@@ -168,15 +163,6 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
             T_nodes = fill(case.param.cell.T0, nnode_th)
         end
         variables["T_nodes"] = T_nodes
-        # 若启用 collector-seeded 逻辑，计算 layer_weights
-        if case.opt.collector_seeded
-            try
-                fks = jellyroll_element_properties(case.mesh["thermal2D"], case.param)[2]
-                variables["thermal2D layer_weights"] = fks
-            catch err
-                @warn "Failed to set layer_weights: $err"
-            end
-        end
     end
     # 持久化热场（跨 CallModel 迭代携带）
     T_nodes_carry = case.opt.thermal_enabled && case.opt.thermalmodel == "distributed2D" ? variables["T_nodes"] : Float64[]
@@ -429,14 +415,14 @@ end
 """
 function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
     # 验证前提条件
-    if isempty(case.multi_spme_layout)
-        error("CallModel_MultiSPMe requires populated multi_spme_layout. Did you call ModelInitialisation_MultiSPMe?")
+    if case.layout === nothing
+        error("CallModel_MultiSPMe requires case.layout to be set. Did you call ModelInitialisation_MultiSPMe?")
     end
     
-    layout = case.multi_spme_layout
-    ne = layout["ne"]
-    n_chem = layout["n_chem"]
-    nT = layout["nT"]
+    layout = case.layout
+    ne = layout.ne
+    n_chem = layout.n_chem
+    nT = layout.nT
     mesh_th = case.mesh["thermal2D"]
     param = case.param
     
@@ -445,11 +431,11 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     
     # 1) 解析状态向量
     # 提取热场
-    T_nodes = MultiSPMe_get_thermal_dofs(yt, case)
+    T_nodes = get_thermal_dofs(yt, case.layout)
     # 提取每个单元的电化学状态
     yt_chem = Vector{Vector{Float64}}(undef, ne)
     for e in 1:ne
-        yt_chem[e] = vec(MultiSPMe_extract_element_state(yt, e, case))
+        yt_chem[e] = vec(extract_element_state(yt, e, case.layout))
     end
     
     # 2) 计算元素面积和均温
@@ -581,7 +567,7 @@ function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
     should_use_multi_spme = (case.opt.model == "SPMe" && case.opt.thermalmodel == "distributed2D")
     
     # 如果应该使用多SPMe但布局为空，尝试从状态向量长度推断
-    if should_use_multi_spme && isempty(case.multi_spme_layout)
+    if should_use_multi_spme && case.layout === nothing
         # 计算期望的布局
         ne = size(case.mesh["thermal2D"].element, 1)
         nT = case.mesh["thermal2D"].nlen
@@ -590,22 +576,17 @@ function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
         Nel = case.mesh["electrolyte"].nlen
         n_chem = Nrn + Nrp + Nel
         expected_multi_len = ne * n_chem + nT
-        
+
         # 检查传入的状态向量长度
         if length(yt) == expected_multi_len
             # 状态向量是多SPMe格式，需要初始化布局
-            @warn "CallModel: multi_spme_layout 为空但状态向量长度匹配多SPMe格式，自动初始化布局"
-            case.multi_spme_layout["ne"] = ne
-            case.multi_spme_layout["n_chem"] = n_chem
-            case.multi_spme_layout["nT"] = nT
-            case.multi_spme_layout["n_total"] = expected_multi_len
-            case.multi_spme_layout["chem_range"] = 1:(ne * n_chem)
-            case.multi_spme_layout["thermal_range"] = (ne * n_chem + 1):(ne * n_chem + nT)
+            @warn "CallModel: case.layout 为 nothing 但状态向量长度匹配多SPMe格式，自动初始化布局"
+            case.layout = MultiSPMeLayout(ne, n_chem, nT)
         end
     end
     
     # 最终判断
-    multi_spme_enabled = should_use_multi_spme && !isempty(case.multi_spme_layout)
+    multi_spme_enabled = should_use_multi_spme && case.layout !== nothing
     
     if multi_spme_enabled
         return CallModel_MultiSPMe(case, yt, t, jacobi=jacobi)
