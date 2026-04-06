@@ -106,134 +106,53 @@ function ModelInitialisation_MultiSPMe(case::Case; initial_soc_distribution::Uni
     
     # 6) 组装全局状态向量
     y0 = [y0_chem_all; T0_nodes]
-    # 7) 缓存状态向量结构信息（用于后续提取）
-    empty!(case.multi_spme_layout)
-    case.multi_spme_layout["ne"] = ne
-    case.multi_spme_layout["n_chem"] = n_chem
-    case.multi_spme_layout["nT"] = nT
-    case.multi_spme_layout["n_total"] = length(y0)
-    case.multi_spme_layout["chem_range"] = 1:(ne * n_chem)
-    case.multi_spme_layout["thermal_range"] = (ne * n_chem + 1):(ne * n_chem + nT)
-    
+    # 7) 缓存布局信息
+    case.layout = MultiSPMeLayout(ne, n_chem, nT)
+
     return y0
 end
 
 
 """
-    MultiSPMe_extract_element_state(y::Vector{Float64}, e::Int, case::Case) -> Vector{Float64}
+    extract_element_state(y, e, layout)
 
 从多SPMe全局状态向量中提取单个单元的电化学状态。
-
-# 参数
-- `y::Vector{Float64}`: 全局状态向量（由 ModelInitialisation_MultiSPMe 生成）
-- `e::Int`: 单元编号（1-based）
-- `case::Case`: 案例对象（必须包含 multi_spme_layout 信息）
-
-# 返回
-- `yt_e::Vector{Float64}`: 单元 e 的局部电化学状态向量
-  - 结构: [cn_surf; cp_surf; ce]
-  - 长度: n_chem = Nrn + Nrp + Nel
-
-# 示例
-```julia
-# 初始化多SPMe状态
-y0 = ModelInitialisation_MultiSPMe(case)
-
-# 提取单元5的状态
-yt_5 = MultiSPMe_extract_element_state(y0, 5, case)
-
-# 用于求解该单元
-M_e, K_e, F_e, vars_e = SPMe_element(case, yt_5, t, 5; I_e=I_e[5], T_e=T_e[5])
-```
 """
-function MultiSPMe_extract_element_state(y::Array{Float64}, e::Int, case::Case)
-    # 自动转换为向量（兼容矩阵输入）
-    y_vec = vec(y)
-    
-    layout = case.multi_spme_layout
-    ne = layout["ne"]
-    n_chem = layout["n_chem"]
-    
-    offset = (e - 1) * n_chem
-    yt_e = y_vec[(offset + 1):(offset + n_chem)]
-    
-    return yt_e
+function extract_element_state(y::AbstractVector, e::Int, layout::MultiSPMeLayout)
+    offset = (e - 1) * layout.n_chem
+    return y[(offset + 1):(offset + layout.n_chem)]
 end
 
 
 """
-    MultiSPMe_get_thermal_dofs(y::Vector{Float64}, case::Case) -> Vector{Float64}
+    get_thermal_dofs(y, layout)
 
 从多SPMe全局状态向量中提取热场节点温度。
-
-# 参数
-- `y::Vector{Float64}`: 全局状态向量
-- `case::Case`: 案例对象（必须包含 multi_spme_layout 信息）
-
-# 返回
-- `T_nodes::Vector{Float64}`: 热场节点温度（无量纲）
-  - 长度: nT
-
-# 示例
-```julia
-y0 = ModelInitialisation_MultiSPMe(case)
-T_nodes = MultiSPMe_get_thermal_dofs(y0, case)
-```
 """
-function MultiSPMe_get_thermal_dofs(y::Array{Float64}, case::Case)
-    # 自动转换为向量（兼容矩阵输入）
-    y_vec = vec(y)
-    
-    layout = case.multi_spme_layout
-    thermal_range = layout["thermal_range"]
-    
-    T_nodes = y_vec[thermal_range]
-    
-    return T_nodes
+function get_thermal_dofs(y::AbstractVector, layout::MultiSPMeLayout)
+    return y[layout.thermal_range]
 end
 
 
 """
-    MultiSPMe_update_state(y::Vector{Float64}, case::Case; element_index=nothing, element_state=nothing, thermal_nodes=nothing)
+    update_state(y, layout; element_index, element_state, thermal_nodes)
 
 更新多SPMe全局状态向量（返回新向量）。
-
-可选更新：
-- `element_index` 与 `element_state`：写回单元电化学状态
-- `thermal_nodes`：写回热场节点温度
 """
-function MultiSPMe_update_state(y::Vector{Float64},case::Case;element_index::Union{Nothing, Int}=nothing,element_state::Union{Nothing, Vector{Float64}}=nothing,thermal_nodes::Union{Nothing, Vector{Float64}}=nothing)
-    if isempty(case.multi_spme_layout)
-        error("case.multi_spme_layout is empty. Did you call ModelInitialisation_MultiSPMe?")
-    end
-
-    layout = case.multi_spme_layout
-    ne = layout["ne"]
-    n_chem = layout["n_chem"]
-    nT = layout["nT"]
-    thermal_range = layout["thermal_range"]
-
+function update_state(y::AbstractVector, layout::MultiSPMeLayout;
+                      element_index::Union{Nothing,Int}=nothing,
+                      element_state::Union{Nothing,Vector{Float64}}=nothing,
+                      thermal_nodes::Union{Nothing,Vector{Float64}}=nothing)
     y_new = copy(y)
-
-    if element_index !== nothing || element_state !== nothing
-        if element_index === nothing || element_state === nothing
-            error("element_index and element_state must be provided together")
-        end
-        if element_index < 1 || element_index > ne
-            error("Element index $element_index out of range [1, $ne]")
-        end
-        if length(element_state) != n_chem
-            error("element_state length ($(length(element_state))) must equal n_chem ($n_chem)")
-        end
-        offset = (element_index - 1) * n_chem
-        y_new[(offset + 1):(offset + n_chem)] .= element_state
+    if element_index !== nothing
+        @assert 1 <= element_index <= layout.ne "element_index $element_index out of range [1, $(layout.ne)]"
+        @assert length(element_state) == layout.n_chem "element_state length $(length(element_state)) != n_chem $(layout.n_chem)"
+        offset = (element_index - 1) * layout.n_chem
+        y_new[(offset + 1):(offset + layout.n_chem)] .= element_state
     end
-
     if thermal_nodes !== nothing
-        if length(thermal_nodes) != nT
-            error("thermal_nodes length ($(length(thermal_nodes))) must equal nT ($nT)")
-        end
-        y_new[thermal_range] .= thermal_nodes
+        @assert length(thermal_nodes) == layout.nT "thermal_nodes length $(length(thermal_nodes)) != nT $(layout.nT)"
+        y_new[layout.thermal_range] .= thermal_nodes
     end
     return y_new
 end
