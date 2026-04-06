@@ -89,8 +89,7 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
         index["electrolyte potential in positive electrode"] =  v0 .+ mesh_el.nlen .- collect(mesh_el_pe.nlen - 1:-1:0)
         index["electrolyte potential in separator"] =  v0 + mesh_el_ne.nlen - 1 .+ collect(1: mesh_el_sp.nlen)
     end
-    # 初始化布局字典，供多SPMe模式后续填充
-    case = Case(param_dim, param, opt, mesh, index, Dict{String,Any}())
+    case = Case(param_dim, param, opt, mesh, index)
     return case
 end
 
@@ -101,5 +100,13 @@ mutable struct Case
     opt::Option                            # solver options
     mesh::Dict{String, Mesh}               # discretisation meshes
     index::Dict{String, Union{Array{Int64}, Int64}} # indices of unknowns
-    multi_spme_layout::Dict{String,Any}    # 多SPMe模式的结构布局（初始化后不变）
+    layout::Union{Nothing, MultiSPMeLayout}   # 布局索引（初始化后不变）
+    geometry::Union{Nothing, MeshGeometry}   # 几何拓扑（构建后不变）
+    czm_mesh::Union{Nothing, CohesiveMesh}   # CZM 网格（演化但类型明确）
+    thermal_extras::Dict{String,Any}         # 运行时状态暂存
+end
+
+# 5 参数兼容构造器
+function Case(param_dim, param, opt, mesh, index)
+    Case(param_dim, param, opt, mesh, index, nothing, nothing, nothing, Dict{String,Any}())
 end
