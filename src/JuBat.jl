@@ -1,9 +1,10 @@
 module JuBat
 using LinearAlgebra, SparseArrays, Plots, Parameters, CSV, Infiltrator, Statistics, Printf
 
-include("Option.jl") 
-include("SetMesh.jl") 
-include("SetParams.jl") 
+include("Option.jl")
+include("SetMesh.jl")
+include("SetParams.jl")
+include("CouplingState.jl")  # MultiSPMeLayout + MeshGeometry 类型定义
 include("SetCase.jl")
 include("czm.jl")  # 内聚力区域模型
 include("CzmSolve.jl")
@@ -34,8 +35,9 @@ include("CycleData.jl")
 export Assemble, ElectrodeDiffusion, ElectrolyteDiffusion, Postprocessing, SetCase, SetMesh, ChooseCell
 export Mesh1D, Mesh2D, GetGS, LagrangeBasis, GSweight, ShapeFunction1D, NormaliseParam, StandardVariables
 export SPM, Solve, SPMe, SPMe_element, ModelInitialisation
-export ModelInitialisation_MultiSPMe, MultiSPMe_extract_element_state, MultiSPMe_get_thermal_dofs
-export MultiSPMe_update_state
+export ModelInitialisation_MultiSPMe, extract_element_state, get_thermal_dofs
+export update_state
+export MultiSPMeLayout, MeshGeometry
 export Arrhenius, IntV, IntQ4
 export jellyroll_collector_seed_mesh, jellyroll_element_properties
 export jellyroll_tab_node_indices, edge_boundary
