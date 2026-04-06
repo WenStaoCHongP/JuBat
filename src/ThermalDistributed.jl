@@ -189,8 +189,8 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64)
     K = copy(KT)
     F = copy(FT)
 
-    if case.opt.czm_enabled && haskey(case.multi_spme_layout, "czm_mesh")
-        czm_mesh = case.multi_spme_layout["czm_mesh"]
+    if case.opt.czm_enabled
+        czm_mesh = case.czm_mesh
         param = case.param
         for (elem_idx, czm_elem) in enumerate(czm_mesh.cohesive_elements)
             state = czm_mesh.damage_states[elem_idx]

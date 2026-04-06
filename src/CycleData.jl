@@ -62,7 +62,7 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
     else
         y0 = vec(y0)
         if multi_spme
-            _ensure_multi_spme_layout!(case)
+            # layout is now stored as case.layout::Union{Nothing,MultiSPMeLayout}
         end
     end
 
@@ -70,11 +70,11 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
     if T_nodes_init !== nothing
         T_nodes_carry = copy(T_nodes_init)
         if multi_spme
-            thermal_range = case.multi_spme_layout["thermal_range"]
+            thermal_range = case.layout.thermal_range
             y0[thermal_range] .= T_nodes_carry
         end
     elseif multi_spme
-        thermal_range = case.multi_spme_layout["thermal_range"]
+        thermal_range = case.layout.thermal_range
         T_nodes_carry = y0[thermal_range]
     else
         nT_mesh = case.mesh["thermal2D"].nlen
@@ -146,7 +146,7 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
         # 提取温度场
         if case.opt.thermal_enabled
             if multi_spme
-                T_nodes_carry = MultiSPMe_get_thermal_dofs(y_new, case)
+                T_nodes_carry = get_thermal_dofs(y_new, case.layout)
             else
                 nT = mesh_th.nlen
                 T_nodes_carry = y_c[(end - nT + 1):end]
