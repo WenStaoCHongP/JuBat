@@ -1,8 +1,8 @@
 # Initialisation.jl 优化方案
 
-> 日期: 2026-04-01
+> 日期: 2026-04-01 (修订)
 > 文件: `src/Initialisation.jl`
-> 状态: 修改 (43→239 行, +196%)
+> 状态: **已实施** (2026-04-07)
 > main 分支行数: 43
 
 ---
@@ -57,119 +57,69 @@ elseif case.opt.thermalmodel == "distributed2D"
 
 - `ModelInitialisation()` 的 SPM/SPMe/P2D/lumped 分支不动
 - `ModelInitialisation()` 的 distributed2D 分支保留
-- 仅重构 4 个 `MultiSPMe_*` 函数
+- 重构 4 个 `MultiSPMe_*` 函数（改名 + 类型替换），不新增函数
+- 所有逻辑保持内联，不提取子函数
 
-### 3.2 `ModelInitialisation_MultiSPMe` 简化
+### 3.2 函数改名
+
+| 旧名 | 新名 | 说明 |
+|------|------|------|
+| `ModelInitialisation_MultiSPMe` | `model_initialisation_multi_spme` | snake_case |
+| `MultiSPMe_extract_element_state` | `extract_element_state` | 去前缀 + snake_case |
+| `MultiSPMe_get_thermal_dofs` | `get_thermal_dofs` | 去前缀 + snake_case |
+| `MultiSPMe_update_state` | `update_state` | 去前缀 + snake_case |
+
+### 3.3 类型替换
+
+所有函数中 `case.multi_spme_layout["key"]` 替换为 `case.layout.key` / `case.geometry.key`：
 
 ```julia
-# ===== 旧 (66 行) =====
-function ModelInitialisation_MultiSPMe(case::Case; initial_soc_distribution=nothing)
-    ne = size(case.mesh["thermal2D"].element, 1)
-    nT = case.mesh["thermal2D"].nlen
-    # 临时修改 thermalmodel → "none" 来获取纯电化学部分
-    original_thermalmodel = case.opt.thermalmodel
-    case.opt.thermalmodel = "none"
-    y0_single_chem = ModelInitialisation(case)
-    case.opt.thermalmodel = original_thermalmodel
-    n_chem = length(y0_single_chem)
-    # ... 30+ 行手动初始化 ...
-    # 最后 6 行构建 layout Dict
-    empty!(case.multi_spme_layout)
-    case.multi_spme_layout["ne"] = ne
-    # ... 5 行 Dict 赋值 ...
-end
+# 旧:
+layout = case.multi_spme_layout
+ne = layout["ne"]
+n_chem = layout["n_chem"]
+thermal_range = layout["thermal_range"]
 
-# ===== 新 (~35 行) =====
-function model_initialisation_multi_spme(case::Case;
-        initial_soc_distribution::Union{Nothing, Vector{Float64}}=nothing)
-    ne = size(case.mesh["thermal2D"].element, 1)
-    nT = case.mesh["thermal2D"].nlen
-
-    # 获取单单元电化学 DOF
-    original_thermalmodel = case.opt.thermalmodel
-    case.opt.thermalmodel = "none"
-    y0_single = ModelInitialisation(case)
-    case.opt.thermalmodel = original_thermalmodel
-    n_chem = length(y0_single)
-
-    # 设置 layout（替代 6 行 Dict 构建）
-    case.layout = MultiSPMeLayout(ne, n_chem, nT)
-
-    # 批量初始化电化学状态
-    y0_chem = repeat(y0_single, ne)
-
-    # 非均匀 SOC 处理（仅在提供了 distribution 时）
-    if initial_soc_distribution !== nothing
-        _apply_nonuniform_soc!(y0_chem, initial_soc_distribution, case)
-    end
-
-    # 热场 + 组装
-    T0_nodes = fill(case.param.cell.T0, nT)
-    return [y0_chem; T0_nodes]
-end
-
-# 辅助：非均匀 SOC 应用
-function _apply_nonuniform_soc!(y0_chem::Vector{Float64},
-                                 soc_dist::Vector{Float64}, case::Case)
-    Nrn = case.mesh["negative particle"].nlen
-    Nrp = case.mesh["positive particle"].nlen
-    n_chem = case.layout.n_chem
-    for e in 1:length(soc_dist)
-        offset = (e - 1) * n_chem
-        soc_e = soc_dist[e]
-        # NE 浓度
-        cn = case.param.NE.cs0 * soc_e
-        y0_chem[(offset + 1):(offset + Nrn)] .= cn
-        # PE 浓度
-        cp = case.param.PE.cs0 * (1.0 - soc_e)
-        y0_chem[(offset + Nrn + 1):(offset + Nrn + Nrp)] .= cp
-    end
-end
+# 新:
+layout = case.layout
+ne = layout.ne
+n_chem = layout.n_chem
+thermal_range = layout.thermal_range
 ```
 
-**改进点**：
-- 用 `repeat(y0_single, ne)` 替代手动 for 循环填充
-- layout 构建从 6 行 Dict → 1 行 struct
-- 非均匀 SOC 逻辑提取为独立辅助函数
-
-### 3.3 三个辅助函数精简
+### 3.4 `model_initialisation_multi_spme` 内部简化
 
 ```julia
-# ===== 旧 MultiSPMe_extract_element_state (13 行) =====
-function MultiSPMe_extract_element_state(y::Array{Float64}, e::Int, case::Case)
-    y_vec = vec(y)
-    layout = case.multi_spme_layout
-    ne = layout["ne"]
-    n_chem = layout["n_chem"]
-    offset = (e - 1) * n_chem
-    yt_e = y_vec[(offset + 1):(offset + n_chem)]
-    return yt_e
-end
+# 旧 (行 110-116):
+empty!(case.multi_spme_layout)
+case.multi_spme_layout["ne"] = ne
+case.multi_spme_layout["n_chem"] = n_chem
+case.multi_spme_layout["nT"] = nT
+case.multi_spme_layout["n_total"] = length(y0)
+case.multi_spme_layout["chem_range"] = 1:(ne * n_chem)
+case.multi_spme_layout["thermal_range"] = (ne * n_chem + 1):(ne * n_chem + nT)
 
-# ===== 新 (~5 行) =====
+# 新 (1 行):
+case.layout = MultiSPMeLayout(ne, n_chem, nT)
+```
+
+**非均匀 SOC 逻辑保持内联**，不提取为子函数。
+
+### 3.5 三个辅助函数精简（仅改名 + 类型替换）
+
+```julia
+# 旧 MultiSPMe_extract_element_state → 新 extract_element_state:
 function extract_element_state(y::AbstractVector, e::Int, layout::MultiSPMeLayout)
     offset = (e - 1) * layout.n_chem
     return y[(offset + 1):(offset + layout.n_chem)]
 end
 
-# ===== 旧 MultiSPMe_get_thermal_dofs (11 行) =====
-function MultiSPMe_get_thermal_dofs(y::Array{Float64}, case::Case)
-    y_vec = vec(y)
-    layout = case.multi_spme_layout
-    thermal_range = layout["thermal_range"]
-    T_nodes = y_vec[thermal_range]
-    return T_nodes
-end
-
-# ===== 新 (~3 行) =====
+# 旧 MultiSPMe_get_thermal_dofs → 新 get_thermal_dofs:
 function get_thermal_dofs(y::AbstractVector, layout::MultiSPMeLayout)
     return y[layout.thermal_range]
 end
 
-# ===== 旧 MultiSPMe_update_state (35 行) =====
-# 含大量手动 Dict 检查、边界检查、错误消息
-
-# ===== 新 (~12 行) =====
+# 旧 MultiSPMe_update_state → 新 update_state:
 function update_state(y::AbstractVector, layout::MultiSPMeLayout;
                       element_index::Union{Nothing,Int}=nothing,
                       element_state::Union{Nothing,Vector{Float64}}=nothing,
@@ -186,7 +136,7 @@ function update_state(y::AbstractVector, layout::MultiSPMeLayout;
 end
 ```
 
-### 3.4 调用点更新
+### 3.6 调用点更新
 
 所有调用 `MultiSPMe_extract_element_state(y, e, case)` 的地方改为：
 
@@ -209,8 +159,51 @@ yt_e = extract_element_state(vec(yt), e, case.layout)
 
 | 指标 | 旧 | 新 |
 |------|-----|-----|
-| 总行数 | 239 | ~120 |
-| 函数数 | 5 | 6 (+1 辅助) |
+| 总行数 | 239 | ~230 |
+| 函数数 | 5 | 5（仅改名，不新增） |
 | Dict 访问 | ~20 处 | 0 |
 | 类型安全 | 无 | 全部有 |
 | `ModelInitialisation` 行数 | 48 (不变) | 48 (不变) |
+
+---
+
+## 5. 实施记录 (2026-04-07)
+
+### 实际偏差
+
+| 原方案 | 实际实施 | 原因 |
+|--------|---------|------|
+| `ModelInitialisation_MultiSPMe` 改名为 `model_initialisation_multi_spme` | 保持原名 | 避免同时改名+改类型降低出错风险 |
+| 3 个辅助函数改名 + 类型替换 | 已完成（`extract_element_state`/`get_thermal_dofs`/`update_state`） | 按 05 文档执行 |
+| `MultiSPMe_update_state` 不含验证 | 保留 `@assert` 验证 | 审查建议采纳 |
+
+### 实际效果
+
+| 指标 | 旧 | 新 | 备注 |
+|------|-----|-----|------|
+| `multi_spme_layout` Dict 访问 | ~20 处 | **0 处** | 全局替换完成 |
+| 布局构建重复 | 4 处 x 6 行 | **4 处 x 1 行** | `MultiSPMeLayout` 构造器 |
+| `_ensure_multi_spme_layout!` | 28 行 | **已删除** | 不再需要 |
+| `haskey` 检查 | 2 处 | **0 处** | fail-fast 原则 |
+| `layer_weights` try/catch | 1 处 | **已删除** | 迁入 MeshGeometry |
+
+### 新增文件
+- `src/CouplingState.jl` — `MultiSPMeLayout` + `MeshGeometry` struct 定义
+
+### 连锁修改文件
+| 文件 | 改动点数 |
+|------|---------|
+| `SetCase.jl` | Case struct + 构造器 |
+| `JuBat.jl` | include + export |
+| `Solve.jl` | ~20 处 |
+| `CycleSolver.jl` | 删除 28 行函数 |
+| `CycleData.jl` | 4 处 |
+| `PostProcessing.jl` | 3 处（规格遗漏，实施中发现） |
+| `Jellyrollmodel.jl` | MeshGeometry 构造 |
+| `ThermalDistributed.jl` | haskey 替换 |
+
+### 验证
+- 全局搜索 `multi_spme_layout`：仅在注释中出现（1 处）
+- 旧函数名搜索：零匹配
+- `haskey` 搜索：零匹配
+- Julia 冒烟测试：Case 构造 + MultiSPMeLayout 构造 均通过
