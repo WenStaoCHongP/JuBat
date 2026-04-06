@@ -683,34 +683,3 @@ function _update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carr
     
     return result.displacement, result.converged
 end
-
-"""
-    _ensure_multi_spme_layout!(case::Case)
-
-确保多SPMe布局信息已初始化（不改变状态向量）。
-
-当状态向量从上一阶段传递时，case.multi_spme_layout 可能为空。
-此函数计算并设置必要的布局信息，使 CallModel_MultiSPMe 能正常工作。
-"""
-function _ensure_multi_spme_layout!(case::Case)
-    # 获取维度信息
-    ne = size(case.mesh["thermal2D"].element, 1)
-    nT = case.mesh["thermal2D"].nlen
-    
-    # 计算单个单元的电化学自由度数
-    Nrn = case.mesh["negative particle"].nlen
-    Nrp = case.mesh["positive particle"].nlen
-    Nel = case.mesh["electrolyte"].nlen
-    n_chem = Nrn + Nrp + Nel
-    
-    # 设置布局信息
-    empty!(case.multi_spme_layout)
-    case.multi_spme_layout["ne"] = ne
-    case.multi_spme_layout["n_chem"] = n_chem
-    case.multi_spme_layout["nT"] = nT
-    case.multi_spme_layout["n_total"] = ne * n_chem + nT
-    case.multi_spme_layout["chem_range"] = 1:(ne * n_chem)
-    case.multi_spme_layout["thermal_range"] = (ne * n_chem + 1):(ne * n_chem + nT)
-    
-    return nothing
-end
