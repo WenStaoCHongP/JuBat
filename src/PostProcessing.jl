@@ -97,9 +97,8 @@ function _state_concentration_variance(case::Case, y_state)
     Nrp = case.mesh["positive particle"].nlen
 
     if multi_spme
-        _ensure_multi_spme_layout!(case)
-        ne = case.multi_spme_layout["ne"]
-        n_chem = case.multi_spme_layout["n_chem"]
+        ne = case.layout.ne
+        n_chem = case.layout.n_chem
         cs_n_all = Float64[]
         cs_p_all = Float64[]
         for e in 1:ne

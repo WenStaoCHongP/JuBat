@@ -543,12 +543,16 @@ function setup_thermal2D_mesh(case, mesh_data; use_merged::Union{Bool,Nothing}=n
 
     case_new.mesh["thermal2D"] = mesh_th
 
-    case_new.multi_spme_layout["interface_pairs"] = interface_pairs
-    case_new.multi_spme_layout["element_layer"] = mesh_data.element_layer
-    case_new.multi_spme_layout["is_inner_layer"] = mesh_data.is_inner_layer
-    case_new.multi_spme_layout["czm_element_map"] = mesh_data.czm_element_map
-    case_new.multi_spme_layout["inner_nodes"] = mesh_data.inner_nodes
-    case_new.multi_spme_layout["outer_nodes"] = mesh_data.outer_nodes
+    _, layer_weights = jellyroll_element_properties(case_new.mesh["thermal2D"], case_new.param)
+    case_new.geometry = MeshGeometry(
+        mesh_data.element_layer,
+        mesh_data.is_inner_layer,
+        layer_weights,
+        interface_pairs,
+        mesh_data.czm_element_map,
+        mesh_data.inner_nodes,
+        mesh_data.outer_nodes
+    )
 
     ne = size(mesh_th.element, 1)
     nnode = mesh_th.nlen
