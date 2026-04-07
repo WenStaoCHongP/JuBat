@@ -156,7 +156,7 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_curren
             t_end_nd = duration / case.param.scale.t0
             _, _, _, vars_end, _ = CallModel(case, y_end, t_end_nd, jacobi="update")
             try
-                _update_czm_damage!(czm_mesh, czm_params, case, vars_end, T_nodes_nd, nothing)
+                update_czm_damage!(czm_mesh, czm_params, case, vars_end, T_nodes_nd, nothing)
             catch e
                 @debug "Phase-end CZM update failed: $e"
             end
@@ -524,7 +524,7 @@ function apply_initial_soc!(case::Case, param_dim, soc::Float64)
 end
 
 """
-    _compute_czm_effective_params(case, param_dim)
+    compute_czm_effective_params(case, param_dim)
 
 计算 CZM 求解所需的有效材料参数。
 
@@ -535,7 +535,7 @@ end
 - `β_n`: 负极扩散应变系数 [-]
 - `β_p`: 正极扩散应变系数 [-]
 """
-function _compute_czm_effective_params(case::Case, param_dim)
+function compute_czm_effective_params(case::Case, param_dim)
     # 有效弹性模量（厚度加权平均）
     E_eff = (param_dim.NE.E * param_dim.NE.thickness + param_dim.PE.E * param_dim.PE.thickness) / 
             (param_dim.NE.thickness + param_dim.PE.thickness)
@@ -556,7 +556,7 @@ function _compute_czm_effective_params(case::Case, param_dim)
 end
 
 """
-    _compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)
+    compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)
 
 计算 CZM 损伤计算所需的单元级应变输入。
 
@@ -565,7 +565,7 @@ end
 - `Δsoc_n_elem`: 每个单元的负极 SOC 变化 [-]
 - `Δsoc_p_elem`: 每个单元的正极 SOC 变化 [-]
 """
-function _compute_czm_strain_inputs(case::Case, variables::Dict, czm_mesh, T_nodes_carry)
+function compute_czm_strain_inputs(case::Case, variables::Dict, czm_mesh, T_nodes_carry)
     ne = size(czm_mesh.bulk_element, 1)
     param_dim = case.param_dim
     
@@ -624,7 +624,7 @@ function _compute_czm_strain_inputs(case::Case, variables::Dict, czm_mesh, T_nod
 end
 
 """
-    _update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)
+    update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)
 
 更新 CZM 网格的损伤状态。
 
@@ -642,7 +642,7 @@ end
 - `u_czm`: 更新后的 CZM 位移场
 - `converged`: 是否收敛
 """
-function _update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)
+function update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)
     param_dim = case.param_dim
     param = case.param
 
@@ -650,10 +650,10 @@ function _update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carr
     czm_params.czm_model = case.opt.czm_model
     
     # 计算有效材料参数
-    E_eff, ν_eff, α_eff, β_n, β_p = _compute_czm_effective_params(case, param_dim)
+    E_eff, ν_eff, α_eff, β_n, β_p = compute_czm_effective_params(case, param_dim)
     
     # 计算应变输入
-    dT_elem, Δsoc_n_elem, Δsoc_p_elem = _compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)
+    dT_elem, Δsoc_n_elem, Δsoc_p_elem = compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)
     
     # 外力向量（一般为零）
     ndof = 2 * czm_mesh.nnode

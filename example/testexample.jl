@@ -50,7 +50,7 @@ function main()
     opt.mechanicalmodel = "none"
     
     # 时间设置
-    opt.time = [0.0, 60]  # 仿真时间 (s)
+    opt.time = [0.0, 3600]  # 仿真时间 (s)
     opt.dt = [0.5, 10]    # 时间步长范围 [dt_min, dt_max] (s)
     opt.dtType = "auto"     # 自动时间步长
     opt.jacobi = "update"
@@ -206,6 +206,27 @@ function main()
     @printf("  初始电压: %.4f V\n", V[1])
     @printf("  最终电压: %.4f V\n", V[end])
     @printf("  电压降: %.4f V\n", V[1] - V[end])
+
+    # 性能分解（用于源码优化定位）
+    if haskey(result, "timing SPMe solve total [s]")
+        println("\n  求解耗时分解（CallModel累计）:")
+        @printf("    SPMe求解: %.3f s (%.2f%%), 平均 %.3f ms/step\n",
+            result["timing SPMe solve total [s]"],
+            get(result, "timing SPMe solve ratio [%]", 0.0),
+            get(result, "timing SPMe solve avg [ms]", 0.0))
+        @printf("    分流求解器: %.3f s (%.2f%%), 平均 %.3f ms/step\n",
+            result["timing branch solver total [s]"],
+            get(result, "timing branch solver ratio [%]", 0.0),
+            get(result, "timing branch solver avg [ms]", 0.0))
+        @printf("    热分布式模型: %.3f s (%.2f%%), 平均 %.3f ms/step\n",
+            result["timing thermal distributed total [s]"],
+            get(result, "timing thermal distributed ratio [%]", 0.0),
+            get(result, "timing thermal distributed avg [ms]", 0.0))
+        @printf("    CZM模型: %.3f s (%.2f%%), 平均 %.3f ms/step\n",
+            result["timing CZM model total [s]"],
+            get(result, "timing CZM model ratio [%]", 0.0),
+            get(result, "timing CZM model avg [ms]", 0.0))
+    end
      # ========================================================================
     # 4.5. 计算每个时间步的应力场
     # ========================================================================
@@ -421,7 +442,8 @@ function main()
     # ========================================================================
     println("\n[6/7] 生成最终温度场图像...")
     
-    T_nodes_final = result["thermal2D T_nodes [K]"]
+    T_nodes_hist = result["thermal2D temperature at nodes [K]"]
+    T_nodes_final = ndims(T_nodes_hist) == 2 ? T_nodes_hist[:, end] : T_nodes_hist
         
         # 使用节点坐标
         xnod = mesh_th.node[:,1]
@@ -514,7 +536,8 @@ try
     variables = Dict{String, Union{Array{Float64},Float64}}()
     
     # 从 result 中提取温度场并转换为无量纲形式
-    T_nodes_K = result["thermal2D T_nodes [K]"]
+    T_nodes_hist_K = result["thermal2D temperature at nodes [K]"]
+    T_nodes_K = ndims(T_nodes_hist_K) == 2 ? T_nodes_hist_K[:, end] : T_nodes_hist_K
     T_ref = case.param_dim.scale.T_ref
     T_nodes = T_nodes_K ./ T_ref  # 转换为无量纲
     variables["T_nodes"] = T_nodes

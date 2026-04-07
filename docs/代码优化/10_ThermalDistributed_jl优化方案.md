@@ -1,6 +1,6 @@
 # ThermalDistributed.jl 优化方案
 
-> 日期: 2026-04-01
+> 日期: 2026-04-01 (修订)
 > 文件: `src/ThermalDistributed.jl`
 > 状态: 新增 (425 行)
 
@@ -23,171 +23,78 @@
 
 ### 1.2 核心问题
 
-1. **`compute_heat_sources` 是第二大的上帝函数 (111 行)**：11 层热源逐一计算 + 单位转换，逻辑冗长且与 FEM 装配无关
-2. **`compute_heat_sources_with_czm` 是简单包装**：仅调用 `compute_heat_sources` 后用 `active_mask` 过滤，可内联
-3. **热源计算与 FEM 装配职责混杂**：ThermalDistributed.jl 应只负责 FEM 装配和 BC，热源计算应独立
+1. **`compute_heat_sources` 是最大的单函数 (111 行)**：11 层热源逐一计算 + 层权重 + 单位转换
+2. **`compute_heat_sources_with_czm` 是简单包装**：仅调用 `compute_heat_sources` 后用 `active_mask` 过滤
+3. **热源计算与 FEM 装配职责混杂**：ThermalDistributed.jl 应只负责 FEM 装配和 BC
 
 ---
 
 ## 2. 优化方案
 
-### 2.1 拆分 `compute_heat_sources` → ThermalHeatSource.jl
+### 2.1 约束
 
-热源计算从 ThermalDistributed.jl 完全迁出到新文件 `src/ThermalHeatSource.jl`。
+- **不新增函数**
+- `compute_heat_sources` 保留在 ThermalDistributed.jl 内（不迁出）
+- `compute_heat_sources_with_czm` 保留
+- 仅做类型替换和命名修正
 
-### 2.2 热源函数分层
+### 2.2 `compute_heat_sources` 内部修正
+
+#### 关键：保留层权重 `fks` 和单位转换
+
+当前代码正确使用了：
+- `fks = jellyroll_element_properties(case, ...)` 获取层面积权重
+- `q_rxn_ne[e] = fks[e,1] * Q_rxn_NE` 应用层权重
+- `q_total[e] * (scale.L^3 / case.param_dim.cell.volume)` 单位转换
+
+**这些逻辑必须完整保留，不能简化。** 方案仅做：
+
+1. `case.multi_spme_layout["key"]` → `case.layout.key` 类型替换
+2. `jellyroll_element_properties` 直接调用改为通过 `case.geometry` 获取 `fks`
+3. 函数重命名: `compute_heat_sources` → `compute_heat_sources`（保持不变，已经是 snake_case）
+
+### 2.3 层权重获取方式修正
 
 ```julia
-# ThermalHeatSource.jl (新文件, ~180 行)
+# 旧: 直接调用 jellyroll_element_properties
+fks = jellyroll_element_properties(case, ...)
 
-"""
-计算所有 11 层逐单元热源 (无量纲)。
+# 新: 从预计算的 geometry 获取
+fks = case.geometry.layer_weights
+```
 
-# 返回
-- `q_total::Vector{Float64}`: ne 个单元的总热源
-- `q_layers::NamedTuple`: 11 层热源 (各 ne 个值)
-"""
-function compute_heat_sources(case::Case, variables::Dict,
-                               A_elem::Vector{Float64},
-                               I_e::Vector{Float64},
-                               Te_prev::Vector{Float64},
-                               T_nodes::Vector{Float64})
-    ne = length(I_e)
-    param = case.param
-    scale = case.param_dim.scale
+这消除了 `ThermalDistributed` 对 `Jellyrollmodel` 的直接耦合泄漏（00 文档标记的高严重度问题）。
 
-    # 预提取共享量
-    T_ref = scale.T_ref
-    j_scale = scale.j
-    phi_scale = scale.phi
+### 2.4 `compute_heat_sources_with_czm` 保留
 
-    q_rxn_ne = zeros(ne)
-    q_rev_ne = zeros(ne)
-    q_ohm_s_ne = zeros(ne)
-    q_ohm_e_ne = zeros(ne)
-    q_sp = zeros(ne)
-    q_rxn_pe = zeros(ne)
-    q_rev_pe = zeros(ne)
-    q_ohm_s_pe = zeros(ne)
-    q_ohm_e_pe = zeros(ne)
-    q_pcc = zeros(ne)
-    q_ncc = zeros(ne)
-
-    for e in 1:ne
-        q_rxn_ne[e], q_rev_ne[e], q_ohm_s_ne[e], q_ohm_e_ne[e],
-        q_sp[e],
-        q_rxn_pe[e], q_rev_pe[e], q_ohm_s_pe[e], q_ohm_e_pe[e],
-        q_pcc[e], q_ncc[e] = _compute_element_heat_source(
-            e, variables, param, I_e[e], Te_prev[e], A_elem[e],
-            T_ref, j_scale, phi_scale
-        )
-    end
-
-    q_total = q_rxn_ne + q_rev_ne + q_ohm_s_ne + q_ohm_e_ne +
-              q_sp + q_rxn_pe + q_rev_pe + q_ohm_s_pe + q_ohm_e_pe +
-              q_pcc + q_ncc
-
-    return q_total, (;
-        q_rxn_ne, q_rev_ne, q_ohm_s_ne, q_ohm_e_ne,
-        q_sp,
-        q_rxn_pe, q_rev_pe, q_ohm_s_pe, q_ohm_e_pe,
-        q_pcc, q_ncc
-    )
-end
-
-"""单个单元的 11 层热源"""
-function _compute_element_heat_source(e, variables, param, I_e, T_e, A_e,
-                                       T_ref, j_scale, phi_scale)
-    # 从 variables 中提取单元 e 的物理量
-    eta_n = variables["thermal2D eta_n_e"][e]
-    eta_p = variables["thermal2D eta_p_e"][e]
-    dUdT_n = variables["thermal2D dUdT_n_e"][e]
-    dUdT_p = variables["thermal2D dUdT_p_e"][e]
-    sigma_eff = variables["thermal2D element conductivity"][e]
-
-    # NE 反应热 + 可逆热
-    q_rxn_ne = abs(I_e) * abs(eta_n) / A_e
-    q_rev_ne = abs(I_e) * T_e * abs(dUdT_n) / A_e
-
-    # NE 欧姆热 (固体 + 电解液)
-    q_ohm_s_ne = I_e^2 * param.NE.Rs / (A_e * param.NE.thickness)
-    q_ohm_e_ne = I_e^2 * param.EL.R_e_ne / (A_e * param.NE.thickness)
-
-    # 隔膜欧姆热
-    q_sp = I_e^2 * param.SP.R_sp / (A_e * param.SP.thickness)
-
-    # PE 反应热 + 可逆热
-    q_rxn_pe = abs(I_e) * abs(eta_p) / A_e
-    q_rev_pe = abs(I_e) * T_e * abs(dUdT_p) / A_e
-
-    # PE 欧姆热
-    q_ohm_s_pe = I_e^2 * param.PE.Rs / (A_e * param.PE.thickness)
-    q_ohm_e_pe = I_e^2 * param.EL.R_e_pe / (A_e * param.PE.thickness)
-
-    # 集流体
-    q_pcc = I_e^2 * param.cell.R_pcc / (A_e * param.cell.t_pcc)
-    q_ncc = I_e^2 * param.cell.R_ncc / (A_e * param.cell.t_ncc)
-
-    return q_rxn_ne, q_rev_ne, q_ohm_s_ne, q_ohm_e_ne,
-           q_sp,
-           q_rxn_pe, q_rev_pe, q_ohm_s_pe, q_ohm_e_pe,
-           q_pcc, q_ncc
-end
-
-"""CZM 过滤版热源"""
-function compute_heat_sources_with_czm(case, variables, A_elem, I_e, Te_prev, T_nodes)
-    q_total, q_layers = compute_heat_sources(case, variables, A_elem, I_e, Te_prev, T_nodes)
-
-    if case.czm_mesh !== nothing
-        active = get_active_elements(case.czm_mesh, case.layout.ne)
-        q_total .*= active
-        # 过滤每层
-        for k in keys(q_layers)
-            getfield(q_layers, k) .*= active
-        end
-    end
-
-    return q_total, q_layers
+```julia
+# 保持原样，仅做类型替换
+function compute_heat_sources_with_czm(case, variables, variables_elems, I_e, Te_prev, areas, czm_mesh, mesh_th)
+    q_total, q_fields = compute_heat_sources(case, variables, variables_elems, I_e, Te_prev, areas, mesh_th)
+    # ... active_mask 过滤逻辑保持 ...
 end
 ```
 
-### 2.3 ThermalDistributed.jl 精简后
+### 2.5 FEM 装配函数不做修改
 
-```
-重构前 (425 行):                    重构后 (~220 行):
-─────────────────────               ─────────────────────
-ThermalDistributed2D     47行  →    保留                    47行
-apply_convection_bc      56行  →    保留                    56行
-apply_cool_method        79行  →    保留                    79行
-ThermalDistributed2D_BC  33行  →    保留                    33行
-ThermalDistributed2D_Ring 50行 →    保留                    50行
-ThermalRing2D_BC          8行  →    保留                     8行
-compute_heat_sources    111行  →    迁出 → ThermalHeatSource.jl
-compute_heat_sources_... 33行  →    迁出 → ThermalHeatSource.jl
-───────────────────────────────────────────────────────────
-总计                    425行      ~275行 (FEM+BC) + ~180行 (新文件)
-```
-
----
-
-## 3. 不动的部分
-
-| 函数 | 原因 |
+| 函数 | 操作 |
 |------|------|
-| `ThermalDistributed2D` | FEM 装配核心，结构良好 |
-| `apply_convection_bc` | BC 逻辑完整 |
-| `apply_cool_method` | 冷却方式完整 |
-| `ThermalDistributed2D_BC` | BC 入口（仅调用 `compute_heat_sources` 时需改 import） |
-| `ThermalDistributed2D_Ring` | 极坐标路径独立 |
-| `ThermalRing2D_BC` | 极坐标 BC |
+| `ThermalDistributed2D` | 不动 |
+| `apply_convection_bc` | 不动 |
+| `apply_cool_method` | 不动 |
+| `ThermalDistributed2D_BC` | 不动 |
+| `ThermalDistributed2D_Ring` | 不动 |
+| `ThermalRing2D_BC` | 不动 |
 
 ---
 
-## 4. 预期效果
+## 3. 预期效果
 
 | 指标 | 旧 | 新 |
 |------|-----|-----|
-| ThermalDistributed.jl 行数 | 425 | ~275 |
-| ThermalHeatSource.jl 行数 | 0 | ~180 |
-| 热源计算独立性 | 耦合在 FEM 文件中 | 完全独立 |
-| `compute_heat_sources` 行数 | 111 | ~40 (入口) + ~50 (单元素) |
+| ThermalDistributed.jl 行数 | 425 | ~415 (仅类型替换) |
+| 热源计算独立性 | 耦合在 FEM 文件中 | 保留（仅消除 Jellyrollmodel 耦合） |
+| 层权重正确性 | 正确 | 正确（保持不变） |
+| 单位转换 | 正确 | 正确（保持不变） |
+| 新增函数 | 0 | 0 |
+| 新增文件 | 0 | 0（不创建 ThermalHeatSource.jl） |

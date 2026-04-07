@@ -51,6 +51,7 @@ end
 struct MeshGeometry
     element_layer::Vector{Int}                      # 每个单元的层类型
     is_inner_layer::Vector{Bool}                    # 是否为内层（与 JellyrollMesh 类型一致）
+    layer_weights::Matrix{Float64}                  # ne × 5 层面积权重 [NE, SP, PE, PCC, NCC]
     interface_pairs::Vector{Tuple{Int,Int}}         # CZM 界面配对
     czm_element_map::Dict{Int,Vector{Int}}          # 热单元号 → CZM 单元索引向量（一对多映射）
     inner_nodes::Vector{Int}                        # 内边界节点索引
@@ -58,7 +59,7 @@ struct MeshGeometry
 end
 ```
 
-**注意**：`layer_weights` 不纳入 `MeshGeometry`。`layer_weights` 由 `jellyroll_element_properties()` 函数单独计算（Jellyrollmodel.jl:245-316），当前通过 `variables["thermal2D layer_weights"]` 存储和访问（Solve.jl:172-178），该机制保持不变。
+`layer_weights` 由 `jellyroll_element_properties()` 函数计算（Jellyrollmodel.jl:245-316），在构建 `MeshGeometry` 时传入，替代原来通过 `variables["thermal2D layer_weights"]` 的存储方式。
 
 ## 3. Case 结构体修改 (`src/SetCase.jl`)
 
@@ -190,6 +191,7 @@ end
 | 函数调用 | `MultiSPMe_update_state(y, case; ...)` | `update_state(y, case.layout; ...)` |
 | 运行时键 (行 6-8) | `case.multi_spme_layout["thermal_variables"]` 等 | `case.thermal_extras["thermal_variables"]` 等 |
 | 运行时键 (行 30, 45) | `case.multi_spme_layout["polar_mesh_data"]` | `case.thermal_extras["polar_mesh_data"]` |
+| layer_weights (行 171-178) | `jellyroll_element_properties()` + `variables["thermal2D layer_weights"]` + try/catch | 删除（已迁入 `case.geometry.layer_weights`） |
 
 ### 5.2 `CycleSolver.jl`
 
@@ -209,9 +211,11 @@ case_new.multi_spme_layout["inner_nodes"] = mesh_data.inner_nodes
 case_new.multi_spme_layout["outer_nodes"] = mesh_data.outer_nodes
 
 # 新:
+_, layer_weights = jellyroll_element_properties(case_new.mesh["thermal2D"], case_new.param)
 case_new.geometry = MeshGeometry(
     mesh_data.element_layer,
     mesh_data.is_inner_layer,
+    layer_weights,
     interface_pairs,
     mesh_data.czm_element_map,
     mesh_data.inner_nodes,
@@ -219,7 +223,7 @@ case_new.geometry = MeshGeometry(
 )
 ```
 
-注意：`layer_weights` 不在此处设置，保持现有 `variables["thermal2D layer_weights"]` 机制。
+注意：`layer_weights` 从 `jellyroll_element_properties()` 的返回值获取，不再通过 `variables` Dict 传递。
 
 ### 5.4 `CycleData.jl`
 
@@ -265,7 +269,6 @@ if case.opt.czm_enabled
 - 所有物理/数学计算逻辑不变
 - P2D 模型相关代码不动
 - `ThermalLumped` 不动
-- `layer_weights` 的计算和存储机制不变（仍通过 `jellyroll_element_properties()` 和 `variables` Dict）
 
 ## 7. 预期效果
 
@@ -301,6 +304,7 @@ if case.opt.czm_enabled
 | `case.multi_spme_layout["czm_element_map"]` | `case.geometry.czm_element_map` | `Dict{Int,Vector{Int}}` |
 | `case.multi_spme_layout["inner_nodes"]` | `case.geometry.inner_nodes` | `Vector{Int}` |
 | `case.multi_spme_layout["outer_nodes"]` | `case.geometry.outer_nodes` | `Vector{Int}` |
+| `variables["thermal2D layer_weights"]` | `case.geometry.layer_weights` | `Matrix{Float64}` |
 
 ### 8.3 CZM 网格 → `case.czm_mesh`
 
@@ -317,12 +321,6 @@ if case.opt.czm_enabled
 | `case.multi_spme_layout["thermal_update_fn"]` | `case.thermal_extras["thermal_update_fn"]` | 待迁入 SimulationState |
 | `case.multi_spme_layout["thermal_record"]` | `case.thermal_extras["thermal_record"]` | 待迁入 SimulationState |
 | `case.multi_spme_layout["polar_mesh_data"]` | `case.thermal_extras["polar_mesh_data"]` | 待迁入 SimulationState |
-
-### 8.5 不迁移
-
-| 键 | 原因 |
-|----|------|
-| `layer_weights` | 仍通过 `variables["thermal2D layer_weights"]` 管理，由 `jellyroll_element_properties()` 计算 |
 
 ## 9. 测试验证
 

@@ -1,11 +1,14 @@
-function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothing, return_final_state::Bool=false)
+function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing,return_final_state::Bool=false,thermal_variables::Union{Dict{String,Any},Nothing}=nothing,thermal_update_fn::Union{Function,Nothing}=nothing,thermal_record::Bool=false,polar_mesh_data::Any=nothing)
     if case.opt.model == "thermal"
+            if thermal_variables === nothing
+                error("Solve: model==\"thermal\" requires thermal_variables keyword argument")
+            end
             t0 = case.opt.time[1]/case.param.scale.t0
             t_end = case.opt.time[end]/case.param.scale.t0
             dt = case.opt.dt[1]/case.param.scale.t0
-            vars = case.thermal_extras["thermal_variables"]
-            update_fn = case.thermal_extras["thermal_update_fn"]
-            record = case.thermal_extras["thermal_record"]
+            vars = thermal_variables
+            update_fn = thermal_update_fn
+            record = thermal_record
 
             if case.opt.solveType == "Crank-Nicolson"
                 theta = 0.5
@@ -19,7 +22,7 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
 
             mesh = case.mesh["thermal2D"]
             nnode = mesh.nlen
-            T_nodes = vars["T_nodes"]
+            T_nodes = vars["thermal2D temperature at nodes"]
 
             times = collect(range(t0, step=dt, length=Int(cld(t_end - t0, dt)) + 1))
             T_hist = record ? zeros(Float64, nnode, length(times)) : zeros(Float64, 0, 0)
@@ -27,8 +30,7 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
 
             update_fn !== nothing && update_fn(t0, vars)
             if case.opt.thermalmodel == "ring2D_polar"
-                mesh_data = case.thermal_extras["polar_mesh_data"]
-                MT_old, KT_old, FT_old = ThermalPolar2D_Ring(case, vars, mesh_data)
+                MT_old, KT_old, FT_old = ThermalPolar2D_Ring(case, vars, polar_mesh_data)
             elseif case.opt.thermalmodel == "ring2D"
                 MT_old, KT_old, FT_old = ThermalDistributed2D_Ring(case, vars)
                 KT_old, FT_old = ThermalRing2D_BC(KT_old, FT_old, case, vars["thermal2D outer_nodes"], t0)
@@ -42,8 +44,7 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
                 update_fn !== nothing && update_fn(t, vars)
 
                 if case.opt.thermalmodel == "ring2D_polar"
-                    mesh_data = case.thermal_extras["polar_mesh_data"]
-                    MT_new, KT_new, FT_new = ThermalPolar2D_Ring(case, vars, mesh_data)
+                    MT_new, KT_new, FT_new = ThermalPolar2D_Ring(case, vars, polar_mesh_data)
                 elseif case.opt.thermalmodel == "ring2D"
                     MT_new, KT_new, FT_new = ThermalDistributed2D_Ring(case, vars)
                     KT_new, FT_new = ThermalRing2D_BC(KT_new, FT_new, case, vars["thermal2D outer_nodes"], t)
@@ -56,7 +57,7 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
                 rhs = (MT_new + (1.0 - theta) * dt * KT_old) * T_nodes +
                       dt * (theta * FT_new + (1.0 - theta) * FT_old)
                 T_nodes = A \ rhs
-                vars["T_nodes"] = T_nodes
+                vars["thermal2D temperature at nodes"] = T_nodes
 
                 record && (T_hist[:, step + 1] .= T_nodes)
 
@@ -75,12 +76,11 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
         t0 = RunTime[1] 
         t_end = RunTime[end]
     
-    # 判断是否启用多SPMe模式（当使用分布式2D热模型时自动启用）
-    multi_spme_enabled = (case.opt.model == "SPMe" &&case.opt.thermalmodel == "distributed2D")
-    
+    # 判断是否启用多SPMe模式：与 CallModel 保持一致，由 per_element_spme 控制
+    multi_spme_enabled = case.opt.per_element_spme
+
     # 允许从外部状态继续求解（用于循环阶段衔接）
-    y0_input = initial_state === nothing ? nothing : get(initial_state, "y", nothing)
-    T_nodes_input = initial_state === nothing ? nothing : get(initial_state, "T_nodes", nothing)
+    y0_input = initial_state
 
     # 检查模式并初始化（优先级：外部状态 > 多SPMe > 标准）
     if y0_input === nothing
@@ -107,13 +107,6 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
             if length(y0) != expected_multi_len
                 @warn "外部状态长度与多SPMe布局不匹配，回退到模型初始化" got=length(y0) expected=expected_multi_len
                 y0 = ModelInitialisation_MultiSPMe(case)
-            end
-        elseif case.opt.thermalmodel == "distributed2D"
-            nT = case.mesh["thermal2D"].nlen
-            n_chem_base = case.mesh["negative particle"].nlen + case.mesh["positive particle"].nlen + case.mesh["electrolyte"].nlen
-            if length(y0) == n_chem_base
-                T_seed = (T_nodes_input !== nothing && length(T_nodes_input) == nT) ? vec(T_nodes_input) : fill(case.param.cell.T0, nT)
-                y0 = [y0; T_seed]
             end
         end
     end
@@ -147,25 +140,30 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
     t = t0
     vt = 2  
     v = 1
+    timing_totals = Dict{String,Float64}(
+        "spme" => 0.0,
+        "branch" => 0.0,
+        "thermal" => 0.0,
+        "czm" => 0.0,
+    )
+    timing_call_count = 0
+
+    function accumulate_callmodel_timing!(totals::Dict{String,Float64}, vars::Dict{String, Union{Array{Float64},Float64}})
+        totals["spme"] += get(vars, "timing spme solve [s]", 0.0)
+        totals["branch"] += get(vars, "timing branch solver [s]", 0.0)
+        totals["thermal"] += get(vars, "timing thermal distributed [s]", 0.0)
+        totals["czm"] += get(vars, "timing czm model [s]", 0.0)
+        return nothing
+    end
+
     M_old, K_old, F_old, variables, y_phi= CallModel(case, y0, t, jacobi="update")
+    timing_call_count += 1
+    accumulate_callmodel_timing!(timing_totals, variables)
     # 打印初始信息
     V_init = variables["cell voltage"] * case.param.scale.phi
     println("\n[Solve] 初始化完成: V=$V_init V, t_end=$(t_end * case.param.scale.t0)")
-    # Thermal-distributed init if enabled
-    if case.opt.thermal_enabled && case.opt.thermalmodel == "distributed2D"
-        # 初始化热场，优先使用传入状态，其次使用状态向量中的热自由度。
-        nnode_th = case.mesh["thermal2D"].nlen
-        if T_nodes_input !== nothing && length(T_nodes_input) == nnode_th
-            T_nodes = copy(vec(T_nodes_input))
-        elseif length(y0) >= nnode_th
-            T_nodes = copy(y0[(end - nnode_th + 1):end])
-        else
-            T_nodes = fill(case.param.cell.T0, nnode_th)
-        end
-        variables["T_nodes"] = T_nodes
-    end
     # 持久化热场（跨 CallModel 迭代携带）
-    T_nodes_carry = case.opt.thermal_enabled && case.opt.thermalmodel == "distributed2D" ? variables["T_nodes"] : Float64[]
+    T_nodes_carry = get(variables, "thermal2D temperature at nodes", Float64[])
 
     dt_init = 1e-8
     vc = 1:size(M_old,1)
@@ -189,30 +187,22 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
     
     # run the model
     while t <= t_end
-        # 1) 先用当前热场的均温影响动力学
-        if case.opt.thermal_enabled && case.opt.thermalmodel == "distributed2D"
-            # T_nodes_carry is dimensionless (T/T_ref) under Scheme B thermal scaling
-            Tm = thermal2D_volume_average_temperature(case.mesh["thermal2D"], T_nodes_carry)  # dimensionless
-            case.param.cell.T0 = Tm  # SPMe expects dimensionless T
-        end
-
-        # 2) 电化学步
+        # 电化学步
         M_new, K_new, F_new, variables, y_phi = CallModel(case, y_old, t, jacobi="update") 
+        timing_call_count += 1
+        accumulate_callmodel_timing!(timing_totals, variables)
         Mt = M_new - theta * K_new * dt 
         Kt = (1 - theta) * K_old * dt + M_new 
         Ft = theta * F_new * dt + (1 - theta) * F_old * dt 
         y_c = convert(SparseMatrixCSC{Float64,Int}, Mt) \ (Kt * y_old[vc] + Ft) 
         y_new = vcat(y_c, y_phi)
 
-        # 3) 分布式热：统一到 CallModel 的 M/K/F 内，不再在主循环单独做一步。
-        # 仅在求解后提取温度自由度并回写到 variables 以用于记录/后处理。
-        if case.opt.thermal_enabled && case.opt.thermalmodel == "distributed2D"
-            nT = case.mesh["thermal2D"].nlen
-            n_tot = size(M_new, 1)
-            # 热自由度位于化学自由度之后（按 blockdiag 顺序追加），属于 y_c 中最后 nT 个条目
-            if length(y_c) == n_tot
+        # multi-SPMe：求解后提取温度自由度，用于记录/后处理
+        if multi_spme_enabled
+            nT = case.layout.nT
+            if length(y_c) >= nT
                 T_nodes = y_c[(end - nT + 1):end]
-                variables["T_nodes"] = T_nodes
+                variables["thermal2D temperature at nodes"] = T_nodes
                 T_nodes_carry = T_nodes
             end
         end
@@ -307,6 +297,45 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
         termination_reason = "time_limit"
     end
     result = PostProcessing(case, variables_hist, v) 
+    # 汇总耗时统计（用于识别主要瓶颈）
+    timing_total = timing_totals["spme"] + timing_totals["branch"] + timing_totals["thermal"] + timing_totals["czm"]
+    call_count_safe = max(timing_call_count, 1)
+
+    result["timing SPMe solve total [s]"] = timing_totals["spme"]
+    result["timing branch solver total [s]"] = timing_totals["branch"]
+    result["timing thermal distributed total [s]"] = timing_totals["thermal"]
+    result["timing CZM model total [s]"] = timing_totals["czm"]
+
+    result["timing SPMe solve avg [ms]"] = 1000.0 * timing_totals["spme"] / call_count_safe
+    result["timing branch solver avg [ms]"] = 1000.0 * timing_totals["branch"] / call_count_safe
+    result["timing thermal distributed avg [ms]"] = 1000.0 * timing_totals["thermal"] / call_count_safe
+    result["timing CZM model avg [ms]"] = 1000.0 * timing_totals["czm"] / call_count_safe
+    result["timing CallModel calls"] = Float64(timing_call_count)
+
+    if timing_total > 0
+        result["timing SPMe solve ratio [%]"] = 100.0 * timing_totals["spme"] / timing_total
+        result["timing branch solver ratio [%]"] = 100.0 * timing_totals["branch"] / timing_total
+        result["timing thermal distributed ratio [%]"] = 100.0 * timing_totals["thermal"] / timing_total
+        result["timing CZM model ratio [%]"] = 100.0 * timing_totals["czm"] / timing_total
+    else
+        result["timing SPMe solve ratio [%]"] = 0.0
+        result["timing branch solver ratio [%]"] = 0.0
+        result["timing thermal distributed ratio [%]"] = 0.0
+        result["timing CZM model ratio [%]"] = 0.0
+    end
+
+    if case.opt.debug_coupling
+        println("\n[Solve-Timing] CallModel 阶段累计耗时（用于优化定位）")
+        println("  calls = $(timing_call_count)")
+        @printf("  SPMe solve           : %.3f s (%.2f%%), avg %.3f ms/call\n",
+            timing_totals["spme"], result["timing SPMe solve ratio [%]"], result["timing SPMe solve avg [ms]"])
+        @printf("  Branch solver        : %.3f s (%.2f%%), avg %.3f ms/call\n",
+            timing_totals["branch"], result["timing branch solver ratio [%]"], result["timing branch solver avg [ms]"])
+        @printf("  Thermal distributed  : %.3f s (%.2f%%), avg %.3f ms/call\n",
+            timing_totals["thermal"], result["timing thermal distributed ratio [%]"], result["timing thermal distributed avg [ms]"])
+        @printf("  CZM model            : %.3f s (%.2f%%), avg %.3f ms/call\n",
+            timing_totals["czm"], result["timing CZM model ratio [%]"], result["timing CZM model avg [ms]"])
+    end
     
     # 添加截止信息到结果
     result["termination_reason"] = termination_reason
@@ -348,7 +377,7 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
 
             # 节点温度时间序列
             Tref = case.param_dim.scale.T_ref
-            T_nodes_hist = variables_hist["T_nodes"][:, 1:v] .* Tref
+            T_nodes_hist = variables_hist["thermal2D temperature at nodes"][:, 1:v] .* Tref
             result["thermal2D temperature at nodes [K]"] = T_nodes_hist
 
             # 单元温度时间序列（节点平均）
@@ -357,17 +386,15 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
             n_t = size(T_nodes_hist, 2)
             T_elem_temp_hist = zeros(Float64, ne, n_t)
             for ti in 1:n_t
-                T_nodes_t = variables_hist["T_nodes"][:, ti]
+                T_nodes_t = variables_hist["thermal2D temperature at nodes"][:, ti]
                 T_elem_temp_hist[:, ti] = element_nodal_mean(mesh_th, T_nodes_t)
             end
             result["thermal2D temperature [K]"] = T_elem_temp_hist .* Tref
         end
-        if case.opt.thermal_enabled
-            if isa(T_nodes_carry, Array{Float64}) && length(T_nodes_carry) == case.mesh["thermal2D"].nlen
-                Tref = case.param_dim.scale.T_ref
-                result["thermal2D final temperature at nodes [K]"] = T_nodes_carry .* Tref
-                result["thermal2D nodes xy [m]"] = case.mesh["thermal2D"].node
-            end
+        if multi_spme_enabled && !isempty(T_nodes_carry)
+            Tref = case.param_dim.scale.T_ref
+            result["thermal2D final temperature at nodes [K]"] = T_nodes_carry .* Tref
+            result["thermal2D nodes xy [m]"] = case.mesh["thermal2D"].node
         end
     catch
         # non-fatal
@@ -385,285 +412,6 @@ function Solve(case::Case; initial_state::Union{Dict{String,Any},Nothing}=nothin
         )
     end
     return result
-end
-"""
-    CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
-
-多SPMe并行架构的 CallModel 实现。
-
-此函数为每个热单元调用独立的 SPMe_element 求解器，然后将所有单元的矩阵和热学矩阵
-全局装配成统一的系统。
-
-# 状态向量结构
-输入 yt:
-    [yt_e[1]; yt_e[2]; ...; yt_e[ne]; T_nodes]
-输出 M, K, F 对应的状态向量结构相同。
-
-# 工作流程
-1. 解析状态向量（提取每个单元的电化学状态和热场）
-2. 计算元素均温和面积
-3. 调用分流求解器获取逐单元电流 I_e
-4. 并行调用 SPMe_element 求解每个单元的电化学响应
-5. 计算逐单元热源（使用各单元的局部 η 和 dUdT）
-6. 装配热学矩阵
-7. 全局装配：blockdiag(M_e[1], ..., M_e[ne], MT)
-
-# 返回
-- M, K, F: 全局系统矩阵
-- variables: 合并的变量字典（包含全局信息和逐单元信息）
-- y_phi: 空向量（SPMe无电势自由度）
-"""
-function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
-    # 验证前提条件
-    if case.layout === nothing
-        error("CallModel_MultiSPMe requires case.layout to be set. Did you call ModelInitialisation_MultiSPMe?")
-    end
-    
-    layout = case.layout
-    ne = layout.ne
-    n_chem = layout.n_chem
-    nT = layout.nT
-    mesh_th = case.mesh["thermal2D"]
-    param = case.param
-    
-    # 初始化 variables（提前，以便后续缓存/读取中使用）
-    variables = StandardVariables(case, 1)
-    
-    # 1) 解析状态向量
-    # 提取热场
-    T_nodes = get_thermal_dofs(yt, case.layout)
-    # 提取每个单元的电化学状态
-    yt_chem = Vector{Vector{Float64}}(undef, ne)
-    for e in 1:ne
-        yt_chem[e] = vec(extract_element_state(yt, e, case.layout))
-    end
-    
-    # 2) 计算元素面积和均温
-    A = zeros(Float64, ne)
-    ngs = length(mesh_th.gs.detJ)
-    @inbounds for g in 1:ngs
-        e = mesh_th.gs.ele[g]
-        A[e] += mesh_th.gs.weight[g] * mesh_th.gs.detJ[g]
-    end
-    variables["thermal2D element area"] = A
-    areas = A
-    
-    Te_prev = zeros(Float64, ne)
-    @inbounds for e in 1:ne
-        nds = mesh_th.element[e, :]
-        Te_prev[e] = sum(T_nodes[nds]) / length(nds)
-    end
-    # 3) 分流求解（获取 I_e）
-    # 使用与 SPMe 变量一致的电流无量纲尺度（param.scale.I_typ）
-    I_total = case.opt.Current(t * case.param.scale.t0) / case.param.scale.I_typ
-    
-    # 更新 variables（用于传递给分流求解器）
-    variables["cell current"] = I_total
-    variables["T_nodes"] = T_nodes
-    variables["thermal2D element area"] = areas
-    
-    # 使用缓存的 I_e 作为初值
-    I_e_prev = hasproperty(case, :I_e_cache) ? case.I_e_cache : nothing
-    
-    # 分流求解需要代表性的全局状态（用于计算 prefactor）。
-    # 这里使用所有单元的平均状态，并先生成与之匹配的电化学变量，确保标度一致。
-    yt_representative = mean(yt_chem)
-    T_rep = mean(Te_prev)
-    vars_rep = SPMe_variables(case, yt_representative, t; I_app=I_total, T_e=T_rep)
-    for (k, v) in vars_rep
-        variables[k] = v
-    end
-    # 保留热相关场
-    variables["T_nodes"] = T_nodes
-    variables["thermal2D element area"] = areas
-
-    # 获取CZM失效单元列表（仅在启用CZM时）
-    if case.opt.czm_enabled
-        deactivated_elements = Int64[]
-        try
-            deactivated_elements = convert(Vector{Int64}, variables["deactivated_elements"])
-        catch
-            deactivated_elements = Int64[]
-        end
-    else
-        deactivated_elements = Int64[]
-    end
-    
-    variables, I_e, Vc = solve_branch_currents_newton(case, variables, yt_representative, t, I_total, areas, Te_prev, I_e_prev; deactivated_elements=deactivated_elements)
-    
-    # 4) 并行求解每个单元的SPMe
-    M_elems = Vector{SparseMatrixCSC{Float64,Int64}}(undef, ne)
-    K_elems = Vector{SparseMatrixCSC{Float64,Int64}}(undef, ne)
-    F_elems = Vector{Vector{Float64}}(undef, ne)
-    variables_elems = Vector{Dict{String,Union{Array{Float64},Float64}}}(undef, ne)
-    
-    # 可选：并行化（如果Julia配置了多线程）
-    Threads.@threads for e in 1:ne
-    #for e in 1:ne
-        M_e, K_e, F_e, vars_e = SPMe_element(case, yt_chem[e], t, e;I_e = I_e[e],T_e = Te_prev[e],jacobi = jacobi)
-        M_elems[e] = sparse(M_e)
-        K_elems[e] = sparse(K_e)
-        F_elems[e] = vec(F_e)
-        variables_elems[e] = vars_e
-    end
-    
-    # 5) 装配电化学全局矩阵
-    M_chem = blockdiag(M_elems...)
-    K_chem = blockdiag(K_elems...)
-    F_chem = vcat(F_elems...)
-    
-    # 6) 计算逐单元热源（调用 ThermalDistributed.jl 中的统一函数)
-    if case.opt.czm_enabled == true
-        variables = compute_heat_sources_with_czm(case, variables, variables_elems, I_e, Te_prev, areas, czm_mesh, mesh_th)
-    else
-        variables = compute_heat_sources(case, variables, variables_elems, I_e, Te_prev, areas; per_element_spme=true)
-    end
-
-    # 保存辅助变量（用于调试）
-    for e in 1:ne
-        vars_e = variables_elems[e]
-        variables["thermal2D eta_n_e"][e] = vars_e["negative electrode overpotential"][1]
-        variables["thermal2D eta_p_e"][e] = vars_e["positive electrode overpotential"][end]
-        cn_surf_e = vars_e["negative particle surface lithium concentration"][1]
-        cp_surf_e = vars_e["positive particle surface lithium concentration"][end]
-        variables["thermal2D dUdT_n_e"][e] = param.NE.dUdT(cn_surf_e)[1]
-        variables["thermal2D dUdT_p_e"][e] = param.PE.dUdT(cp_surf_e)[1]
-        csn_data = vars_e["negative particle lithium concentration"]
-        csp_data = vars_e["positive particle lithium concentration"]
-        variables["thermal2D element soc_n"][e] = mean(vec(csn_data))
-        variables["thermal2D element soc_p"][e] = mean(vec(csp_data))
-    end
-    variables["thermal2D element current"] = I_e
-    
-    # 7) 装配热学矩阵
-    MT, KT, FT = ThermalDistributed2D(case, variables)
-    # 统一时间尺度：电化学和热模型使用相同时间尺度 t0，时间比为 1
-    t_ratio = 1.0
-    MT = MT .* t_ratio
-    KT, FT = ThermalDistributed2D_BC(KT, FT, case, t)
-    
-    # 8) 全局拼装
-    M = blockdiag(M_chem, sparse(MT))
-    K = blockdiag(K_chem, sparse(KT))
-    F = [F_chem; FT]
-    
-    # 9) 合并 variables（保留关键全局信息）
-    # 电压取公共电压 Vc
-    variables["cell voltage"] = Vc
-    variables["time"] = t
-    variables["temperature"] = thermal2D_volume_average_temperature(case.mesh["thermal2D"], T_nodes)  # 体积平均温度
-    variables["T_nodes"] = T_nodes
-
-    # 可选：添加单元电压分布（用于诊断）
-    variables["thermal2D element voltages"] = [variables_elems[e]["cell voltage"] for e in 1:ne]
-    
-    y_phi = Float64[]
-    
-    return M, K, F, variables, y_phi
-end
-function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
-    # 判断是否应该启用多SPMe模式
-    # 当使用分布式2D热模型时自动启用多SPMe
-    should_use_multi_spme = (case.opt.model == "SPMe" && case.opt.thermalmodel == "distributed2D")
-    
-    # 如果应该使用多SPMe但布局为空，尝试从状态向量长度推断
-    if should_use_multi_spme && case.layout === nothing
-        # 计算期望的布局
-        ne = size(case.mesh["thermal2D"].element, 1)
-        nT = case.mesh["thermal2D"].nlen
-        Nrn = case.mesh["negative particle"].nlen
-        Nrp = case.mesh["positive particle"].nlen
-        Nel = case.mesh["electrolyte"].nlen
-        n_chem = Nrn + Nrp + Nel
-        expected_multi_len = ne * n_chem + nT
-
-        # 检查传入的状态向量长度
-        if length(yt) == expected_multi_len
-            # 状态向量是多SPMe格式，需要初始化布局
-            @warn "CallModel: case.layout 为 nothing 但状态向量长度匹配多SPMe格式，自动初始化布局"
-            case.layout = MultiSPMeLayout(ne, n_chem, nT)
-        end
-    end
-    
-    # 最终判断
-    multi_spme_enabled = should_use_multi_spme && case.layout !== nothing
-    
-    if multi_spme_enabled
-        return CallModel_MultiSPMe(case, yt, t, jacobi=jacobi)
-    end
-    
-    # 原有逻辑（单SPMe模式）
-    if case.opt.model == "SPM"
-        M, K, F, variables = SPM(case, yt, t, jacobi=jacobi)
-        y_phi = Float64[]
-    elseif case.opt.model == "SPMe"
-        M, K, F, variables = SPMe(case, yt, t, jacobi=jacobi)
-        y_phi = Float64[]
-    elseif case.opt.model == "P2D"
-        M, K, F, variables, y_phi = P2D(case, yt, t, jacobi=jacobi)
-    elseif case.opt.model == "sP2D"
-        M, K, F, variables, y_phi = sP2D(case, yt, t, jacobi=jacobi)
-    else
-        error( "Error: $(case.opt.model) model has not been implemented!\n ")
-    end
-    if case.opt.thermalmodel == "lumped"
-        MT, FT = ThermalLumped(case, variables)        
-        M = blockdiag(M, sparse(MT))
-        K = blockdiag(K, sparse(zeros(1,1)))
-        F = [F; FT]
-    elseif case.opt.thermalmodel == "distributed2D"
-        # 与 lumped 一致：在 CallModel 内根据最新电化学变量更新热源并装配热学 M/K/F，随后拼接。
-        # 使用状态向量的热自由度作为当前温度场
-        nT = case.mesh["thermal2D"].nlen
-        variables["T_nodes"] = yt[(end - nT + 1):end]
-        # 面积
-        mesh_th = case.mesh["thermal2D"]
-        ne_loc = size(mesh_th.element, 1)
-        A_loc = zeros(Float64, ne_loc)
-        ngs_loc = length(mesh_th.gs.detJ)
-        @inbounds for g in 1:ngs_loc
-            e = mesh_th.gs.ele[g]
-            A_loc[e] += mesh_th.gs.weight[g] * mesh_th.gs.detJ[g]
-        end
-        variables["thermal2D element area"] = A_loc
-        # 计算元素均温，准备非线性分流求解
-        areas = A_loc
-        T_nodes_loc = variables["T_nodes"]
-        Te_prev = zeros(Float64, ne_loc)
-        @inbounds for e in 1:ne_loc
-            nds = mesh_th.element[e, :]
-            Te_prev[e] = sum(T_nodes_loc[nds]) / length(nds)
-        end
-        # 总电流（无量纲，相对 I1C_total）
-        Ival = variables["cell current"]
-        I_total = isa(Ival, Float64) ? Ival : (ndims(Ival) == 1 ? Ival[1] : Ival[1,1])
-        # 获取CZM失效单元列表（仅在启用CZM时）
-        if case.opt.czm_enabled
-            deactivated_elements_loc = Int64[]
-            try
-                deactivated_elements_loc = convert(Vector{Int64}, variables["deactivated_elements"])
-            catch
-                deactivated_elements_loc = Int64[]
-            end
-        else
-            deactivated_elements_loc = Int64[]
-        end
-        # 使用非线性分流求解器求每单元电流（不进行面积分流回退）
-        variables, _Ie, _Vc = solve_branch_currents_newton(case, variables, yt, t, I_total, areas, Te_prev, nothing; deactivated_elements=deactivated_elements_loc)
-        # 更新热源（调用 ThermalDistributed.jl 中的统一函数）
-        variables = compute_heat_sources(case, variables, nothing, _Ie, Te_prev, areas; per_element_spme=false)
-        # 装配热学矩阵并施加边界条件
-        MT, KT, FT = ThermalDistributed2D(case, variables)
-        # 统一时间尺度：电化学和热模型使用相同时间尺度 t0，时间比为 1
-        t_ratio = 1.0
-        MT = MT .* t_ratio
-        KT, FT = ThermalDistributed2D_BC(KT, FT, case, t)
-        # 拼接到主系统
-        M = blockdiag(M, sparse(MT))
-        K = blockdiag(K, sparse(KT))
-        F = [F; FT]
-    end
-    return M, K, F, variables, y_phi
 end
 
 function RecordMatrix!(case::Case, M::SparseArrays.SparseMatrixCSC{Float64, Int64}, K::SparseArrays.SparseMatrixCSC{Float64, Int64})

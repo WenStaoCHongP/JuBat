@@ -238,14 +238,13 @@ function run_ring_simulation(jellyroll_result)
         vars["heat_source_fields"] = q_at_t
     end
 
-    case_ring.multi_spme_layout["thermal_variables"] = variables
-    case_ring.multi_spme_layout["thermal_update_fn"] = update_heat_source
-    case_ring.multi_spme_layout["thermal_record"] = true
-    case_ring.multi_spme_layout["polar_mesh_data"] = mesh_data
-
     println("开始圆环热模型时间推进...")
-    
-    ring_sol = JuBat.Solve(case_ring)
+
+    ring_sol = JuBat.Solve(case_ring;
+        thermal_variables=variables,
+        thermal_update_fn=update_heat_source,
+        thermal_record=true,
+        polar_mesh_data=mesh_data)
 
     # ring_sol.time 现在是无量纲时间，需要转换回物理时间
     t_ring_phys = ring_sol.time .* param_ring.scale.t0
