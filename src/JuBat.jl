@@ -18,6 +18,7 @@ include("SPMe.jl")
 include("P2D.jl") 
 include("Parallelsolution.jl")
 include("Tools.jl")
+include("CallModel.jl")  # 模型调度：CallModel + CallModel_MultiSPMe
 include("Solve.jl")
 include("PostProcessing.jl")
 include("Materialmatrix.jl")
@@ -49,7 +50,7 @@ export ThermalDistributed2D, ThermalDistributed2D_BC
 export ThermalDistributed2D_Ring, ThermalRing2D_BC
 export ThermalPolar2D_Ring
 export identify_boundary_nodes, apply_convection_bc, apply_cool_method
-export compute_heat_sources, compute_heat_sources_with_czm, solve_branch_currents_newton
+export compute_heat_sources, compute_heat_sources_with_czm, solve_branch_currents
 export ThermalModel, ThermalLumpedModel, ThermalDistributed2DModel
 export thermal_diffusion_stress_2D
 # CZM exports

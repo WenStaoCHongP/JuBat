@@ -256,3 +256,65 @@
 2. 温度追踪需恢复 `track_elem_index`, `T_elem_hist`, `time_hist` 变量
 3. 截止电压 println 需在对应位置恢复
 4. CallModel_MultiSPMe NaN 检查需在各位置恢复
+
+---
+
+## 7. 2026-04-07 新增性能计时调试代码（当前有效）
+
+> 说明: 本节不是“移除记录”，而是当前已加入源码的性能计时调试代码，用于定位四类核心流程耗时占比。
+
+### 7.1 Solve 内累计器（约 lines 150-170）
+
+在 `Solve` 开头新增累计字典与累加函数:
+
+```julia
+    timing_totals = Dict{String,Float64}(
+        "spme" => 0.0,
+        "branch" => 0.0,
+        "thermal" => 0.0,
+        "czm" => 0.0,
+    )
+    timing_call_count = 0
+
+    function accumulate_callmodel_timing!(totals::Dict{String,Float64}, vars::Dict{String, Union{Array{Float64},Float64}})
+        totals["spme"] += get(vars, "timing spme solve [s]", 0.0)
+        totals["branch"] += get(vars, "timing branch solver [s]", 0.0)
+        totals["thermal"] += get(vars, "timing thermal distributed [s]", 0.0)
+        totals["czm"] += get(vars, "timing czm model [s]", 0.0)
+        return nothing
+    end
+```
+
+并在每次 `CallModel(...)` 后执行累加。
+
+### 7.2 Solve 结果写回（约 lines 330-355）
+
+新增以下 `result` 字段，供后处理和脚本打印:
+
+- `timing SPMe solve total [s]`
+- `timing branch solver total [s]`
+- `timing thermal distributed total [s]`
+- `timing CZM model total [s]`
+- `timing SPMe solve avg [ms]`
+- `timing branch solver avg [ms]`
+- `timing thermal distributed avg [ms]`
+- `timing CZM model avg [ms]`
+- `timing SPMe solve ratio [%]`
+- `timing branch solver ratio [%]`
+- `timing thermal distributed ratio [%]`
+- `timing CZM model ratio [%]`
+- `timing CallModel calls`
+
+### 7.3 控制台摘要输出（约 lines 358-370）
+
+当 `case.opt.debug_coupling == true` 时，打印:
+
+```text
+[Solve-Timing] CallModel 阶段累计耗时（用于优化定位）
+```
+
+并输出四类模块的总耗时、占比和平均耗时（ms/call）。
+
+### 7.4 示例脚本联动
+
+`example/testexample.jl` 已在结果提取阶段打印同一组耗时分解，便于直接比较“SPMe / 分流 / 热分布式 / CZM”四类流程。

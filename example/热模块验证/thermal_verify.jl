@@ -360,12 +360,11 @@ function solve_for_ntheta(param_dim, ntheta, dr, model)
         end
     end
 
-    case.multi_spme_layout["thermal_variables"] = variables
-    case.multi_spme_layout["thermal_update_fn"] = update_fn
-    case.multi_spme_layout["thermal_record"] = false
-    case.multi_spme_layout["polar_mesh_data"] = mesh_data
-
-    result = JuBat.Solve(case)
+    result = JuBat.Solve(case;
+        thermal_variables=variables,
+        thermal_update_fn=update_fn,
+        thermal_record=false,
+        polar_mesh_data=mesh_data)
     T = result.T_nodes .* T_ref
 
     # Convert normalized coordinates back to dimensional for exact solution comparison
@@ -424,12 +423,11 @@ function run_case(param_dim, ntheta, dr, model, label)
         end
     end
 
-    case.multi_spme_layout["thermal_variables"] = variables
-    case.multi_spme_layout["thermal_update_fn"] = update_fn
-    case.multi_spme_layout["thermal_record"] = false
-    case.multi_spme_layout["polar_mesh_data"] = mesh_data
-
-    result = JuBat.Solve(case)
+    result = JuBat.Solve(case;
+        thermal_variables=variables,
+        thermal_update_fn=update_fn,
+        thermal_record=false,
+        polar_mesh_data=mesh_data)
     T = result.T_nodes .* T_ref
 
     out_dir = normpath(joinpath(@__DIR__, "..", "..", "output", "thermal_verify", label))
@@ -528,12 +526,11 @@ function run_case_data(param_dim, ntheta, dr, model)
         end
     end
 
-    case.multi_spme_layout["thermal_variables"] = variables
-    case.multi_spme_layout["thermal_update_fn"] = update_fn
-    case.multi_spme_layout["thermal_record"] = false
-    case.multi_spme_layout["polar_mesh_data"] = mesh_data
-
-    result = JuBat.Solve(case)
+    result = JuBat.Solve(case;
+        thermal_variables=variables,
+        thermal_update_fn=update_fn,
+        thermal_record=false,
+        polar_mesh_data=mesh_data)
     T = result.T_nodes .* T_ref
 
     r_prof, T_r = radial_profile(mesh, T)

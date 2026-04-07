@@ -141,11 +141,6 @@ function run_verify_case(param_dim, ntheta, dr, model)
         end
     end
 
-    case.multi_spme_layout["thermal_variables"] = variables
-    case.multi_spme_layout["thermal_update_fn"] = update_fn
-    case.multi_spme_layout["thermal_record"] = false
-    case.multi_spme_layout["polar_mesh_data"] = mesh_data
-
     # 稳态验证：直接求解 K*T + F = 0，避免瞬态截断误差
     update_fn(0.0, variables)
     if model == "ring2D_polar"

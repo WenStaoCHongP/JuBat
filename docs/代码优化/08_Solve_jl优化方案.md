@@ -1,8 +1,8 @@
 # Solve.jl 优化方案
 
-> 日期: 2026-04-01
+> 日期: 2026-04-01 (修订)
 > 文件: `src/Solve.jl`
-> 状态: 修改 (155→850 行, +448%)
+> 状态: 修改 (155→717 行, +362%)
 > main 分支行数: 155
 
 ---
@@ -40,13 +40,15 @@ Solve: 纯时间步进器
 
 | 新增功能 | 塞入位置 | 行数 | 应在位置 |
 |----------|----------|------|----------|
-| 文件日志重定向 | Solve 开头 | ~35 | 辅助函数 `setup_logging!` |
-| MultiSPMe 初始化分支 | Solve 中部 | ~40 | Initialisation.jl |
-| distributed2D 热场初始化 | Solve 中部 | ~40 | CallModel_MultiSPMe |
-| 单元截止电压检测 | Solve 循环内 | ~60 | CallModel 返回终止信号 |
-| 物理单位后处理 | Solve 尾部 | ~60 | PostProcessing |
-| CallModel_MultiSPMe | Solve 下半部 | ~180 | CallModel.jl |
-| CallModel 扩展 | Solve 下半部 | ~110 | CallModel.jl |
+| 文件日志重定向 | Solve 开头 | ~35 | 保留在 Solve（仅精简） |
+| MultiSPMe 初始化分支 | Solve 中部 | ~40 | 保留在 Solve |
+| distributed2D 热场初始化 | Solve 中部 | ~40 | 保留在 Solve |
+| 单元截止电压检测 | Solve 循环内 | ~60 | 保留在 Solve |
+| 物理单位后处理 | Solve 尾部 | ~60 | 保留在 Solve |
+| `CallModel_MultiSPMe` | Solve 下半部 | 148 | **迁出到 CallModel.jl** |
+| `CallModel` 扩展 | Solve 下半部 | 109 | **迁出到 CallModel.jl** |
+
+**核心策略**: 将 `CallModel` 和 `CallModel_MultiSPMe` 搬到 `CallModel.jl`，Solve.jl 仅保留步进器 + 初始化 + 后处理。所有逻辑保持内联，不提取子函数。
 
 ---
 
@@ -55,298 +57,71 @@ Solve: 纯时间步进器
 ### 3.1 拆分策略
 
 ```
-Solve.jl (851 → ~200 行)           拆出:
+Solve.jl (717 → ~480 行)           迁出到 CallModel.jl:
 ──────────────────────────────     ──────────────────
-Solve()           ~200行           (保留了纯步进器精神)
-RecordMatrix!      ~10行
-ErrorEstimation    ~25行
-setup_logging!     ~15行  ← 提取为独立辅助函数
-
-                                   CallModel.jl (新, ~200 行):
-                                   ──────────────────────────
-                                   call_model()           ~30行
-                                   call_model_multi_spme()~120行
-                                   detect_cutoff()        ~30行
-
-                                   PostProcessing.jl (已有):
-                                   ──────────────────────────
-                                   物理单位后处理部分从 Solve 尾部迁入
+Solve()           ~430行(保留)
+RecordMatrix!      ~10行(保留)
+ErrorEstimation    ~20行(保留)
+                                   CallModel_MultiSPMe  148行(整体搬家)
+                                   CallModel            109行(整体搬家)
 ```
 
-### 3.2 Solve() 重构后结构
+### 3.2 Solve() 保持原结构
+
+Solve() 主函数不拆分子函数。所有初始化、时间步进、截止检测、后处理逻辑保持内联。
+
+仅做以下修改：
+1. `case.multi_spme_layout["key"]` → `case.layout.key` 类型替换
+2. `case.param.cell.T0` 直接修改 bug → 用局部变量
+3. `czm_mesh` 作用域问题 → 在函数开头声明为 `nothing`
+
+### 3.3 Bug 修复（在 Solve 内部）
+
+#### 3.3.1 `czm_mesh` 作用域 (行 531 附近)
 
 ```julia
-function Solve(case::Case; initial_state=nothing, return_final_state=false)
-    # ═══ 1. 初始化 (~40 行) ═══
-    if case.opt.model == "thermal"
-        return _solve_pure_thermal(case; initial_state, return_final_state)
-    end
+# 旧: czm_mesh 可能在某些分支未定义
+# 新: 在 Solve() 函数开头声明
+czm_mesh = nothing
+czm_params = nothing
 
-    y0 = isempty(case.opt.y0) ?
-        (is_multi_spme(case) ?
-            ModelInitialisation_MultiSPMe(case) :
-            ModelInitialisation(case)) :
-        case.opt.y0
-
-    if initial_state !== nothing
-        y0 = _restore_state(y0, initial_state, case)
-    end
-
-    dt, theta, t, t_end = _init_time_params(case)
-    v, v_max = 1, case.opt.max_steps
-    variables_hist = StandardVariables(case, v_max)
-
-    if case.layout !== nothing && case.opt.thermalmodel == "distributed2D"
-        T0 = fill(case.param.cell.T0, case.layout.nT)
-        variables_hist["T_nodes"][:, 1] = T0
-    end
-
-    # ═══ 2. 时间步进循环 (~80 行) ═══
-    termination_reason = "time_limit"
-    yt = y0
-    while t[1] < t_end[1] && v < v_max
-        M, K, F, variables, y_phi = call_model(case, yt, t[1]; jacobi="left")
-
-        # 时间离散
-        Mt = M - theta * dt[1] * K
-        Ft = M * yt + dt[1] * F
-        y_new = Mt \ Ft
-        y_new[isnan.(y_new)] .= 0.0  # NaN 安全
-
-        # 提取温度 (distributed2D)
-        if case.layout !== nothing && case.opt.thermalmodel == "distributed2D"
-            T_nodes = y_new[case.layout.thermal_range]
-            variables["T_nodes"] = T_nodes
-        end
-
-        # dt 自适应
-        dt_new = ErrorEstimation(case, yt, y_new, theta)
-        dt[1] = clamp(dt_new, case.opt.dt[1], case.opt.dt[2])
-
-        # 电压截止检测
-        V = variables["cell voltage"]
-        if _check_voltage_cutoff(V, case.opt)
-            termination_reason = "voltage_cutoff"
-            break
-        end
-
-        Variable_update!(variables_hist, variables, v)
-        yt = y_new
-        t[1] += dt[1]
-        v += 1
-    end
-
-    # ═══ 3. 后处理 (~30 行) ═══
-    result = PostProcessing(case, variables_hist, v)
-    result["termination_reason"] = termination_reason
-    result["steps"] = v
-
-    if return_final_state
-        result["final_state"] = _pack_final_state(yt, variables, case)
-    end
-
-    return result
+# 后续分支中赋值:
+if case.opt.czm_enabled && case.czm_mesh !== nothing
+    czm_mesh = case.czm_mesh
+    czm_params = ...
 end
 ```
 
-### 3.3 辅助函数提取
+#### 3.3.2 `case.param.cell.T0` 副作用 (行 210 附近)
 
 ```julia
-"""纯热模式入口"""
-function _solve_pure_thermal(case; initial_state=nothing, return_final_state=false)
-    # 从当前 Solve.jl 行 1-95 提取的纯热路径
-    # ~80 行
-end
+# 旧:
+case.param.cell.T0 = Tm  # 直接修改参数！
 
-"""判断是否为 multi-SPMe 模式"""
-function is_multi_spme(case::Case)
-    return case.opt.model == "SPMe" &&
-           case.opt.per_element_spme &&
-           case.opt.thermalmodel == "distributed2D"
-end
-
-"""从 initial_state Dict 恢复状态向量"""
-function _restore_state(y0, initial_state, case)
-    if haskey(initial_state, "y")
-        y = initial_state["y"]
-        if is_multi_spme(case) && case.layout === nothing
-            ne = size(case.mesh["thermal2D"].element, 1)
-            nT = case.mesh["thermal2D"].nlen
-            case.layout = MultiSPMeLayout(ne, length(y) - nT, nT)
-        end
-        return vec(y)
-    end
-    return y0
-end
-
-"""电压截止检测"""
-function _check_voltage_cutoff(V, opt)
-    if opt.V_max !== nothing && V > opt.V_max
-        return true
-    end
-    if opt.V_min !== nothing && V < opt.V_min
-        return true
-    end
-    return false
-end
-
-"""打包最终状态"""
-function _pack_final_state(yt, variables, case)
-    state = Dict{String,Any}("y" => copy(yt))
-    for k in ("cell voltage", "temperature", "T_nodes")
-        if haskey(variables, k)
-            state[k] = copy(variables[k])
-        end
-    end
-    return state
-end
-
-"""初始化时间参数"""
-function _init_time_params(case)
-    dt = [case.opt.dt[1]]
-    theta = case.opt.solveType == "Crank-Nicolson" ? 0.5 : 1.0
-    t = [case.opt.time[1]]
-    t_end = [case.opt.time[2]]
-    return dt, theta, t, t_end
-end
+# 新:
+T_ref_current = Tm  # 使用局部变量
+# 后续所有引用 case.param.cell.T0 的地方改为 T_ref_current
 ```
 
 ---
 
 ## 4. CallModel.jl (新文件)
 
-### 4.1 `call_model` 统一调度
+### 4.1 内容
+
+从 Solve.jl 整体搬出 `CallModel_MultiSPMe`（148行）和 `CallModel`（109行），**不做任何逻辑拆分**，仅做：
+
+1. 函数重命名: `CallModel_MultiSPMe` → `call_model_multi_spme`, `CallModel` → `call_model`
+2. 类型替换: `case.multi_spme_layout["key"]` → `case.layout.key`
+3. 修复热源计算中对 `jellyroll_element_properties` 的直接调用 → 通过 `case.geometry` 传递
+
+### 4.2 热源→FT 映射（关键修复）
+
+当前 `call_model_multi_spme` 中 FT 映射逻辑已存在但可能不完整。检查并确保：
 
 ```julia
-# CallModel.jl
-
-"""
-统一模型调度入口。给定 (case, yt, t) 返回 (M, K, F, variables, y_phi)。
-"""
-function call_model(case::Case, yt, t::Float64; jacobi::String="left")
-    if is_multi_spme(case)
-        return call_model_multi_spme(case, yt, t; jacobi)
-    end
-
-    # ═══ 标准路径: SPM / SPMe / P2D (不动 main 分支逻辑) ═══
-    if case.opt.model == "SPM"
-        M, K, F, variables = SPM(case, yt, t, jacobi=jacobi)
-        y_phi = Float64[]
-    elseif case.opt.model == "SPMe"
-        if case.opt.thermalmodel == "distributed2D"
-            return call_model_spme_distributed2d(case, yt, t; jacobi)
-        end
-        M, K, F, variables = SPMe(case, yt, t, jacobi=jacobi)
-        y_phi = Float64[]
-    elseif case.opt.model == "P2D"
-        M, K, F, variables, y_phi = P2D(case, yt, t, jacobi=jacobi)
-    else
-        error("Model $(case.opt.model) not implemented")
-    end
-
-    # 可选 lumped 热拼接
-    if case.opt.thermalmodel == "lumped"
-        MT, FT = ThermalLumped(case, variables)
-        M = blockdiag(M, sparse(MT))
-        K = blockdiag(K, sparse(zeros(1,1)))
-        F = [F; FT]
-    end
-
-    return M, K, F, variables, y_phi
-end
-```
-
-### 4.2 `call_model_multi_spme` (~120 行)
-
-```julia
-"""
-Multi-SPMe 路径: 逐单元 SPMe + 分流 + 热源 + distributed2D FEM。
-"""
-function call_model_multi_spme(case::Case, yt, t::Float64; jacobi::String="left")
-    layout = case.layout
-    layout === nothing && error("call_model_multi_spme: layout is nothing")
-
-    ne = layout.ne
-    n_chem = layout.n_chem
-    y_vec = vec(yt)
-
-    # 1) 提取元素面积和均温
-    A_elem, Te_prev = _compute_element_geometry(y_vec, case)
-
-    # 2) 分流求解
-    variables = Dict{String,Any}()
-    variables, I_e, V_common = solve_branch_currents_newton(
-        case, variables, y_vec, t,
-        case.param.cell.I1C * case.opt.Current(t), A_elem, Te_prev, ones(ne)
-    )
-
-    # 3) 逐单元 SPMe (并行)
-    M_chem = spzeros(ne * n_chem, ne * n_chem)
-    K_chem = spzeros(ne * n_chem, ne * n_chem)
-    F_chem = zeros(ne * n_chem)
-
-    Threads.@threads for e in 1:ne
-        yt_e = extract_element_state(y_vec, e, layout)
-        Me, Ke, Fe, vars_e = SPMe_element(case, yt_e, t, e; I_e=I_e[e], T_e=Te_prev[e])
-        offset = (e - 1) * n_chem
-        M_chem[(offset+1):(offset+n_chem), (offset+1):(offset+n_chem)] = Me
-        K_chem[(offset+1):(offset+n_chem), (offset+1):(offset+n_chem)] = Ke
-        F_chem[(offset+1):(offset+n_chem)] = Fe
-        _merge_element_variables!(variables, vars_e, e)
-    end
-
-    # 4) 热源计算
-    T_nodes = y_vec[layout.thermal_range]
-    q_fields = compute_heat_sources(case, variables, A_elem, I_e, Te_prev, T_nodes)
-
-    # 5) 热学 FEM 装配 + BC
-    MT, KT, FT = ThermalDistributed2D(case, T_nodes)
-    ThermalDistributed2D_BC(case, MT, KT, FT, T_nodes)
-
-    # 6) 填充热源到 F 向量
-    FT .+= q_fields  # 简化，实际需映射到节点
-
-    # 7) 全局装配
-    M = blockdiag(M_chem, MT)
-    K = blockdiag(K_chem, KT)
-    F = [F_chem; FT]
-
-    return M, K, F, variables, Float64[]
-end
-```
-
-### 4.3 辅助函数
-
-```julia
-"""计算单元面积和均温"""
-function _compute_element_geometry(y_vec, case)
-    ne = case.layout.ne
-    nT = case.layout.nT
-
-    # 面积
-    if haskey(case.mesh, "thermal2D")
-        elements = case.mesh["thermal2D"].element
-        A_elem = [compute_element_area(elements[e, :], case.mesh["thermal2D"]) for e in 1:ne]
-    else
-        A_elem = ones(ne)
-    end
-
-    # 均温
-    T_nodes = y_vec[case.layout.thermal_range]
-    Te_prev = element_nodal_mean(T_nodes, case.mesh["thermal2D"])
-
-    return A_elem, Te_prev
-end
-
-"""合并单元变量到全局 variables Dict"""
-function _merge_element_variables!(variables, vars_e, e::Int)
-    for k in keys(vars_e)
-        key = "thermal2D element $(k)"
-        if !haskey(variables, key)
-            variables[key] = Float64[]  # 首次创建占位
-        end
-    end
-end
+# 热源 (逐单元) 映射到 F 向量 (逐节点)
+# 需要确认映射逻辑正确，不能简单 FT .+= q_fields
 ```
 
 ---
@@ -355,11 +130,11 @@ end
 
 | 指标 | 旧 | 新 |
 |------|-----|-----|
-| Solve.jl 行数 | 851 | ~200 |
-| CallModel.jl 行数 | 0 (在 Solve 内) | ~200 |
-| `Solve()` 主函数行数 | 502 | ~200 |
-| `call_model()` | 110 (在 Solve 内) | ~30 |
-| `call_model_multi_spme()` | 180 (在 Solve 内) | ~120 |
+| Solve.jl 行数 | 717 | ~480 |
+| CallModel.jl 行数 | 0 (在 Solve 内) | ~260 (整体搬家) |
+| `Solve()` 主函数行数 | ~430 | ~430（仅修 bug + 类型替换） |
+| Bug 修复 | 0 | 2 (czm_mesh 作用域 + T0 副作用) |
+| 新增函数 | 0 | 0（仅搬家 + 改名） |
 | main 分支 SPM/SPMe 标准路径 | N/A | 零改动 |
 | `RecordMatrix!` | 不动 | 不动 |
 | `ErrorEstimation` | 不动 | 不动 |

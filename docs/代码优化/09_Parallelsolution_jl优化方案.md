@@ -1,43 +1,39 @@
 # Parallelsolution.jl 优化方案
 
-> 日期: 2026-04-01
+> 日期: 2026-04-01 (修订)
 > 文件: `src/Parallelsolution.jl`
-> 状态: 新增 (619 行)
+> 状态: 新增 (441 行)
 
 ---
 
 ## 1. 现状分析
 
-### 1.1 函数清单
+### 1.1 函数清单（当前代码实际状态）
 
-| 函数 | 行范围 | 行数 | 职责 |
-|------|--------|------|------|
-| `_debug_check_prefactors` | 7-30 | 24 | 调试：检查预因子 NaN |
-| `_debug_check_coefficients` | 33-52 | 20 | 调试：检查系数异常 |
-| `_debug_check_initial_voltage` | 55-76 | 22 | 调试：检查初始电压 |
-| `_compute_electrochemical_prefactors` | 83-116 | 34 | 计算交换电流密度、OCV、熵系数 |
-| `_compute_element_coefficients` | 119-149 | 31 | 单元分流系数 (C1, C2, alpha, C5) |
-| `_compute_all_coefficients` | 152-158 | 7 | 批量系数计算 |
-| `_branch_voltage` | 162-166 | 5 | V_e = C1 + C2*I + alpha*T + C5*ln(I) |
-| `_branch_dVdI` | 169-175 | 7 | dV_e/dI 解析导数 |
-| `_initialize_currents` | 179-191 | 13 | 初始化电流猜测 |
-| `_check_voltage_bounds` | 194-208 | 15 | 电压边界检查 |
-| `_detect_cutoff_elements` | 226-287 | 62 | 截止电压检测 |
-| `_newton_iteration!` | 294-388 | 95 | Newton-Raphson 主循环 |
-| `_line_search` | 391-415 | 25 | 回溯线搜索 |
-| `solve_branch_currents_newton` | 452-619 | 168 | 主入口 |
+| 函数 | 行号 | 行数 | 职责 |
+|------|------|------|------|
+| `compute_prefactors` | 10 | 34 | 计算交换电流密度、OCV、熵系数 |
+| `compute_element_coefficients` | 46 | 31 | 单元分流系数 (C1, C2, alpha, C5) |
+| `compute_all_coefficients` | 74 | 7 | 批量系数计算 |
+| `branch_voltage` | 84 | 5 | V_e = C1 + C2*I + alpha*T + C5*ln(I) |
+| `branch_dVdI` | 91 | 7 | dV_e/dI 解析导数 |
+| `initialize_currents` | 101 | 13 | 初始化电流猜测 |
+| `check_voltage_bounds` | 116 | 15 | 电压边界检查 |
+| `detect_cutoff_elements` | 148 | 62 | 截止电压检测 |
+| `newton_iteration` | 216 | 95 | Newton-Raphson 主循环 |
+| `line_search` | 313 | 25 | 回溯线搜索 |
+| `solve_branch_currents` | 358-441 | 84 | 主入口 |
 
 ### 1.2 架构评价
 
 **优点**：
-- 辅助函数分解得好（`_compute_prefactors`, `_branch_voltage`, `_branch_dVdI`）
+- 辅助函数分解得好（`compute_prefactors`, `branch_voltage`, `branch_dVdI`）
 - Newton-Raphson 和线搜索逻辑清晰
-- 内部函数统一 `_` 前缀
+- 无 `_` 前缀
 
 **问题**：
-- `solve_branch_currents_newton` 仍有 168 行，含过多 active/inactive 分支逻辑
-- `_detect_cutoff_elements` 62 行返回 7 字段 NamedTuple——可改为 struct
-- 3 个 `_debug_check_*` 函数仅在 `debug_coupling=true` 时使用，可条件编译
+- `solve_branch_currents` 仍承担“截止检测 + 牛顿迭代调用 + 状态写回”等多职责，循环热点集中
+- `detect_cutoff_elements` 已采用 `CutoffInfo`，仍可继续精简循环与写回路径
 
 ---
 
@@ -46,62 +42,19 @@
 ### 2.1 约束
 
 此文件是 Parameters_Design **新增**文件，无 main 分支代码，全部可重构。
+但**不新增函数**，仅做重命名和类型替换。
 
-### 2.2 `solve_branch_currents_newton` 拆分
+### 2.2 `solve_branch_currents` 命名与入口统一
 
 ```julia
-# ===== 旧 (168 行): =====
-function solve_branch_currents_newton(case, variables, yt, t, I_total, areas, Te_prev, x_prev;
-                                       deactivated_elements=nothing)
-    # 1. 提取物理量 (~20 行)
-    # 2. 计算预因子 (~5 行)
-    # 3. 计算系数 (~5 行)
-    # 4. 截止检测 (~15 行)
-    # 5. 初始化电流 (~5 行)
-    # 6. Newton 迭代 (~5 行)
-    # 7. 结果写入 variables (~40 行)
-    # 8. 异常处理 (~20 行)
-    # 9. 返回
-end
-
-# ===== 新 (~80 行): =====
-function solve_branch_currents(case, variables, yt, t, I_total, areas, Te_prev, x_prev;
-                                deactivated_elements=nothing)
-    # 1. 计算分流系数
-    prefactors = compute_electrochemical_prefactors(variables, case.param,
-                                                      case.mesh["negative electrode"],
-                                                      case.mesh["positive electrode"])
-    coeffs = compute_all_coefficients(case.layout.ne, Te_prev, case.param, prefactors,
-                                       case.param_dim.scale.T_ref;
-                                       debug_mode=case.opt.debug_coupling)
-
-    # 2. 截止检测
-    cutoff = detect_cutoff(coeffs, case.layout.ne, I_total, case.param_dim.scale.phi)
-    active_mask = cutoff.active_mask
-    if deactivated_elements !== nothing
-        active_mask .&= .!deactivated_elements
-    end
-
-    # 3. 初始化 + 求解
-    I_e = initialize_currents(case.layout.ne, areas, I_total, x_prev)
-    w = vec(areas) ./ sum(areas)
-    V_common = newton_solve!(I_e, coeffs, w, I_total; active_mask)
-
-    # 4. 写回结果
-    _write_branch_results!(variables, I_e, V_common, cutoff, coeffs)
-
-    return variables, I_e, V_common
-end
+# 当前统一入口:
+solve_branch_currents(case, variables, yt, t, I_total, areas, Te_prev, x_prev;
+                      deactivated_elements=nothing)
 ```
 
 ### 2.3 截止检测结果改用 struct
 
 ```julia
-# 旧: 返回 NamedTuple，7 字段
-# (cutoff_elements, cutoff_ocv, active_mask, n_cutoff, nearest_cutoff_element,
-#  nearest_cutoff_ocv, margin_to_cutoff)
-
-# 新:
 struct CutoffInfo
     elements::Vector{Int}           # 已截止单元列表
     ocv::Vector{Float64}            # 对应 OCV
@@ -113,34 +66,140 @@ struct CutoffInfo
 end
 ```
 
-### 2.4 主函数拆小后，保留的函数改名
+`detect_cutoff_elements` 返回值从 NamedTuple 改为 `CutoffInfo`。
 
-| 旧名 | 新名 | 变化 |
-|------|------|------|
-| `solve_branch_currents_newton` | `solve_branch_currents` | 缩短，去掉 `_newton` |
-| `_compute_electrochemical_prefactors` | `compute_electrochemical_prefactors` | 去掉 `_`（公开） |
-| `_compute_element_coefficients` | `compute_element_coefficients` | 去掉 `_` |
-| `_compute_all_coefficients` | `compute_all_coefficients` | 去掉 `_` |
-| `_newton_iteration!` | `newton_solve!` | 缩短 |
-| `_detect_cutoff_elements` | `detect_cutoff` | 缩短 |
-| `_debug_check_*` | 保持不变 | 调试函数不改 |
+### 2.4 结果写回逻辑保持内联
 
-### 2.5 写回结果提取为子函数
+原方案提议提取 `write_branch_results!`——现在保持内联在 `solve_branch_currents` 中，不新增函数。
+
+### 2.5 数据结构说明
+
+`Parallelsolution.jl` 当前不直接依赖 `case.multi_spme_layout`，入口通过参数和 `variables` 字典传递状态。
+
+### 2.6 循环嵌套优化参考（来自 11 文档）
+
+本节补充 `11_其余文件优化方案汇总.md` 中 L/M 节对应到 `Parallelsolution.jl` 的可落地方案，重点覆盖：
+
+1. 显式嵌套：`newton_iteration` 的 `iter -> e` 双层循环。
+2. 隐式嵌套：`newton_iteration` 内调用 `line_search` 的 `attempt -> e` 双层循环。
+3. 推导式/生成器：`mean([ ... for e in ...])`、`sum(... for e in ...)` 的隐式循环。
+
+#### 2.6.1 显式+隐式嵌套：`newton_iteration` 与 `line_search` 对照
+
+**旧逻辑（循环分散，重复计算较多）**
 
 ```julia
-function _write_branch_results!(variables, I_e, V_common, cutoff::CutoffInfo, coeffs)
-    ne = length(I_e)
-    variables["thermal2D element current"] = I_e
-    variables["thermal2D element voltages"] = [_branch_voltage(coeffs[e], I_e[e]) for e in 1:ne]
-    variables["cell voltage"] = V_common
-    variables["thermal2D active_mask"] = Float64.(cutoff.active_mask)
-    variables["thermal2D n_cutoff_elements"] = Float64(cutoff.n_cutoff)
-    variables["thermal2D nearest_cutoff_element"] = Float64(cutoff.nearest_element)
-    variables["thermal2D nearest_cutoff_ocv"] = cutoff.nearest_ocv
-    variables["thermal2D margin_to_cutoff"] = cutoff.margin
-    return nothing
+# newton_iteration 内
+for iter in 1:max_iters
+    for e in 1:ne
+        V_e = branch_voltage(coeffs[e], I_e[e])
+        F[e] = V_e - V
+        dFdI[e] = branch_dVdI(coeffs[e], I_e[e])
+    end
+
+    # ... 计算 ΔV/ΔI ...
+
+    λ, V_trial = line_search(I_e, V, ΔI, ΔV, I_trial, ne)
+end
+
+# line_search 内
+for attempt in 1:max_attempts
+    for e in 1:ne
+        val = I_e[e] + λ * ΔI[e]
+        # ... 校验 ...
+    end
 end
 ```
+
+**新逻辑（不新增函数版本，强调中间量复用与早停）**
+
+```julia
+for iter in 1:max_iters
+    # 1) 单次扫描同时更新 F 与 dFdI，避免二次遍历
+    @inbounds for e in 1:ne
+        Ve = branch_voltage(coeffs[e], I_e[e])
+        dV = branch_dVdI(coeffs[e], I_e[e])
+        F[e] = Ve - V
+        dFdI[e] = abs(dV) < 1e-12 ? (dV == 0.0 ? -coeffs[e].C5 : sign(dV) * 1e-12) : dV
+    end
+
+    # 2) 收敛早停：先判断 res_V 与 res_I，再决定是否进入 line_search
+    # ... res_V/res_I 计算与判定 ...
+
+    # 3) 仅在需要时调用 line_search；line_search 内仅更新活跃索引
+    λ, V_trial = line_search(I_e, V, ΔI, ΔV, I_trial, ne)
+    λ == 0.0 && break
+end
+```
+
+#### 2.6.2 截止检测与写回：旧/新逻辑对照
+
+**旧逻辑（字段分散、返回结构弱类型）**
+
+```julia
+# detect_cutoff_elements 返回 NamedTuple/Dict 风格
+active_mask, n_cutoff, cutoff_info = detect_cutoff_elements(...)
+
+# solve_branch_currents 内分散写回
+variables["thermal2D cutoff_elements"] = Float64.(cutoff_info["cutoff_elements"])
+variables["thermal2D cutoff_ocv"] = cutoff_info["cutoff_ocv"]
+```
+
+**新逻辑（`CutoffInfo` 强类型 + 单路径写回）**
+
+```julia
+ci = detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
+active_mask = copy(ci.active_mask)
+
+# 合并 CZM 失效后统一写回
+variables["thermal2D n_cutoff_elements"] = Float64(ci.n_cutoff)
+variables["thermal2D cutoff_elements"] = Float64.(ci.cutoff_elements)
+variables["thermal2D cutoff_ocv"] = ci.cutoff_ocv
+variables["thermal2D margin_to_cutoff"] = ci.margin
+```
+
+#### 2.6.3 推导式/生成器微优化：旧/新逻辑对照
+
+**旧逻辑（隐式循环，临时对象较多）**
+
+```julia
+V = isempty(active_idx) ? mean([coeffs[e].C1 for e in 1:ne]) :
+    mean([branch_voltage(coeffs[e], I_e[e]) for e in active_idx])
+
+sx = sum(w[e] * I_e[e] for e in active_idx)
+```
+
+**新逻辑（显式累加，减少临时分配）**
+
+```julia
+if isempty(active_idx)
+    s = 0.0
+    @inbounds for e in 1:ne
+        s += coeffs[e].C1
+    end
+    V = s / ne
+else
+    s = 0.0
+    @inbounds for e in active_idx
+        s += branch_voltage(coeffs[e], I_e[e])
+    end
+    V = s / length(active_idx)
+end
+
+sx = 0.0
+@inbounds for e in active_idx
+    sx += w[e] * I_e[e]
+end
+```
+
+#### 2.6.4 嵌套优化建议汇总表（09 专用）
+
+| 目标位置 | 嵌套类型 | 旧逻辑问题 | 新逻辑方向（不新增函数） | 预期收益 |
+|---|---|---|---|---|
+| `newton_iteration` (`iter->e`) | 显式 | 每迭代重复分散计算中间量 | 单次扫描复用 `F/dFdI`，收敛早停 | 迭代耗时下降 |
+| `newton_iteration -> line_search` | 隐式调用链 | 外迭代内再触发 `attempt->e` 全量扫描 | `λ==0` 快速中断，仅必要时进入线搜索 | 无效尝试减少 |
+| `detect_cutoff_elements + 写回` | 显式+隐式 | 截止信息字段散、写回路径长 | `CutoffInfo` + 单路径写回 | 可维护性提升 |
+| `mean/sum` 推导式与生成器 | 隐式 | 临时对象与分配抖动 | 显式 `for` 累加替代 | 小幅降分配 |
 
 ---
 
@@ -148,7 +207,16 @@ end
 
 | 指标 | 旧 | 新 |
 |------|-----|-----|
-| 总行数 | 619 | ~500 |
-| 主函数行数 | 168 | ~80 |
+| 总行数 | 525 | ~510 |
+| 主函数行数 | 152 | 84（重命名后已精简） |
 | 截止检测返回 | NamedTuple | `CutoffInfo` struct |
-| 内部函数前缀 | `_` (不一致) | 公开函数无前缀，内部保留 `_` |
+| 新增函数 | 0 | 0 |
+
+### 3.1 循环嵌套优化后的补充预期
+
+| 指标 | 旧 | 新（目标） |
+|------|-----|-----|
+| Newton 单步中间量重复计算 | 较多 | 减少（复用 `F/dFdI`） |
+| line_search 无效尝试 | 偏多 | 减少（早停与快速中断） |
+| 推导式/生成器临时分配 | 存在 | 降低（显式累加） |
+| 数值行为 | 基线 | 保持一致（需回归验证） |

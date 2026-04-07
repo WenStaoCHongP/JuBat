@@ -11,8 +11,8 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Flo
     Vi, Vj = mesh.element[mesh.gs.ele, :], mesh.element[mesh.gs.ele, :]
     ele_of_gp = mesh.gs.ele
 
-    # 获取层权重
-    fks = jellyroll_element_properties(mesh, case.param)[2]
+    # 获取层权重（从预计算的 geometry struct，避免跨模块耦合）
+    fks = case.geometry !== nothing ? case.geometry.layer_weights : jellyroll_element_properties(mesh, case.param)[2]
 
     # ========== 质量矩阵 ==========
     rho_c_weights = thermal_capacity_weights_2d(param, fks, ele_of_gp, wJ)
@@ -283,8 +283,8 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
     ne = size(mesh.element, 1)
     param = case.param
 
-    # 获取层权重
-    fks = jellyroll_element_properties(mesh, param)[2]
+    # 获取层权重（优先使用预计算的 geometry struct，避免跨模块耦合）
+    fks = case.geometry !== nothing ? case.geometry.layer_weights : jellyroll_element_properties(mesh, param)[2]
 
     # 从 variables 获取预分配的数组
     q_rxn_ne = variables["thermal2D q_rxn_ne"]

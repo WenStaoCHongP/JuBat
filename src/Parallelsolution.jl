@@ -1,6 +1,19 @@
 # ========================================================================
-# solve_branch_currents_newton - 辅助函数
+# solve_branch_currents - 辅助函数
 # ========================================================================
+
+# 截止检测结果结构体（替代 Dict{String,Any}）
+struct CutoffInfo
+    active_mask::BitVector
+    n_cutoff::Int
+    cutoff_elements::Vector{Int}
+    cutoff_ocv::Vector{Float64}
+    cutoff_type::Vector{Int}
+    all_ocv::Vector{Float64}
+    nearest_element::Int
+    nearest_ocv::Float64
+    margin::Float64
+end
 
 # 电化学计算函数
 """标量化：将数组转为标量（取第一个元素）"""
@@ -147,65 +160,36 @@ end
 """
 function detect_cutoff_elements(coeffs, ne::Int, V_MIN::Float64, V_MAX::Float64, I_total::Float64, phi_scale::Float64)
 	active_mask = trues(ne)
-    
-	# 计算各单元的开路电压 (OCV = C1，当 I=0 时的电压)
 	OCV = [coeffs[e].C1 for e in 1:ne]
-	 # 记录截止单元的详细信息
 	cutoff_elements = Int[]
 	cutoff_ocv = Float64[]
-	cutoff_type = Int[]  # 1 = 放电截止, 2 = 充电截止
-	 # 严格检测：无容差
-	if I_total < 0  # 充电
-		# 充电时，如果单元 OCV >= V_MAX，该单元已满充
-		for e in 1:ne
-			if OCV[e] >= V_MAX
-				active_mask[e] = false
-				push!(cutoff_elements, e)
-				push!(cutoff_ocv, OCV[e] * phi_scale)
-				push!(cutoff_type, 2)
-			end
+	cutoff_type = Int[]
+
+	# 检测截止单元：充电时 OCV ≥ V_MAX 满，放电时 OCV ≤ V_MIN 空
+	for e in 1:ne
+		cutoff = (I_total < 0 && OCV[e] >= V_MAX) || (I_total > 0 && OCV[e] <= V_MIN)
+		if cutoff
+			active_mask[e] = false
+			push!(cutoff_elements, e)
+			push!(cutoff_ocv, OCV[e] * phi_scale)
+			push!(cutoff_type, I_total < 0 ? 2 : 1)
 		end
-	elseif I_total > 0  # 放电
-		# 放电时，如果单元 OCV <= V_MIN，该单元已完全放电
-		for e in 1:ne
-			if OCV[e] <= V_MIN
-				active_mask[e] = false
-				push!(cutoff_elements, e)
-				push!(cutoff_ocv, OCV[e] * phi_scale)
-				push!(cutoff_type, 1)
-			end
-		end
-	end
-	# 静置时 (I_total ≈ 0)，所有单元保持活跃
-    
-	n_cutoff = sum(.!active_mask)
-	# 构建截止信息字典
-	cutoff_info = Dict{String, Any}(
-		"cutoff_elements" => cutoff_elements,
-		"cutoff_ocv" => cutoff_ocv,
-		"cutoff_type" => cutoff_type,
-		"all_ocv" => OCV .* phi_scale,
-		"V_MIN" => V_MIN * phi_scale,
-		"V_MAX" => V_MAX * phi_scale,
-		"nearest_cutoff_element" => 0,
-		"nearest_cutoff_ocv" => NaN,
-		"margin_to_cutoff" => NaN
-	)
-    
-	# 找出最接近截止的单元（用于预警）
-	if I_total > 0  # 放电
-		min_ocv_idx = argmin(OCV)
-		cutoff_info["nearest_cutoff_element"] = min_ocv_idx
-		cutoff_info["nearest_cutoff_ocv"] = OCV[min_ocv_idx] * phi_scale
-		cutoff_info["margin_to_cutoff"] = (OCV[min_ocv_idx] - V_MIN) * phi_scale
-	elseif I_total < 0  # 充电
-		max_ocv_idx = argmax(OCV)
-		cutoff_info["nearest_cutoff_element"] = max_ocv_idx
-		cutoff_info["nearest_cutoff_ocv"] = OCV[max_ocv_idx] * phi_scale
-		cutoff_info["margin_to_cutoff"] = (V_MAX - OCV[max_ocv_idx]) * phi_scale
 	end
 
-	return active_mask, n_cutoff, cutoff_info
+	n_cutoff = length(cutoff_elements)
+	all_ocv = OCV .* phi_scale
+
+	# 最近截止预警
+	nearest_element, nearest_ocv, margin = 0, NaN, NaN
+	if I_total > 0
+		idx = argmin(OCV)
+		nearest_element, nearest_ocv, margin = idx, OCV[idx] * phi_scale, (OCV[idx] - V_MIN) * phi_scale
+	elseif I_total < 0
+		idx = argmax(OCV)
+		nearest_element, nearest_ocv, margin = idx, OCV[idx] * phi_scale, (V_MAX - OCV[idx]) * phi_scale
+	end
+
+	return CutoffInfo(active_mask, n_cutoff, cutoff_elements, cutoff_ocv, cutoff_type, all_ocv, nearest_element, nearest_ocv, margin)
 end
 
 """牛顿迭代主循环（支持部分单元截止）
@@ -337,11 +321,11 @@ function line_search(I_e, V, ΔI, ΔV, I_trial, ne; max_attempts=12)
 end
 
 # ========================================================================
-# 主函数：solve_branch_currents_newton（精简版）
+# 主函数：solve_branch_currents（精简版）
 # ========================================================================
 
 """
-	solve_branch_currents_newton(case, variables, yt, t, I_total, areas, Te_prev, x_prev; deactivated_elements=nothing)
+	solve_branch_currents(case, variables, yt, t, I_total, areas, Te_prev, x_prev; deactivated_elements=nothing)
 
 非线性分流求解器（精简版）
 
@@ -371,118 +355,62 @@ end
 - 总电流由剩余活跃单元承担
 - 失效单元不参与牛顿迭代
 """
-function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, yt::Array{Float64}, t::Float64, I_total::Float64, areas::Vector{Float64}, Te_prev::Vector{Float64}, x_prev::Union{Nothing,Vector{Float64}}=nothing; deactivated_elements::Union{Nothing,Vector{Int64}}=nothing)
-	# 1. 初始化
+function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, yt::Array{Float64}, t::Float64, I_total::Float64, areas::Vector{Float64}, Te_prev::Vector{Float64}, x_prev::Union{Nothing,Vector{Float64}}=nothing; deactivated_elements::Union{Nothing,Vector{Int64}}=nothing)
 	ne = length(areas)
-	A_global = sum(areas)
-	w = areas ./ A_global  # 面积权重
+	w = areas ./ sum(areas)
 	phi_scale = case.param.scale.phi
-	V_MIN = case.param_dim.cell.v_l / phi_scale
-	V_MAX = case.param_dim.cell.v_h / phi_scale
-	# CZM失效单元处理：创建失效掩码
-	deactivated_mask = zeros(Bool, ne)
-	if deactivated_elements !== nothing && !isempty(deactivated_elements)
+	V_MIN, V_MAX = case.param_dim.cell.v_l / phi_scale, case.param_dim.cell.v_h / phi_scale
+
+	# CZM 失效掩码
+	deactivated_mask = falses(ne)
+	if deactivated_elements !== nothing
 		for e in deactivated_elements
-			if 1 <= e <= ne
-				deactivated_mask[e] = true
-			end
+			1 <= e <= ne && (deactivated_mask[e] = true)
 		end
 	end
-	n_deactivated = sum(deactivated_mask)
 
-	# 2. 计算电化学预因子
-	param = case.param
-	mesh_ne = case.mesh["negative electrode"]
-	mesh_pe = case.mesh["positive electrode"]
-	prefactors = compute_prefactors(variables, param, mesh_ne, mesh_pe)
+	# 电化学预因子 + 各单元系数
+	prefactors = compute_prefactors(variables, case.param, case.mesh["negative electrode"], case.mesh["positive electrode"])
+	coeffs = compute_all_coefficients(ne, Te_prev, case.param, prefactors, case.param.cell.T0)
 
-	# 3. 计算各单元系数
-	T_ref = case.param.cell.T0
-	coeffs = compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref)
-    
-	# 4. 检测达到截止电压的单元
-	active_mask, n_cutoff, cutoff_info = detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
-	# 4b. 合并CZM失效单元到活跃掩码
-	# 失效单元不参与电化学反应
+	# 截止检测 + 合并 CZM 失效
+	ci = detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
+	active_mask = copy(ci.active_mask)
 	for e in 1:ne
-		if deactivated_mask[e]
-			active_mask[e] = false
-		end
+		deactivated_mask[e] && (active_mask[e] = false)
 	end
-	n_inactive_total = sum(.!active_mask)
-
-	# 5. 初始化电流猜测
-	I_e = initialize_currents(ne, w, I_total, x_prev)
-    
-	# 活跃单元索引
 	active_idx = findall(active_mask)
-	all_active = (n_inactive_total == 0)
-    
-	# 将非活跃单元的电流设为0
-	if !all_active
-		for e in 1:ne
-			if !active_mask[e]
-				I_e[e] = 0.0
-			end
-		end
+
+	# 初始化电流（非活跃单元置零）
+	I_e = initialize_currents(ne, w, I_total, x_prev)
+	for e in 1:ne
+		!active_mask[e] && (I_e[e] = 0.0)
 	end
-    
-	# 计算初始电压
-	if all_active
-		# 所有单元活跃：使用原始逻辑
-		V_branches = [branch_voltage(coeffs[e], I_e[e]) for e in 1:ne]
-		V = sum(V_branches) / ne
-	elseif !isempty(active_idx)
-		# 有截止单元：使用活跃单元的平均值
-		V_branches = [branch_voltage(coeffs[e], I_e[e]) for e in active_idx]
-		V = sum(V_branches) / length(active_idx)
-	else
-		# 所有单元都达到截止，使用 OCV 的平均值作为公共电压
-		V = sum(coeffs[e].C1 for e in 1:ne) / ne
-	end
-    
-	# 6. 牛顿迭代求解
-	if all_active
-		# 所有单元活跃
-		V, converged, last_iter = newton_iteration(I_e, V, ne, w, I_total, coeffs)
-	elseif !isempty(active_idx)
-		# 有非活跃单元（截止或失效）：传入 active_mask
+
+	# 初始电压（活跃单元平均，无活跃单元则用 OCV 均值）
+	V = isempty(active_idx) ? mean([coeffs[e].C1 for e in 1:ne]) :
+		mean([branch_voltage(coeffs[e], I_e[e]) for e in active_idx])
+
+	# 牛顿迭代（统一路径，active_mask 为空时直接跳过）
+	converged, last_iter = true, 0
+	if !isempty(active_idx)
 		V, converged, last_iter = newton_iteration(I_e, V, ne, w, I_total, coeffs; active_mask=active_mask)
-	else
-		# 所有单元都非活跃
-		converged = true
-		last_iter = 0
 	end
-    
-	# 7. 归一化确保总电流约束
-	sx = sum(w .* I_e)
-	if all_active
-		# 所有单元活跃：使用原始向量操作
-		if sx != 0.0
-			I_e .*= (I_total / sx)
-		end
-	elseif !isempty(active_idx)
-		# 有截止单元：只调整活跃单元
-		if abs(sx) > 1e-12
-			scale_factor = I_total / sx
-			for e in active_idx
-				I_e[e] *= scale_factor
-			end
-		elseif abs(I_total) > 1e-12
-			# sx ≈ 0 但 I_total ≠ 0：按面积权重分配给活跃单元
-			w_active_sum = sum(w[active_idx])
-			if w_active_sum > 0
-				for e in active_idx
-					I_e[e] = I_total * w[e] / w_active_sum
-				end
-			end
-		end
+
+	# 归一化：活跃单元满足总电流约束
+	sx = sum(w[e] * I_e[e] for e in active_idx)
+	if abs(sx) > 1e-12
+		sf = I_total / sx
+		for e in active_idx; I_e[e] *= sf; end
+	elseif abs(I_total) > 1e-12 && !isempty(active_idx)
+		w_sum = sum(w[active_idx])
+		w_sum > 0 && (for e in active_idx; I_e[e] = I_total * w[e] / w_sum; end)
 	end
-    
-	# 8. 边界检查
-	voltage_in_bounds, cutoff_type_global, V_phys, V_limit = check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e)
-    
-	# 9. 写入结果
+
+	# 边界检查
+	voltage_in_bounds, cutoff_type_global, _, _ = check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e)
+
+	# 写入 variables
 	variables["thermal2D element current"] = I_e
 	variables["thermal2D element current A"] = case.param.scale.I_typ .* I_e
 	variables["thermal2D common voltage"] = V
@@ -490,36 +418,24 @@ function solve_branch_currents_newton(case::Case, variables::Dict{String,Union{A
 	variables["thermal2D Vsolve status"] = converged ? 3.0 : 3.5
 	variables["thermal2D Vsolve iters"] = Float64(last_iter)
 	variables["thermal2D Vsolve converged"] = converged ? 1.0 : 0.0
-	# 截止状态信息（包括CZM失效单元）
 	variables["thermal2D n_active_elements"] = Float64(sum(active_mask))
-	variables["thermal2D n_cutoff_elements"] = Float64(n_cutoff)
-	variables["thermal2D n_deactivated_elements"] = Float64(n_deactivated)  # CZM失效单元数
-	variables["thermal2D active_mask"] = Float64.(active_mask)  # 1.0 = 活跃, 0.0 = 截止/失效
-	variables["thermal2D deactivated_mask"] = Float64.(deactivated_mask)  # 1.0 = CZM失效
-	# 失效原因编码: 0=活跃, 1=电压截止, 2=CZM断裂失效
+	variables["thermal2D n_cutoff_elements"] = Float64(ci.n_cutoff)
+	variables["thermal2D n_deactivated_elements"] = Float64(sum(deactivated_mask))
+	variables["thermal2D active_mask"] = Float64.(active_mask)
+	variables["thermal2D deactivated_mask"] = Float64.(deactivated_mask)
 	inactive_reason = zeros(Float64, ne)
 	for e in 1:ne
-		if deactivated_mask[e]
-			inactive_reason[e] = 2.0  # CZM断裂失效
-		elseif !active_mask[e]
-			inactive_reason[e] = 1.0  # 电压截止
-		end
-		# 0.0 表示活跃
+		inactive_reason[e] = deactivated_mask[e] ? 2.0 : (!active_mask[e] ? 1.0 : 0.0)
 	end
 	variables["thermal2D inactive_reason"] = inactive_reason
 	variables["thermal2D voltage_in_bounds"] = voltage_in_bounds ? 1.0 : 0.0
-	variables["thermal2D cutoff_type_global"] = Float64(cutoff_type_global)  # 0=正常, 1=放电截止, 2=充电截止
-    
-	# 各单元的开路电压（用于诊断）
-	variables["thermal2D element OCV"] = cutoff_info["all_ocv"]
-	# 截止单元详细信息
-	variables["thermal2D cutoff_elements"] = Float64.(cutoff_info["cutoff_elements"])
-	variables["thermal2D cutoff_ocv"] = cutoff_info["cutoff_ocv"]
-	variables["thermal2D cutoff_type"] = Float64.(cutoff_info["cutoff_type"])
-    
-	# 最接近截止的单元信息（预警）
-	variables["thermal2D nearest_cutoff_element"] = Float64(cutoff_info["nearest_cutoff_element"])
-	variables["thermal2D nearest_cutoff_ocv"] = cutoff_info["nearest_cutoff_ocv"]
-	variables["thermal2D margin_to_cutoff"] = cutoff_info["margin_to_cutoff"]
+	variables["thermal2D cutoff_type_global"] = Float64(cutoff_type_global)
+	variables["thermal2D element OCV"] = ci.all_ocv
+	variables["thermal2D cutoff_elements"] = Float64.(ci.cutoff_elements)
+	variables["thermal2D cutoff_ocv"] = ci.cutoff_ocv
+	variables["thermal2D cutoff_type"] = Float64.(ci.cutoff_type)
+	variables["thermal2D nearest_cutoff_element"] = Float64(ci.nearest_element)
+	variables["thermal2D nearest_cutoff_ocv"] = ci.nearest_ocv
+	variables["thermal2D margin_to_cutoff"] = ci.margin
 	return variables, I_e, V
 end
