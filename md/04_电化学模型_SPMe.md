@@ -207,9 +207,12 @@ $$
 
 **函数签名**：
 ```julia
-function SPMe_element(case::Case, yt_e::Array{Float64}, t::Float64, e::Int; 
-    I_e::Float64, T_e::Float64, jacobi::String="update")
+function SPMe_element(case::Case, yt_e, t::Float64, e::Int;
+    I_e::Float64, T_e::Float64, jacobi::String="update",
+    workspace::Union{Nothing, Dict}=nothing)
 ```
+
+> **注**: `yt_e` 参数接受 `AbstractVector`（兼容 `@view` 切片）。`workspace` 为可选预分配工作区，传入时使用精简型 `SPMe_variables!` 原位变体，避免每步创建 `StandardVariables` Dict。
 
 **输入参数**：
 
@@ -268,6 +271,18 @@ SPMe_variables(case, yt, t; I_app, T_e)
 | `negative electrode overpotential` | 负极过电位 |
 | `positive electrode overpotential` | 正极过电位 |
 | `cell voltage` | 电池电压 |
+
+**原位变体**：
+```julia
+SPMe_variables!(ws, case, yt, t; I_app, T_e)
+```
+直接写入预分配的 `ws` Dict，不创建新的 `StandardVariables`。用于多 SPMe 并行架构中的线程本地工作区优化。
+
+**精简型工作区**：
+```julia
+create_element_workspace(case)
+```
+创建仅包含 SPMe_element 调用链实际需要的 ~30 个键（排除 ~30 个 thermal2D 专用键），比 `StandardVariables(case, 1)` 减少约 60% 数组分配。
 
 ### 6.3 温度依赖性
 
@@ -348,9 +363,12 @@ $$
 | SPMe 主求解 | src/SPMe.jl | `SPMe` |
 | 单元级 SPMe | src/SPMe.jl | `SPMe_element` |
 | 变量提取 | src/SPMe.jl | `SPMe_variables` |
+| 变量提取（原位） | src/SPMe.jl | `SPMe_variables!` |
 | 边界条件 | src/SPMe.jl | `SPMe_BC` |
 | 颗粒扩散 | src/ElectrodeDiffusion.jl | `ElectrodeDiffusion` |
 | 电解液扩散 | src/ElectrolyteDiffusion.jl | `ElectrolyteDiffusion` |
 | 电位求解 | src/ElectrodePotential.jl | `ElectrodePotential` |
 | 电解液电位 | src/ElectrolytePotential.jl | `ElectrolytePotential` |
 | 力学输出 | src/Mechanical.jl | `Mechanicaloutput` |
+| 精简型工作区 | src/Variables.jl | `create_element_workspace` |
+| 变量初始化 | src/Variables.jl | `StandardVariables` |

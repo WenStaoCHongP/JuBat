@@ -83,8 +83,8 @@
 
 ### 依赖
 - `CycleSolver.jl`: `PhaseType`, `PHASE_CHARGE`, `PHASE_REST`, `PHASE_DISCHARGE`, `PhaseResult`, `CycleOption`, `apply_initial_soc!`, `ErrorEstimation`
-- `Initialisation.jl`: `ModelInitialisation`, `ModelInitialisation_MultiSPMe`, `MultiSPMe_get_thermal_dofs`
-- `Solve.jl`: `CallModel`
+- `Initialisation.jl`: `ModelInitialisation`, `ModelInitialisation_MultiSPMe`, `get_thermal_dofs`
+- `CallModel.jl`: `CallModel`
 - `SetCase.jl`: `Case`
 - `Printf`: `@printf`, `@sprintf`
 - `Statistics`: `mean`
@@ -105,8 +105,15 @@
 4. **热模型集成**: 导出完整的 2D 温度场和网格信息
 
 关键耦合点:
-- 使用 `MultiSPMe_get_thermal_dofs` 提取 multi-SPMe 热自由度
+- 使用 `get_thermal_dofs` 提取 multi-SPMe 热自由度
 - 使用面积加权温度平均（与分布式热模型一致）
 - 导出数据格式设计支持 CZM 载荷输入需求
 
 此文件体现了"电化学-热耦合"到"力学-CZM"之间的**数据流接口**设计。
+
+## 后续变更 (2026-04-07)
+
+- **Dict 访问替换**: 4 处 `multi_spme_layout` Dict 访问替换为 `case.layout` 和 `case.geometry` 字段直接访问
+- **函数名更新**: `MultiSPMe_get_thermal_dofs` → `get_thermal_dofs`，`solve_branch_currents_newton` → `solve_branch_currents`
+- 核心导出/加载逻辑不变
+- 行数保持 623 行
