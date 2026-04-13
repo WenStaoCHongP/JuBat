@@ -11,25 +11,23 @@
 
 ## Parameters_Design分支
 
-- **行数**: 619
+- **行数**: 441
 - **主要函数列表**:
 
   | 行号  | 函数签名                                                                                                          | 说明                                                                                        |
   | --- | ------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-  | 7   | `_debug_check_prefactors(...)`                                                                                | 调试：检查电化学预因子中的 NaN/Inf                                                                     |
-  | 33  | `_debug_check_coefficients(...)`                                                                              | 调试：检查单元系数有效性                                                                              |
-  | 55  | `_debug_check_initial_voltage(...)`                                                                           | 调试：检查初始电压分布合理性                                                                            |
-  | 83  | `_compute_electrochemical_prefactors(variables, param, mesh_ne, mesh_pe)`                                     | 计算电化学预因子（交换电流密度、OCV 等）                                                                    |
-  | 119 | `_compute_element_coefficients(e, T_e, param, prefactors, T_ref; debug_mode)`                                 | 计算单个单元的分流系数（C1, C2, alpha, C5）                                                            |
-  | 152 | `_compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref; debug_mode)`                                | 批量计算所有单元的分流系数                                                                             |
-  | 162 | `_branch_voltage(coeff, I::Float64)`                                                                          | 计算单元分支电压 V_e = coeff.C1 + coeff.C2*I + coeff.alpha_p*T + coeff.alpha_n*T + coeff.C5*ln(I) |
-  | 169 | `_branch_dVdI(coeff, I::Float64)`                                                                             | 计算分支电压对电流的导数 dV_e/dI                                                                      |
-  | 179 | `_initialize_currents(ne, w, I_total, x_prev)`                                                                | 初始化电流分布（均匀或使用上次结果）                                                                        |
-  | 194 | `_check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e; context)`                                 | 检查电压是否越界，返回异常标志                                                                           |
-  | 226 | `_detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)`                                       | 检测达到截止电压的单元，返回截止信息                                                                        |
-  | 294 | `_newton_iteration!(I_e, V, ne, w, I_total, coeffs; tol_V, tol_I, max_iters, active_mask)`                    | Newton-Raphson 迭代求解分流电流，含线搜索                                                              |
-  | 391 | `_line_search(I_e, V, dI, dV, I_trial, ne; max_attempts)`                                                     | 线搜索算法，防止 Newton 步过大导致发散                                                                   |
-  | 452 | `solve_branch_currents_newton(case, variables, yt, t, I_total, areas, Te_prev, x_prev; deactivated_elements)` | 主入口：分流求解器，返回 (variables, I_e, V_common)                                                   |
+  | 6   | `CutoffInfo` struct                                                                                            | 截止检测结果结构体（替代 `Dict{String,Any}`）                                                            |
+  | 20  | `scalarize(x)`                                                                                                | 标量化：将数组转为标量                                                                                  |
+  | 23  | `compute_prefactors(variables, param, mesh_ne, mesh_pe)`                                                       | 计算电化学预因子（交换电流密度、OCV 等）                                                                    |
+  | ~55 | `compute_element_coefficients(e, T_e, param, prefactors, T_ref)`                                              | 计算单个单元的分流系数（C1, C2, alpha, C5）                                                            |
+  | ~90 | `compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref)`                                             | 批量计算所有单元的分流系数                                                                             |
+  | ~100| `branch_voltage(coeff, I::Float64)`                                                                           | 计算单元分支电压 V_e = coeff.C1 + coeff.C2*I + coeff.alpha_p*T + coeff.alpha_n*T + coeff.C5*ln(I) |
+  | ~107| `branch_dVdI(coeff, I::Float64)`                                                                              | 计算分支电压对电流的导数 dV_e/dI                                                                      |
+  | ~117| `initialize_currents(ne, w, I_total, x_prev)`                                                                 | 初始化电流分布（均匀或使用上次结果）                                                                        |
+  | ~132| `detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)`                                        | 检测达到截止电压的单元，返回 `CutoffInfo` 结构体                                                            |
+  | ~175| `newton_iteration!(I_e, V, ne, w, I_total, coeffs; tol_V, tol_I, max_iters, active_mask)`                     | Newton-Raphson 迭代求解分流电流，含线搜索                                                              |
+  | ~270| `line_search(I_e, V, dI, dV, I_trial, ne; max_attempts)`                                                      | 线搜索算法，防止 Newton 步过大导致发散                                                                   |
+  | ~310| `solve_branch_currents(case, variables, yt, t, I_total, areas, Te_prev, x_prev; deactivated_elements)`        | 主入口：分流求解器，返回 (variables, I_e, V_common)                                                   |
 
 
 ## 变更详情
@@ -194,4 +192,14 @@ Parallelsolution.jl 是**电-热耦合的关键桥梁**，它解决了多单元�
 - 这些函数使用大量 emoji 标记输出，仅用于开发阶段调试，无生产价值。
 - **核心求解器函数不变**：`_compute_electrochemical_prefactors`、`_compute_element_coefficients`、`_newton_iteration!`、`solve_branch_currents_newton` 等核心函数均未修改。
 - **行数变化**：从 619 行减少至约 546 行。
+
+## 后续变更 (2026-04-07)
+
+- **P2 主函数精简**:
+  - `solve_branch_currents_newton` → `solve_branch_currents`（全局替换：定义+3处调用+export）
+  - 新增 `CutoffInfo` struct 替代 `detect_cutoff_elements` 的 `Dict{String,Any}` 返回值
+  - `detect_cutoff_elements` 从 62 行精简到 ~35 行（消除 3 个独立 push! 循环 → 统一单循环）
+  - 主函数 `solve_branch_currents` 从 ~152 行精简到 ~80 行（消除 `all_active` 三路分支 → 统一 `active_idx` 路径）
+  - 移除 `_` 前缀：`_compute_electrochemical_prefactors` → `compute_prefactors`、`_compute_element_coefficients` → `compute_element_coefficients` 等
+- **行数变化**：从约 546 行减少至 441 行 (-105 行)
 

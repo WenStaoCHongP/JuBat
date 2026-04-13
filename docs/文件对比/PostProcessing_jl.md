@@ -136,3 +136,9 @@
 - **与multi-SPMe耦合**：`_state_concentration_variance` 支持多SPMe布局下的浓度方差计算，用于评估静置阶段的扩散松弛效果。
 
 - **设计模式**：辅助函数以 `_` 前缀命名（Julia惯例表示内部函数），由CycleSolver.jl调用。这避免了CycleSolver过度膨胀，将后处理逻辑解耦到PostProcessing.jl中。
+
+## 后续变更 (2026-04-07)
+
+- **Dict 访问替换**: 3 处 `multi_spme_layout` Dict 访问替换为 `case.layout` 和 `case.geometry` 字段直接访问
+- 核心后处理逻辑不变
+- 行数保持约 310 行

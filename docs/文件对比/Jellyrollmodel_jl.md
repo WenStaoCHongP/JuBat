@@ -3,7 +3,7 @@
 ## 文件状态: 新增 (Parameters_Design分支)
 
 ## 文件概况
-- 行数: 559
+- 行数: 562
 - 路径: `src/Jellyrollmodel.jl`
 
 ### 主要结构体
@@ -21,7 +21,7 @@
 | `edge_boundary(mesh, nidx, param; which, theta_range, tol)` | L339 | 基于螺旋方程精确识别内/外边界节点 |
 | `jellyroll_element_centers(mesh)` | L372 | 计算每个Q4单元的几何中心(ne x 2) |
 | `jellyroll_tab_node_indices(mesh, param)` | L389 | 通过弧长二分搜索识别受正/负极耳影响的节点索引 |
-| `setup_thermal2D_mesh(case, mesh_data; use_merged)` | L527 | 将JellyrollMesh装入case，自动选择合并/未合并网格，保存界面信息到multi_spme_layout |
+| `setup_thermal2D_mesh(case, mesh_data; use_merged)` | L527 | 将JellyrollMesh装入case，自动选择合并/未合并网格，保存界面信息到 `case.geometry` (`MeshGeometry`) |
 
 ## 功能描述
 
@@ -50,13 +50,13 @@
 - `src/JuBat.jl` — `include("Jellyrollmodel.jl")`（L29）
 - `example/testexample.jl` — 调用 `jellyroll_collector_seed_mesh` 和 `setup_thermal2D_mesh`
 - `src/Solve.jl` — 通过 `case.mesh["thermal2D"]` 使用生成的网格
-- `src/Parallelsolution.jl` — 通过 `case.multi_spme_layout` 使用界面和层信息
+- `src/Parallelsolution.jl` — 通过 `case.geometry` 使用界面和层信息
 
 ## 耦合分析
 
 本文件是 **multi-SPMe + distributed2D + CZM** 耦合体系的几何基础设施：
 
-- **与multi-SPMe耦合**：`setup_thermal2D_mesh`将界面节点对、层权重、CZM映射等存入 `case.multi_spme_layout`，供多SPMe求解器使用。每个热单元对应一个独立SPMe模型。
+- **与multi-SPMe耦合**：`setup_thermal2D_mesh`将界面节点对、层权重、CZM映射等存入 `case.geometry`（`MeshGeometry` struct），供多SPMe求解器使用。每个热单元对应一个独立SPMe模型。
 
 - **与distributed2D热模型耦合**：生成的Q4网格直接作为 `case.mesh["thermal2D"]` 使用。`jellyroll_element_properties` 提供的层权重用于计算各向异性导热系数和分层体积热容。
 
@@ -64,8 +64,9 @@
 
 - **关键设计决策**：`use_merged` 参数控制网格选择策略——CZM未启用时使用合并网格（消除界面节点重复，保证径向导热连续），CZM启用时使用未合并网格（保留界面自由度，通过界面热阻模型处理层间传热）。
 
-## 后续变更 (2026-04-01)
+## 后续变更 (2026-04-07)
 
-- **新增 `JellyrollMesh` 结构体**（约 16 行）：在文件顶部定义了带显式类型标注的字段，替代了原先的 `NamedTuple` 返回方式。结构体包含热网格、合并网格、界面节点对、CZM 映射、层信息、极耳节点等所有字段。
-- **变更 `jellyroll_collector_seed_mesh` 返回类型**：返回值从 `NamedTuple` 改为 `JellyrollMesh` 结构体实例。这消除了无类型 `NamedTuple` 返回模式，提供了更好的类型稳定性和 IDE 支持。
-- **下游影响**：所有调用 `jellyroll_collector_seed_mesh` 的代码（`setup_thermal2D_mesh`、示例脚本等）自动兼容，因为结构体支持与 `NamedTuple` 相同的字段访问语法。
+- **MeshGeometry 构造**: `setup_thermal2D_mesh` 中 6 行 Dict 赋值 → `MeshGeometry` struct 构造 + `layer_weights` 计算
+- `case.multi_spme_layout["layer_weights"] = ...` → `case.geometry = MeshGeometry(..., layer_weights, ...)`
+- `layer_weights` 存储在 `MeshGeometry` struct 中，提供类型安全访问
+- 行数从约 568 行减少到 562 行

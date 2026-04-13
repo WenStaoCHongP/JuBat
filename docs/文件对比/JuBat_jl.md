@@ -39,22 +39,24 @@
 `LinearAlgebra, SparseArrays, Plots, Parameters, CSV, Infiltrator`
 
 ## Parameters_Design分支
-- 行数: 74 (+44, +147%)
-- 主要内容: 大幅扩展的模块入口文件，新增 11 个 include 文件和大量 export 声明
+- 行数: 77 (+47, +157%)
+- 主要内容: 大幅扩展的模块入口文件，新增 13 个 include 文件和大量 export 声明
 
-### 新增 include 文件（11个）
-1. `czm.jl` - 内聚力区域模型
-2. `CzmSolve.jl` - CZM 求解器
-3. `Parallelsolution.jl` - 分流求解器（**从 Solve.jl 之前加载**）
-4. `Tools.jl` - **移动到 Solve.jl 之前**（确保工具函数先定义）
-5. `Materialmatrix.jl` - 材料矩阵
-6. `ThermalDistributed.jl` - 二维分布式热模型
-7. `ThermalPolar2D.jl` - 极坐标 FVM 求解器
-8. `mechanical.jl` - 应力计算（**替代 Mechanical.jl**，注意大小写变化）
-9. `Jellyrollmodel.jl` - Jellyroll 几何与网格
-10. `ring.jl` - 环形网格
-11. `CycleSolver.jl` - 循环求解器
-12. `CycleData.jl` - 循环数据导出
+### 新增 include 文件（13个）
+1. `CouplingState.jl` - MultiSPMeLayout + MeshGeometry 类型定义（**SetCase.jl 之前**）
+2. `czm.jl` - 内聚力区域模型
+3. `CzmSolve.jl` - CZM 求解器
+4. `Parallelsolution.jl` - 分流求解器（**从 Solve.jl 之前加载**）
+5. `Tools.jl` - **移动到 Solve.jl 之前**（确保工具函数先定义）
+6. `CallModel.jl` - 模型调度（**从 Solve.jl 之前加载**）
+7. `Materialmatrix.jl` - 材料矩阵
+8. `ThermalDistributed.jl` - 二维分布式热模型
+9. `ThermalPolar2D.jl` - 极坐标 FVM 求解器
+10. `mechanical.jl` - 应力计算（**替代 Mechanical.jl**，注意大小写变化）
+11. `Jellyrollmodel.jl` - Jellyroll 几何与网格
+12. `ring.jl` - 环形网格
+13. `CycleSolver.jl` - 循环求解器
+14. `CycleData.jl` - 循环数据导出
 
 ### 删除的 include 文件（3个）
 1. `sP2D.jl` - 已移除
@@ -72,9 +74,13 @@
 - `jellyroll_collector_seed_mesh, jellyroll_element_properties, jellyroll_tab_node_indices, edge_boundary, jellyroll_element_centers`
 - `ring_mesh`
 
+**耦合状态类型**
+- `MultiSPMeLayout, MeshGeometry`
+
 **多 SPMe 模型**
 - `SPMe_element, ModelInitialisation`
-- `ModelInitialisation_MultiSPMe, MultiSPMe_extract_element_state, MultiSPMe_get_thermal_dofs, MultiSPMe_update_state`
+- `ModelInitialisation_MultiSPMe, extract_element_state, get_thermal_dofs`
+- `update_state`
 
 **热模型**
 - `setup_thermal2D_mesh`
@@ -84,7 +90,7 @@
 - `ThermalModel, ThermalLumpedModel, ThermalDistributed2DModel`
 
 **分流求解**
-- `compute_heat_sources, compute_heat_sources_with_czm, solve_branch_currents_newton`
+- `compute_heat_sources, compute_heat_sources_with_czm, solve_branch_currents`
 
 **力学**
 - `thermal_diffusion_stress_2D`
@@ -117,10 +123,20 @@
 
 ### 核心变更
 1. **include 顺序重组**: `Tools.jl` 移到 `Solve.jl` 之前，`Parallelsolution.jl` 也移到 `Solve.jl` 之前，确保依赖函数先定义
-2. **新增 11 个 include 文件**: 涵盖 CZM、热模型、Jellyroll、循环求解等完整功能链
+2. **新增 13 个 include 文件**: 涵盖 CouplingState、CallModel、CZM、热模型、Jellyroll、循环求解等完整功能链
 3. **删除 3 个 include 文件**: `sP2D.jl`, `Citation.jl`, `Mechanical.jl`
 4. **导出列表从 3 组扩展到约 70+ 个符号**: 几乎所有新增模块的核心函数都被导出
 5. **新增依赖**: `Statistics`, `Printf`
+
+## 后续变更 (2026-04-07)
+
+- **新增 `CouplingState.jl` include**: 在 `SetParams.jl` 之后、`SetCase.jl` 之前加载
+- **新增 `CallModel.jl` include**: 在 `Tools.jl` 之后、`Solve.jl` 之前加载
+- **导出更新**:
+  - 新增 `MultiSPMeLayout, MeshGeometry`
+  - 重命名导出: `MultiSPMe_extract_element_state` → `extract_element_state`, `MultiSPMe_get_thermal_dofs` → `get_thermal_dofs`, `MultiSPMe_update_state` → `update_state`
+  - 重命名导出: `solve_branch_currents_newton` → `solve_branch_currents`
+- 行数从 74 增加到 77
 
 ## 依赖关系
 

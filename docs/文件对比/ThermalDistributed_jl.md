@@ -8,6 +8,12 @@
 
 ## Parameters_Design分支
 - 行数: 425
+
+## 后续变更 (2026-04-07)
+
+- **P3 耦合泄漏修复**: `jellyroll_element_properties` 直接调用 → `case.geometry.layer_weights`（带 fallback）
+  - `ThermalDistributed2D` 和 `ThermalDistributed2D_Ring` 两处均改为 `case.geometry !== nothing ? case.geometry.layer_weights : jellyroll_element_properties(...)[2]`
+  - 消除 ThermalDistributed→Jellyrollmodel 的硬依赖（可选耦合）
 - 主要函数列表:
   1. `ThermalDistributed2D(case, variables)` -- 2D 分布式热模型 FEM 矩阵组装（直角坐标）
   2. `apply_convection_bc(KT, FT, mesh, is_outer, case)` -- 对流边界条件施加（Biot 数）
