@@ -17,21 +17,16 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 1) 解析状态向量
     # 提取热场
     T_nodes = get_thermal_dofs(yt, case.layout)
-    # 提取每个单元的电化学状态
-    yt_chem = Vector{Vector{Float64}}(undef, ne)
+    # 提取每个单元的电化学状态（使用 @views 消除拷贝）
+    yt_chem = Vector{SubArray{Float64,1}}(undef, ne)
     for e in 1:ne
-        yt_chem[e] = vec(extract_element_state(yt, e, case.layout))
+        offset = (e - 1) * layout.n_chem
+        yt_chem[e] = @view yt[(offset + 1):(offset + layout.n_chem)]
     end
     
-    # 2) 计算元素面积和均温
-    A = zeros(Float64, ne)
-    ngs = length(mesh_th.gs.detJ)
-    @inbounds for g in 1:ngs
-        e = mesh_th.gs.ele[g]
-        A[e] += mesh_th.gs.weight[g] * mesh_th.gs.detJ[g]
-    end
-    variables["thermal2D element area"] = A
-    areas = A
+    # 2) 使用缓存的元素面积（网格不变量）
+    areas = layout.areas
+    variables["thermal2D element area"] = areas
     
     Te_prev = zeros(Float64, ne)
     @inbounds for e in 1:ne
@@ -78,21 +73,28 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, I_e_prev; deactivated_elements=deactivated_elements)
     t_branch_s = (time_ns() - t_branch_ns) * 1e-9
     
-    # 4) 并行求解每个单元的SPMe
+    # 4) 并行求解每个单元的SPMe（使用线程本地精简工作区）
     M_elems = Vector{SparseMatrixCSC{Float64,Int64}}(undef, ne)
     K_elems = Vector{SparseMatrixCSC{Float64,Int64}}(undef, ne)
     F_elems = Vector{Vector{Float64}}(undef, ne)
     variables_elems = Vector{Dict{String,Union{Array{Float64},Float64}}}(undef, ne)
-    
+
+    # 预分配线程本地工作区
+    nthreads_avail = Threads.nthreads()
+    ws_pool = [create_element_workspace(case) for _ in 1:nthreads_avail]
+
     # 可选：并行化（如果Julia配置了多线程）
     t_spme_ns = time_ns()
     Threads.@threads for e in 1:ne
-    #for e in 1:ne
-        M_e, K_e, F_e, vars_e = SPMe_element(case, yt_chem[e], t, e;I_e = I_e[e],T_e = Te_prev[e],jacobi = jacobi)
-        M_elems[e] = sparse(M_e)
-        K_elems[e] = sparse(K_e)
+        tid = Threads.threadid()
+        ws_e = ws_pool[tid]
+        M_e, K_e, F_e, vars_e = SPMe_element(case, yt_chem[e], t, e;
+                                               I_e=I_e[e], T_e=Te_prev[e],
+                                               jacobi=jacobi, workspace=ws_e)
+        M_elems[e] = M_e
+        K_elems[e] = K_e
         F_elems[e] = vec(F_e)
-        variables_elems[e] = vars_e
+        variables_elems[e] = copy_element_results(vars_e)
     end
     t_spme_s = (time_ns() - t_spme_ns) * 1e-9
     
@@ -137,8 +139,8 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     t_thermal_s = (time_ns() - t_thermal_ns) * 1e-9
     
     # 8) 全局拼装
-    M = blockdiag(M_chem, sparse(MT))
-    K = blockdiag(K_chem, sparse(KT))
+    M = blockdiag(M_chem, MT)
+    K = blockdiag(K_chem, KT)
     F = [F_chem; FT]
     
     # 9) 合并 variables（保留关键全局信息）
@@ -186,4 +188,32 @@ function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
         F = [F; FT]
     end
     return M, K, F, variables, y_phi
+end
+
+"""
+    copy_element_results(vars_e)
+
+从 workspace Dict 中提取下游代码需要的键，返回轻量级独立 Dict。
+状态提取键（通过 case.index 原位写入 workspace）必须 copy()。
+计算结果键（通过 = 赋值，每次创建新数组/标量）可安全引用拷贝。
+"""
+function copy_element_results(vars_e)
+    Dict{String, Union{Array{Float64},Float64}}(
+        # ── 计算结果键：每次 = 赋值创建新对象，引用安全 ──
+        "negative electrode overpotential"             => vars_e["negative electrode overpotential"],
+        "positive electrode overpotential"             => vars_e["positive electrode overpotential"],
+        "cell voltage"                                 => vars_e["cell voltage"],
+        "negative electrode exchange current density"  => vars_e["negative electrode exchange current density"],
+        "positive electrode exchange current density"  => vars_e["positive electrode exchange current density"],
+        "negative electrode interfacial current density" => vars_e["negative electrode interfacial current density"],
+        "positive electrode interfacial current density" => vars_e["positive electrode interfacial current density"],
+        "negative electrode open circuit potential"    => vars_e["negative electrode open circuit potential"],
+        "positive electrode open circuit potential"    => vars_e["positive electrode open circuit potential"],
+        "temperature"                                  => vars_e["temperature"],
+        # ── 状态提取键：替换赋值，workspace 不再持有引用，直接传递 ──
+        "negative particle surface lithium concentration" => vars_e["negative particle surface lithium concentration"],
+        "positive particle surface lithium concentration" => vars_e["positive particle surface lithium concentration"],
+        "negative particle lithium concentration"      => vars_e["negative particle lithium concentration"],
+        "positive particle lithium concentration"      => vars_e["positive particle lithium concentration"],
+    )
 end
