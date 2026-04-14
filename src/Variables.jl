@@ -140,6 +140,86 @@ function StandardVariables(case::Case, num::Int64)
     return variables
 end
 
+"""
+    create_element_workspace(case)
+
+创建精简型单元工作区 Dict，仅包含 SPMe_element 调用链实际需要的键。
+排除 distributed2D 专用的 ~30 个 thermal2D 键（由 CallModel_MultiSPMe
+在单元循环外独立管理）。比 StandardVariables(case, 1) 减少约 60% 数组分配。
+"""
+function create_element_workspace(case::Case)
+    Nrn = case.mesh["negative particle"].nlen
+    Nrp = case.mesh["positive particle"].nlen
+    Nn = 1; Np = 1  # SPMe 模式
+    Ne_ngs = case.opt.Nn * case.opt.gsorder
+    Ne_pgs = case.opt.Np * case.opt.gsorder
+
+    ws = Dict{String, Union{Array{Float64}, Float64}}()
+
+    # ── 状态提取键（case.index 对应，SPMe_variables! 从 yt 原位覆写）──
+    ws["negative particle lithium concentration"] = zeros(Float64, Nrn, 1)
+    ws["positive particle lithium concentration"] = zeros(Float64, Nrp, 1)
+    ws["negative particle surface lithium concentration"] = zeros(Float64, Nn, 1)
+    ws["positive particle surface lithium concentration"] = zeros(Float64, Np, 1)
+
+    # ── SPMe 专用键 ──
+    if case.opt.model == "SPMe"
+        Ne_n = case.mesh["negative electrode"].nlen
+        Ne_p = case.mesh["positive electrode"].nlen
+        Ne_sp = case.mesh["separator"].nlen
+        Ne_spgs = case.opt.Ns * case.opt.gsorder
+        ws["electrolyte lithium concentration in negative electrode"] = zeros(Float64, Ne_n, 1)
+        ws["electrolyte lithium concentration in positive electrode"] = zeros(Float64, Ne_p, 1)
+        ws["electrolyte lithium concentration in separator"] = zeros(Float64, Ne_sp, 1)
+        # Gauss 点计算结果（ElectrolyteDiffusion 读取）
+        ws["electrolyte lithium concentration at negative electrode Gauss point"] = zeros(Float64, Ne_ngs, 1)
+        ws["electrolyte lithium concentration at positive electrode Gauss point"] = zeros(Float64, Ne_pgs, 1)
+        ws["electrolyte lithium concentration at separator Gauss point"] = zeros(Float64, Ne_spgs, 1)
+    end
+
+    ws["temperature"] = 0.0
+
+    # ── SPMe_variables! 计算结果键 ──
+    ws["cell voltage"] = 0.0
+    ws["time"] = 0.0
+    ws["cell current"] = 0.0
+    ws["negative electrode exchange current density"] = zeros(Float64, Nn, 1)
+    ws["positive electrode exchange current density"] = zeros(Float64, Np, 1)
+    ws["negative electrode interfacial current density"] = zeros(Float64, Nn, 1)
+    ws["positive electrode interfacial current density"] = zeros(Float64, Np, 1)
+    ws["negative electrode overpotential"] = zeros(Float64, Nn, 1)
+    ws["positive electrode overpotential"] = zeros(Float64, Np, 1)
+    ws["negative electrode open circuit potential"] = zeros(Float64, Nn, 1)
+    ws["positive electrode open circuit potential"] = zeros(Float64, Np, 1)
+
+    # ── 高斯点浓度键（SPMe_element L52-53 无条件读取）──
+    # 注意：用 opt.Nrn/Nrp（单元数）而非 mesh.nlen（节点数）来计算高斯点数
+    ws["negative particle concentration at gauss point"] = zeros(Float64, Nn * case.opt.Nrn * case.opt.gsorder, 1)
+    ws["positive particle concentration at gauss point"] = zeros(Float64, Np * case.opt.Nrp * case.opt.gsorder, 1)
+
+    # ── Mechanicaloutput 结果键（条件）──
+    if case.opt.mechanicalmodel == "full"
+        ws["negative particle center radial stress"] = zeros(Float64, Nn, 1)
+        ws["positive particle center radial stress"] = zeros(Float64, Np, 1)
+        ws["negative particle surface tangential stress"] = zeros(Float64, Nn, 1)
+        ws["positive particle surface tangential stress"] = zeros(Float64, Np, 1)
+        ws["negative particle surface displacement"] = zeros(Float64, Nn, 1)
+        ws["positive particle surface displacement"] = zeros(Float64, Np, 1)
+        ws["negative particle surface tangential stress at gauss point"] = zeros(Float64, Ne_ngs, 1)
+        ws["positive particle surface tangential stress at gauss point"] = zeros(Float64, Ne_pgs, 1)
+        ws["negative particle stress coupling diffusion coefficient"] = zeros(Float64, Nn, 1)
+        ws["positive particle stress coupling diffusion coefficient"] = zeros(Float64, Np, 1)
+    end
+
+    # ── CZM 键（条件）──
+    if case.opt.czm_enabled
+        ws["negative electrode cohesive zone damage"] = zeros(Float64, Nn, 1)
+        ws["positive electrode cohesive zone damage"] = zeros(Float64, Np, 1)
+    end
+
+    return ws
+end
+
 function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Float64}}, variables::Dict{String, Union{Array{Float64},Float64}}, v::Int64)
     # 检查是否需要扩展数组（动态增长）
     for k in keys(variables_hist)
