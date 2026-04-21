@@ -342,8 +342,8 @@ end
 """
 	get_active_elements(czm_mesh, mesh_data) -> Vector{Int64}
 """
-function get_active_elements(czm_mesh::CohesiveMesh, mesh_data)
-	ne = mesh_data.ne
+function get_active_elements(czm_mesh::CohesiveMesh, mesh_data::MeshGeometry)
+	ne = length(mesh_data.element_layer)
 	active = ones(Bool, ne)
 	fractured_czm = get_fractured_elements(czm_mesh)
 
@@ -351,7 +351,7 @@ function get_active_elements(czm_mesh::CohesiveMesh, mesh_data)
 		if !mesh_data.is_inner_layer[e]
 			continue
 		end
-		for czm_idx in mesh_data.czm_element_map[e]
+		for czm_idx in get(mesh_data.czm_element_map, e, Int64[])
 			if czm_idx in fractured_czm
 				active[e] = false
 				break

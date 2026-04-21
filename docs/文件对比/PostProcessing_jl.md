@@ -142,3 +142,14 @@
 - **Dict 访问替换**: 3 处 `multi_spme_layout` Dict 访问替换为 `case.layout` 和 `case.geometry` 字段直接访问
 - 核心后处理逻辑不变
 - 行数保持约 310 行
+
+## 后续变更 (2026-04-20)
+
+- **新增 CZM 变量输出**: `PostProcessing` 函数中新增 CZM 摘要统计的物理单位转换输出（当 `czm_enabled` 且 `variables` 中有 `czm D_max` 时）：
+  - `"czm D_max"` — 最大损伤值（无量纲，直接复制）
+  - `"czm D_mean"` — 平均损伤值（无量纲，直接复制）
+  - `"czm δ_max_n [m]"` — 最大法向分离位移（`* scale.L` 转换为物理单位）
+  - `"czm δ_mean_n [m]"` — 平均法向分离位移（`* scale.L` 转换为物理单位）
+  - `"czm n_fractured"` — 完全断裂单元数（无量纲，直接复制）
+- **移除冗余尾随空格**: `"thermal lumped internal heat [W/m^3]"` 行末空格清理
+- 行数保持约 311 行

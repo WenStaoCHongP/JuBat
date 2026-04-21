@@ -90,7 +90,22 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             y0 = ModelInitialisation(case)
         end
     else
-        y0 = vec(y0_input)
+        # initial_state 可能是向量或 Dict（来自循环求解器）
+        if isa(y0_input, Dict)
+            y_from_state = get(y0_input, "y", nothing)
+            if y_from_state !== nothing
+                y0 = vec(y_from_state)
+            else
+                # Dict 中没有 y，回退到模型初始化
+                if multi_spme_enabled
+                    y0 = ModelInitialisation_MultiSPMe(case)
+                else
+                    y0 = ModelInitialisation(case)
+                end
+            end
+        else
+            y0 = vec(y0_input)
+        end
         if multi_spme_enabled
             ne = size(case.mesh["thermal2D"].element, 1)
             nT = case.mesh["thermal2D"].nlen
@@ -101,7 +116,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             expected_multi_len = ne * n_chem + nT
 
             if case.layout === nothing
-                case.layout = MultiSPMeLayout(ne, n_chem, nT)
+                case.layout = MultiSPMeLayout(ne, n_chem, nT, case.mesh["thermal2D"])
             end
 
             if length(y0) != expected_multi_len
@@ -120,7 +135,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         error( "Error: $(opt.solve_type) difference scheme has not been implemented!\n ") 
     end
 
-    dt = deepcopy(dt_min)
+    dt = dt_min
     dt_temp = 0
     dt_temp_flag = false
     # 计算预期时间步数，添加安全限制避免内存溢出
@@ -184,6 +199,11 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     first_cutoff_ocv = 0.0
     total_cutoff_count = 0
     termination_reason = "time_limit"  # 默认终止原因
+
+    # CZM 损伤演化状态
+    czm_active = case.opt.czm_enabled && case.czm_mesh !== nothing
+    u_czm_prev = nothing       # 上一步 CZM 位移场
+    czm_step_count = 0         # CZM 更新步计数器
     
     # run the model
     while t <= t_end
@@ -227,25 +247,44 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
                 if error_y < 0.5 * case.opt.dtThreshold
                     dt = min(dt * 2, dt_max) 
                 elseif error_y >= 1.5 * case.opt.dtThreshold
-                    dt = deepcopy(dt_min)
+                    dt = dt_min
                 elseif error_y > case.opt.dtThreshold
                     dt = max(dt / 2, dt_min) 
                 end
             elseif dt_temp_flag
-                dt = deepcopy(dt_temp)
-                dt_temp_flag = false    
+                dt = dt_temp
+                dt_temp_flag = false
             end
             if t + dt > RunTime[vt] && t < RunTime[vt]
-                dt_temp = deepcopy(dt)
+                dt_temp = dt
                 dt = abs(RunTime[vt] - t) 
                 dt_temp_flag = true
             end
 
             # update system information
-            y_old = deepcopy(y_new)
-            K_old = deepcopy(K_new)
-            F_old = deepcopy(F_new)
-            t += dt 
+            y_old = copy(y_new)
+            K_old = copy(K_new)
+            F_old = copy(F_new)
+            t += dt
+
+            # CZM 损伤演化（按间隔更新）
+            if czm_active
+                czm_step_count += 1
+                if czm_step_count % case.opt.czm_update_interval == 0
+                    t_czm_ns = time_ns()
+                    try
+                        u_czm_new, czm_converged = update_czm_damage!(
+                            case.czm_mesh, case.param.cohesive,
+                            case, variables, T_nodes_carry, u_czm_prev)
+                        if czm_converged
+                            u_czm_prev = u_czm_new
+                        end
+                    catch e
+                        @debug "CZM damage update failed at step $czm_step_count: $e"
+                    end
+                    timing_totals["czm"] += (time_ns() - t_czm_ns) * 1e-9
+                end
+            end
         end
         
         # ====================================================================

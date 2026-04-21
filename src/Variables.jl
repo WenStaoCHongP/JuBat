@@ -134,8 +134,13 @@ function StandardVariables(case::Case, num::Int64)
         variables["thermal2D displacement y"] = zeros(Float64, nT, num)
     end
     if case.opt.czm_enabled == true
-        variables["negative electrode cohesive zone damage"] = zeros(Float64, Nn, num) 
+        variables["negative electrode cohesive zone damage"] = zeros(Float64, Nn, num)
         variables["positive electrode cohesive zone damage"] = zeros(Float64, Np, num)
+        variables["czm D_max"] = zeros(Float64, 1, num)
+        variables["czm D_mean"] = zeros(Float64, 1, num)
+        variables["czm δ_max_n"] = zeros(Float64, 1, num)
+        variables["czm δ_mean_n"] = zeros(Float64, 1, num)
+        variables["czm n_fractured"] = zeros(Float64, 1, num)
     end 
     return variables
 end

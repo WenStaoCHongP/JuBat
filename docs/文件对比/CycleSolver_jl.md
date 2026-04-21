@@ -3,12 +3,12 @@
 ## 文件状态: 新增 (Parameters_Design分支)
 
 ## 文件概况
-- 行数: 685
+- 行数: 527
 - 路径: `src/CycleSolver.jl`
 
 ### 主要结构体
 
-| 结构体 | 说明 |
+|| 结构体 | 说明 |
 |--------|------|
 | `PhaseResult` | 单阶段（充电/静置/放电）求解结果，包含时间、电压、容量、温度、损伤、终止原因、最终状态 |
 | `CycleResult` | 单个循环结果，包含4个PhaseResult（放电/静置1/充电/静置2）及循环汇总（容量、库伦效率、损伤、温度） |
@@ -16,15 +16,12 @@
 
 ### 主要函数/方法列表
 
-| 函数签名 | 行号 | 说明 |
+|| 函数签名 | 行号 | 说明 |
 |----------|------|------|
 | `solve_phase(case, phase_type, t_max, I_current, V_limit, initial_state; czm_mesh, czm_params, dt_range)` | L110 | 求解单个阶段（放电/充电/静置），含CZM更新 |
 | `solve_cycling(case, cycle_opt, czm_mesh; verbose, save_detailed)` | L209 | 主循环求解器：放电->静置1->充电->静置2 |
 | `compute_cs0_from_soc(param_dim, soc)` | ~L486 | 根据SOC计算正负极初始锂浓度 |
 | `apply_initial_soc!(case, param_dim, soc)` | ~L524 | 应用初始SOC并重新归一化参数 |
-| `compute_czm_effective_params(case, param_dim)` | ~L551 | 计算CZM有效材料参数（E_eff, nu_eff, alpha_eff, beta_n, beta_p） |
-| `compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)` | ~L581 | 计算CZM应变输入（温度变化、SOC变化） |
-| `update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)` | ~L630 | 调用CZM求解器更新损伤状态 |
 
 ## 功能描述
 
@@ -32,8 +29,9 @@
 
 1. **单阶段求解**（`solve_phase`）：
    - 根据阶段类型（放电/充电/静置）配置电压限制和电流方向
+   - 将 CZM 网格挂载到 case 上，以便 CallModel 能访问
    - 调用 `Solve(case; initial_state, return_final_state)` 执行时间积分
-   - 阶段末调用CZM求解器更新损伤状态
+   - 阶段末调用CZM求解器更新损伤状态（通过 CzmSolve.jl 中的函数）
    - 通过 `_postprocess_phase_result` 后处理阶段结果
 
 2. **循环求解**（`solve_cycling`）：
@@ -49,18 +47,12 @@
    - 正极：`theta_p = theta_0_p - SOC * (theta_0_p - theta_100_p)`
    - 更新维度参数后重新归一化
 
-4. **CZM接口**（`update_czm_damage!`）：
-   - 从当前variables提取温度场和SOC分布
-   - 计算有效材料参数（厚度加权平均）
-   - 调用 `solve_czm_step` 进行力学求解
-   - 同步损伤状态到调用者的czm_mesh
-
 ## 依赖关系
 
 ### 该文件依赖
 - `src/Solve.jl` — `Solve`主求解器
 - `src/CallModel.jl` — `CallModel`模型调用
-- `src/CzmSolve.jl` — `solve_czm_step`、`get_damage_statistics`
+- `src/CzmSolve.jl` — `solve_czm_step`、`get_damage_statistics`、`update_czm_damage!`（CZM 损伤更新函数）
 - `src/czm.jl` — `assemble_thermal_chemical_load`（间接）
 - `src/PostProcessing.jl` — `_postprocess_phase_result`、`_postprocess_cycle_result!`等辅助函数
 - `src/Variables.jl` — `Case`、`CycleOption`、`PhaseType`等类型
@@ -87,10 +79,9 @@
   - 支持 `reset_T_before_charge` 在充电前重置温度场
 
 - **与CZM耦合**：
-  - 每个阶段结束调用 `update_czm_damage!` 更新损伤
+  - CZM 网格在 `solve_phase` 开始时挂载到 `case.czm_mesh`，使 CallModel 和 Solve 均可访问
   - 损伤状态通过 `czm_mesh.damage_states` 跨循环累积
   - SOH终止判断基于CZM断裂状态（`check_fracture_criterion`）
-  - `compute_czm_strain_inputs` 将热-电化学状态转化为力学应变输入
 
 - **与分流求解器耦合**：
   - CZM损伤状态通过 `get_active_elements` 影响下一阶段的电流分配
@@ -105,3 +96,10 @@
 - **删除 `_ensure_multi_spme_layout!` 函数**（28 行）：不再需要，布局信息由 `case.layout`（`MultiSPMeLayout`）管理
 - **Dict 访问替换**: 使用 `case.layout` 替代 `multi_spme_layout` Dict 键值访问
 - 行数从约 717 行减少到 685 行
+
+## 后续变更 (2026-04-20)
+
+- **CZM 损伤更新函数迁出到 CzmSolve.jl**: `compute_czm_effective_params`、`compute_czm_strain_inputs`、`update_czm_damage!` 三个函数（共约 160 行）从 CycleSolver.jl 迁出到 CzmSolve.jl
+  - 迁出原因：Solve.jl 和 CycleSolver.jl 共用这些函数，放在 CzmSolve.jl 更合理
+- **新增 CZM 网格挂载**: `solve_phase` 中在调用 `Solve` 之前将 `czm_mesh` 挂载到 `case.czm_mesh`，使 CallModel 能在每步中访问 CZM 数据
+- 行数从约 685 行减少到约 527 行

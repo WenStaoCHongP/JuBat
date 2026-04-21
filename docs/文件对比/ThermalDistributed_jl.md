@@ -7,7 +7,7 @@
 - 文件不存在于 main 分支
 
 ## Parameters_Design分支
-- 行数: 425
+- 行数: 531
 
 ## 后续变更 (2026-04-07)
 
@@ -24,6 +24,33 @@
   7. `compute_heat_sources(case, variables, variables_elems, I_e, T_e, areas; per_element_spme)` -- 分层热源计算
   8. `compute_heat_sources_with_czm(case, variables, variables_elems, I_e, T_e, areas, czm_mesh, mesh_data)` -- 含 CZM 损伤屏蔽的热源计算
 
+## 后续变更 (2026-04-20)
+
+### 性能优化：边界边预缓存
+
+- **`apply_convection_bc` 新增 `edge_cache` 参数**: 支持传入预计算的 `BoundaryEdgeCache`，避免每步重复扫描网格提取外边界边
+  - 当 `edge_cache === nothing` 时自动回退到实时计算（兼容性保留）
+  - 内部循环从遍历所有单元的4条边改为直接遍历 `edge_cache.edges`，减少约 4 倍迭代量
+- **新增 `apply_convection_bc!` 原位变体**: 不复制 K/F 矩阵，直接在输入矩阵上修改
+- **新增 `apply_cool_method!` 原位变体**: 不复制 K/F 矩阵，直接在输入矩阵上修改
+- **`ThermalDistributed2D_BC` 优化**: 
+  - 使用 `case.geometry.boundary_edges` 缓存传入 `apply_convection_bc!`
+  - 调用原位变体消除三重 copy（原代码对流BC、冷却方法各做一次 copy），改为单次 copy
+  - 移除 CZM 界面热阻中的冗余注释
+
+### compute_heat_sources_with_czm 改进
+
+- **活跃单元获取**: 从 `get_active_elements(czm_mesh, mesh_data)` 改为使用 `case.geometry` 获取
+  - `mesh_data` 参数仍保留（向后兼容），但优先使用 `case.geometry` 的 `czm_element_map`
+  - 无几何元数据时回退到所有单元活跃
+- **active_elements 类型修复**: `active_elements` 从 `Vector{Int}` 改为 `Float64.(active_elements)`，确保与 variables 字典中其他数组类型一致
+
+### 代码清理
+
+- 移除 `apply_cool_method` 中无冷却模式下的冗余注释
+- 移除 `ThermalDistributed2D_BC` 中 CZM 热阻部分的冗余注释
+- 行数从约 425 行增加到约 531 行
+
 ## 变更详情
 
 ### 新增函数
@@ -31,45 +58,58 @@
 #### 1. `ThermalDistributed2D(case::Case, variables)` (行 1-47)
 - **功能**：基于 FEM 组装二维分布式热模型的质量矩阵 MT、刚度矩阵 KT 和载荷向量 FT
 - **实现要点**：
-  - 使用 `jellyroll_element_properties` 获取各单元的层权重
+  - 使用 `jellyroll_element_properties` 获取各单元的层权重（带 `case.geometry` fallback）
   - 通过 `thermal_capacity_weights_2d` 和 `thermal_anisotropic_conductivity_2d` 获取各向异性的热物性
   - 刚度矩阵由 4 个子矩阵 KT_xx, KT_xy, KT_yx, KT_yy 组合（各向异性）
   - 载荷向量由 `heat_source_fields` 映射到节点
   - 全部使用无量纲参数
 
-#### 2. `apply_convection_bc(KT, FT, mesh, is_outer, case)` (行 49-105)
+#### 2. `apply_convection_bc(KT, FT, mesh, is_outer, case; edge_cache=nothing)` (行 49-98)
 - **功能**：对边界节点施加对流边界条件（Newton 冷却定律）
 - **实现要点**：
   - 使用 Biot 数 `Bi = h * lambda_r` 作为无量纲对流系数
-  - 遍历所有外边界边，使用 2 点高斯积分
-  - 修改刚度矩阵 K 和载荷向量 F
-  - 防止重复处理同一条边（使用 `seen` 集合）
+  - 支持传入预计算的 `edge_cache`（`BoundaryEdgeCache`），避免每步重复扫描
+  - 当 `edge_cache === nothing` 时自动计算缓存
+  - 遍历外边界边列表，使用 2 点高斯积分
 
-#### 3. `apply_cool_method(KT, FT, mesh, case)` (行 107-185)
+#### 3. `apply_cool_method(KT, FT, mesh, case)` (行 100-185)
 - **功能**：根据冷却方式修改热矩阵
 - **实现要点**：
   - `"none"`：无冷却，直接返回
   - `"surface"`：表面冷却，使用 `conv_factor = 2 * Bi / width` 修改全局矩阵
   - `"tab"`：极耳冷却，通过 `jellyroll_tab_node_indices` 定位极耳节点，按弧长加权施加冷却条件
 
-#### 4. `ThermalDistributed2D_BC(KT, FT, case, t)` (行 187-219)
+#### 4. `apply_convection_bc!(K, F, case; edge_cache=nothing)` (行 ~175-210)
+- **功能**：`apply_convection_bc` 的原位变体，不复制 K/F 矩阵
+- **实现要点**：
+  - 无 `edge_cache` 时回退到完整版 `apply_convection_bc`
+  - 有缓存时直接在 K/F 上累加对流项
+
+#### 5. `apply_cool_method!(K, F, mesh, case)` (行 ~212-295)
+- **功能**：`apply_cool_method` 的原位变体，不复制 K/F 矩阵
+- **实现要点**：
+  - `"none"` 模式直接返回 K/F（零开销）
+  - `"surface"` 和 `"tab"` 模式直接在输入矩阵上修改
+
+#### 6. `ThermalDistributed2D_BC(KT, FT, case, t)` (行 ~297-320)
 - **功能**：热模型边界条件入口函数，整合 CZM 界面热阻和对流冷却
 - **实现要点**：
   - 如果 `czm_enabled` 且存在 `czm_mesh`，遍历所有内聚力单元，使用 `compute_gap_conductance` 计算损伤相关的有效热导
   - 在 cohesive 上下节点之间添加热耦合项
-  - 调用 `apply_convection_bc` 和 `apply_cool_method`
+  - 使用原位变体 `apply_convection_bc!` 和 `apply_cool_method!`，从 `case.geometry.boundary_edges` 获取缓存
+  - 总共只做一次 copy（入口处的 KT/FT 复制）
 
-#### 5. `ThermalDistributed2D_Ring(case, variables)` (行 221-270)
+#### 7. `ThermalDistributed2D_Ring(case, variables)` (行 221-270)
 - **功能**：极坐标下的环形热模型 FEM 组装
 - **实现要点**：
   - 将直角坐标梯度转换为极坐标 (dN/dr, dN/dtheta)
   - 使用各向异性导热率 `lambda_r` 和 `lambda_t`
   - 径向和切向独立组装后相加
 
-#### 6. `ThermalRing2D_BC(KT, FT, case, outer_nodes, t)` (行 272-279)
+#### 8. `ThermalRing2D_BC(KT, FT, case, outer_nodes, t)` (行 272-279)
 - **功能**：环形热模型边界条件，对外边界施加对流
 
-#### 7. `compute_heat_sources(case, variables, variables_elems, I_e, T_e, areas; per_element_spme)` (行 281-391)
+#### 9. `compute_heat_sources(case, variables, variables_elems, I_e, T_e, areas; per_element_spme)` (行 281-491)
 - **功能**：逐单元计算分层热源（反应热 + 可逆热 + 欧姆热）
 - **实现要点**：
   - 支持两种模式：`per_element_spme=true` 从 `variables_elems[e]` 读取单元级变量；否则从全局 `variables` 读取
@@ -77,21 +117,14 @@
   - 按层权重 `fks[e,:]` 分配到单元
   - 温度相关电导率计算
   - 最终通过 `scale.L^3 / volume` 将热源转换为适当量纲
-- **参数**：
-  - `case` -- Case 结构
-  - `variables` -- 全局变量字典
-  - `variables_elems` -- 逐单元变量向量（可 Nothing）
-  - `I_e` -- 单元电流向量
-  - `T_e` -- 单元温度向量
-  - `areas` -- 单元面积向量
-  - `per_element_spme` -- 是否使用逐单元 SPMe
 
-#### 8. `compute_heat_sources_with_czm(case, variables, variables_elems, I_e, T_e, areas, czm_mesh, mesh_data)` (行 393-425)
+#### 10. `compute_heat_sources_with_czm(case, variables, variables_elems, I_e, T_e, areas, czm_mesh, mesh_data)` (行 493-531)
 - **功能**：在 `compute_heat_sources` 基础上叠加 CZM 损伤屏蔽效果
 - **实现要点**：
   - 先调用 `compute_heat_sources` 计算所有单元热源
-  - 通过 `get_active_elements` 获取活跃单元
+  - 优先使用 `case.geometry` 获取活跃单元信息（`czm_element_map`），无几何元数据时回退到所有活跃
   - 将断裂（非活跃）单元的热源设为 0
+  - `active_elements` 转换为 `Float64` 向量存入 variables
   - 更新总功率（仅活跃单元）
 
 ### 修改函数
@@ -106,13 +139,14 @@
 - `src/Option.jl` -- 通过 `case.opt.cool_method`, `case.opt.czm_enabled` 等
 - `src/SetCase.jl` -- `Case` 类型定义
 - `src/Assemble.jl` -- `Assemble`, `Assemble1D` 矩阵组装函数
+- `src/CouplingState.jl` -- `BoundaryEdgeCache` 类型（通过 `case.geometry.boundary_edges`）
 - `src/Jellyrollmodel.jl` -- `jellyroll_element_properties`, `jellyroll_tab_node_indices`, `identify_boundary_nodes`
 - `src/czm.jl` / `src/CzmSolve.jl` -- `compute_gap_conductance`, CZM mesh 数据结构
-- `src/Thermal.jl` (间接) -- 共享热模型接口概念
+- `src/Tools.jl` -- `identify_boundary_nodes`（边界节点识别）
 
 ### 哪些文件依赖该文件
 - `src/JuBat.jl` -- 导出所有公开函数
-- `src/Solve.jl` -- 主求解器，调用 `ThermalDistributed2D`, `ThermalDistributed2D_BC`, `ThermalDistributed2D_Ring`, `ThermalRing2D_BC`, `compute_heat_sources`, `compute_heat_sources_with_czm`
+- `src/CallModel.jl` -- 调用 `ThermalDistributed2D`, `ThermalDistributed2D_BC`, `compute_heat_sources`, `compute_heat_sources_with_czm`
 
 ### 新增的外部依赖
 无新增外部包依赖。使用标准库 `SparseArrays`（可能通过 Assemble.jl 间接使用）。
@@ -125,11 +159,12 @@
 - `ThermalDistributed2D_BC` 中的 CZM 界面热阻实现了力学 -> 热模型的反向耦合（损伤 -> 层间热阻）。
 - `compute_heat_sources_with_czm` 实现了力学 -> 电化学耦合（断裂单元退出电化学反应，热源置零）。
 - `per_element_spme` 参数使得每个热单元可以有独立的电化学状态，是 multi-SPMe 架构的关键。
+- 边界边预缓存（`BoundaryEdgeCache`）加速了热模型对流边界条件装配。
 
 ### 哪些变更是耦合相关的
-- 全部 8 个函数均为耦合相关：
+- 全部函数均为耦合相关：
   - `ThermalDistributed2D` + `ThermalDistributed2D_Ring` -- 热-电耦合（温度场求解）
-  - `apply_convection_bc` + `apply_cool_method` -- 热边界条件
+  - `apply_convection_bc` + `apply_convection_bc!` + `apply_cool_method` + `apply_cool_method!` -- 热边界条件
   - `ThermalDistributed2D_BC` -- 热-力耦合（CZM 界面热阻）
   - `compute_heat_sources` -- 电-热耦合（热源计算）
   - `compute_heat_sources_with_czm` -- 电-热-力三场耦合

@@ -10,7 +10,7 @@ function Assemble(Vi::Array{Int64}, Vj::Array{Int64}, Ni::Array{Float64}, Nj::Ar
     gslen1 = size(Ni, 2)
     gslen2 = size(Nj, 2)
     KI = zeros(Int64, gslen * gslen1 * gslen2)
-    KJ = deepcopy(KI)
+    KJ = zeros(Int64, length(KI))
     KV = zeros(Float64, gslen * gslen1 * gslen2)
     v = 0
     for i = 1 : gslen1

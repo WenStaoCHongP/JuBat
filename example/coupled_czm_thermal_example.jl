@@ -31,8 +31,8 @@ println("\n[1] 加载参数...")
 
 param_dim = JuBat.ChooseCell("Jellyroll")
 println("  间隙导热参数:")
-println("    h_0 = $(param_dim.gap_conductance.h_0) W/(m^2 K)")
-println("    k_air = $(param_dim.gap_conductance.k_air) W/(m K)")
+println("    h_c0 = $(param_dim.cohesive.h_c0) W/(m^2 K)")
+println("    k_air = $(param_dim.cohesive.k_air) W/(m K)")
 println("  内聚力参数:")
 println("    sigma_max = $(param_dim.cohesive.σ_max_n/1e6) MPa")
 println("    delta_0 = $(param_dim.cohesive.δ_0_n*1e6) um")
@@ -71,7 +71,7 @@ println("\n[3] 生成统一网格...")
 
 # 先创建Case以获取归一化参数
 case_temp = JuBat.SetCase(param_dim, opt)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(case_temp.param; nθ=60, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(case_temp.param; nθ=16, gsorder=2)
 
 println("  热网格单元数: $(mesh_data.ne)")
 println("  热网格节点数: $(mesh_data.nnode)")
@@ -84,7 +84,7 @@ println("  外圈单元数: $(sum(.!mesh_data.is_inner_layer))")
 # ========================================================================
 println("\n[4] 创建CZM网格...")
 
-czm_mesh = JuBat.create_czm_mesh(mesh_data.Jellyroll_czm, param_dim)
+czm_mesh = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
 
 println("  内聚力单元数: $(czm_mesh.n_cohesive)")
 println("  层数: $(czm_mesh.n_layers)")
@@ -109,7 +109,7 @@ mesh_th = case.mesh["thermal2D"]
 println("\n[6] 设置循环参数...")
 
 cycle_opt = JuBat.CycleOption(
-    n_cycles = 5,           # 循环次数
+    n_cycles = 30,           # 循环次数
     SOC_init = 0.65,         # 初始SOC 90%
     t_discharge = 1800.0,   # 放电时间 1小时
     t_charge = 1800.0,      # 充电时间 1小时
@@ -204,7 +204,7 @@ println("  结果图已保存到: $(joinpath(output_dir, "coupled_czm_thermal_re
 println("\n[9] 间隙导热分析...")
 
 # 计算所有内聚力单元的有效换热系数
-h_eff_all = JuBat.compute_all_gap_conductances(czm_mesh, param_dim.gap_conductance)
+h_eff_all = JuBat.compute_all_gap_conductances(czm_mesh, param_dim.cohesive)
 
 println("  有效换热系数统计:")
 println("    最小值: $(minimum(h_eff_all)) W/(m^2 K)")
@@ -216,8 +216,8 @@ fractured = JuBat.get_fractured_elements(czm_mesh)
 println("  断裂单元数: $(length(fractured))")
 
 # 活跃热单元
-active = JuBat.get_active_elements(czm_mesh, mesh_data)
-println("  活跃热单元数: $(length(active)) / $(mesh_data.ne)")
+active = JuBat.get_active_elements(czm_mesh, case.geometry)
+println("  活跃热单元数: $(length(active)) / $(length(case.geometry.element_layer))")
 
 println("\n" * "="^60)
 println("仿真完成")

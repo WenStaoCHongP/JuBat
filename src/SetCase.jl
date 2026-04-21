@@ -103,9 +103,10 @@ mutable struct Case
     layout::Union{Nothing, MultiSPMeLayout}   # 布局索引（初始化后不变）
     geometry::Union{Nothing, MeshGeometry}   # 几何拓扑（构建后不变）
     czm_mesh::Union{Nothing, CohesiveMesh}   # CZM 网格（演化但类型明确）
+    czm_cache::Union{Nothing, CZMAssemblyCache}  # CZM 装配缓存（E/ν 变化时重建）
 end
 
 # 5 参数兼容构造器
 function Case(param_dim, param, opt, mesh, index)
-    Case(param_dim, param, opt, mesh, index, nothing, nothing, nothing)
+    Case(param_dim, param, opt, mesh, index, nothing, nothing, nothing, nothing)
 end
