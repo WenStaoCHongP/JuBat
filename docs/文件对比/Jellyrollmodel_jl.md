@@ -70,3 +70,10 @@
 - `case.multi_spme_layout["layer_weights"] = ...` → `case.geometry = MeshGeometry(..., layer_weights, ...)`
 - `layer_weights` 存储在 `MeshGeometry` struct 中，提供类型安全访问
 - 行数从约 568 行减少到 562 行
+
+## 后续变更 (2026-04-20)
+
+- **预计算边界边缓存**: `setup_thermal2D_mesh` 中在构造 `MeshGeometry` 之前调用 `identify_boundary_nodes` 和 `compute_boundary_edge_cache`
+- **MeshGeometry 新增 `boundary_edges` 字段**: 将预计算的 `BoundaryEdgeCache` 存入 `case.geometry.boundary_edges`
+- 热模型对流边界条件装配可复用此缓存，消除每步重复扫描网格的开销
+- 行数从约 562 行增加到约 569 行

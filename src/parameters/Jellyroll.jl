@@ -147,7 +147,7 @@ cohesive = Cohesive()
 
 # 法向参数 (Mode I - 张开模式)
 cohesive.σ_max_n = 82e6 # 最大法向牵引力 [Pa]
-cohesive.K_n = 2.4e17 # 初始刚度 [Pa/m]
+cohesive.K_n = 2.4e15 # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
 cohesive.δ_0_n = cohesive.σ_max_n / cohesive.K_n # 损伤起始分离位移 [m]
 cohesive.G_c_n = 25.3  # 断裂能 [J/m²]
 cohesive.δ_c_n = 2.0 * cohesive.G_c_n / cohesive.σ_max_n  # 临界分离位移 [m]
@@ -155,10 +155,10 @@ cohesive.δ_c_n = 2.0 * cohesive.G_c_n / cohesive.σ_max_n  # 临界分离位移
 
 # 切向参数 (Mode II - 剪切模式)
 cohesive.τ_max_t = 0.15e6      # 最大切向牵引力 [Pa] (0.15 MPa)
-cohesive.δ_0_t = 35e-9         # 损伤起始切向位移 [m] (35 nm)
+cohesive.K_t = 4.3e10  # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
+cohesive.δ_0_t = cohesive.τ_max_t / cohesive.K_t         # 损伤起始切向位移 [m] (35 nm)
 cohesive.δ_c_t = 180e-9        # 临界切向位移 [m] (180 nm)
 cohesive.G_c_t = 0.5 * cohesive.τ_max_t * cohesive.δ_c_t  # [J/m²] ≈ 0.0135 J/m²
-cohesive.K_t = cohesive.τ_max_t / cohesive.δ_0_t  # [Pa/m] ≈ 4.3e12 Pa/m
 
 # 混合模式参数
 cohesive.eta = 1.45           # BK准则指数（Benzeggagh-Kenane）[-]

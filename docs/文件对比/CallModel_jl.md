@@ -62,3 +62,14 @@
 - 从 Solve.jl **整体搬家**，不做逻辑拆分或函数重命名
 - CallModel.jl 独立于 Solve.jl，可单独维护和测试
 - Solve.jl 保留纯步进器职责（时间推进、自适应步长、截止检测）
+
+## 后续变更 (2026-04-20)
+
+- **CZM 条件守卫增强**: `case.opt.czm_enabled == true` 改为 `case.opt.czm_enabled == true && case.czm_mesh !== nothing`，避免 czm_mesh 为 nothing 时崩溃
+- **新增 CZM 摘要统计记录**: 在 CZM 路径中调用 `get_damage_statistics` 并将结果写入 variables 字典：
+  - `czm D_max` — 最大损伤值
+  - `czm D_mean` — 平均损伤值
+  - `czm δ_max_n` — 最大法向分离位移
+  - `czm δ_mean_n` — 平均法向分离位移
+  - `czm n_fractured` — 完全断裂单元数
+- 行数从约 188 行增加到约 219 行

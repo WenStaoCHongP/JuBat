@@ -107,11 +107,10 @@ function ModelInitialisation_MultiSPMe(case::Case; initial_soc_distribution::Uni
     # 6) 组装全局状态向量
     y0 = [y0_chem_all; T0_nodes]
     # 7) 缓存布局信息
-    case.layout = MultiSPMeLayout(ne, n_chem, nT)
+    case.layout = MultiSPMeLayout(ne, n_chem, nT, case.mesh["thermal2D"])
 
     return y0
 end
-
 
 """
     extract_element_state(y, e, layout)
@@ -123,7 +122,6 @@ function extract_element_state(y::AbstractVector, e::Int, layout::MultiSPMeLayou
     return y[(offset + 1):(offset + layout.n_chem)]
 end
 
-
 """
     get_thermal_dofs(y, layout)
 
@@ -133,16 +131,12 @@ function get_thermal_dofs(y::AbstractVector, layout::MultiSPMeLayout)
     return y[layout.thermal_range]
 end
 
-
 """
     update_state(y, layout; element_index, element_state, thermal_nodes)
 
 更新多SPMe全局状态向量（返回新向量）。
 """
-function update_state(y::AbstractVector, layout::MultiSPMeLayout;
-                      element_index::Union{Nothing,Int}=nothing,
-                      element_state::Union{Nothing,Vector{Float64}}=nothing,
-                      thermal_nodes::Union{Nothing,Vector{Float64}}=nothing)
+function update_state(y::AbstractVector, layout::MultiSPMeLayout;element_index::Union{Nothing,Int}=nothing,element_state::Union{Nothing,Vector{Float64}}=nothing,thermal_nodes::Union{Nothing,Vector{Float64}}=nothing)
     y_new = copy(y)
     if element_index !== nothing
         @assert 1 <= element_index <= layout.ne "element_index $element_index out of range [1, $(layout.ne)]"

@@ -107,3 +107,14 @@
 ## 后续变更 (2026-04-07)
 
 - 无逻辑变更，文件行数约 184 行
+
+## 后续变更 (2026-04-20)
+
+- **新增 CZM 摘要统计变量**: `StandardVariables` 中 CZM 块新增 5 个变量：
+  - `"czm D_max"` — 最大损伤值 (Float64, 1×num)
+  - `"czm D_mean"` — 平均损伤值 (Float64, 1×num)
+  - `"czm δ_max_n"` — 最大法向分离位移 (Float64, 1×num)
+  - `"czm δ_mean_n"` — 平均法向分离位移 (Float64, 1×num)
+  - `"czm n_fractured"` — 完全断裂单元数 (Float64, 1×num)
+- 这些变量在 `CallModel_MultiSPMe` 中每步填充，用于 `PostProcessing` 输出和循环仿真监控
+- 行数从约 184 行增加到约 191 行

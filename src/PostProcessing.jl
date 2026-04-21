@@ -47,7 +47,7 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
     end
 
     if case.opt.thermalmodel == "lumped"
-        result["thermal lumped internal heat [W/m^3]"] = vec(variables["thermal lumped internal heat"][1, 1:v]) * case.param.scale.q    
+        result["thermal lumped internal heat [W/m^3]"] = vec(variables["thermal lumped internal heat"][1, 1:v]) * case.param.scale.q
     elseif case.opt.thermalmodel == "distributed2D"
         result["thermal2D Q_rxn_NE [W/m3]"] = variables["thermal2D q_rxn_ne"][:, 1:v] * case.param.scale.q
         result["thermal2D Q_rev_NE [W/m3]"] = variables["thermal2D q_rev_ne"][:, 1:v] * case.param.scale.q
@@ -61,6 +61,13 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
         result["thermal2D Q_PCC [W/m3]"] = variables["thermal2D q_pcc"][:, 1:v] * case.param.scale.q
         result["thermal2D Q_NCC [W/m3]"] = variables["thermal2D q_ncc"][:, 1:v] * case.param.scale.q
         result["thermal2D temperature at nodes [K]"] = variables["thermal2D temperature at nodes"][:, 1:v] * case.param_dim.scale.T_ref
+    end
+    if case.opt.czm_enabled == true && haskey(variables, "czm D_max")
+        result["czm D_max"] = vec(variables["czm D_max"][1, 1:v])
+        result["czm D_mean"] = vec(variables["czm D_mean"][1, 1:v])
+        result["czm δ_max_n [m]"] = vec(variables["czm δ_max_n"][1, 1:v]) * case.param_dim.scale.L
+        result["czm δ_mean_n [m]"] = vec(variables["czm δ_mean_n"][1, 1:v]) * case.param_dim.scale.L
+        result["czm n_fractured"] = vec(variables["czm n_fractured"][1, 1:v])
     end
     """
     if case.opt.czm_enabled == true

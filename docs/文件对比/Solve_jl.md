@@ -105,3 +105,21 @@ Solve.jl 现在是耦合架构的**纯步进器**（模型调度已迁出到 Cal
 - **使用 typed 字段**: `case.layout` 替代 Dict 键值访问，`case.layout === nothing` 替代 `isempty` 检查
 - **行数变化**: 从约 710 行减少至 446 行
 - **职责变化**: Solve.jl 现在是纯步进器，模型调度逻辑在 CallModel.jl 中
+
+## 后续变更 (2026-04-20)
+
+- **initial_state 支持 Dict 类型**: `y0_input` 现在可以是 `Dict{String,Any}`（来自循环求解器的 `final_state`），从中提取 `"y"` 键值；若 Dict 中无 `"y"`，回退到模型初始化
+- **MultiSPMeLayout 构造器升级**: `case.layout = MultiSPMeLayout(ne, n_chem, nT)` 改为带 mesh 参数的版本，预计算单元面积
+- **CZM 步内损伤演化**: 在主循环中新增按 `czm_update_interval` 间隔的 CZM 损伤更新：
+  - `czm_active` 标志：`case.opt.czm_enabled && case.czm_mesh !== nothing`
+  - `u_czm_prev` / `czm_step_count` 跨步追踪 CZM 状态
+  - 每 `czm_update_interval` 步调用 `update_czm_damage!`（来自 CzmSolve.jl）
+  - CZM 更新失败不终止求解（`try/catch` + `@debug`）
+  - CZM 计时记入 `timing_totals["czm"]`
+- **性能优化 — 移除不必要 deepcopy**:
+  - `dt = deepcopy(dt_min)` → `dt = dt_min`（标量无需 deepcopy）
+  - `dt_temp = deepcopy(dt)` → `dt_temp = dt`
+  - `y_old = deepcopy(y_new)` → `y_old = copy(y_new)`
+  - `K_old = deepcopy(K_new)` → `K_old = copy(K_new)`
+  - `F_old = deepcopy(F_new)` → `F_old = copy(F_new)`
+- 行数从约 446 行增加到约 475 行

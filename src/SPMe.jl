@@ -99,10 +99,7 @@ end
 SPMe_variables 的原位变体：直接写入预分配 workspace，不创建新 Dict。
 计算逻辑与 SPMe_variables 完全一致，仅省去 StandardVariables 分配。
 """
-function SPMe_variables!(ws::Dict{String, Union{Array{Float64},Float64}},
-                          case::Case, yt, t::Float64;
-                          I_app::Union{Nothing,Float64}=nothing,
-                          T_e::Union{Nothing,Float64}=nothing)
+function SPMe_variables!(ws::Dict{String, Union{Array{Float64},Float64}},case::Case, yt, t::Float64;I_app::Union{Nothing,Float64}=nothing,T_e::Union{Nothing,Float64}=nothing)
     param = case.param
 
     if isnothing(I_app)

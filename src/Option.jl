@@ -73,9 +73,9 @@ end
     czm_update_interval::Int64 = 1     # CZM损伤更新间隔（时间步数），1=每步更新
     czm_soh_threshold::Float64 = 0.8   # SOH终止阈值，SOH≤此值时终止循环
     czm_inner_exit_only::Bool = true   # 断裂时仅内圈单元退出电化学反应
-    czm_iter_method::String = "load_substep"  # "basic" | "load_substep" | "arc_length"
+    czm_iter_method::String = "basic"  # "basic" | "load_substep" | "arc_length"
     czm_max_iter::Int64 = 100           # CZM 牛顿迭代最大步数
     czm_tol::Float64 = 1e-4             # CZM 收敛容差
-    czm_load_steps::Int64 = 20          # 载荷子步数（load_substep 模式）
+    czm_load_steps::Int64 = 2          # 载荷子步数（load_substep 模式）
     czm_arc_length_alpha::Float64 = 1.0 # 弧长法系数（arc_length 模式）
 end

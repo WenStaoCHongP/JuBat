@@ -103,3 +103,10 @@ Initialisation.jl 是耦合架构的**数据准备层**：
 - **参数类型变更**: 辅助函数的参数从 `case::Case` 改为 `layout::MultiSPMeLayout`（类型安全）
 - **布局缓存**: `case.multi_spme_layout[...] = ...` Dict 填充 → `case.layout = MultiSPMeLayout(ne, n_chem, nT)` 构造器
 - 行数从约 239 行减少到 158 行（简化了冗余的类型检查和 Dict 访问代码）
+
+## 后续变更 (2026-04-20)
+
+- **MultiSPMeLayout 构造器升级**: `case.layout = MultiSPMeLayout(ne, n_chem, nT)` 改为 `case.layout = MultiSPMeLayout(ne, n_chem, nT, case.mesh["thermal2D"])`
+  - 使用带 mesh 参数的构造器，在初始化时即预计算单元面积 `areas`
+  - 消除 CallModel_MultiSPMe 中每步重复计算面积的开销
+- 行数保持约 158 行

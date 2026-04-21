@@ -80,21 +80,8 @@
 - `src/ThermalDistributed.jl` — 调用 `thermal_capacity_weights_2d`、`thermal_anisotropic_conductivity_2d`
 - `src/Parallelsolution.jl` — 调用 `get_active_elements`、`compute_gap_conductance`
 
-## 耦合分析
+## 后续变更 (2026-04-20)
 
-本文件是 **热-CZM耦合** 的材料模型桥梁：
-
-- **与distributed2D热模型耦合**：
-  - `thermal_capacity_weights_2d` 和 `thermal_anisotropic_conductivity_2d` 是热有限元组装的核心材料参数
-  - 各向异性导热直接反映了Jellyroll的层状结构：径向串联低导热（受隔膜限制），周向并联高导热（受集流体主导）
-
-- **与CZM耦合**：
-  - 双线性本构模型是CZM求解器（CzmSolve.jl）的核心依赖
-  - `compute_gap_conductance` 将损伤状态转化为界面热阻变化，实现力学-热学双向耦合
-
-- **与分流求解器耦合**：
-  - `get_active_elements` 将CZM断裂状态转化为热单元活跃标志
-  - 断裂界面对应的热单元不参与分流计算
-
-- **与multi-SPMe耦合**：
-  - 热材料矩阵影响温度场分布，进而影响各单元SPMe的电化学动力学
+- **`get_active_elements` 修复**: `ne = mesh_data.ne` 改为 `ne = length(mesh_data.is_inner_layer)`
+  - 修复原因：`mesh_data` 可能没有 `ne` 字段，使用 `is_inner_layer` 向量长度获取单元数更可靠
+  - 确保与 `MeshGeometry` 结构兼容（`is_inner_layer` 是 `MeshGeometry` 的必选字段）

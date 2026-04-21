@@ -544,6 +544,11 @@ function setup_thermal2D_mesh(case, mesh_data; use_merged::Union{Bool,Nothing}=n
     case_new.mesh["thermal2D"] = mesh_th
 
     _, layer_weights = jellyroll_element_properties(case_new.mesh["thermal2D"], case_new.param)
+
+    # 预计算边界边缓存（网格不变量）
+    is_inner, is_outer = identify_boundary_nodes(mesh_th, case_new.param)
+    boundary_cache = compute_boundary_edge_cache(mesh_th, is_outer)
+
     case_new.geometry = MeshGeometry(
         mesh_data.element_layer,
         mesh_data.is_inner_layer,
@@ -551,7 +556,8 @@ function setup_thermal2D_mesh(case, mesh_data; use_merged::Union{Bool,Nothing}=n
         interface_pairs,
         mesh_data.czm_element_map,
         mesh_data.inner_nodes,
-        mesh_data.outer_nodes
+        mesh_data.outer_nodes,
+        boundary_cache
     )
 
     ne = size(mesh_th.element, 1)

@@ -151,82 +151,142 @@ end
 - `separations`: 每个单元的分离位移
 - `tractions`: 每个单元的牵引力
 """
-function assemble_czm_system(czm_mesh::CohesiveMesh, u::Vector{Float64}, cohesive_params::Cohesive; damage_states=nothing)
+function assemble_czm_system(czm_mesh::CohesiveMesh, u::Vector{Float64}, cohesive_params::Cohesive; damage_states=nothing, geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing, ws::Union{Nothing, CZMAssemblyWorkspace}=nothing)
     nnode = czm_mesh.nnode
     ndof = 2 * nnode
     n_coh = czm_mesh.n_cohesive
     states = damage_states === nothing ? czm_mesh.damage_states : damage_states
-    
-    # 稀疏矩阵组装
-    I_idx = Int64[]
-    J_idx = Int64[]
-    K_vals = Float64[]
-    
-    f_int_coh = zeros(Float64, ndof)
-    
-    # 存储每个单元的分离和牵引
-    separations = Vector{Tuple{Float64, Float64}}(undef, n_coh)
-    tractions = Vector{Tuple{Float64, Float64}}(undef, n_coh)
-    
-    for (i, elem) in enumerate(czm_mesh.cohesive_elements)
+
+    # 使用或创建工作区
+    if ws === nothing
+        ws = CZMAssemblyWorkspace(ndof, n_coh)
+    end
+
+    # 每轮重置
+    fill!(ws.f_int_coh, 0.0)
+
+    K_coh = ws.K_coh
+    # 首次调用时构建稀疏结构（基于 DOF 映射），后续只清零 nonzero 值
+    if size(K_coh, 1) != ndof || nnz(K_coh) == 0
+        # 构建 sparsity pattern：每个 cohesive 单元贡献 8×8 块
+        I_pat = Int64[]
+        J_pat = Int64[]
+        sizehint!(I_pat, n_coh * 64)
+        sizehint!(J_pat, n_coh * 64)
+        for i in 1:n_coh
+            if geom_cache !== nothing
+                dofs = geom_cache[i].dofs
+            else
+                elem = czm_mesh.cohesive_elements[i]
+                n1, n2 = elem.nodes_bottom
+                n4, n3 = elem.nodes_top
+                dofs = [2*n1-1, 2*n1, 2*n2-1, 2*n2, 2*n3-1, 2*n3, 2*n4-1, 2*n4]
+            end
+            for a in 1:8
+                for b in 1:8
+                    push!(I_pat, dofs[a])
+                    push!(J_pat, dofs[b])
+                end
+            end
+        end
+        V_pat = zeros(Float64, length(I_pat))
+        K_coh = sparse(I_pat, J_pat, V_pat, ndof, ndof)
+        ws.K_coh = K_coh
+    end
+
+    # 清零 nonzero 值（O(nnz)，无分配）
+    fill!(nonzeros(K_coh), 0.0)
+
+    @inbounds for i in 1:n_coh
         damage_state = states[i]
-        
-        # 单元有4个节点，每节点2个DOF，共8个DOF
-        K_e = zeros(Float64, 8, 8)
-        f_int_e = zeros(Float64, 8)
-        
-        n1, n2 = elem.nodes_bottom
-        n4, n3 = elem.nodes_top
-        x1, y1 = czm_mesh.node[n1, 1], czm_mesh.node[n1, 2]
-        x2, y2 = czm_mesh.node[n2, 1], czm_mesh.node[n2, 2]
-        L = elem.length
-        
+
+        fill!(ws.K_e, 0.0)
+        fill!(ws.f_int_e, 0.0)
+
         T_n_avg = 0.0
         T_t_avg = 0.0
         δ_n_avg = 0.0
         δ_t_avg = 0.0
         w_sum = 0.0
-        
-        if L >= 1e-15
-            dx = x2 - x1
-            dy = y2 - y1
-            t_vec = [dx / L, dy / L]
-            n_vec = [-t_vec[2], t_vec[1]]
-            R = [n_vec[1] n_vec[2]; t_vec[1] t_vec[2]]
-            
+
+        if geom_cache !== nothing
+            geom = geom_cache[i]
+            L = geom.length
+            R = geom.R
+            dofs = geom.dofs
+            wts = geom.gauss_wts
+            pts = geom.gauss_pts
+        else
+            elem = czm_mesh.cohesive_elements[i]
+            n1, n2 = elem.nodes_bottom
+            n4, n3 = elem.nodes_top
+            L = elem.length
+
+            if L >= 1e-15
+                x1, y1 = czm_mesh.node[n1, 1], czm_mesh.node[n1, 2]
+                x2, y2 = czm_mesh.node[n2, 1], czm_mesh.node[n2, 2]
+                dx, dy = x2 - x1, y2 - y1
+                t_vec = [dx / L, dy / L]
+                n_vec = [-t_vec[2], t_vec[1]]
+                R = [n_vec[1] n_vec[2]; t_vec[1] t_vec[2]]
+            else
+                R = [0.0 1.0; 1.0 0.0]
+            end
+            dofs = [2*n1-1, 2*n1, 2*n2-1, 2*n2, 2*n3-1, 2*n3, 2*n4-1, 2*n4]
             order = czm_mesh.bulk_mesh.gs.order
             wts, pts = NCweight(order)
+        end
+
+        if L >= 1e-15
+            # 提取单元位移
+            ws.u_e[1] = u[dofs[1]]; ws.u_e[2] = u[dofs[2]]
+            ws.u_e[3] = u[dofs[3]]; ws.u_e[4] = u[dofs[4]]
+            ws.u_e[5] = u[dofs[5]]; ws.u_e[6] = u[dofs[6]]
+            ws.u_e[7] = u[dofs[7]]; ws.u_e[8] = u[dofs[8]]
 
             for (ξ, w) in zip(pts, wts)
                 N1 = 0.5 * (1.0 - ξ)
                 N2 = 0.5 * (1.0 + ξ)
-                
-                B_global = zeros(Float64, 2, 8)
-                B_global[1, 1] = -N1; B_global[2, 2] = -N1
-                B_global[1, 3] = -N2; B_global[2, 4] = -N2
-                B_global[1, 5] = N2; B_global[2, 6] = N2
-                B_global[1, 7] = N1; B_global[2, 8] = N1
-                
-                B_local = R * B_global
-                
-                u_e = zeros(Float64, 8)
-                u_e[1] = u[2 * n1 - 1]; u_e[2] = u[2 * n1]
-                u_e[3] = u[2 * n2 - 1]; u_e[4] = u[2 * n2]
-                u_e[5] = u[2 * n3 - 1]; u_e[6] = u[2 * n3]
-                u_e[7] = u[2 * n4 - 1]; u_e[8] = u[2 * n4]
-                
-                δ_local = B_local * u_e
-                δ_n = δ_local[1]
-                δ_t = δ_local[2]
-                
+
+                fill!(ws.B_global, 0.0)
+                ws.B_global[1, 1] = -N1; ws.B_global[2, 2] = -N1
+                ws.B_global[1, 3] = -N2; ws.B_global[2, 4] = -N2
+                ws.B_global[1, 5] = N2;  ws.B_global[2, 6] = N2
+                ws.B_global[1, 7] = N1;  ws.B_global[2, 8] = N1
+
+                # B_local = R * B_global  （mul! 无分配）
+                mul!(ws.B_local, R, ws.B_global)
+
+                # δ_local = B_local * u_e  （mul! 无分配）
+                mul!(ws.δ_local, ws.B_local, ws.u_e)
+                δ_n = ws.δ_local[1]
+                δ_t = ws.δ_local[2]
+
                 T_n, T_t, _, _ = bilinear_traction_state(δ_n, δ_t, damage_state, cohesive_params)
                 dT_dδ = bilinear_tangent(δ_n, δ_t, damage_state, cohesive_params)
-                
+
                 J = L / 2.0
-                K_e += w * J * (B_local' * dT_dδ * B_local)
-                T_local = [T_n, T_t]
-                f_int_e += w * J * (B_local' * T_local)
-                
+                wJ = w * J
+
+                # BL_dT = B_local' * dT_dδ  （mul! 无分配）
+                mul!(ws.BL_dT, transpose(ws.B_local), dT_dδ)
+
+                # K_e += wJ * BL_dT * B_local  （mul! 无分配）
+                mul!(ws.BL_dT_B, ws.BL_dT, ws.B_local)
+                for a in 1:8
+                    for b in 1:8
+                        ws.K_e[a, b] += wJ * ws.BL_dT_B[a, b]
+                    end
+                end
+
+                # f_int_e += wJ * B_local' * [T_n, T_t]  （mul! 无分配）
+                ws.T_vec[1] = T_n
+                ws.T_vec[2] = T_t
+                mul!(ws.BLtT, transpose(ws.B_local), ws.T_vec)
+                for a in 1:8
+                    ws.f_int_e[a] += wJ * ws.BLtT[a]
+                end
+
                 T_n_avg += w * T_n
                 T_t_avg += w * T_t
                 δ_n_avg += w * δ_n
@@ -241,34 +301,20 @@ function assemble_czm_system(czm_mesh::CohesiveMesh, u::Vector{Float64}, cohesiv
             δ_n_avg /= w_sum
             δ_t_avg /= w_sum
         end
-        
-        δ_n = δ_n_avg
-        δ_t = δ_t_avg
-        T_n = T_n_avg
-        T_t = T_t_avg
-        
-        separations[i] = (δ_n, δ_t)
-        tractions[i] = (T_n, T_t)
-        
-        # 获取单元DOF编号
-        n1, n2 = elem.nodes_bottom
-        n4, n3 = elem.nodes_top
-        dofs = [2*n1-1, 2*n1, 2*n2-1, 2*n2, 2*n3-1, 2*n3, 2*n4-1, 2*n4]
-        
-        # 组装到全局
+
+        ws.separations[i] = (δ_n_avg, δ_t_avg)
+        ws.tractions[i] = (T_n_avg, T_t_avg)
+
+        # 组装到预分配稀疏矩阵（直接索引，无 sparse() 重建）
         for a in 1:8
-            f_int_coh[dofs[a]] += f_int_e[a]
+            ws.f_int_coh[dofs[a]] += ws.f_int_e[a]
             for b in 1:8
-                push!(I_idx, dofs[a])
-                push!(J_idx, dofs[b])
-                push!(K_vals, K_e[a, b])
+                K_coh[dofs[a], dofs[b]] += ws.K_e[a, b]
             end
         end
     end
-    
-    K_coh = sparse(I_idx, J_idx, K_vals, ndof, ndof)
-    
-    return K_coh, f_int_coh, separations, tractions
+
+    return K_coh, ws.f_int_coh, ws.separations, ws.tractions
 end
 
 """
@@ -402,15 +448,125 @@ function assemble_thermal_chemical_load(czm_mesh::CohesiveMesh, E_eff::Float64, 
     return F_thermo_chem
 end
 
-function assemble_coupled_system(czm_mesh::CohesiveMesh, u::Vector{Float64},E_eff::Float64, ν_eff::Float64, cohesive_params::Cohesive;F_ext::Union{Vector{Float64}, Nothing}=nothing,F_thermo_chem::Union{Vector{Float64}, Nothing}=nothing,damage_states=nothing)
+# ========================================================================
+# CZM Assembly Cache Builder
+# ========================================================================
+
+"""
+    build_czm_cache(czm_mesh, E_eff, ν_eff, param)
+
+构建 CZM 装配缓存，包括 K_bulk、cohesive 几何、边界条件。
+当 E/ν 不变时，整个缓存可在多次 Newton 迭代中复用。
+"""
+function build_czm_cache(czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64, param)
+    cache = CZMAssemblyCache()
+
+    # 1. 缓存 K_bulk（最高 ROI：消除 ~60 次/更新 的冗余 bulk 重组）
+    cache.K_bulk = assemble_bulk_stiffness(czm_mesh, E_eff, ν_eff)
+
+    # 2. 缓存 bulk DOF 映射
+    element = czm_mesh.bulk_element
+    ne = size(element, 1)
+    cache.bulk_dofs = Vector{Vector{Int64}}(undef, ne)
+    for e in 1:ne
+        elem_nodes = element[e, :]
+        dofs = Vector{Int64}(undef, 8)
+        for (i, n) in enumerate(elem_nodes)
+            dofs[2*i - 1] = 2*n - 1
+            dofs[2*i]     = 2*n
+        end
+        cache.bulk_dofs[e] = dofs
+    end
+
+    # 3. 缓存 cohesive 单元几何
+    n_coh = czm_mesh.n_cohesive
+    cache.cohesive_geom = Vector{CohesiveElementGeom}(undef, n_coh)
+    for (i, elem) in enumerate(czm_mesh.cohesive_elements)
+        n1, n2 = elem.nodes_bottom
+        n4, n3 = elem.nodes_top
+        L = elem.length
+
+        if L >= 1e-15
+            x1, y1 = czm_mesh.node[n1, 1], czm_mesh.node[n1, 2]
+            x2, y2 = czm_mesh.node[n2, 1], czm_mesh.node[n2, 2]
+            dx, dy = x2 - x1, y2 - y1
+            t_vec = [dx / L, dy / L]
+            n_vec = [-t_vec[2], t_vec[1]]
+            R = [n_vec[1] n_vec[2]; t_vec[1] t_vec[2]]
+        else
+            t_vec = [1.0, 0.0]
+            n_vec = [0.0, 1.0]
+            R = [0.0 1.0; 1.0 0.0]
+        end
+
+        dofs = [2*n1-1, 2*n1, 2*n2-1, 2*n2, 2*n3-1, 2*n3, 2*n4-1, 2*n4]
+
+        order = czm_mesh.bulk_mesh.gs.order
+        wts, pts = NCweight(order)
+
+        cache.cohesive_geom[i] = CohesiveElementGeom(
+            L, n_vec, t_vec, R, dofs,
+            [n1, n2], [n4, n3],
+            wts, pts
+        )
+    end
+
+    # 4. 缓存边界条件
+    bc_nodes, _, _ = identify_bc_nodes_czm(czm_mesh, param)
+    bc_dofs = Int64[]
+    bc_vals = Float64[]
+    for (node, bc_type) in bc_nodes
+        if bc_type == :fixed_xy
+            push!(bc_dofs, 2 * node - 1); push!(bc_vals, 0.0)
+            push!(bc_dofs, 2 * node);     push!(bc_vals, 0.0)
+        elseif bc_type == :fixed_x
+            push!(bc_dofs, 2 * node - 1); push!(bc_vals, 0.0)
+        elseif bc_type == :fixed_y
+            push!(bc_dofs, 2 * node);     push!(bc_vals, 0.0)
+        end
+    end
+    cache.bc_dofs = bc_dofs
+    cache.bc_vals = bc_vals
+
+    # 5. 记录参数用于失效判断
+    cache.E_eff = E_eff
+    cache.ν_eff = ν_eff
+
+    # 6. 创建可复用工作区（ndof × n_coh，跨时间步复用）
     ndof = 2 * czm_mesh.nnode
-    
-    # 固体刚度
-    K_bulk = assemble_bulk_stiffness(czm_mesh, E_eff, ν_eff)
-    
-    # 内聚力刚度和内力
+    cache.ws = CZMAssemblyWorkspace(ndof, n_coh)
+
+    cache.valid = true
+
+    return cache
+end
+
+"""
+    ensure_czm_cache(case, czm_mesh, E_eff, ν_eff)
+
+确保 `case.czm_cache` 可用且未过期。如果缓存不存在或参数不匹配则重建。
+"""
+function ensure_czm_cache(case::Case, czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64)
+    cache = case.czm_cache
+    if cache === nothing || !cache.valid ||
+       cache.E_eff != E_eff || cache.ν_eff != ν_eff ||
+       length(cache.cohesive_geom) != czm_mesh.n_cohesive
+        cache = build_czm_cache(czm_mesh, E_eff, ν_eff, case.param)
+        case.czm_cache = cache
+    end
+    return cache
+end
+
+function assemble_coupled_system(czm_mesh::CohesiveMesh, u::Vector{Float64},E_eff::Float64, ν_eff::Float64, cohesive_params::Cohesive;F_ext::Union{Vector{Float64}, Nothing}=nothing,F_thermo_chem::Union{Vector{Float64}, Nothing}=nothing,damage_states=nothing,K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,ws::Union{Nothing, CZMAssemblyWorkspace}=nothing)
+    ndof = 2 * czm_mesh.nnode
+
+    # 固体刚度（使用缓存或重新计算）
+    K_bulk = K_bulk_cached !== nothing ? K_bulk_cached : assemble_bulk_stiffness(czm_mesh, E_eff, ν_eff)
+
+    # 内聚力刚度和内力（使用几何缓存和工作区）
     K_coh, f_int_coh, separations, tractions = assemble_czm_system(
-        czm_mesh, u, cohesive_params; damage_states=damage_states)
+        czm_mesh, u, cohesive_params; damage_states=damage_states,
+        geom_cache=geom_cache, ws=ws)
     
     # 固体内力（线性弹性：f_int = K * u）
     f_int_bulk = K_bulk * u
@@ -424,11 +580,11 @@ function assemble_coupled_system(czm_mesh::CohesiveMesh, u::Vector{Float64},E_ef
     return K_total, f_int_total, separations, tractions
 end
 
-function assemble_coupled_system_full(czm_mesh::CohesiveMesh, u::Vector{Float64},E_eff::Float64, ν_eff::Float64,α_eff::Float64, β_n::Float64, β_p::Float64,cohesive_params::Cohesive,dT_elem::Vector{Float64},Δsoc_n_elem::Vector{Float64},Δsoc_p_elem::Vector{Float64};F_ext::Union{Vector{Float64}, Nothing}=nothing,damage_states=nothing)
+function assemble_coupled_system_full(czm_mesh::CohesiveMesh, u::Vector{Float64},E_eff::Float64, ν_eff::Float64,α_eff::Float64, β_n::Float64, β_p::Float64,cohesive_params::Cohesive,dT_elem::Vector{Float64},Δsoc_n_elem::Vector{Float64},Δsoc_p_elem::Vector{Float64};F_ext::Union{Vector{Float64}, Nothing}=nothing,damage_states=nothing,K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,ws::Union{Nothing, CZMAssemblyWorkspace}=nothing)
     ndof = 2 * czm_mesh.nnode
-    
+
     # 组装基本系统
-    K_total, f_int_total, separations, tractions = assemble_coupled_system(czm_mesh, u, E_eff, ν_eff, cohesive_params; damage_states=damage_states)
+    K_total, f_int_total, separations, tractions = assemble_coupled_system(czm_mesh, u, E_eff, ν_eff, cohesive_params; damage_states=damage_states, K_bulk_cached=K_bulk_cached, geom_cache=geom_cache, ws=ws)
     
     # 热-化学载荷
     F_thermo_chem = assemble_thermal_chemical_load(czm_mesh, E_eff, ν_eff, α_eff, β_n, β_p,dT_elem, Δsoc_n_elem, Δsoc_p_elem)

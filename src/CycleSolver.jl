@@ -128,6 +128,11 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_curren
     old_v_l = case.param.cell.v_l
     old_v_h = case.param.cell.v_h
     try
+        # 将 CZM 网格挂载到 case 上，以便 CallModel 能访问
+        if czm_mesh !== nothing
+            case.czm_mesh = czm_mesh
+        end
+
         if phase_type == PHASE_DISCHARGE
             case.param.cell.v_l = V_limit
             case.param.cell.v_h = 1.0e6
@@ -149,18 +154,10 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_curren
         final_state = get(solve_result, "final_state", Dict{String, Any}())
         final_state["t_global"] = result.t_start + duration
 
-        # 阶段末调用 CZM 求解器（CzmSolve.jl）更新损伤，避免在 CycleSolver 重复定义求解循环。
-        if czm_mesh !== nothing && czm_params !== nothing
-            y_end = final_state["y"]
-            T_nodes_nd = get(final_state, "T_nodes", Float64[])
-            t_end_nd = duration / case.param.scale.t0
-            _, _, _, vars_end, _ = CallModel(case, y_end, t_end_nd, jacobi="update")
-            try
-                update_czm_damage!(czm_mesh, czm_params, case, vars_end, T_nodes_nd, nothing)
-            catch e
-                @debug "Phase-end CZM update failed: $e"
-            end
-        end
+        # CZM 损伤已由 Solve 主循环每步更新（Solve.jl:270-285），此处不再冗余调用。
+        # 旧版在此处调用 update_czm_damage!(..., u_czm_prev=nothing) 会导致：
+        #   1. 位移场从零重解，产生不一致的应力-位移解
+        #   2. 每阶段额外浪费 ~12s 计算
 
         phase_data = _postprocess_phase_result(
             case, phase_type, solve_result, initial_state,
@@ -246,7 +243,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
     )
     
     # CZM参数
-    czm_params = case.param_dim.cohesive
+    czm_params = case.param.cohesive
     
     # SOH监控参数
     soh_threshold = case.opt.czm_soh_threshold
@@ -521,165 +518,4 @@ function apply_initial_soc!(case::Case, param_dim, soc::Float64)
     case.param.PE.cs0 = param_dim.PE.cs0 / param_dim.PE.cs_max
     
     return cs0_NE, cs0_PE
-end
-
-"""
-    compute_czm_effective_params(case, param_dim)
-
-计算 CZM 求解所需的有效材料参数。
-
-# 返回
-- `E_eff`: 有效弹性模量 [Pa]
-- `ν_eff`: 有效泊松比 [-]
-- `α_eff`: 有效热膨胀系数 [1/K]
-- `β_n`: 负极扩散应变系数 [-]
-- `β_p`: 正极扩散应变系数 [-]
-"""
-function compute_czm_effective_params(case::Case, param_dim)
-    # 有效弹性模量（厚度加权平均）
-    E_eff = (param_dim.NE.E * param_dim.NE.thickness + param_dim.PE.E * param_dim.PE.thickness) / 
-            (param_dim.NE.thickness + param_dim.PE.thickness)
-    
-    # 有效泊松比（厚度加权平均）
-    ν_eff = (param_dim.NE.nu * param_dim.NE.thickness + param_dim.PE.nu * param_dim.PE.thickness) / 
-            (param_dim.NE.thickness + param_dim.PE.thickness)
-    
-    # 有效热膨胀系数（厚度加权平均）
-    α_eff = (param_dim.NE.alphaT * param_dim.NE.thickness + param_dim.PE.alphaT * param_dim.PE.thickness) / 
-            (param_dim.NE.thickness + param_dim.PE.thickness)
-    
-    # 扩散应变系数 β = Ω/3（部分摩尔体积/3）
-    β_n = param_dim.NE.Omega / 3.0
-    β_p = param_dim.PE.Omega / 3.0
-    
-    return E_eff, ν_eff, α_eff, β_n, β_p
-end
-
-"""
-    compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)
-
-计算 CZM 损伤计算所需的单元级应变输入。
-
-# 返回
-- `dT_elem`: 每个单元的温度变化 [K]
-- `Δsoc_n_elem`: 每个单元的负极 SOC 变化 [-]
-- `Δsoc_p_elem`: 每个单元的正极 SOC 变化 [-]
-"""
-function compute_czm_strain_inputs(case::Case, variables::Dict, czm_mesh, T_nodes_carry)
-    ne = size(czm_mesh.bulk_element, 1)
-    param_dim = case.param_dim
-    
-    # 参考温度（维度值）
-    T_ref = param_dim.cell.T0
-    T_ref_scale = param_dim.scale.T_ref
-    
-    # 参考 SOC（归一化值）
-    soc_ref_n = case.param.NE.cs0
-    soc_ref_p = case.param.PE.cs0
-    
-    # 初始化输出数组
-    dT_elem = zeros(Float64, ne)
-    Δsoc_n_elem = zeros(Float64, ne)
-    Δsoc_p_elem = zeros(Float64, ne)
-    
-    # 提取温度场（转换为维度值）
-    if length(T_nodes_carry) >= czm_mesh.nnode
-        # T_nodes_carry 是无量纲温度（T/T_ref）
-        for e in 1:ne
-            nodes = czm_mesh.bulk_element[e, :]
-            # 计算单元平均温度（无量纲）
-            T_elem_nd = 0.0
-            valid_nodes = 0
-            for n in nodes
-                if n <= length(T_nodes_carry)
-                    T_elem_nd += T_nodes_carry[n]
-                    valid_nodes += 1
-                end
-            end
-            if valid_nodes > 0
-                T_elem_nd /= valid_nodes
-                # 转换为有量纲温度变化 [K]
-                T_elem_dim = T_elem_nd * T_ref_scale
-                dT_elem[e] = T_elem_dim - T_ref
-            end
-        end
-    end
-    
-    # 提取 SOC 分布（如果 variables 中有）
-    soc_n_elem = variables["thermal2D element soc_n"]
-    soc_p_elem = variables["thermal2D element soc_p"]
-    
-    # 处理数组维度（可能是 ne×1 或 ne×num）
-    if isa(soc_n_elem, AbstractMatrix)
-        soc_n_elem = soc_n_elem[:, end]
-        soc_p_elem = soc_p_elem[:, end]
-    end
-    
-    for e in 1:min(ne, length(soc_n_elem))
-        Δsoc_n_elem[e] = soc_n_elem[e] - soc_ref_n
-        Δsoc_p_elem[e] = soc_p_elem[e] - soc_ref_p
-    end
-    
-    return dT_elem, Δsoc_n_elem, Δsoc_p_elem
-end
-
-"""
-    update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)
-
-更新 CZM 网格的损伤状态。
-
-使用牛顿-拉弗森迭代求解力学平衡方程，通过载荷子步法处理软化收敛问题。
-
-# 参数
-- `czm_mesh`: CZM 网格对象
-- `czm_params`: CZM 参数（cohesive）
-- `case`: Case 对象
-- `variables`: 当前时间步的变量字典
-- `T_nodes_carry`: 当前温度场
-- `u_czm_prev`: 上一步的 CZM 位移场
-
-# 返回
-- `u_czm`: 更新后的 CZM 位移场
-- `converged`: 是否收敛
-"""
-function update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)
-    param_dim = case.param_dim
-    param = case.param
-
-    # 同步CZM模型选项（model1 or mix）
-    czm_params.czm_model = case.opt.czm_model
-    
-    # 计算有效材料参数
-    E_eff, ν_eff, α_eff, β_n, β_p = compute_czm_effective_params(case, param_dim)
-    
-    # 计算应变输入
-    dT_elem, Δsoc_n_elem, Δsoc_p_elem = compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)
-    
-    # 外力向量（一般为零）
-    ndof = 2 * czm_mesh.nnode
-    F_ext = zeros(Float64, ndof)
-    
-    # 初始化位移（如果没有上一步的值）
-    if u_czm_prev === nothing || length(u_czm_prev) != ndof
-        u_czm_prev = zeros(Float64, ndof)
-    end
-    
-    # 调用 CZM 求解器（可选迭代方式）
-    iter_method = case.opt.czm_iter_method
-    max_iter = case.opt.czm_max_iter
-    tol = case.opt.czm_tol
-    n_load_steps = case.opt.czm_load_steps
-    arc_length_alpha = case.opt.czm_arc_length_alpha
-
-    result, updated_czm_mesh = solve_czm_step(
-        czm_mesh, F_ext, E_eff, ν_eff, czm_params, param, u_czm_prev;
-        α_eff=α_eff, β_n=β_n, β_p=β_p,
-        dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
-        max_iter=max_iter, tol=tol, n_load_steps=n_load_steps, arc_length_alpha=arc_length_alpha, iter_method=iter_method
-    )
-
-    # Keep caller mesh damage states in sync for subsequent thermo-mechanical coupling.
-    czm_mesh.damage_states = updated_czm_mesh.damage_states
-    
-    return result.displacement, result.converged
 end

@@ -106,10 +106,18 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 6) 计算逐单元热源（调用 ThermalDistributed.jl 中的统一函数)
     t_thermal_ns = time_ns()
     t_czm_model_s = 0.0
-    if case.opt.czm_enabled == true
+    if case.opt.czm_enabled == true && case.czm_mesh !== nothing
         t_czm_ns = time_ns()
         variables = compute_heat_sources_with_czm(case, variables, variables_elems, I_e, Te_prev, areas, case.czm_mesh, mesh_th)
         t_czm_model_s = (time_ns() - t_czm_ns) * 1e-9
+        # 记录 CZM 摘要统计
+        stats = get_damage_statistics(case.czm_mesh)
+        variables["czm D_max"] = [stats.max_D]
+        variables["czm D_mean"] = [stats.mean_D]
+        δ_max_n_vals = [s.δ_max_n for s in case.czm_mesh.damage_states]
+        variables["czm δ_max_n"] = [maximum(δ_max_n_vals)]
+        variables["czm δ_mean_n"] = [mean(δ_max_n_vals)]
+        variables["czm n_fractured"] = [Float64(stats.n_fractured)]
     else
         variables = compute_heat_sources(case, variables, variables_elems, I_e, Te_prev, areas; per_element_spme=true)
     end

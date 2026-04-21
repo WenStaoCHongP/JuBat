@@ -3,18 +3,18 @@
 ## 文件状态: 新增 (Parameters_Design分支)
 
 ## 文件概况
-- 行数: 515
+- 行数: 680
 - 路径: `src/CzmSolve.jl`
 
 ### 主要结构体
 
-| 结构体 | 说明 |
+|| 结构体 | 说明 |
 |--------|------|
 | `CZMResult` | CZM求解结果，包含位移场(displacement)、损伤(damage)、法向/切向牵引力、法向/切向分离、收敛标志、迭代次数、残差范数 |
 
 ### 主要函数/方法列表
 
-| 函数签名 | 行号 | 说明 |
+|| 函数签名 | 行号 | 说明 |
 |----------|------|------|
 | `newton_raphson_czm(czm_mesh, F_ext, E_eff, nu_eff, cohesive_params, param; alpha_eff, beta_n, beta_p, dT_elem, Dsoc_n_elem, Dsoc_p_elem, max_iter, tol, u0, n_load_steps)` | L30 | 带载荷子步的Newton-Raphson求解器 |
 | `solve_czm_step(czm_mesh, F_ext, E_eff, nu_eff, cohesive_params, param, u_prev; ..., iter_method)` | L154 | 统一CZM求解入口，支持3种迭代方法 |
@@ -23,6 +23,9 @@
 | `reset_damage_states(czm_mesh)` | L429 | 重置所有损伤状态为初始值 |
 | `accumulate_cycle_damage(czm_mesh, cycle_damage_increment)` | L452 | 跨循环累积损伤增量 |
 | `czm_output_to_variables(czm_mesh, result, variables)` | L496 | 将CZMResult转换为variables字典格式 |
+| `compute_czm_effective_params(case, param_dim)` | L515 | 计算CZM有效材料参数（E_eff, nu_eff, alpha_eff, beta_n, beta_p） |
+| `compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)` | L564 | 计算CZM应变输入（温度变化、SOC变化） |
+| `update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)` | L641 | 调用CZM求解器更新损伤状态 |
 
 ## 功能描述
 
@@ -53,24 +56,35 @@
 
 5. **后处理**（`czm_output_to_variables`）：将位移、损伤、牵引力、分离位移写入variables字典，便于PostProcessing使用。
 
+6. **CZM 损伤更新接口**（`update_czm_damage!`）：
+   - 从当前variables提取温度场和SOC分布
+   - 计算有效材料参数（厚度加权平均）
+   - 调用 `solve_czm_step` 进行力学求解
+   - 同步损伤状态到调用者的czm_mesh
+   - 被 Solve.jl 和 CycleSolver.jl 共用
+
 ## 依赖关系
 
 ### 该文件依赖
 - `src/czm.jl` — `assemble_coupled_system`、`assemble_thermal_chemical_load`、`apply_bc_czm`、`identify_bc_nodes_czm`
 - `src/Materialmatrix.jl` — `update_damage`、`bilinear_traction_state`（间接）
 - `src/SetMesh.jl` — `CohesiveMesh`、`Mesh`
-- `src/SetParams.jl` — `Cohesive`参数类型
+- `src/SetParams.jl` — `Params`、`Cohesive`参数类型
 - `src/Variables.jl` — `Case`类型
 
 ### 哪些文件调用该文件
 - `src/JuBat.jl` — `include("CzmSolve.jl")`（L9）
-- `src/CycleSolver.jl` — 调用 `solve_czm_step`（通过 `_update_czm_damage!`）、`get_damage_statistics`、`czm_output_to_variables`、`accumulate_cycle_damage`
+- `src/CycleSolver.jl` — 调用 `solve_czm_step`（通过 `update_czm_damage!`）、`get_damage_statistics`、`czm_output_to_variables`、`accumulate_cycle_damage`
+- `src/Solve.jl` — 调用 `update_czm_damage!` 在每个时间步更新 CZM 损伤
+- `src/CallModel.jl` — 调用 `get_damage_statistics` 获取 CZM 摘要统计
 
 ## 耦合分析
 
 本文件是CZM损伤演化的**求解引擎**，在电-热-CZM耦合中承担力学求解角色：
 
-- **与CycleSolver耦合**：`solve_czm_step` 是循环求解器中CZM更新的核心入口。每个充电/放电/静置阶段结束时，CycleSolver调用 `_update_czm_damage!` -> `solve_czm_step` 更新损伤状态。
+- **与CycleSolver耦合**：`solve_czm_step` 是循环求解器中CZM更新的核心入口。每个充电/放电/静置阶段结束时，CycleSolver调用 `update_czm_damage!` -> `solve_czm_step` 更新损伤状态。
+
+- **与Solve.jl耦合**：Solve.jl 在每个时间步（按 `czm_update_interval` 间隔）调用 `update_czm_damage!` 实现步内损伤演化，而非仅在阶段末更新。
 
 - **与热模型耦合**：`dT_elem` 从热模型的温度场提取，转化为热应力载荷驱动CZM。
 
@@ -79,3 +93,9 @@
 - **与分流求解器耦合**：损伤状态通过 `check_fracture_criterion` 影响分流求解器——断裂的界面导致对应热单元不分配电流。
 
 - **迭代方法选择**：通过 `case.opt.czm_iter_method` 控制迭代方法。"basic"适合快速计算，"load_substep"适合一般情况，"arc_length"适合严重软化和后峰路径追踪。
+
+## 后续变更 (2026-04-20)
+
+- **从 CycleSolver.jl 迁入 CZM 损伤更新函数**：`compute_czm_effective_params`、`compute_czm_strain_inputs`、`update_czm_damage!` 三个函数（共约 165 行）从 CycleSolver.jl 迁入
+  - 迁入原因：Solve.jl 新增步内 CZM 更新功能，需要共用这些函数，放在 CzmSolve.jl 是最自然的位置
+- 行数从约 515 行增加到约 680 行

@@ -3,7 +3,8 @@
     "allow": [
       "mcp__zread__search_doc",
       "Bash(wc -l src/*.jl src/parameters/*.jl 2>/dev/null | tail -5; echo \"---\"; for f in src/*.jl src/parameters/*.jl; do echo \"$\\(wc -l < \"$f\"\\) $f\"; done)",
-      "Bash(echo \"=== New files ===\" && ls -la docs/文件对比/CallModel_jl.md docs/文件对比/CouplingState_jl.md 2>/dev/null && echo \"=== Total files ===\" && ls docs/文件对比/*.md | wc -l)"
+      "Bash(echo \"=== New files ===\" && ls -la docs/文件对比/CallModel_jl.md docs/文件对比/CouplingState_jl.md 2>/dev/null && echo \"=== Total files ===\" && ls docs/文件对比/*.md | wc -l)",
+      "mcp__sequential-thinking__sequentialthinking"
     ]
   }
 }
