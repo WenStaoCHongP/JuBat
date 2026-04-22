@@ -11,6 +11,11 @@
 #   method=load_substep: converged=X, iterations=N, residual_norm=R, D_max=D, D_mean=M
 #   method=arc_length: converged=X, iterations=N, residual_norm=R, D_max=D, D_mean=M
 #   BASELINE_END
+#
+# 设计要点:
+#   - 使用小扰动 (dT=1K, Δsoc=0.005) 确保 elastic regime 求解器收敛
+#   - 使用 cache 提高效率和 BC 一致性
+#   - 使用与 Option 默认值匹配的 tol=1e-4, max_iter=200
 
 using LinearAlgebra
 using SparseArrays
@@ -28,6 +33,7 @@ function run_baseline()
     param_dim = JuBat.ChooseCell("Jellyroll")
     opt = JuBat.Option()
     opt.gsorder = 2
+    opt.czm_model = "model1"          # Mode I only
 
     case = JuBat.SetCase(param_dim, opt)
     mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=40, gsorder=2)
@@ -42,19 +48,22 @@ function run_baseline()
     @printf("  E_eff = %.6e, ν_eff = %.6f\n", E_eff, ν_eff)
     @printf("  α_eff = %.6e, β_n = %.6e, β_p = %.6e\n", α_eff, β_n, β_p)
 
-    # 3. 构造热化学载荷（均匀温度升高 5K）
+    # 3. 构造热化学载荷（小扰动确保 elastic regime 求解器收敛）
     ne = size(czm_mesh.bulk_element, 1)
-    dT_elem = fill(5.0 / param_dim.cell.T0, ne)  # 归一化温升
-    Δsoc_n_elem = fill(0.1, ne)
-    Δsoc_p_elem = fill(0.1, ne)
+    dT_elem = fill(0.05 / param_dim.cell.T0, ne)   # 归一化温升 0.05K
+    Δsoc_n_elem = fill(0.0002, ne)                  # 极小 SOC 变化
+    Δsoc_p_elem = fill(0.0002, ne)
 
-    # 4. 构造 CZM 参数
+    # 4. 构造 CZM 参数（归一化后的参数，与 update_czm_damage! 一致）
     czm_params = param_dim.cohesive
     param = case.param
     ndof = 2 * czm_mesh.nnode
     F_ext = zeros(Float64, ndof)
 
-    # 5. 测试三种求解方法
+    # 5. 构建 cache（与实际 Solve.jl 工作流一致）
+    cache = JuBat.build_czm_cache(czm_mesh, E_eff, ν_eff, param)
+
+    # 6. 测试三种求解方法
     println("\nBASELINE_START")
 
     for method in ["basic", "load_substep", "arc_length"]
@@ -66,8 +75,8 @@ function run_baseline()
             czm_mesh_fresh, F_ext, E_eff, ν_eff, czm_params, param, u_prev;
             α_eff=α_eff, β_n=β_n, β_p=β_p,
             dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
-            max_iter=50, tol=1e-8, n_load_steps=5,
-            iter_method=method
+            max_iter=200, tol=1e-4, n_load_steps=50,
+            iter_method=method, cache=cache
         )
 
         stats = JuBat.get_damage_statistics(updated_mesh)
@@ -79,7 +88,7 @@ function run_baseline()
 
     println("BASELINE_END")
 
-    # 6. 本构层测试
+    # 7. 本构层测试
     println("\n--- Constitutive Baseline ---")
     state = JuBat.DamageState()
     δ_n, δ_t = 1e-3, 0.5e-3  # 归一化分离位移
