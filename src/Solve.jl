@@ -202,7 +202,9 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
 
     # CZM 损伤演化状态
     czm_active = case.opt.czm_enabled && case.czm_mesh !== nothing
-    u_czm_prev = nothing       # 上一步 CZM 位移场
+    if czm_active && case.czm_layout === nothing
+        case.czm_layout = CzmLayout(case.czm_mesh)
+    end
     czm_step_count = 0         # CZM 更新步计数器
     
     # run the model
@@ -274,11 +276,8 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
                     t_czm_ns = time_ns()
                     try
                         u_czm_new, czm_converged = update_czm_damage!(
-                            case.czm_mesh, case.param.cohesive,
-                            case, variables, T_nodes_carry, u_czm_prev)
-                        if czm_converged
-                            u_czm_prev = u_czm_new
-                        end
+                            case, variables, T_nodes_carry)
+                        # u_prev 已由 update_czm_damage! 内部管理
                     catch e
                         @debug "CZM damage update failed at step $czm_step_count: $e"
                     end
