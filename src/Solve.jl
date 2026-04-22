@@ -388,49 +388,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     
     # 附加热相关历史数据
     try
-        if case.opt.thermalmodel == "distributed2D"
-            for key in ["thermal2D element current", "thermal2D eta_n_e", "thermal2D eta_p_e", "thermal2D element soc_n", "thermal2D element soc_p",
-                    "thermal2D q_rxn_ne", "thermal2D q_rev_ne", "thermal2D q_ohm_s_ne", "thermal2D q_ohm_e_ne",
-                    "thermal2D q_sp", "thermal2D q_rxn_pe", "thermal2D q_rev_pe", "thermal2D q_ohm_s_pe", "thermal2D q_ohm_e_pe",
-                    "thermal2D q_pcc", "thermal2D q_ncc",
-                    "thermal2D element OCV", "thermal2D n_cutoff_elements", "thermal2D active_mask",
-                    "thermal2D nearest_cutoff_element", "thermal2D nearest_cutoff_ocv", "thermal2D margin_to_cutoff"]
-                result[key] = variables_hist[key][:, 1:v]
-            end
-            result["heat_source_fields"] = variables_hist["heat_source_fields"][:, 1:v]
-            result["total heat source [W]"] = vec(variables_hist["total heat source"][1, 1:v])
-
-            # 热源物理单位转换（无量纲 → 物理单位)
-            q_scale = case.param_dim.scale.q
-            result["thermal2D Q_rxn_NE [W/m3]"] = variables_hist["thermal2D q_rxn_ne"][:, 1:v] .* q_scale
-            result["thermal2D Q_rev_NE [W/m3]"] = variables_hist["thermal2D q_rev_ne"][:, 1:v] .* q_scale
-            result["thermal2D Q_ohm_s_NE [W/m3]"] = variables_hist["thermal2D q_ohm_s_ne"][:, 1:v] .* q_scale
-            result["thermal2D Q_ohm_e_NE [W/m3]"] = variables_hist["thermal2D q_ohm_e_ne"][:, 1:v] .* q_scale
-            result["thermal2D Q_SP [W/m3]"] = variables_hist["thermal2D q_sp"][:, 1:v] .* q_scale
-            result["thermal2D Q_rxn_PE [W/m3]"] = variables_hist["thermal2D q_rxn_pe"][:, 1:v] .* q_scale
-            result["thermal2D Q_rev_PE [W/m3]"] = variables_hist["thermal2D q_rev_pe"][:, 1:v] .* q_scale
-            result["thermal2D Q_ohm_s_PE [W/m3]"] = variables_hist["thermal2D q_ohm_s_pe"][:, 1:v] .* q_scale
-            result["thermal2D Q_ohm_e_PE [W/m3]"] = variables_hist["thermal2D q_ohm_e_pe"][:, 1:v] .* q_scale
-            result["thermal2D Q_PCC [W/m3]"] = variables_hist["thermal2D q_pcc"][:, 1:v] .* q_scale
-            result["thermal2D Q_NCC [W/m3]"] = variables_hist["thermal2D q_ncc"][:, 1:v] .* q_scale
-
-            # 节点温度时间序列
-            Tref = case.param_dim.scale.T_ref
-            T_nodes_hist = variables_hist["thermal2D temperature at nodes"][:, 1:v] .* Tref
-            result["thermal2D temperature at nodes [K]"] = T_nodes_hist
-
-            # 单元温度时间序列（节点平均）
-            mesh_th = case.mesh["thermal2D"]
-            ne = size(mesh_th.element, 1)
-            n_t = size(T_nodes_hist, 2)
-            T_elem_temp_hist = zeros(Float64, ne, n_t)
-            for ti in 1:n_t
-                T_nodes_t = variables_hist["thermal2D temperature at nodes"][:, ti]
-                T_elem_temp_hist[:, ti] = element_nodal_mean(mesh_th, T_nodes_t)
-            end
-            result["thermal2D temperature [K]"] = T_elem_temp_hist .* Tref
-        end
-        if multi_spme_enabled && !isempty(T_nodes_carry)
+        if case.opt.per_element_spme && case.opt.thermalmodel == "distributed2D" && !isempty(T_nodes_carry)
             Tref = case.param_dim.scale.T_ref
             result["thermal2D final temperature at nodes [K]"] = T_nodes_carry .* Tref
             result["thermal2D nodes xy [m]"] = case.mesh["thermal2D"].node
