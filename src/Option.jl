@@ -69,7 +69,7 @@ end
     debug_coupling::Bool = false       # print detailed logs for electro-thermal coupling
     debug_log_path::String = "output/debug.log"  # debug log file path
     # CZM (Cohesive Zone Model) module
-    czm_enabled::Bool = true          # 是否启用CZM损伤模型
+    czm_enabled::Bool = false         # 是否启用CZM损伤模型
     czm_update_interval::Int64 = 1     # CZM损伤更新间隔（时间步数），1=每步更新
     czm_soh_threshold::Float64 = 0.8   # SOH终止阈值，SOH≤此值时终止循环
     czm_inner_exit_only::Bool = true   # 断裂时仅内圈单元退出电化学反应
