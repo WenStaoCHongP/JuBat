@@ -132,7 +132,18 @@ function StandardVariables(case::Case, num::Int64)
         variables["czm δ_max_n"] = zeros(Float64, 1, num)
         variables["czm δ_mean_n"] = zeros(Float64, 1, num)
         variables["czm n_fractured"] = zeros(Float64, 1, num)
-    end 
+        if case.czm_mesh !== nothing
+            n_coh = case.czm_mesh.n_cohesive
+            n_czm_nodes = case.czm_mesh.nnode
+            variables["czm damage"] = zeros(Float64, n_coh, num)
+            variables["czm displacement x"] = zeros(Float64, n_czm_nodes, num)
+            variables["czm displacement y"] = zeros(Float64, n_czm_nodes, num)
+            variables["czm traction normal"] = zeros(Float64, n_coh, num)
+            variables["czm traction tangent"] = zeros(Float64, n_coh, num)
+            variables["czm separation normal"] = zeros(Float64, n_coh, num)
+            variables["czm separation tangent"] = zeros(Float64, n_coh, num)
+        end
+    end
     return variables
 end
 
