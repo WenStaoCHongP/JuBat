@@ -37,9 +37,30 @@
   - `docs/planning-with-files/内聚力模块拆分/progress.md` (更新)
   - `tools/czm_baseline_probe.jl` (新建)
 
-### Phase 3-5: 待执行（helper 提取 + CouplingState.jl 扩展）
+### Phase 3: 代码结构简化
+- **Status:** complete
+- **Started:** 2026-04-22
+- Actions taken:
+  - `5272682` 提取 CzmPostProcess.jl (117 行) — 后处理/统计/损伤管理独立文件
+  - `7bd29ee` 将 compute_czm_effective_params, compute_czm_strain_inputs, update_czm_damage! 迁入 CouplingState.jl
+  - `bd9d8f2` 提取 clone_czm_mesh_with_damage 公共 helper，消除 4 处重复
+  - `9499832` 提取 extract_bc_dofs 公共 helper，消除 3 处 BC 提取重复
+  - `56ce8e1` 提取 backtrack_line_search! helper (限定服务 solve_czm_basic_step)
+- Files created/modified:
+  - `src/CzmPostProcess.jl` (新建, 117 行)
+  - `src/CouplingState.jl` (扩展, 375 行)
+  - `src/CzmSolve.jl` (瘦身, 1001→647 行)
+
+### Phase 4: 迁移与兼容
+- **Status:** complete
+- Actions taken:
+  - 所有重构均在 `czm-refactor` 分支上完成
+  - 公开接口保持不变（所有 export 符号和外部脚本调用点未受影响）
+  - include 顺序已在 JuBat.jl 中更新
+
+### Phase 5: 验证与文档
 - **Status:** pending
-- 待用户确认基线并批准后开始实施
+- 待执行
 
 ## Test Results
 | Test | Input | Expected | Actual | Status |
@@ -54,8 +75,8 @@
 ## 5-Question Reboot Check
 | Question | Answer |
 |----------|--------|
-| Where am I? | Phase 2 已完成，Phase 3 待启动 |
-| Where am I going? | Phase 3 代码结构简化（helper 提取 + 文件拆分） |
+| Where am I? | Phase 3+4 已完成，Phase 5 (验证与文档) 待执行 |
+| Where am I going? | Phase 5 验证拆分后数值一致性，更新文档 |
 | What's the goal? | 把内聚力模块拆成边界清晰、易维护的结构 |
-| What have I learned? | 314 行重复代码，19+11 函数，5 条不可破坏约束 |
-| What have I done? | Phase 1+2 完成，3 个 Key Questions 闭合，基线探针就绪 |
+| What have I learned? | backtrack_line_search! 只能服务 basic 路径；CzmSolve.jl 瘦身至 647 行 |
+| What have I done? | Phase 1-4 全部完成，5 个子任务落地，公开接口不变 |
