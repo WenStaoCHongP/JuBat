@@ -307,25 +307,25 @@ function compute_czm_strain_inputs(case, variables::Dict, czm_mesh, T_nodes_carr
 end
 
 """
-    update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)
+    update_czm_damage!(case, variables, T_nodes_carry)
 
 更新 CZM 网格的损伤状态。
 
 使用牛顿-拉弗森迭代求解力学平衡方程，通过载荷子步法处理软化收敛问题。
+从 case.czm_mesh、case.param.cohesive、case.czm_layout 获取内部状态。
 
 # 参数
-- `czm_mesh`: CZM 网格对象
-- `czm_params`: CZM 参数（cohesive）
-- `case`: Case 对象
+- `case`: Case 对象（需已设置 czm_mesh 和 czm_layout）
 - `variables`: 当前时间步的变量字典
 - `T_nodes_carry`: 当前温度场
-- `u_czm_prev`: 上一步的 CZM 位移场
 
 # 返回
 - `u_czm`: 更新后的 CZM 位移场
 - `converged`: 是否收敛
 """
-function update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)
+function update_czm_damage!(case, variables, T_nodes_carry)
+    czm_mesh = case.czm_mesh
+    czm_params = case.param.cohesive
     param_dim = case.param_dim
     param = case.param
 
@@ -353,8 +353,9 @@ function update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry
         @warn "CZM inputs contain NaN" has_nan_T=has_nan_T has_nan_soc_n=has_nan_soc_n has_nan_soc_p=has_nan_soc_p n_nan_dT=count(isnan, dT_elem) n_nan_soc_n=count(isnan, Δsoc_n_elem) n_nan_soc_p=count(isnan, Δsoc_p_elem)
     end
 
-    # 初始化位移（如果没有上一步的值）
-    if u_czm_prev === nothing || length(u_czm_prev) != ndof
+    # 初始化位移（从 czm_layout 获取上一步值）
+    u_czm_prev = case.czm_layout !== nothing ? case.czm_layout.u_prev : zeros(Float64, ndof)
+    if length(u_czm_prev) != ndof
         u_czm_prev = zeros(Float64, ndof)
     elseif any(isnan, u_czm_prev)
         @warn "CZM u_czm_prev contains NaN, resetting to zeros"
@@ -387,7 +388,27 @@ function update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry
     # This avoids propagating a partially converged or diverged state into the next time step.
     if result.converged
         czm_mesh.damage_states = updated_czm_mesh.damage_states
+        if case.czm_layout !== nothing
+            case.czm_layout.u_prev = result.displacement
+        end
     end
 
     return result.displacement, result.converged
+end
+
+"""
+    update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)
+
+6 参数兼容入口：自动构建 CzmLayout 并委托给 3 参数版本。
+"""
+function update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)
+    # 确保 czm_layout 存在
+    if case.czm_layout === nothing
+        case.czm_layout = CzmLayout(czm_mesh)
+    end
+    # 同步外部传入的 u_prev
+    if u_czm_prev !== nothing && length(u_czm_prev) == 2 * czm_mesh.nnode
+        case.czm_layout.u_prev = u_czm_prev
+    end
+    return update_czm_damage!(case, variables, T_nodes_carry)
 end
