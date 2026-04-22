@@ -44,7 +44,7 @@ function ModelInitialisation(case::Case)
     else
         y0 = case.opt.y0 
     end
-    return y0
+    return vec(y0)
 end
 """
         ModelInitialisation_MultiSPMe(case::Case; initial_soc_distribution=nothing)

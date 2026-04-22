@@ -126,7 +126,7 @@ function SPMe_variables!(ws::Dict{String, Union{Array{Float64},Float64}},case::C
         end
     end
 
-    T = T_e === nothing ? yt[case.index["temperature"]] : T_e
+    T = T_e === nothing ? only(yt[case.index["temperature"]]) : T_e
 
     # ── 以下计算逻辑与 SPMe_variables 逐行一致 ──
     cn_surf = ws["negative particle surface lithium concentration"]
@@ -186,9 +186,9 @@ function SPMe_BC(case::Case, variables::Dict{String, Union{Array{Float64},Float6
     param = case.param
     j_n = variables["negative electrode interfacial current density"]
     j_p = variables["positive electrode interfacial current density"]
-    flux_np = zeros(Float64, case.mesh["negative particle"].nlen, 1)
+    flux_np = zeros(Float64, case.mesh["negative particle"].nlen)
     flux_np[end] = - j_n * param.NE.rs^2
-    flux_pp = zeros(Float64, case.mesh["positive particle"].nlen, 1)
+    flux_pp = zeros(Float64, case.mesh["positive particle"].nlen)
     flux_pp[end] = - j_p * param.PE.rs^2
 
     # electrolyte source term
@@ -203,7 +203,7 @@ function SPMe_BC(case::Case, variables::Dict{String, Union{Array{Float64},Float6
 
     Vi = mesh_el.element[mesh_el.gs.ele,:]
     flux_el = Assemble1D(Vi, mesh_el.gs.Ni, coeff, mesh_el.nlen)
-    flux = [flux_np; flux_pp; flux_el]
+    flux = vcat(flux_np, flux_pp, flux_el)
     return flux
 end
 
@@ -230,7 +230,7 @@ function SPMe_variables(case::Case, yt::AbstractVector{Float64}, t::Float64; I_a
         variables[i] = yt[case.index[i]]
     end
     if T_e === nothing
-        T = yt[case.index["temperature"]]
+        T = only(yt[case.index["temperature"]])
     else
         T = T_e
     end

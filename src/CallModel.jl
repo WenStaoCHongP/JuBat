@@ -218,6 +218,9 @@ function copy_element_results(vars_e)
         "negative electrode open circuit potential"    => vars_e["negative electrode open circuit potential"],
         "positive electrode open circuit potential"    => vars_e["positive electrode open circuit potential"],
         "temperature"                                  => vars_e["temperature"],
+        "electrolyte lithium concentration at negative electrode Gauss point" => vars_e["electrolyte lithium concentration at negative electrode Gauss point"],
+        "electrolyte lithium concentration at positive electrode Gauss point" => vars_e["electrolyte lithium concentration at positive electrode Gauss point"],
+        "electrolyte lithium concentration at separator Gauss point" => vars_e["electrolyte lithium concentration at separator Gauss point"],
         # ── 状态提取键：替换赋值，workspace 不再持有引用，直接传递 ──
         "negative particle surface lithium concentration" => vars_e["negative particle surface lithium concentration"],
         "positive particle surface lithium concentration" => vars_e["positive particle surface lithium concentration"],
