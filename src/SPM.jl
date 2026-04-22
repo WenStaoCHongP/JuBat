@@ -57,7 +57,7 @@ function SPM_variables(case::Case, yt::Array{Float64}, t::Float64)
         variables[i] = yt[case.index[i]] # hcat converts vector to matrix
     end
     if "temperature" in var_list
-        T = yt[case.index["temperature"]]
+        T = only(yt[case.index["temperature"]])
     else
         T = case.param.cell.T0
     end

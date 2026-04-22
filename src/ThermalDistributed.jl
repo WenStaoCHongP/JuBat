@@ -380,9 +380,6 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
     mesh = case.mesh["thermal2D"]
     ne = size(mesh.element, 1)
     param = case.param
-    t_ne = param.NE.thickness
-    t_sp = param.SP.thickness
-    t_pe = param.PE.thickness
 
     # 获取层权重（优先使用预计算的 geometry struct，避免跨模块耦合）
     fks = case.geometry !== nothing ? case.geometry.layer_weights : jellyroll_element_properties(mesh, param)[2]
@@ -399,6 +396,7 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
     q_ohm_e_pe = variables["thermal2D q_ohm_e_pe"]
     q_pcc = variables["thermal2D q_pcc"]
     q_ncc = variables["thermal2D q_ncc"]
+    q_el = zeros(Float64, ne)
 
     # 材料参数（已无量纲）
     as_n, as_p = param.NE.as, param.PE.as
@@ -419,6 +417,12 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
             j_p = vars_e["positive electrode interfacial current density"]
             cn_surf = vars_e["negative particle surface lithium concentration"][1]
             cp_surf = vars_e["positive particle surface lithium concentration"][end]
+            ce_n_gs = vars_e["electrolyte lithium concentration at negative electrode Gauss point"]
+            ce_p_gs = vars_e["electrolyte lithium concentration at positive electrode Gauss point"]
+            ce_sp_gs = vars_e["electrolyte lithium concentration at separator Gauss point"]
+            mesh_ne = case.mesh["negative electrode"]
+            mesh_pe = case.mesh["positive electrode"]
+            mesh_sp = case.mesh["separator"]
         else
             eta_n = variables["negative electrode overpotential"][1]
             eta_p = variables["positive electrode overpotential"][end]
@@ -426,36 +430,48 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
             j_p = variables["positive electrode interfacial current density"]
             cn_surf = variables["negative particle surface lithium concentration"][1]
             cp_surf = variables["positive particle surface lithium concentration"][end]
+            ce_n_gs = variables["electrolyte lithium concentration at negative electrode Gauss point"]
+            ce_p_gs = variables["electrolyte lithium concentration at positive electrode Gauss point"]
+            ce_sp_gs = variables["electrolyte lithium concentration at separator Gauss point"]
+            mesh_ne = case.mesh["negative electrode"]
+            mesh_pe = case.mesh["positive electrode"]
+            mesh_sp = case.mesh["separator"]
         end
 
         T = T_e[e]
         I_local = I_e[e]
 
         # 电导率（温度相关，无量纲）
-        kappa_ne = param.EL.kappa(param.EL.ce0, T) * param.NE.eps^param.NE.brugg
-        kappa_pe = param.EL.kappa(param.EL.ce0, T) * param.PE.eps^param.PE.brugg
-        kappa_sp = param.EL.kappa(param.EL.ce0, T) * param.SP.eps^param.SP.brugg
-
+        kappa_ne_gs = param.EL.kappa(ce_n_gs, T) * param.NE.eps ^ param.NE.brugg
+        kappa_pe_gs = param.EL.kappa(ce_p_gs, T) * param.PE.eps ^ param.PE.brugg
+        kappa_sp_gs = param.EL.kappa(ce_sp_gs, T) * param.SP.eps ^ param.SP.brugg
+        kappa_ne_av = IntV(kappa_ne_gs, mesh_ne) / param.NE.thickness
+        kappa_pe_av = IntV(kappa_pe_gs, mesh_pe) / param.PE.thickness
+        kappa_sp_av = IntV(kappa_sp_gs, mesh_sp) / param.SP.thickness
+        csn_av = IntV(ce_n_gs, mesh_ne) / param.NE.thickness
+        csp_av = IntV(ce_p_gs, mesh_pe) / param.PE.thickness
         # 计算各层热源分量（无量纲）
-        # 与 Thermal.jl 中 SPMe 分支的欧姆热组装方式保持一致：按厚度和有效电导率分配
         # 负极层
         Q_rxn_NE = as_n * abs(j_n) * abs(eta_n)
         Q_rev_NE = as_n * j_n * T * param.NE.dUdT(cn_surf)[1]
-        Q_ohm_s_NE = I_local^2 * t_ne / (3.0 * sig_n_eff)
-        Q_ohm_e_NE = I_local^2 * t_ne / (3.0 * kappa_ne)
+        Q_ohm_s_NE = I_local^2 / (3.0 * sig_n_eff)
+        Q_ohm_e_NE = I_local^2 / (3.0 * kappa_ne_av)
 
         # 隔膜层
-        Q_SP = I_local^2 * t_sp / kappa_sp
+        Q_SP = I_local^2 / kappa_sp_av
 
         # 正极层
         Q_rxn_PE = as_p * abs(j_p) * abs(eta_p)
         Q_rev_PE = as_p * j_p * T * param.PE.dUdT(cp_surf)[1]
-        Q_ohm_s_PE = I_local^2 * t_pe / (3.0 * sig_p_eff)
-        Q_ohm_e_PE = I_local^2 * t_pe / (3.0 * kappa_pe)
+        Q_ohm_s_PE = I_local^2 / (3.0 * sig_p_eff)
+        Q_ohm_e_PE = I_local^2 / (3.0 * kappa_pe_av)
 
         # 集流体层
         Q_PCC = I_local^2 / (3.0 * sigma_pcc)
         Q_NCC = I_local^2 / (3.0 * sigma_ncc)
+
+        #电解液修正
+        Q_EL = -I_local * 2.0 * T * (1 - param.EL.tplus) * (csp_av - csn_av) / param.EL.ce0
 
         # 按层权重分配并存储（无量纲）
         q_rxn_ne[e] = fks[e,1] * Q_rxn_NE
@@ -469,9 +485,10 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
         q_ohm_e_pe[e] = fks[e,3] * Q_ohm_e_PE
         q_pcc[e] = fks[e,4] * Q_PCC
         q_ncc[e] = fks[e,5] * Q_NCC
+        q_el[e] = (fks[e,1]+fks[e,3]) * Q_EL
 
         # 总热源
-        q_total[e] = q_rxn_ne[e] + q_rev_ne[e] + q_ohm_s_ne[e] + q_ohm_e_ne[e] + q_sp[e] + q_rxn_pe[e] + q_rev_pe[e] + q_ohm_s_pe[e] + q_ohm_e_pe[e] + q_pcc[e] + q_ncc[e]
+        q_total[e] = q_rxn_ne[e] + q_rev_ne[e] + q_ohm_s_ne[e] + q_ohm_e_ne[e] + q_sp[e] + q_rxn_pe[e] + q_rev_pe[e] + q_ohm_s_pe[e] + q_ohm_e_pe[e] + q_pcc[e] + q_ncc[e] + q_el[e]
     end
 
     # 写入 variables

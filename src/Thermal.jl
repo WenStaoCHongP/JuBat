@@ -32,12 +32,12 @@ function ThermalLumped(case::Case, variables::Dict{String, Union{Array{Float64},
         kappa_ne_av = IntV(kappa_ne_gs, mesh_ne) / param.NE.thickness
         kappa_pe_av = IntV(kappa_pe_gs, mesh_pe) / param.PE.thickness
         kappa_sp_av = IntV(kappa_sp_gs, mesh_sp) / param.SP.thickness
-        dphi_S = I_app / 3 * (param.NE.thickness / param.NE.sig + param.PE.thickness / param.PE.sig)
+        dphi_S = I_app / 3 * (param.NE.thickness / sig_n_eff + param.PE.thickness / sig_p_eff)
         R_EL = param.NE.thickness / (3.0 * kappa_ne_av) + param.SP.thickness / kappa_sp_av + param.PE.thickness / (3.0 * kappa_pe_av)
         csn_av = IntV(ce_n_gs, mesh_ne) / param.NE.thickness
         csp_av = IntV(ce_p_gs, mesh_pe) / param.PE.thickness
         dphi_e = 2.0 * T * (1 - param.EL.tplus) * (csp_av - csn_av) / param.EL.ce0 - I_app * R_EL - dphi_S
-        Q_ohm = -I_app * (dphi_S + dphi_e)
+        Q_ohm = -I_app * dphi_e
         Q_rxn = abs(I_app * (eta_p - eta_n) ) # reaction heat is always positive
         Q_rev = abs(I_app) * T * (param.PE.dUdT(csp_surf) - param.NE.dUdT(csn_surf))
     else

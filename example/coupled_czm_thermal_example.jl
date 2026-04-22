@@ -71,7 +71,7 @@ println("\n[3] 生成统一网格...")
 
 # 先创建Case以获取归一化参数
 case_temp = JuBat.SetCase(param_dim, opt)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(case_temp.param; nθ=16, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(case_temp.param; nθ=80, gsorder=2)
 
 println("  热网格单元数: $(mesh_data.ne)")
 println("  热网格节点数: $(mesh_data.nnode)")
@@ -109,7 +109,7 @@ mesh_th = case.mesh["thermal2D"]
 println("\n[6] 设置循环参数...")
 
 cycle_opt = JuBat.CycleOption(
-    n_cycles = 30,           # 循环次数
+    n_cycles = 400,           # 循环次数
     SOC_init = 0.65,         # 初始SOC 90%
     t_discharge = 1800.0,   # 放电时间 1小时
     t_charge = 1800.0,      # 充电时间 1小时
