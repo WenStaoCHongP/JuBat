@@ -4,7 +4,7 @@
 把内聚力模块从当前的"大而全"实现拆成边界清晰、职责单一、便于后续维护的若干小模块，同时保持现有公开接口和数值行为尽量不变。
 
 ## Current Phase
-Phase 2 - 拆分方案设计 (已完成 Key Questions，待进入 Phase 3)
+Phase 3+4 已完成，Phase 5 (验证与文档) 待执行
 
 ## Phases
 
@@ -24,18 +24,20 @@ Phase 2 - 拆分方案设计 (已完成 Key Questions，待进入 Phase 3)
 - **Status:** complete
 
 ### Phase 3: 代码结构简化方案
-- [ ] 3.1 提取 `clone_czm_mesh` 公共 helper（消除 4 处重复，~44 行）
-- [ ] 3.2 提取 `extract_bc_dofs` 公共 helper（消除 3 处 BC 提取重复，~60 行）
-- [ ] 3.3 提取 Newton 迭代 + 线搜索公共 helper（消除 3 处循环重复，~180 行）
-- [ ] 3.4 将后处理/统计函数从 CzmSolve.jl 中拆分到 `src/CzmPostProcess.jl`
-- [ ] 3.5 将参数计算函数 (`compute_czm_effective_params`, `compute_czm_strain_inputs`, `update_czm_damage!`) 并入 `src/CouplingState.jl`
-- **Status:** pending
+- [x] 3.1 提取 `clone_czm_mesh` 公共 helper（消除 4 处重复，~44 行） — `bd9d8f2`
+- [x] 3.2 提取 `extract_bc_dofs` 公共 helper（消除 3 处 BC 提取重复，~60 行） — `9499832`
+- [x] 3.3 提取 Newton 迭代 + 线搜索公共 helper（`backtrack_line_search!`，仅服务 basic 求解器） — `56ce8e1`
+- [x] 3.4 将后处理/统计函数从 CzmSolve.jl 中拆分到 `src/CzmPostProcess.jl` (117 行) — `5272682`
+- [x] 3.5 将参数计算函数 (`compute_czm_effective_params`, `compute_czm_strain_inputs`, `update_czm_damage!`) 并入 `src/CouplingState.jl` — `7bd29ee`
+- **Status:** complete
+- **说明:** 3.3 的 `backtrack_line_search!` 限定只服务 `solve_czm_basic_step`，因为 `newton_raphson_czm` 使用惩罚式 BC 残差语义，不能复用零化式 helper。arc_length 和 newton_raphson 仍有部分 Newton 循环重复，但风险可控。
 
 ### Phase 4: 迁移与兼容
-- [ ] 先做无行为变化的内部重构（Phase 3 的 helper 提取）
-- [ ] 再做文件级拆分与入口收束
-- [ ] 保持旧 API 可用，必要时加薄兼容层
-- **Status:** pending
+- [x] 先做无行为变化的内部重构（Phase 3 的 helper 提取）
+- [x] 再做文件级拆分与入口收束
+- [x] 保持旧 API 可用，必要时加薄兼容层
+- **Status:** complete
+- **结果:** CzmSolve.jl 从 1001 行瘦身至 647 行；CzmPostProcess.jl 117 行；CouplingState.jl 扩展 375 行。所有公开接口保持不变。
 
 ### Phase 5: 验证与文档
 - [ ] 跑最小 CZM 探针和主耦合例程
@@ -92,11 +94,11 @@ src/CouplingState.jl     → 耦合状态 + 参数计算/应变输入/损伤更�
 
 ## Target File Layout
 
-### Phase 2 完成后的目标结构
+### 实际完成后的文件结构
 
 ```
 src/
-├── CzmSolve.jl            (调度 + 求解器，~600 行)
+├── CzmSolve.jl            (调度 + 求解器，647 行)
 │   ├── CZMResult
 │   ├── clone_damage_states
 │   ├── clone_czm_mesh_with_damage
@@ -104,56 +106,34 @@ src/
 │   ├── zero_czm_bc_entries!
 │   ├── fill_czm_result!
 │   ├── build_arc_length_augmented_matrix
+│   ├── backtrack_line_search!    ← 新增 helper (原 3.3)
+│   ├── extract_bc_dofs           ← 新增 helper (原 3.2)
 │   ├── solve_czm_basic_step
 │   ├── solve_czm_arc_length_step
 │   ├── newton_raphson_czm
 │   └── solve_czm_step
 │
-├── CzmPostProcess.jl      (新文件，~120 行)
+├── CzmPostProcess.jl      (新文件，117 行)
 │   ├── get_damage_statistics
 │   ├── check_fracture_criterion
 │   ├── reset_damage_states
 │   ├── accumulate_cycle_damage
 │   └── czm_output_to_variables
 │
-├── CouplingState.jl       (现有文件扩展，~90 行新增)
-│   ├── compute_czm_effective_params
-│   ├── compute_czm_strain_inputs
-│   └── update_czm_damage!
+├── CouplingState.jl       (现有文件扩展，375 行)
+│   ├── ... (原有类型和 helpers)
+│   ├── compute_czm_effective_params  ← 从 CzmSolve.jl 迁入
+│   ├── compute_czm_strain_inputs     ← 从 CzmSolve.jl 迁入
+│   └── update_czm_damage!            ← 从 CzmSolve.jl 迁入
 │
 ├── czm.jl                 (组装层，659 行不变)
-│   ├── CohesiveElement
-│   ├── DamageState
-│   ├── create_czm_mesh
-│   ├── assemble_czm_system
-│   ├── assemble_bulk_stiffness
-│   ├── assemble_thermal_chemical_load
-│   ├── build_czm_cache / ensure_czm_cache
-│   ├── assemble_coupled_system / assemble_coupled_system_full
-│   ├── apply_bc_czm
-│   └── identify_bc_nodes_czm
 │
-└── JuBat.jl               (include 顺序不变)
-  ├── ... (existing includes) ...
+└── JuBat.jl               (include 顺序已更新)
+  ├── include("CouplingState.jl")
   ├── include("czm.jl")
   ├── include("CzmSolve.jl")
-  ├── include("CzmPostProcess.jl") ← 新增
-  └── ... (existing includes, including CouplingState.jl) ...
-```
-
-### Phase 3 完成后的目标结构 (helper 提取后)
-
-```
-src/CzmSolve.jl            (调度 + 求解器，~400 行)
-├── helpers (新增):
-│   ├── clone_czm_mesh      (公共 helper，消除 4 处重复)
-│   ├── extract_bc_dofs     (公共 helper，消除 3 处重复)
-│   └── newton_iteration!   (公共 helper，消除 3 处 Newton 循环重复)
-├── 求解器 (瘦身后):
-│   ├── solve_czm_basic_step       (~60 行，原 137 行)
-│   ├── solve_czm_arc_length_step  (~140 行，原 220 行)
-│   ├── newton_raphson_czm         (~100 行，原 193 行)
-│   └── solve_czm_step             (不变，22 行)
+  ├── include("CzmPostProcess.jl")
+  └── ...
 ```
 
 ## Decisions Made
