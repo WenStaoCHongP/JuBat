@@ -42,6 +42,32 @@ function clone_czm_mesh_with_damage(czm_mesh::CohesiveMesh, damage_states::Abstr
     return new_czm_mesh
 end
 
+"""
+    extract_bc_dofs(czm_mesh, param; cache=nothing)
+
+从 czm_mesh 提取 Dirichlet BC 的自由度列表和对应值。
+优先使用缓存中的 bc_dofs/bc_vals，否则从 identify_bc_nodes_czm 重新计算。
+"""
+function extract_bc_dofs(czm_mesh::CohesiveMesh, param; cache::Union{Nothing, CZMAssemblyCache}=nothing)
+    if cache !== nothing
+        return cache.bc_dofs, cache.bc_vals
+    end
+    bc_nodes, _, _ = identify_bc_nodes_czm(czm_mesh, param)
+    bc_dofs = Int64[]
+    bc_vals = Float64[]
+    for (node, bc_type) in bc_nodes
+        if bc_type == :fixed_xy
+            push!(bc_dofs, 2 * node - 1); push!(bc_vals, 0.0)
+            push!(bc_dofs, 2 * node);     push!(bc_vals, 0.0)
+        elseif bc_type == :fixed_x
+            push!(bc_dofs, 2 * node - 1); push!(bc_vals, 0.0)
+        elseif bc_type == :fixed_y
+            push!(bc_dofs, 2 * node);     push!(bc_vals, 0.0)
+        end
+    end
+    return bc_dofs, bc_vals
+end
+
 function apply_czm_dirichlet!(u::AbstractVector{Float64}, bc_dofs::AbstractVector{Int64}, bc_vals::AbstractVector{Float64})
     for (dof, val) in zip(bc_dofs, bc_vals)
         u[dof] = val
@@ -91,28 +117,7 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_
         damage_states = czm_mesh.damage_states
         damage_start = clone_damage_states(damage_states)
 
-        if cache !== nothing
-            bc_dofs = cache.bc_dofs
-            bc_vals = cache.bc_vals
-        else
-            bc_nodes, inner_count, outer_count = identify_bc_nodes_czm(czm_mesh, param)
-            bc_dofs = Int64[]
-            bc_vals = Float64[]
-            for (node, bc_type) in bc_nodes
-                if bc_type == :fixed_xy
-                    push!(bc_dofs, 2 * node - 1)
-                    push!(bc_vals, 0.0)
-                    push!(bc_dofs, 2 * node)
-                    push!(bc_vals, 0.0)
-                elseif bc_type == :fixed_x
-                    push!(bc_dofs, 2 * node - 1)
-                    push!(bc_vals, 0.0)
-                elseif bc_type == :fixed_y
-                    push!(bc_dofs, 2 * node)
-                    push!(bc_vals, 0.0)
-                end
-            end
-        end
+        bc_dofs, bc_vals = extract_bc_dofs(czm_mesh, param; cache=cache)
 
         F_thermo_chem = assemble_thermal_chemical_load(czm_mesh, E_eff, ν_eff, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
         K_bulk_cached = cache !== nothing ? cache.K_bulk : nothing
@@ -227,28 +232,7 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_
         u = copy(u_prev)
         damage_states = czm_mesh.damage_states
 
-        if cache !== nothing
-            bc_dofs = cache.bc_dofs
-            bc_vals = cache.bc_vals
-        else
-            bc_nodes, inner_count, outer_count = identify_bc_nodes_czm(czm_mesh, param)
-            bc_dofs = Int64[]
-            bc_vals = Float64[]
-            for (node, bc_type) in bc_nodes
-                if bc_type == :fixed_xy
-                    push!(bc_dofs, 2 * node - 1)
-                    push!(bc_vals, 0.0)
-                    push!(bc_dofs, 2 * node)
-                    push!(bc_vals, 0.0)
-                elseif bc_type == :fixed_x
-                    push!(bc_dofs, 2 * node - 1)
-                    push!(bc_vals, 0.0)
-                elseif bc_type == :fixed_y
-                    push!(bc_dofs, 2 * node)
-                    push!(bc_vals, 0.0)
-                end
-            end
-        end
+        bc_dofs, bc_vals = extract_bc_dofs(czm_mesh, param; cache=cache)
 
         F_thermo_chem_total = assemble_thermal_chemical_load(czm_mesh, E_eff, ν_eff, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
         K_bulk_cached = cache !== nothing ? cache.K_bulk : nothing
@@ -462,30 +446,7 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_ef
     u = u0 === nothing ? zeros(Float64, ndof) : copy(u0)
     damage_states = czm_mesh.damage_states
 
-    # 使用缓存的 BC 或重新计算
-    if cache !== nothing
-        bc_dofs = cache.bc_dofs
-        bc_vals = cache.bc_vals
-    else
-        bc_nodes, inner_count, outer_count = identify_bc_nodes_czm(czm_mesh, param)
-        bc_dofs = Int64[]
-        bc_vals = Float64[]
-
-        for (node, bc_type) in bc_nodes
-            if bc_type == :fixed_xy
-                push!(bc_dofs, 2 * node - 1)
-                push!(bc_vals, 0.0)
-                push!(bc_dofs, 2 * node)
-                push!(bc_vals, 0.0)
-            elseif bc_type == :fixed_x
-                push!(bc_dofs, 2 * node - 1)
-                push!(bc_vals, 0.0)
-            elseif bc_type == :fixed_y
-                push!(bc_dofs, 2 * node)
-                push!(bc_vals, 0.0)
-            end
-        end
-    end
+    bc_dofs, bc_vals = extract_bc_dofs(czm_mesh, param; cache=cache)
 
     F_thermo_chem_total = assemble_thermal_chemical_load(czm_mesh, E_eff, ν_eff, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
 
