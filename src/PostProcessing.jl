@@ -49,6 +49,7 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
     if case.opt.thermalmodel == "lumped"
         result["thermal lumped internal heat [W/m^3]"] = vec(variables["thermal lumped internal heat"][1, 1:v]) * case.param.scale.q
     elseif case.opt.thermalmodel == "distributed2D"
+        # ── 热源物理单位还原 ──
         result["thermal2D Q_rxn_NE [W/m3]"] = variables["thermal2D q_rxn_ne"][:, 1:v] * case.param.scale.q
         result["thermal2D Q_rev_NE [W/m3]"] = variables["thermal2D q_rev_ne"][:, 1:v] * case.param.scale.q
         result["thermal2D Q_ohm_s_NE [W/m3]"] = variables["thermal2D q_ohm_s_ne"][:, 1:v] * case.param.scale.q
@@ -60,7 +61,40 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
         result["thermal2D Q_ohm_e_PE [W/m3]"] = variables["thermal2D q_ohm_e_pe"][:, 1:v] * case.param.scale.q
         result["thermal2D Q_PCC [W/m3]"] = variables["thermal2D q_pcc"][:, 1:v] * case.param.scale.q
         result["thermal2D Q_NCC [W/m3]"] = variables["thermal2D q_ncc"][:, 1:v] * case.param.scale.q
+
+        # ── 温度还原 ──
         result["thermal2D temperature at nodes [K]"] = variables["thermal2D temperature at nodes"][:, 1:v] * case.param_dim.scale.T_ref
+
+        # ── 单元温度（从节点平均计算）──
+        mesh_th = case.mesh["thermal2D"]
+        ne = size(mesh_th.element, 1)
+        n_t = v
+        Tref = case.param_dim.scale.T_ref
+        T_elem_hist = zeros(Float64, ne, n_t)
+        for ti in 1:n_t
+            T_nodes_t = variables["thermal2D temperature at nodes"][:, ti]
+            T_elem_hist[:, ti] = element_nodal_mean(mesh_th, T_nodes_t)
+        end
+        result["thermal2D temperature [K]"] = T_elem_hist .* Tref
+
+        # ── 热源场与总热源 ──
+        result["heat_source_fields"] = variables["heat_source_fields"][:, 1:v]
+        result["total heat source [W]"] = vec(variables["total heat source"][1, 1:v])
+
+        # ── 单元级变量（无量纲直传）──
+        for key in ["thermal2D element current", "thermal2D eta_n_e", "thermal2D eta_p_e",
+                    "thermal2D element soc_n", "thermal2D element soc_p",
+                    "thermal2D element voltages", "thermal2D element OCV",
+                    "thermal2D dUdT_n_e", "thermal2D dUdT_p_e"]
+            result[key] = variables[key][:, 1:v]
+        end
+
+        # ── 截止与激活信息 ──
+        result["thermal2D active_mask"] = variables["thermal2D active_mask"][:, 1:v]
+        result["thermal2D n_cutoff_elements"] = variables["thermal2D n_cutoff_elements"][1, 1:v]
+        result["thermal2D nearest_cutoff_element"] = variables["thermal2D nearest_cutoff_element"][1, 1:v]
+        result["thermal2D nearest_cutoff_ocv"] = variables["thermal2D nearest_cutoff_ocv"][1, 1:v]
+        result["thermal2D margin_to_cutoff"] = variables["thermal2D margin_to_cutoff"][1, 1:v]
     end
     if case.opt.czm_enabled == true
         result["czm D_max"] = vec(variables["czm D_max"][1, 1:v])
