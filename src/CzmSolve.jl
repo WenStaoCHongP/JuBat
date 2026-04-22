@@ -631,17 +631,7 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_ef
         result.traction_t[i] = tractions[i][2]
     end
 
-    new_czm_mesh = CohesiveMesh()
-    new_czm_mesh.bulk_mesh = czm_mesh.bulk_mesh
-    new_czm_mesh.node = czm_mesh.node
-    new_czm_mesh.nnode = czm_mesh.nnode
-    new_czm_mesh.bulk_element = czm_mesh.bulk_element
-    new_czm_mesh.cohesive_elements = czm_mesh.cohesive_elements
-    new_czm_mesh.n_cohesive = czm_mesh.n_cohesive
-    new_czm_mesh.n_layers = czm_mesh.n_layers
-    new_czm_mesh.node_map = czm_mesh.node_map
-    new_czm_mesh.interface_nodes = czm_mesh.interface_nodes
-    new_czm_mesh.damage_states = damage_states
+    new_czm_mesh = clone_czm_mesh_with_damage(czm_mesh, damage_states)
 
     return result, new_czm_mesh
 end

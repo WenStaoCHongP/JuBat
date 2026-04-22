@@ -58,19 +58,7 @@ Return new CZM mesh with reset damage states.
 """
 function reset_damage_states(czm_mesh::CohesiveMesh)
     new_damage_states = [DamageState() for _ in 1:czm_mesh.n_cohesive]
-
-    new_czm_mesh = CohesiveMesh()
-    new_czm_mesh.bulk_mesh = czm_mesh.bulk_mesh
-    new_czm_mesh.node = czm_mesh.node
-    new_czm_mesh.nnode = czm_mesh.nnode
-    new_czm_mesh.bulk_element = czm_mesh.bulk_element
-    new_czm_mesh.cohesive_elements = czm_mesh.cohesive_elements
-    new_czm_mesh.n_cohesive = czm_mesh.n_cohesive
-    new_czm_mesh.n_layers = czm_mesh.n_layers
-    new_czm_mesh.node_map = czm_mesh.node_map
-    new_czm_mesh.interface_nodes = czm_mesh.interface_nodes
-    new_czm_mesh.damage_states = new_damage_states
-
+    new_czm_mesh = clone_czm_mesh_with_damage(czm_mesh, new_damage_states)
     return new_czm_mesh
 end
 
@@ -101,18 +89,7 @@ function accumulate_cycle_damage(czm_mesh::CohesiveMesh, cycle_damage_increment:
         new_damage_states[i] = new_state
     end
 
-    new_czm_mesh = CohesiveMesh()
-    new_czm_mesh.bulk_mesh = czm_mesh.bulk_mesh
-    new_czm_mesh.node = czm_mesh.node
-    new_czm_mesh.nnode = czm_mesh.nnode
-    new_czm_mesh.bulk_element = czm_mesh.bulk_element
-    new_czm_mesh.cohesive_elements = czm_mesh.cohesive_elements
-    new_czm_mesh.n_cohesive = czm_mesh.n_cohesive
-    new_czm_mesh.n_layers = czm_mesh.n_layers
-    new_czm_mesh.node_map = czm_mesh.node_map
-    new_czm_mesh.interface_nodes = czm_mesh.interface_nodes
-    new_czm_mesh.damage_states = new_damage_states
-
+    new_czm_mesh = clone_czm_mesh_with_damage(czm_mesh, new_damage_states)
     return new_czm_mesh
 end
 
