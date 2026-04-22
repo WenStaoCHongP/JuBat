@@ -222,6 +222,12 @@ function create_element_workspace(case::Case)
     if case.opt.czm_enabled
         ws["negative electrode cohesive zone damage"] = zeros(Float64, Nn, 1)
         ws["positive electrode cohesive zone damage"] = zeros(Float64, Np, 1)
+        ws["czm D_max"] = 0.0
+        ws["czm D_mean"] = 0.0
+        ws["czm n_fractured"] = 0.0
+        if case.czm_mesh !== nothing
+            ws["czm damage"] = zeros(Float64, case.czm_mesh.n_cohesive, 1)
+        end
     end
 
     return ws
