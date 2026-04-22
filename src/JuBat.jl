@@ -8,6 +8,7 @@ include("CouplingState.jl")  # MultiSPMeLayout + MeshGeometry 类型定义
 include("SetCase.jl")
 include("czm.jl")  # 内聚力区域模型
 include("CzmSolve.jl")
+include("CzmPostProcess.jl")  # CZM 后处理/统计/损伤管理
 include("Assemble.jl") 
 include("ElectrodeDiffusion.jl")
 include("ElectrolyteDiffusion.jl")
