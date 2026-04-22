@@ -185,6 +185,24 @@ mutable struct CZMAssemblyCache
     end
 end
 
+"""
+    CzmLayout
+
+CZM 求解的布局信息和跨时间步状态。对标电化学的 MultiSPMeLayout。
+"""
+mutable struct CzmLayout
+    n_coh::Int                    # cohesive 单元数
+    ndof::Int                     # 总位移 DOF 数 (2 * nnode)
+    u_prev::Vector{Float64}       # 上一步位移场（跨时间步持有）
+end
+
+"""便捷构造器：从 czm_mesh 初始化"""
+function CzmLayout(czm_mesh::CohesiveMesh)
+    n_coh = czm_mesh.n_cohesive
+    ndof = 2 * czm_mesh.nnode
+    CzmLayout(n_coh, ndof, zeros(Float64, ndof))
+end
+
 # ========================================================================
 # CZM Coupling Helpers
 # ========================================================================
