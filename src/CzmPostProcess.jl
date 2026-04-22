@@ -109,9 +109,9 @@ function czm_output_to_variables(czm_mesh::CohesiveMesh, result::CZMResult, vari
     new_variables["czm separation tangent"] = result.separation_t
 
     stats = get_damage_statistics(czm_mesh)
-    new_variables["czm max damage"] = stats.max_D
-    new_variables["czm mean damage"] = stats.mean_D
-    new_variables["czm fractured elements"] = Float64(stats.n_fractured)
+    new_variables["czm D_max"] = stats.max_D
+    new_variables["czm D_mean"] = stats.mean_D
+    new_variables["czm n_fractured"] = Float64(stats.n_fractured)
 
     return new_variables
 end
