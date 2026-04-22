@@ -68,6 +68,48 @@ function extract_bc_dofs(czm_mesh::CohesiveMesh, param; cache::Union{Nothing, CZ
     return bc_dofs, bc_vals
 end
 
+"""
+    backtrack_line_search!(u, Δu, czm_mesh, E_eff, ν_eff, cohesive_params,
+                           damage_states, F_ext, F_thermo_chem, R_norm_current,
+                           bc_dofs, bc_vals, K_bulk_cached, geom_cache, ws;
+                           max_halvings=8)
+
+回溯线搜索（零化式 BC 残差）。仅用于 solve_czm_basic_step。
+返回 (u_new, R_new_norm, accepted, α_used)。
+accepted 时返回的 u_new 已含 BC 赋值，外部无需再执行 u = u + α*Δu。
+未 accepted 时返回原始 u（未修改），外部应 break。
+"""
+function backtrack_line_search!(u::Vector{Float64}, Δu::Vector{Float64},
+                                czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64,
+                                cohesive_params::Cohesive, damage_states,
+                                F_ext::Vector{Float64}, F_thermo_chem::Vector{Float64},
+                                R_norm_current::Float64,
+                                bc_dofs::Vector{Int64}, bc_vals::Vector{Float64},
+                                K_bulk_cached, geom_cache, ws;
+                                max_halvings::Int=8)
+    α = 1.0
+    for _ in 1:max_halvings
+        u_trial = u + α * Δu
+        apply_czm_dirichlet!(u_trial, bc_dofs, bc_vals)
+
+        _, f_int_trial, _, _ = assemble_coupled_system(
+            czm_mesh, u_trial, E_eff, ν_eff, cohesive_params;
+            damage_states=damage_states, K_bulk_cached=K_bulk_cached,
+            geom_cache=geom_cache, ws=ws)
+
+        R_trial = F_ext + F_thermo_chem - f_int_trial
+        apply_czm_dirichlet!(R_trial, bc_dofs, zeros(length(bc_dofs)))
+
+        R_trial_norm = norm(R_trial)
+        if !isnan(R_trial_norm) && R_trial_norm < R_norm_current
+            return u_trial, R_trial_norm, true, α
+        end
+
+        α *= 0.5
+    end
+    return u, R_norm_current, false, 0.0
+end
+
 function apply_czm_dirichlet!(u::AbstractVector{Float64}, bc_dofs::AbstractVector{Int64}, bc_vals::AbstractVector{Float64})
     for (dof, val) in zip(bc_dofs, bc_vals)
         u[dof] = val
@@ -166,35 +208,14 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_
                 break
             end
 
-            α = 1.0
-            ls_accepted = false
-            for _ in 1:8
-                u_trial = u + α * Δu
-                apply_czm_dirichlet!(u_trial, bc_dofs, bc_vals)
-
-                _, f_int_trial, _, _ = assemble_coupled_system(
-                    czm_mesh, u_trial, E_eff, ν_eff, cohesive_params;
-                    damage_states=damage_states, K_bulk_cached=K_bulk_cached,
-                    geom_cache=geom_cache, ws=ws_basic)
-
-                R_trial = F_ext + F_thermo_chem - f_int_trial
-                apply_czm_dirichlet!(R_trial, bc_dofs, zeros(length(bc_dofs)))
-
-                R_trial_norm = norm(R_trial)
-                if !isnan(R_trial_norm) && R_trial_norm < R_norm
-                    ls_accepted = true
-                    break
-                end
-
-                α *= 0.5
-            end
+            u, R_norm, ls_accepted, α_used = backtrack_line_search!(
+                u, Δu, czm_mesh, E_eff, ν_eff, cohesive_params,
+                damage_states, F_ext, F_thermo_chem, R_norm,
+                bc_dofs, bc_vals, K_bulk_cached, geom_cache, ws_basic)
 
             if !ls_accepted
                 break
             end
-
-            u = u + α * Δu
-            apply_czm_dirichlet!(u, bc_dofs, bc_vals)
         end
 
         if !converged
