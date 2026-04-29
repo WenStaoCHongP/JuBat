@@ -64,15 +64,27 @@ $$\epsilon_A = \frac{|A - A_{\text{ref}}|}{|A_{\text{ref}}|} \times 100\%$$
 | 温度曲线 RMSPE | $\epsilon_{\text{RMSPE}}(T(t), T_{\text{ref}}(t))$ | `temperature [K]` 时间序列 |
 | 温度梯度曲线 RMSPE | $\epsilon_{\text{RMSPE}}(dT/dt(t), dT/dt_{\text{ref}}(t))$ | 温度时间序列差分 |
 
-**注意**：dT/dt 在差分前需要确保两组时间步对齐。若时间步不一致，需先将参考解插值到候选解的时间网格上。
+**注意**：
+- dT/dt 在差分前需要确保两组时间步对齐。若时间步不一致，需先用 `align_to_ref` 将参考解插值到候选解的时间网格上。
+- 所有脚本使用 `opt.dtType = "auto"`（自适应时间步），不同网格分辨率会产生不同的时间步序列。插值可能引入额外误差，需在报告中标注。
+- 若候选解提前触发截止电压（时间范围短于参考解），RMSPE 只计算两组解共同覆盖的时间范围。
+
+### 3.1.1 与旧规格的关系
+
+旧规格 `2026-04-22-grid-sensitivity-analysis-design.md` §3 定义了以下指标，本文档中未保留：
+
+- **角变化收敛**（旧 §3.2）：由于 Biot 数分析已表明热场近乎轴对称（$Bi_t \approx 0.004$），角变化本身极小，RMSPE 的零点保护会大量跳过，不具备统计意义。改由空间场 RMSPE 间接覆盖。
+- **应力峰值**（旧 §3.3）：应力场由扩散应力 + 热应力驱动，非外部加载。其空间分布不均匀，单点峰值意义有限。建议在实施时作为可选补充指标加入。
+- **损伤起始时间**（旧 §3.3）：起始时刻是一个事件时间，RMSPE 不适用。改为在 D_max(t) 曲线的 RMSPE 中间接体现。
+- **载荷-位移曲线偏差**（旧 §3.3）：保留牵引-分离面积偏差作为替代。载荷-位移曲线需要纯机械模型施加位移边界条件，与电池仿真的实际驱动方式（扩散应力+热应力）不同，优先级较低。
 
 ### 3.2 热学 Track
 
 | 指标名称 | 公式 | 数据来源 |
 |----------|------|---------|
-| 峰值温度曲线 RMSPE | $\epsilon_{\text{RMSPE}}(T_{\max}(t), T_{\max,\text{ref}}(t))$ | 每时间步取 max(T_nodes) |
-| 温度范围曲线 RMSPE | $\epsilon_{\text{RMSPE}}(T_{\text{range}}(t), T_{\text{range,ref}}(t))$ | 每时间步取 max-min |
-| 空间场 RMSPE | $\epsilon_{\text{spatial}}$（§2.3） | T_hist 节点温度时间序列 |
+| 峰值温度曲线 RMSPE | $\epsilon_{\text{RMSPE}}(T_{\max}(t), T_{\max,\text{ref}}(t))$ | 每时间步取 max(T_nodes)，T_nodes 来自 `result.T_hist` |
+| 温度范围曲线 RMSPE | $\epsilon_{\text{RMSPE}}(T_{\text{range}}(t), T_{\text{range,ref}}(t))$ | 每时间步取 max(T_nodes) - min(T_nodes) |
+| 空间场 RMSPE | $\epsilon_{\text{spatial}}$（§2.3） | `result["thermal2D temperature at nodes [K]"]`（nnode × nt 矩阵） |
 
 **说明**：T_range 在温度场接近均匀时可能接近零，此时零点保护会触发跳过。需在输出中标注。
 
@@ -83,53 +95,68 @@ $$\epsilon_A = \frac{|A - A_{\text{ref}}|}{|A_{\text{ref}}|} \times 100\%$$
 | 损伤演化 RMSPE | $\epsilon_{\text{RMSPE}}(D_{\max}(t), D_{\max,\text{ref}}(t))$ | `czm D_max` 时间序列 |
 | 断裂数演化 RMSPE | $\epsilon_{\text{RMSPE}}(n_f(t), n_{f,\text{ref}}(t))$ | `czm n_fractured` 时间序列 |
 | 分离曲线 RMSPE | $\epsilon_{\text{RMSPE}}(\delta_n(t), \delta_{n,\text{ref}}(t))$ | `czm δ_max_n [m]` 时间序列 |
-| 牵引-分离面积偏差 | $\epsilon_A$（§2.4） | traction-separation 数据 |
+| 牵引-分离面积偏差 | $\epsilon_A$（§2.4） | 选取 D_max 峰值单元的 traction-separation 数据（见下方说明） |
+
+**牵引-分离面积偏差的单元选择策略**：CZM 输出 `czm traction normal [Pa]` 和 `czm separation normal [m]` 为 (n_coh × nt) 矩阵。选取 D_max 达到最大值的那个单元（即最终时刻 D 值最大的单元），提取其 traction-separation 时间序列构建曲线。若多个单元共享最大 D 值，取其中索引最小的一个。不同 nθ 的 CZM 网格单元数不同，无法逐单元对应，因此只比较"峰值损伤单元"的局部响应。
 
 ### 3.4 能量守恒检查
 
-能量残余 $\epsilon_R(t)$ 保留瞬时值形式（能量残余本身是瞬时物理量），但新增：
+能量残余 $\epsilon_R(t)$ 保留瞬时值形式（能量残余本身是瞬时物理量），但新增归一化 RMS 残余：
 
-$$\epsilon_{R,\text{RMSPE}} = \text{RMSPE}(\epsilon_R(t), \mathbf{0})$$
+$$\epsilon_{R,\text{rms}} = \frac{\sqrt{\frac{1}{N}\sum_{i=1}^{N}R(t_i)^2}}{|W_{\text{elec}}(t_{\text{end}})|} \times 100\%$$
 
-即能量残余的 RMS 值占电功的比例，作为整体守恒质量的统计度量。
+其中 $R(t)$ 是能量平衡残余，$W_{\text{elec}}(t_{\text{end}})$ 是仿真结束时的累积电功。这**不是** RMSPE（因为参考值为零时 RMSPE 无定义），而是绝对残余的 RMS 归一化。
 
 ---
 
 ## 4. 工具函数
 
-所有脚本共用以下 Julia 工具函数：
+所有脚本共用以下 Julia 工具函数（需 `using Statistics`）：
 
 ```julia
+using Statistics
+
 """
-    rmspe(y, y_ref; rel_tol=1e-3)
+    rmspe(y, y_ref; rel_tol=1e-3) -> (rmspe_val, skip_rate)
 
 计算相对均方根百分比误差。跳过 |y_ref| < rel_tol * max(|y_ref|) 的点。
+返回 (RMSPE值, 跳过率)。若跳过率 > 50%，调用者应改用绝对误差。
 """
 function rmspe(y, y_ref; rel_tol=1e-3)
     threshold = rel_tol * maximum(abs.(y_ref))
     mask = abs.(y_ref) .> threshold
-    count(mask) == 0 && return NaN
-    return sqrt(mean(((y[mask] .- y_ref[mask]) ./ y_ref[mask]).^2)) * 100
+    skip_rate = 1.0 - count(mask) / length(y_ref)
+    count(mask) == 0 && return (NaN, 1.0)
+    val = sqrt(mean(((y[mask] .- y_ref[mask]) ./ y_ref[mask]).^2)) * 100
+    return (val, skip_rate)
 end
 
 """
     spatial_rmspe_over_time(T_hist, T_ref_hist; rel_tol=1e-3)
 
 计算空间场 RMSPE 的时间平均值。
-T_hist: (nnode × nt) 矩阵
+T_hist: (nnode × nt) 矩阵，来自 result["thermal2D temperature at nodes [K]"]
 """
 function spatial_rmspe_over_time(T_hist, T_ref_hist; rel_tol=1e-3)
     nt = size(T_hist, 2)
-    errs = [rmspe(T_hist[:,k], T_ref_hist[:,k]; rel_tol) for k in 1:nt]
-    return mean(filter(!isnan, errs))
+    errs = Float64[]
+    for k in 1:nt
+        val, skip = rmspe(T_hist[:,k], T_ref_hist[:,k]; rel_tol)
+        isnan(val) || push!(errs, val)
+    end
+    isempty(errs) && return 0.0  # 所有时步均无空间变化 → 误差为零
+    return mean(errs)
 end
 
 """
     area_error(x, y, x_ref, y_ref)
 
 计算归一化曲线面积偏差（梯形积分）。
+x 和 y 至少需要 2 个点。
 """
 function area_error(x, y, x_ref, y_ref)
+    length(x) < 2 && return NaN
+    length(x_ref) < 2 && return NaN
     A  = abs(trapz(x, y))
     Ar = abs(trapz(x_ref, y_ref))
     Ar == 0 && return NaN
@@ -149,9 +176,16 @@ end
     align_to_ref(t_cand, y_cand, t_ref)
 
 将候选解插值到参考解的时间网格上，返回对齐后的 y_cand_aligned。
+不依赖外部包，手写线性插值。超出 t_cand 范围的值用端点值填充。
 """
 function align_to_ref(t_cand, y_cand, t_ref)
-    return linear_interpolation(t_cand, y_cand).(t_ref)
+    return [begin
+        idx = searchsortedfirst(t_cand, t)
+        idx == 1 && return y_cand[1]
+        idx > length(t_cand) && return y_cand[end]
+        frac = (t - t_cand[idx-1]) / (t_cand[idx] - t_cand[idx-1])
+        y_cand[idx-1] + frac * (y_cand[idx] - y_cand[idx-1])
+    end for t in t_ref]
 end
 ```
 
@@ -203,7 +237,7 @@ end
 **改动范围**：后处理逻辑。
 
 - $\epsilon_R(t)$ 瞬时曲线保留
-- 新增能量残余的 RMSPE 统计值
+- 新增能量残余的归一化 RMS 统计值 $\epsilon_{R,\text{rms}}$（见 §3.4 公式）
 
 ---
 
