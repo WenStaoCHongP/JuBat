@@ -110,12 +110,16 @@ end
 不依赖外部包，手写线性插值。超出 t_cand 范围的值用端点值填充。
 """
 function align_to_ref(t_cand, y_cand, t_ref)
-    return [begin
+    return [let
         idx = searchsortedfirst(t_cand, t)
-        idx == 1 && (return y_cand[1])
-        idx > length(t_cand) && (return y_cand[end])
-        frac = (t - t_cand[idx-1]) / (t_cand[idx] - t_cand[idx-1])
-        y_cand[idx-1] + frac * (y_cand[idx] - y_cand[idx-1])
+        if idx == 1
+            y_cand[1]
+        elseif idx > length(t_cand)
+            y_cand[end]
+        else
+            frac = (t - t_cand[idx-1]) / (t_cand[idx] - t_cand[idx-1])
+            y_cand[idx-1] + frac * (y_cand[idx] - y_cand[idx-1])
+        end
     end for t in t_ref]
 end
 ```
@@ -303,9 +307,9 @@ Script 3: 热网格敏感性分析
     println("\n" * "=" ^ 70)
     println("热网格收敛性汇总 (RMSPE)")
     println("=" ^ 70)
-    @printf("%-10s  %12s  %12s  %12s  %10s\n",
-            "nθ", "Tmax RMSPE%", "Trange RMSPE%", "Spatial RMSPE%", "Solve [s]")
-    println("-" ^ 70)
+    @printf("%-10s  %12s  %12s  %12s  %10s  %10s  %10s\n",
+            "nθ", "Tmax RMSPE%", "Trange RMSPE%", "Spatial RMSPE%", "Tmax skip%", "Trange skip%", "Solve [s]")
+    println("-" ^ 90)
 
     Tmax_errors = Float64[]
     Trange_errors = Float64[]
@@ -321,20 +325,20 @@ Script 3: 热网格敏感性分析
             push!(Tmax_errors, 0.0)
             push!(Trange_errors, 0.0)
             push!(Spatial_errors, 0.0)
-            @printf("%-10d  %12s  %12s  %12s  %10.2f\n",
-                    nθ, "ref", "ref", "ref", all_wall[i])
+            @printf("%-10d  %12s  %12s  %12s  %10s  %10s  %10.2f\n",
+                    nθ, "ref", "ref", "ref", "-", "-", all_wall[i])
             continue
         end
 
         # T_max(t) 曲线 RMSPE
         Tmax_cand = [maximum(T_hist[:, k]) for k in 1:nt_c]
         Tmax_cand_aligned = align_to_ref(t_c, Tmax_cand, t_ref)
-        err_Tmax, _ = rmspe(Tmax_cand_aligned, Tmax_ref_curve)
+        err_Tmax, skip_Tmax = rmspe(Tmax_cand_aligned, Tmax_ref_curve)
 
         # T_range(t) 曲线 RMSPE
         Trange_cand = [maximum(T_hist[:, k]) - minimum(T_hist[:, k]) for k in 1:nt_c]
         Trange_cand_aligned = align_to_ref(t_c, Trange_cand, t_ref)
-        err_Trange, _ = rmspe(Trange_cand_aligned, Trange_ref_curve)
+        err_Trange, skip_Trange = rmspe(Trange_cand_aligned, Trange_ref_curve)
 
         # 空间场 RMSPE（对齐时间步）
         nt_overlap = min(nt_c, nt_ref)
@@ -345,8 +349,9 @@ Script 3: 热网格敏感性分析
         push!(Trange_errors, err_Trange)
         push!(Spatial_errors, err_spatial)
 
-        @printf("%-10d  %12.4f  %12.4f  %12.4f  %10.2f\n",
-                nθ, err_Tmax, err_Trange, err_spatial, all_wall[i])
+        @printf("%-10d  %12.4f  %12.4f  %12.4f  %10.1f  %10.1f  %10.2f\n",
+                nθ, err_Tmax, err_Trange, err_spatial,
+                skip_Tmax*100, skip_Trange*100, all_wall[i])
     end
 ```
 
@@ -435,11 +440,11 @@ Script 4: CZM 网格敏感性分析
     println("\n" * "=" ^ 70)
     println("CZM 网格收敛性汇总 (RMSPE)")
     println("=" ^ 70)
-    @printf("%-10s  %10s  %12s  %12s  %12s  %12s  %10s\n",
+    @printf("%-10s  %10s  %12s  %12s  %12s  %12s  %10s  %10s  %10s\n",
             "nθ", "n_coh",
             "D_max RMSPE%", "n_frac RMSPE%", "δ_max_n RMSPE%", "Area err%",
-            "Wall [s]")
-    println("-" ^ 90)
+            "D_skip%", "nf_skip%", "Wall [s]")
+    println("-" ^ 105)
 
     D_rmspe = Float64[]
     nfrac_rmspe = Float64[]
@@ -456,15 +461,15 @@ Script 4: CZM 网格敏感性分析
             push!(nfrac_rmspe, 0.0)
             push!(delta_rmspe, 0.0)
             push!(area_errors, 0.0)
-            @printf("%-10d  %10d  %12s  %12s  %12s  %12s  %10.2f\n",
-                    nθ, n_coh, "ref", "ref", "ref", "ref", all_wall[i])
+            @printf("%-10d  %10d  %12s  %12s  %12s  %12s  %10s  %10s  %10.2f\n",
+                    nθ, n_coh, "ref", "ref", "ref", "ref", "-", "-", all_wall[i])
             continue
         end
 
         # D_max(t) RMSPE
         if haskey(r, "czm D_max") && haskey(ref_result, "czm D_max")
             D_aligned = align_to_ref(t_c, r["czm D_max"], t_ref)
-            err_D, _ = rmspe(D_aligned, ref_result["czm D_max"])
+            err_D, skip_D = rmspe(D_aligned, ref_result["czm D_max"])
         else
             err_D = NaN
         end
@@ -472,7 +477,7 @@ Script 4: CZM 网格敏感性分析
         # n_fractured(t) RMSPE
         if haskey(r, "czm n_fractured") && haskey(ref_result, "czm n_fractured")
             nf_aligned = align_to_ref(t_c, r["czm n_fractured"], t_ref)
-            err_nf, _ = rmspe(nf_aligned, ref_result["czm n_fractured"])
+            err_nf, skip_nf = rmspe(nf_aligned, ref_result["czm n_fractured"])
         else
             err_nf = NaN
         end
@@ -512,8 +517,9 @@ Script 4: CZM 网格敏感性分析
         push!(delta_rmspe, err_d)
         push!(area_errors, err_area)
 
-        @printf("%-10d  %10d  %12.4f  %12.4f  %12.4f  %12.4f  %10.2f\n",
-                nθ, n_coh, err_D, err_nf, err_d, err_area, all_wall[i])
+        @printf("%-10d  %10d  %12.4f  %12.4f  %12.4f  %12.4f  %10.1f  %10.1f  %10.2f\n",
+                nθ, n_coh, err_D, err_nf, err_d, err_area,
+                skip_D*100, skip_nf*100, all_wall[i])
     end
 ```
 
