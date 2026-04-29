@@ -179,12 +179,16 @@ end
 不依赖外部包，手写线性插值。超出 t_cand 范围的值用端点值填充。
 """
 function align_to_ref(t_cand, y_cand, t_ref)
-    return [begin
+    return [let
         idx = searchsortedfirst(t_cand, t)
-        idx == 1 && return y_cand[1]
-        idx > length(t_cand) && return y_cand[end]
-        frac = (t - t_cand[idx-1]) / (t_cand[idx] - t_cand[idx-1])
-        y_cand[idx-1] + frac * (y_cand[idx] - y_cand[idx-1])
+        if idx == 1
+            y_cand[1]
+        elseif idx > length(t_cand)
+            y_cand[end]
+        else
+            frac = (t - t_cand[idx-1]) / (t_cand[idx] - t_cand[idx-1])
+            y_cand[idx-1] + frac * (y_cand[idx] - y_cand[idx-1])
+        end
     end for t in t_ref]
 end
 ```
