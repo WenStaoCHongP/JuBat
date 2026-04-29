@@ -1,4 +1,4 @@
-function ThermalPolar2D_Ring(case::Case, variables::Dict{String,Any}, mesh_data)
+function ThermalPolar2D_Ring(case::Case, variables::AbstractDict{String,<:Any}, mesh_data)
     mesh = case.mesh["thermal2D"]
     param = case.param  # Use normalized parameters
     scale = case.param.scale

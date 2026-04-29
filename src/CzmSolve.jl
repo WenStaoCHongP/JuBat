@@ -196,7 +196,7 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_
                 break
             end
 
-            K_bc, R_bc = apply_bc_czm(K_total, R; bc_dofs=bc_dofs, bc_vals=zeros(length(bc_dofs)))
+            K_bc, R_bc = apply_bc_czm(K_total, R; bc_dofs=bc_dofs, bc_vals=bc_vals)
 
             Δu = try
                 K_bc \ R_bc
@@ -292,7 +292,7 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_
             F_thermo_chem = load_start * F_thermo_chem_total
             R = F_ext + F_thermo_chem - f_int_total
             apply_czm_dirichlet!(R, bc_dofs, zeros(length(bc_dofs)))
-            K_bc, R_bc = apply_bc_czm(K_total, R; bc_dofs=bc_dofs, bc_vals=zeros(length(bc_dofs)))
+            K_bc, R_bc = apply_bc_czm(K_total, R; bc_dofs=bc_dofs, bc_vals=bc_vals)
 
             tangent = try
                 K_bc \ F_load_bc
@@ -346,7 +346,7 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_
                     break
                 end
 
-                K_bc, R_bc = apply_bc_czm(K_total, R; bc_dofs=bc_dofs, bc_vals=zeros(length(bc_dofs)))
+                K_bc, R_bc = apply_bc_czm(K_total, R; bc_dofs=bc_dofs, bc_vals=bc_vals)
                 A = build_arc_length_augmented_matrix(K_bc, F_load_bc, delta_u, delta_lambda, arc_length_alpha)
                 rhs = vcat(-R_bc, -arc_constraint)
 
@@ -522,7 +522,7 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, E_ef
                 break
             end
 
-            K_bc, R_bc = apply_bc_czm(K_total, R; bc_dofs=bc_dofs, bc_vals=zeros(length(bc_dofs)))
+            K_bc, R_bc = apply_bc_czm(K_total, R; bc_dofs=bc_dofs, bc_vals=bc_vals)
             Δu = K_bc \ R_bc
 
             if any(isnan, Δu) || any(isinf, Δu)
