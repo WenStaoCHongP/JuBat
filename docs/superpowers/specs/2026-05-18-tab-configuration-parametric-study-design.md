@@ -27,11 +27,31 @@
 | `tab.h` | 10 W/(m²·K) | 极耳换热系数 |
 | `theta_neg` | `[44π]` | 负极耳位置（所有工况固定） |
 | `cool_method` | `"tab"` | 冷却方式 |
+| `theta_neg` 位置选择依据 | 负极耳在外螺旋区域，远离正极耳以最小化热耦合 | 控制变量约束说明 |
 | 电化学参数 | Jellyroll 默认 | SPMe 模型参数 |
 | 热参数 | Jellyroll 默认 | 各向异性导热 |
 | CZM 参数 | 当前分支默认 | 双线性牵引-分离律 |
 
-### 2.2 变量
+### 2.2 运行时参数（所有工况固定）
+
+| 参数 | 值 | 说明 |
+|------|----|------|
+| `opt.model` | `"SPMe"` | 电化学模型 |
+| `opt.thermal_enabled` | `true` | 启用热耦合 |
+| `opt.thermalmodel` | `"distributed2D"` | 二维分布式热模型 |
+| `opt.per_element_spme` | `true` | 逐单元 SPMe |
+| `opt.czm_enabled` | `true` | 启用 CZM |
+| `opt.mechanicalmodel` | `"full"` | 完整力学模型 |
+| `opt.Current` | `x -> 5.0` | 1C 恒流放电 |
+| `opt.time` | `[0, 3600]` | 单次放电 |
+| `opt.cool_method` | `"tab"` | 极耳冷却 |
+| `nθ` | 80 | 热网格周向分辨率 |
+| `gsorder` | 2 | 高斯积分阶数 |
+| 循环参数 | 按需 | 多循环工况另行定义 |
+
+> 注：`n_fractured` 在单次放电中可能为零（D < 1.0），需多循环仿真才能有效对比。
+
+### 2.3 变量
 
 - **正极耳数量** `n_pos`: 1, 2, 3
 - **正极耳周向位置** `theta_pos`: 向量，元素为角度 [rad]
@@ -94,11 +114,37 @@
 
 ## 4. 具体角度参数
 
-> 注：以下角度值基于当前 Jellyroll 参数（`Rin = 1.92e-3`, `layer ≈ 200μm`），
-> 实际值需在运行时根据 `jellyroll_collector_seed_mesh` 生成的网格确认内螺旋角度范围。
-> 这里提供基于 `theta_pos = [15π]` 默认值的参考范围。
+> **归一化说明**：`theta_pos` 值是无量纲的累积弧度角，归一化前后保持不变（弧度是几何不变量）。
+> 角度范围 `θ_min_in` / `θ_max_in` 必须使用**归一化参数**（`param.cell.Rin`、`param.cell.layer`）从网格计算。
+> 参见 `src/Jellyrollmodel.jl` 中 `jellyroll_tab_node_indices` 的 `theta_cum_in` 计算。
 
-假设内螺旋角度范围约 `[θ_min_in, θ_max_in]`（由网格生成确定）：
+### 4.1 角度计算代码片段
+
+```julia
+# 从网格数据提取内螺旋角度范围
+# mesh_data = jellyroll_collector_seed_mesh(param_dim; nθ=80, gsorder=2)
+# param = NormaliseParam(param_dim)  # 获取归一化参数
+mesh = mesh_data.mesh  # 网格对象
+nn = size(mesh.node, 1)
+
+a = param.cell.Rin                          # 归一化内半径
+b = param.cell.layer / (2 * pi)             # 归一化螺旋增长率
+
+# 计算内螺旋累积角度
+theta_cum_in = [(hypot(mesh.node[i,1], mesh.node[i,2]) - a) / b for i in 1:nn]
+theta_min_in, theta_max_in = extrema(theta_cum_in)
+
+# 定义工况角度
+range_in = theta_max_in - theta_min_in
+θ_mid   = (theta_min_in + theta_max_in) / 2
+Δθ      = range_in / 4
+θ_start = theta_min_in + range_in * 0.1
+θ_end   = theta_min_in + range_in * 0.9
+θ_1     = theta_min_in + range_in / 6
+θ_3     = theta_max_in - range_in / 6
+```
+
+### 4.2 角度标记汇总
 
 | 角度标记 | 计算公式 | 参考值（基于 15π 附近） |
 |----------|----------|------------------------|
@@ -156,10 +202,10 @@
 
 | 图表编号 | 类型 | 内容 |
 |----------|------|------|
-| fig12 | 多子图 | 第一组：不同极耳数量下的损伤/温度场对比 |
-| fig13 | 多子图 | 第二组：不同极耳位置下的损伤/温度场对比 |
-| fig14 | 多子图 | 第三组：不同极耳间距下的损伤/温度场对比 |
-| fig15 | 汇总图 | 三组工况的 D_max, T_max, ΔT, SOH 柱状对比 |
+| fig_tab1 | 多子图 | 第一组：不同极耳数量下的损伤/温度场对比 |
+| fig_tab2 | 多子图 | 第二组：不同极耳位置下的损伤/温度场对比 |
+| fig_tab3 | 多子图 | 第三组：不同极耳间距下的损伤/温度场对比 |
+| fig_tab4 | 汇总图 | 三组工况的 D_max, T_max, ΔT, SOH 柱状对比 |
 
 所有场图采用极坐标投影，标注极耳位置。
 
@@ -190,6 +236,9 @@ tab.theta_pos = [θ_1, θ_mid, θ_3]
 # Case 4: 起始位置
 tab.theta_pos = [θ_start]
 
+# Case 5: 中间位置 (同 Case 1, theta_pos = [θ_mid])
+tab.theta_pos = [θ_mid]
+
 # Case 6: 末端位置
 tab.theta_pos = [θ_end]
 
@@ -203,7 +252,7 @@ tab.theta_pos = [θ_start, θ_end]
 
 ## 8. 技术文档 `md/15_参数研究_极耳工况.md`
 
-设计完成后将创建 `md/15_参数研究_极耳工况.md` 作为正式技术文档，包含完整的工况定义、运行脚本和分析规范。
+设计完成后将创建 `md/15_参数研究_极耳工况.md` 作为正式技术文档。该文档属于第五层（参数研究），编号 15 遵循现有 `md/` 目录编号序列（当前最大为 14_粘性正则化.md）。
 
 ---
 
