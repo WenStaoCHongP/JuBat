@@ -1,7 +1,7 @@
 # CZM 子模块独立化设计
 
 > 日期: 2026-05-19
-> 状态: 设计评审
+> 状态: 设计评审 (v2 — 已修复审查问题)
 
 ## 1. 目标
 
@@ -61,9 +61,9 @@ src/CZM/
 ```julia
 module CZM
 
-using ..JuBat: Mesh, GetGS, NCweight, IntQ4, Assemble, Assemble1D
-using ..JuBat: Params, Scale, Cohesive, Electrode
-using ..JuBat: identify_boundary_nodes
+using ..JuBat: Mesh, GaussPoint, NCweight, IntQ4
+using ..JuBat: Params, Scale, Cohesive
+using ..JuBat: identify_boundary_nodes, Assemble, Assemble1D
 using LinearAlgebra, SparseArrays, Statistics
 
 include("Types.jl")
@@ -99,18 +99,20 @@ end # module CZM
 
 从当前代码中提取以下类型（不修改逻辑）：
 
-- `AbstractCohesiveElement` (如果存在)
-- `AbstractDamageState` (如果存在)
+- `AbstractCohesiveElement` — 从 `SetMesh.jl:23`（移入 CZM）
+- `AbstractDamageState` — 从 `SetMesh.jl:24`（移入 CZM）
 - `CohesiveElement` — 从 `czm.jl:1`
 - `DamageState` — 从 `czm.jl:24`
-- `CohesiveMesh` (mutable struct) — 从 `czm.jl` 中
+- `CohesiveMesh` (mutable struct + 默认构造器) — 从 `SetMesh.jl:26-46`（移入 CZM）
 - `CZMResult` — 从 `CzmSolve.jl:1`
 - `CohesiveElementGeom` — 从 `CouplingState.jl:106`
 - `CZMAssemblyWorkspace` — 从 `CouplingState.jl:124`
 - `CZMAssemblyCache` — 从 `CouplingState.jl:170`
 - `CzmLayout` — 从 `CouplingState.jl:193`
 
-**注意：** `CohesiveElementGeom`, `CZMAssemblyWorkspace`, `CZMAssemblyCache`, `CzmLayout` 当前定义在 `CouplingState.jl` 中，需要移入 CZM 模块。
+**重要：** `CohesiveMesh`、`AbstractCohesiveElement`、`AbstractDamageState` 当前定义在 `SetMesh.jl:23-46`，不是 `czm.jl`。它们将移入 `src/CZM/Types.jl`，`SetMesh.jl` 中的对应代码将被删除。
+
+**`SetMesh.jl` 的变更：** 删除第 23-46 行（3 个类型定义），其余 `SetMesh` 函数不受影响。
 
 #### `src/CZM/Constitutive.jl` — 本构模型
 
@@ -140,9 +142,28 @@ end # module CZM
 - `assemble_bulk_stiffness` (czm.jl:331)
 - `assemble_thermal_chemical_load` (czm.jl:397)
 - `build_czm_cache` (czm.jl:463)
-- `ensure_czm_cache` (czm.jl:551)
 - `assemble_coupled_system` (czm.jl:562)
 - `assemble_coupled_system_full` (czm.jl:585)
+
+**注意：** `ensure_czm_cache` (czm.jl:551) 当前接受 `case::Case` 参数，违反"CZM 不依赖 Case"的约束。将重写为不接受 Case 的版本：
+
+```julia
+# 在 CZM 模块中（纯数据接口）
+function ensure_czm_cache(cache, czm_mesh, E_eff, ν_eff)
+    if cache === nothing || !cache.valid ||
+       cache.E_eff != E_eff || cache.ν_eff != ν_eff ||
+       length(cache.cohesive_geom) != czm_mesh.n_cohesive
+        cache = build_czm_cache(czm_mesh, E_eff, ν_eff, param)
+    end
+    return cache
+end
+```
+
+耦合层的适配器 `update_czm_damage!` 负责传递 `case.czm_cache`：
+```julia
+cache = CZM.ensure_czm_cache(case.czm_cache, case.czm_mesh, E_eff, ν_eff)
+case.czm_cache = cache  # 写回（如果重建了）
+```
 
 **依赖：** `IntQ4`, `Assemble`, `Assemble1D`
 
@@ -267,9 +288,10 @@ using LinearAlgebra, SparseArrays, Plots, Parameters, CSV, Infiltrator, Statisti
 include("Option.jl")
 include("SetMesh.jl")
 include("SetParams.jl")
+include("Tools.jl")            # ← 提前：CZM 需要 IntQ4, identify_boundary_nodes
 include("CouplingState.jl")   # MultiSPMeLayout + MeshGeometry + CZM适配器
 include("SetCase.jl")
-include("CZM/CZM.jl")         # ← 新增：CZM 子模块
+include("CZM/CZM.jl")         # ← 新增：CZM 子模块（依赖 Mesh, Params, Tools）
 include("Assemble.jl")
 include("ElectrodeDiffusion.jl")
 include("ElectrolyteDiffusion.jl")
@@ -279,7 +301,6 @@ include("SPM.jl")
 include("SPMe.jl")
 include("P2D.jl")
 include("Parallelsolution.jl")
-include("Tools.jl")
 include("CallModel.jl")
 include("Solve.jl")
 include("PostProcessing.jl")
@@ -303,6 +324,11 @@ export bilinear_traction, bilinear_tangent, update_damage
 # ... (保持现有 export 列表)
 end
 ```
+
+**include 顺序说明：**
+- `Tools.jl` 从原位置（Parallelsolution 之后）提前到 `SetParams.jl` 之后，因为 CZM 需要 `IntQ4` 和 `identify_boundary_nodes`
+- `Tools.jl` 本身不依赖 CZM 之后的任何文件，所以提前是安全的
+- `compute_separation` 留在 `Tools.jl` 中不变（仅做单元分离计算，是通用工具函数）
 
 ### 3.5 Materialmatrix.jl 的变更
 
