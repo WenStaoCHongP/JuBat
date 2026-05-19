@@ -296,8 +296,8 @@ include("SetParams.jl")
 include("Tools.jl")            # ← 提前：CZM 需要 IntQ4, identify_boundary_nodes
 include("CouplingState.jl")   # MultiSPMeLayout + MeshGeometry + CZM适配器
 include("SetCase.jl")
-include("CZM/CZM.jl")         # ← 新增：CZM 子模块（依赖 Mesh, Params, Tools）
-include("Assemble.jl")
+include("Assemble.jl")         # ← 提前：CZM 需要 Assemble, Assemble1D
+include("CZM/CZM.jl")         # ← 新增：CZM 子模块（依赖 Mesh, Params, Tools, Assemble）
 include("ElectrodeDiffusion.jl")
 include("ElectrolyteDiffusion.jl")
 include("ElectrodePotential.jl")
@@ -332,7 +332,8 @@ end
 
 **include 顺序说明：**
 - `Tools.jl` 从原位置（Parallelsolution 之后）提前到 `SetParams.jl` 之后，因为 CZM 需要 `IntQ4` 和 `identify_boundary_nodes`
-- `Tools.jl` 本身不依赖 CZM 之后的任何文件，所以提前是安全的
+- `Assemble.jl` 从原位置（CZM 之后）提前到 `SetCase.jl` 之后，因为 CZM 需要 `Assemble` 和 `Assemble1D`
+- 两者都是纯工具函数（不依赖后续文件中定义的类型），所以提前是安全的
 - `compute_separation` 留在 `Tools.jl` 中不变（仅做单元分离计算，是通用工具函数）
 
 ### 3.5 Materialmatrix.jl 的变更
@@ -372,7 +373,7 @@ end
 
 ### 5.1 include 顺序敏感性
 
-CZM 模块依赖 `Mesh`, `Params`, `CouplingState` 中的 `MeshGeometry`。需确保在 `CouplingState.jl` 之后加载。
+CZM 模块依赖 `Mesh`, `Params`, `CouplingState` 中的 `MeshGeometry`, 以及 `Tools.jl` 中的 `IntQ4`/`identify_boundary_nodes`, 和 `Assemble.jl` 中的 `Assemble`/`Assemble1D`。需确保在以上所有文件之后加载。
 
 **缓解：** 在 `CZM/CZM.jl` 中使用 `using ..JuBat` 引用已加载的类型。
 
