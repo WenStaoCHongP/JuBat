@@ -1,7 +1,7 @@
 # CZM 子模块独立化设计
 
 > 日期: 2026-05-19
-> 状态: 设计评审 (v2 — 已修复审查问题)
+> 状态: 设计评审 (v3 — 已修复 v2 审查问题)
 
 ## 1. 目标
 
@@ -63,6 +63,7 @@ module CZM
 
 using ..JuBat: Mesh, GaussPoint, NCweight, IntQ4
 using ..JuBat: Params, Scale, Cohesive
+using ..JuBat: CohesiveMesh, AbstractCohesiveElement, AbstractDamageState
 using ..JuBat: identify_boundary_nodes, Assemble, Assemble1D
 using LinearAlgebra, SparseArrays, Statistics
 
@@ -88,7 +89,7 @@ export solve_czm_step, solve_czm_basic_step, newton_raphson_czm, solve_czm_arc_l
 export get_damage_statistics, check_fracture_criterion
 export reset_damage_states, accumulate_cycle_damage
 export czm_output_to_variables
-export get_fractured_elements, get_active_elements
+export get_fractured_elements
 export compute_all_gap_conductances, compute_element_gap_conductance
 export clone_damage_states, clone_czm_mesh_with_damage
 
@@ -99,20 +100,22 @@ end # module CZM
 
 从当前代码中提取以下类型（不修改逻辑）：
 
-- `AbstractCohesiveElement` — 从 `SetMesh.jl:23`（移入 CZM）
-- `AbstractDamageState` — 从 `SetMesh.jl:24`（移入 CZM）
 - `CohesiveElement` — 从 `czm.jl:1`
 - `DamageState` — 从 `czm.jl:24`
-- `CohesiveMesh` (mutable struct + 默认构造器) — 从 `SetMesh.jl:26-46`（移入 CZM）
 - `CZMResult` — 从 `CzmSolve.jl:1`
 - `CohesiveElementGeom` — 从 `CouplingState.jl:106`
 - `CZMAssemblyWorkspace` — 从 `CouplingState.jl:124`
 - `CZMAssemblyCache` — 从 `CouplingState.jl:170`
 - `CzmLayout` — 从 `CouplingState.jl:193`
 
-**重要：** `CohesiveMesh`、`AbstractCohesiveElement`、`AbstractDamageState` 当前定义在 `SetMesh.jl:23-46`，不是 `czm.jl`。它们将移入 `src/CZM/Types.jl`，`SetMesh.jl` 中的对应代码将被删除。
+**保留在 `SetMesh.jl` 的类型（不移动）：**
+- `AbstractCohesiveElement` — `SetMesh.jl:23`
+- `AbstractDamageState` — `SetMesh.jl:24`
+- `CohesiveMesh` (mutable struct + 默认构造器) — `SetMesh.jl:26-46`
 
-**`SetMesh.jl` 的变更：** 删除第 23-46 行（3 个类型定义），其余 `SetMesh` 函数不受影响。
+**原因：** `Tools.jl:identify_boundary_nodes` 使用 `mesh isa CohesiveMesh` 进行类型分派。由于 `Tools.jl` 必须在 CZM 模块之前加载（CZM 需要 `IntQ4` 和 `identify_boundary_nodes`），而 `CohesiveMesh` 在 `SetMesh.jl` 中定义（`Tools.jl` 之前加载），因此这三个类型必须保留在 `SetMesh.jl`。CZM 模块通过 `using ..JuBat: CohesiveMesh, AbstractCohesiveElement, AbstractDamageState` 引用它们。
+
+**`SetMesh.jl` 无变更：** 上述 3 个类型定义保留在原位，不删除。
 
 #### `src/CZM/Constitutive.jl` — 本构模型
 
@@ -149,7 +152,7 @@ end # module CZM
 
 ```julia
 # 在 CZM 模块中（纯数据接口）
-function ensure_czm_cache(cache, czm_mesh, E_eff, ν_eff)
+function ensure_czm_cache(cache, czm_mesh, E_eff, ν_eff, param)
     if cache === nothing || !cache.valid ||
        cache.E_eff != E_eff || cache.ν_eff != ν_eff ||
        length(cache.cohesive_geom) != czm_mesh.n_cohesive
@@ -159,9 +162,9 @@ function ensure_czm_cache(cache, czm_mesh, E_eff, ν_eff)
 end
 ```
 
-耦合层的适配器 `update_czm_damage!` 负责传递 `case.czm_cache`：
+耦合层的适配器 `update_czm_damage!` 负责传递 `case.czm_cache` 和 `case.param`：
 ```julia
-cache = CZM.ensure_czm_cache(case.czm_cache, case.czm_mesh, E_eff, ν_eff)
+cache = CZM.ensure_czm_cache(case.czm_cache, case.czm_mesh, E_eff, ν_eff, case.param)
 case.czm_cache = cache  # 写回（如果重建了）
 ```
 
@@ -204,8 +207,10 @@ case.czm_cache = cache  # 写回（如果重建了）
 
 从 `Materialmatrix.jl` 中移入：
 - `get_fractured_elements` (Materialmatrix.jl:358)
-- `get_active_elements` (Materialmatrix.jl:371)
 - `compute_all_gap_conductances` (Materialmatrix.jl:394)
+
+**保留在 `Materialmatrix.jl` 的函数：**
+- `get_active_elements` (Materialmatrix.jl:371) — 依赖 `MeshGeometry` 类型（定义在 `CouplingState.jl`），属于耦合层逻辑（根据断裂单元过滤热源/分流），不属于 CZM 内部算法。外部调用点直接通过 `JuBat.get_active_elements` 调用，无需 CZM 前缀。
 
 ### 3.3 CouplingState.jl 的变更
 
@@ -227,7 +232,7 @@ end
 # update_czm_damage! — 重写为薄适配层
 function update_czm_damage!(case, variables, T_nodes_carry)
     E_eff, ν_eff, α_eff, β_n, β_p = compute_czm_effective_params(case)
-    cache = CZM.ensure_czm_cache(case, case.czm_mesh, E_eff, ν_eff)
+    cache = CZM.ensure_czm_cache(case.czm_cache, case.czm_mesh, E_eff, ν_eff, case.param)
     dT_elem, Δsoc_n_elem, Δsoc_p_elem = compute_czm_strain_inputs(...)
 
     # 计算粘性参数
@@ -343,7 +348,7 @@ end
 | 调用位置 | 当前调用 | 变更后调用 |
 |----------|---------|-----------|
 | `CallModel.jl:109-123` | `compute_heat_sources_with_czm` | 内部调用 `CZM.get_damage_statistics` |
-| `CallModel.jl:111` | `compute_heat_sources_with_czm(case, ...)` | 内部调用 `CZM.get_active_elements` |
+| `CallModel.jl:111` | `compute_heat_sources_with_czm(case, ...)` | 内部调用 `get_active_elements`（留在 Materialmatrix.jl） |
 | `Solve.jl:206` | `CzmLayout(case.czm_mesh)` | `CZM.CzmLayout(case.czm_mesh)` |
 | `Solve.jl:278` | `update_czm_damage!(case, variables, ...)` | 不变（适配器） |
 | `ThermalDistributed.jl:292-310` | `compute_gap_conductance(D, δ_n, ...)` | `CZM.compute_gap_conductance(...)` |
@@ -375,13 +380,17 @@ CZM 模块依赖 `Mesh`, `Params`, `CouplingState` 中的 `MeshGeometry`。需�
 
 CZM 的 `get_active_elements` 接受 `MeshGeometry` 参数。`MeshGeometry` 定义在 `CouplingState.jl`。
 
-**缓解：** `MeshGeometry` 保持在 JuBat 顶层（`CouplingState.jl`），CZM 通过 `using ..JuBat` 引用。或者将 `get_active_elements` 留在耦合层。
+**缓解：** `get_active_elements` 保留在 `Materialmatrix.jl`（耦合层），不进入 CZM 模块。它本质上是耦合逻辑（根据损伤状态过滤活跃单元），不是 CZM 内部算法。`MeshGeometry` 保持在 JuBat 顶层（`CouplingState.jl`）。
 
-### 5.3 `identify_boundary_nodes` 依赖
+### 5.3 `identify_boundary_nodes` 与 `CohesiveMesh` 依赖
 
-CZM 的 `identify_bc_nodes_czm` 调用 `identify_boundary_nodes`（定义在 JuBat 顶层，可能在 `Tools.jl` 或 `Jellyrollmodel.jl`）。
+CZM 的 `identify_bc_nodes_czm` 调用 `identify_boundary_nodes`（定义在 `Tools.jl`）。`identify_boundary_nodes` 内部使用 `mesh isa CohesiveMesh` 进行类型分派。
 
-**缓解：** 在 CZM 模块中 import 此函数。
+**缓解：**
+- `CohesiveMesh` 保留在 `SetMesh.jl`（在 `Tools.jl` 之前加载），不移动到 CZM
+- `Tools.jl` 在 `SetParams.jl` 之后、`CZM/CZM.jl` 之前加载
+- CZM 模块通过 `using ..JuBat` 引用 `CohesiveMesh` 和 `identify_boundary_nodes`
+- 加载顺序：`SetMesh.jl` (定义 CohesiveMesh) → `Tools.jl` (使用 CohesiveMesh) → `CZM/CZM.jl` (使用两者)
 
 ## 6. 验证标准
 
