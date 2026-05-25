@@ -426,6 +426,8 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
         end
         
         # ============ 循环汇总与后处理 ============
+        rest1_result = cycle_result.rest1
+        rest2_result = cycle_result.rest2
         _postprocess_cycle_result!(cycle_result, charge_result, discharge_result, rest1_result, rest2_result, czm_mesh)
         _append_cycle_result!(result, cycle, cycle_result; save_detailed=save_detailed)
         initial_capacity, current_soh = _update_soh_and_capacity!(result, cycle, cycle_result, initial_capacity)
