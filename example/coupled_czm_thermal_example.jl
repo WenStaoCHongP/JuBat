@@ -61,7 +61,7 @@ opt.czm_inner_exit_only = true          # 仅内圈单元在断裂时退出
 opt.czm_fix_inner = false               # 力学边界：内圈自由，外圈固定
 opt.czm_iter_method = "basic"     # 使用弧长法处理后峰软化（配合粘性正则化）
 opt.czm_load_steps = 10                 # 载荷子步数
-opt.debug_coupling = true               # 打印 CZM 每步诊断
+opt.debug_coupling = false               # 打印 CZM 每步诊断
 
 # 粘性正则化（推荐配合 load_substep 或 arc_length 使用）
 opt.czm_viscous_enabled = false         # 关闭粘性正则化（回归测试）
@@ -157,8 +157,18 @@ println("\n[7.5] 导出CSV文件...")
 output_dir = joinpath(@__DIR__, "..", "output")
 mkpath(output_dir)
 csv_dir = joinpath(output_dir, "csv", "czm_study_1")
+
+# 配置CSV导出选项：仅输出每个阶段首尾步，指定循环完整输出
+csv_opt = JuBat.CsvExportOptions(
+    :phase_ends,                # 仅阶段首尾
+    1,                          # save_every (仅 :custom 模式使用)
+    [1, result.n_cycles],       # 第1个和最后一个循环完整输出
+    String[]                    # 不跳过任何文件
+)
+
 JuBat.export_cycling_csv(result, case, czm_mesh;
-                          output_dir=csv_dir, overwrite=true)
+                          output_dir=csv_dir, overwrite=true,
+                          csv_opt=csv_opt)
 
 # ========================================================================
 # 8. 结果分析
