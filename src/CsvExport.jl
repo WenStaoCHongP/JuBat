@@ -112,10 +112,10 @@ function export_cycling_csv(result, case, czm_mesh;
             push!(files_skipped, "element_currents.csv")
         end
     else
-        push!(files_skipped, "element_currents.csv (no solve_result data)" *
-              (has_data ? "" : ""))
-        if "element_currents.csv" in csv_opt.skip_files && has_data
-            files_skipped[end] = "element_currents.csv (skipped by csv_opt)"
+        if "element_currents.csv" in csv_opt.skip_files
+            push!(files_skipped, "element_currents.csv (skipped by csv_opt)")
+        else
+            push!(files_skipped, "element_currents.csv (no solve_result data)")
         end
     end
 
