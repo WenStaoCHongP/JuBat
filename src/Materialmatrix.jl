@@ -83,14 +83,21 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 	new_state.fractured = damage_state.fractured
 	new_state.accumulated_damage = damage_state.accumulated_damage
 
+	czm_model = cohesive_params.czm_model
+
 	if damage_state.fractured
 		new_state.D = 1.0
 		new_state.D_visc = 1.0
 		new_state.fractured = true
-		return 0.0, 0.0, 1.0, new_state
+		if czm_model == "model1"
+			T_n = 0.0
+			T_t = K_t * δ_t
+		else
+			T_n = 0.0
+			T_t = 0.0
+		end
+		return T_n, T_t, 1.0, new_state
 	end
-
-	czm_model = cohesive_params.czm_model
 	δ_n_pos = max(0.0, δ_n)
 	if czm_model == "model1"
 		δ_eff = δ_n_pos
@@ -185,7 +192,11 @@ function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageStat
 
 	if damage_state.fractured
 		dT_dδ[1, 1] = 1e-10 * K_n
-		dT_dδ[2, 2] = 1e-10 * K_t
+		if czm_model == "model1"
+			dT_dδ[2, 2] = K_t
+		else
+			dT_dδ[2, 2] = 1e-10 * K_t
+		end
 		return dT_dδ
 	end
 
