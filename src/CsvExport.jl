@@ -45,28 +45,31 @@ function _should_output_step(csv_opt::CsvExportOptions, cycle::Int, ti::Int, n_s
     return true
 end
 
-"""Pre-compute Set of (cycle, phase) keys that correspond to the last snapshot in each phase group.
+"""Pre-compute Set of snapshot indices that correspond to the last snapshot in each phase group.
 Returns empty Set for empty snapshot arrays."""
-function _compute_last_snap_keys(czm_snapshots)
-    last_keys = Set{Tuple{Int,String}}()
-    isempty(czm_snapshots) && return last_keys
+function _compute_last_snap_indices(czm_snapshots)
+    last_indices = Set{Int}()
+    isempty(czm_snapshots) && return last_indices
     prev_key = (czm_snapshots[1].cycle, czm_snapshots[1].phase)
+    prev_idx = 1
     for i in 2:length(czm_snapshots)
         key = (czm_snapshots[i].cycle, czm_snapshots[i].phase)
         if key != prev_key
-            push!(last_keys, prev_key)
+            push!(last_indices, prev_idx)
         end
         prev_key = key
+        prev_idx = i
     end
-    push!(last_keys, prev_key)
-    return last_keys
+    push!(last_indices, prev_idx)
+    return last_indices
 end
 
-"""Whether a CZM snapshot should be written, given it is (or isn't) the last in its phase group."""
-function _should_output_snapshot(csv_opt::CsvExportOptions, cycle::Int, is_last_in_phase::Bool)
+"""Whether a CZM snapshot at index `snap_idx` should be written."""
+function _should_output_snapshot(csv_opt::CsvExportOptions, cycle::Int, snap_idx::Int,
+                                  last_indices::Set{Int})
     cycle in csv_opt.full_output_cycles && return true
     csv_opt.mode == :full && return true
-    csv_opt.mode == :phase_ends && return is_last_in_phase
+    csv_opt.mode == :phase_ends && return snap_idx in last_indices
     csv_opt.mode == :custom && return true
     return true
 end
@@ -390,15 +393,13 @@ function _write_cohesive_damage(result, case, czm_mesh,
         push!(theta_degs, atan(my, mx) * 180.0 / pi)
     end
 
-    last_snap_keys = _compute_last_snap_keys(result.czm_snapshots)
+    last_snap_indices = _compute_last_snap_indices(result.czm_snapshots)
 
     open(filepath, "w") do f
         println(f, "time_s,cycle,phase,coh_id,length,D,delta_n,delta_t,T_n,T_t,fractured,theta_deg")
 
-        for snap in result.czm_snapshots
-            key = (snap.cycle, snap.phase)
-            is_last = key in last_snap_keys
-            if !_should_output_snapshot(csv_opt, snap.cycle, is_last)
+        for (si, snap) in enumerate(result.czm_snapshots)
+            if !_should_output_snapshot(csv_opt, snap.cycle, si, last_snap_indices)
                 continue
             end
             t = snap.time_s
@@ -436,15 +437,13 @@ function _write_node_displacement(result, case, czm_mesh,
     node_x = czm_mesh.node[:, 1] * scale.L
     node_y = czm_mesh.node[:, 2] * scale.L
 
-    last_snap_keys = _compute_last_snap_keys(result.czm_snapshots)
+    last_snap_indices = _compute_last_snap_indices(result.czm_snapshots)
 
     open(filepath, "w") do f
         println(f, "time_s,cycle,phase,node_id,x,y,ux,uy")
 
-        for snap in result.czm_snapshots
-            key = (snap.cycle, snap.phase)
-            is_last = key in last_snap_keys
-            if !_should_output_snapshot(csv_opt, snap.cycle, is_last)
+        for (si, snap) in enumerate(result.czm_snapshots)
+            if !_should_output_snapshot(csv_opt, snap.cycle, si, last_snap_indices)
                 continue
             end
             t = snap.time_s
@@ -506,15 +505,13 @@ function _write_driving_force(result, case, czm_mesh,
         end
     end
 
-    last_snap_keys = _compute_last_snap_keys(result.czm_snapshots)
+    last_snap_indices = _compute_last_snap_indices(result.czm_snapshots)
 
     open(filepath, "w") do f
         println(f, "time_s,cycle,phase,coh_id,dT_neighbor,dsoc_n_neighbor,dsoc_p_neighbor,eps_0_thermal,eps_0_diffusion,eps_0_total")
 
-        for snap in result.czm_snapshots
-            key = (snap.cycle, snap.phase)
-            is_last = key in last_snap_keys
-            if !_should_output_snapshot(csv_opt, snap.cycle, is_last)
+        for (si, snap) in enumerate(result.czm_snapshots)
+            if !_should_output_snapshot(csv_opt, snap.cycle, si, last_snap_indices)
                 continue
             end
 
