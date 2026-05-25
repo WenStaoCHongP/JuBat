@@ -80,5 +80,5 @@ export TimeStepData, CycleExportData
 export solve_phase_with_export, solve_cycle_with_export
 export export_cycle_data_to_csv, load_cycle_data_from_csv
 # CSV export for cycling results
-export CZMSnapshot, export_cycling_csv
+export CZMSnapshot, export_cycling_csv, CsvExportOptions
 end

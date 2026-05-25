@@ -3,23 +3,95 @@
 # Note: CZMSnapshot struct is defined in CouplingState.jl (included before Solve.jl)
 
 # ========================================================================
+# Export options (configurable sampling)
+# ========================================================================
+
+"""
+    CsvExportOptions
+
+Controls which time steps and snapshots are written to CSV files.
+
+# Fields
+- `mode::Symbol`: `:full` (all steps), `:phase_ends` (first+last per phase), `:custom` (every N steps)
+- `save_every::Int`: Step interval for `:custom` mode (ignored for other modes)
+- `full_output_cycles::Vector{Int}`: Cycles that always get full output regardless of mode
+- `skip_files::Vector{String}`: Filenames to skip entirely (e.g. `["node_displacement.csv"]`)
+"""
+struct CsvExportOptions
+    mode::Symbol
+    save_every::Int
+    full_output_cycles::Vector{Int}
+    skip_files::Vector{String}
+end
+
+CsvExportOptions() = CsvExportOptions(:full, 1, [1], String[])
+CsvExportOptions(mode::Symbol) = CsvExportOptions(mode, 1, [1], String[])
+
+function _validate_csv_opt(csv_opt::CsvExportOptions)
+    if csv_opt.mode ∉ (:full, :phase_ends, :custom)
+        error("CsvExportOptions: invalid mode $(csv_opt.mode), must be :full, :phase_ends, or :custom")
+    end
+    if csv_opt.mode == :custom && csv_opt.save_every < 1
+        error("CsvExportOptions: save_every must be ≥ 1 for :custom mode")
+    end
+end
+
+"""Whether time step `ti` (of `n_steps` total) in `cycle` should be written."""
+function _should_output_step(csv_opt::CsvExportOptions, cycle::Int, ti::Int, n_steps::Int)
+    cycle in csv_opt.full_output_cycles && return true
+    csv_opt.mode == :full && return true
+    csv_opt.mode == :phase_ends && return (ti == 1 || ti == n_steps)
+    csv_opt.mode == :custom && return (ti == 1 || ti == n_steps || ti % csv_opt.save_every == 1)
+    return true
+end
+
+"""Pre-compute Set of (cycle, phase) keys that correspond to the last snapshot in each phase group.
+Returns empty Set for empty snapshot arrays."""
+function _compute_last_snap_keys(czm_snapshots)
+    last_keys = Set{Tuple{Int,String}}()
+    isempty(czm_snapshots) && return last_keys
+    prev_key = (czm_snapshots[1].cycle, czm_snapshots[1].phase)
+    for i in 2:length(czm_snapshots)
+        key = (czm_snapshots[i].cycle, czm_snapshots[i].phase)
+        if key != prev_key
+            push!(last_keys, prev_key)
+        end
+        prev_key = key
+    end
+    push!(last_keys, prev_key)
+    return last_keys
+end
+
+"""Whether a CZM snapshot should be written, given it is (or isn't) the last in its phase group."""
+function _should_output_snapshot(csv_opt::CsvExportOptions, cycle::Int, is_last_in_phase::Bool)
+    cycle in csv_opt.full_output_cycles && return true
+    csv_opt.mode == :full && return true
+    csv_opt.mode == :phase_ends && return is_last_in_phase
+    csv_opt.mode == :custom && return true
+    return true
+end
+
+# ========================================================================
 # Main export function
 # ========================================================================
 
 """
     export_cycling_csv(result, case, czm_mesh;
-                       output_dir="output/csv", overwrite=false)
+                       output_dir="output/csv", overwrite=false,
+                       csv_opt=CsvExportOptions())
 
 Export solve_cycling results to CSV files for post-processing.
 """
 function export_cycling_csv(result, case, czm_mesh;
-                            output_dir::String="output/csv", overwrite::Bool=false)
+                            output_dir::String="output/csv", overwrite::Bool=false,
+                            csv_opt::CsvExportOptions=CsvExportOptions())
+    _validate_csv_opt(csv_opt)
     mkpath(output_dir)
 
     files_written = String[]
     files_skipped = String[]
 
-    # 1. cycle_summary.csv
+    # 1. cycle_summary.csv (always full output)
     try
         _write_cycle_summary(result, output_dir, overwrite)
         push!(files_written, "cycle_summary.csv")
@@ -31,46 +103,62 @@ function export_cycling_csv(result, case, czm_mesh;
     # 2. element_currents.csv
     has_data = !isempty(result.cycle_results) &&
                any(cr -> cr.discharge.solve_result !== nothing, result.cycle_results)
-    if has_data
+    if has_data && !("element_currents.csv" in csv_opt.skip_files)
         try
-            _write_element_currents(result, case, output_dir, overwrite)
+            _write_element_currents(result, case, output_dir, overwrite, csv_opt)
             push!(files_written, "element_currents.csv")
         catch e
             @warn "Failed to write element_currents.csv" exception=e
             push!(files_skipped, "element_currents.csv")
         end
     else
-        push!(files_skipped, "element_currents.csv (no solve_result data)")
+        push!(files_skipped, "element_currents.csv (no solve_result data)" *
+              (has_data ? "" : ""))
+        if "element_currents.csv" in csv_opt.skip_files && has_data
+            files_skipped[end] = "element_currents.csv (skipped by csv_opt)"
+        end
     end
 
     # 3. node_temperature.csv
-    if case.opt.thermal_enabled
+    if case.opt.thermal_enabled && !("node_temperature.csv" in csv_opt.skip_files)
         try
-            _write_node_temperature(result, case, output_dir, overwrite)
+            _write_node_temperature(result, case, output_dir, overwrite, csv_opt)
             push!(files_written, "node_temperature.csv")
         catch e
             @warn "Failed to write node_temperature.csv" exception=e
             push!(files_skipped, "node_temperature.csv")
         end
     else
-        push!(files_skipped, "node_temperature.csv (thermal disabled)")
+        if "node_temperature.csv" in csv_opt.skip_files
+            push!(files_skipped, "node_temperature.csv (skipped by csv_opt)")
+        else
+            push!(files_skipped, "node_temperature.csv (thermal disabled)")
+        end
     end
 
     # 4. cohesive_damage.csv + 5. node_displacement.csv
     if !isempty(result.czm_snapshots)
-        try
-            _write_cohesive_damage(result, case, czm_mesh, output_dir, overwrite)
-            push!(files_written, "cohesive_damage.csv")
-        catch e
-            @warn "Failed to write cohesive_damage.csv" exception=e
-            push!(files_skipped, "cohesive_damage.csv")
+        if !("cohesive_damage.csv" in csv_opt.skip_files)
+            try
+                _write_cohesive_damage(result, case, czm_mesh, output_dir, overwrite, csv_opt)
+                push!(files_written, "cohesive_damage.csv")
+            catch e
+                @warn "Failed to write cohesive_damage.csv" exception=e
+                push!(files_skipped, "cohesive_damage.csv")
+            end
+        else
+            push!(files_skipped, "cohesive_damage.csv (skipped by csv_opt)")
         end
-        try
-            _write_node_displacement(result, case, czm_mesh, output_dir, overwrite)
-            push!(files_written, "node_displacement.csv")
-        catch e
-            @warn "Failed to write node_displacement.csv" exception=e
-            push!(files_skipped, "node_displacement.csv")
+        if !("node_displacement.csv" in csv_opt.skip_files)
+            try
+                _write_node_displacement(result, case, czm_mesh, output_dir, overwrite, csv_opt)
+                push!(files_written, "node_displacement.csv")
+            catch e
+                @warn "Failed to write node_displacement.csv" exception=e
+                push!(files_skipped, "node_displacement.csv")
+            end
+        else
+            push!(files_skipped, "node_displacement.csv (skipped by csv_opt)")
         end
     else
         push!(files_skipped, "cohesive_damage.csv (no CZM snapshots)")
@@ -79,18 +167,22 @@ function export_cycling_csv(result, case, czm_mesh;
 
     # 6. cohesive_driving_force.csv
     if !isempty(result.czm_snapshots) && case.geometry !== nothing
-        try
-            _write_driving_force(result, case, czm_mesh, output_dir, overwrite)
-            push!(files_written, "cohesive_driving_force.csv")
-        catch e
-            @warn "Failed to write cohesive_driving_force.csv" exception=e
-            push!(files_skipped, "cohesive_driving_force.csv")
+        if !("cohesive_driving_force.csv" in csv_opt.skip_files)
+            try
+                _write_driving_force(result, case, czm_mesh, output_dir, overwrite, csv_opt)
+                push!(files_written, "cohesive_driving_force.csv")
+            catch e
+                @warn "Failed to write cohesive_driving_force.csv" exception=e
+                push!(files_skipped, "cohesive_driving_force.csv")
+            end
+        else
+            push!(files_skipped, "cohesive_driving_force.csv (skipped by csv_opt)")
         end
     else
         push!(files_skipped, "cohesive_driving_force.csv (no CZM snapshots or geometry)")
     end
 
-    # 7. czm_solver_diagnostics.csv
+    # 7. czm_solver_diagnostics.csv (always full output)
     if !isempty(result.czm_snapshots)
         try
             _write_czm_diagnostics(result, output_dir, overwrite)
@@ -149,7 +241,8 @@ end
 # 2. element_currents.csv
 # ========================================================================
 
-function _write_element_currents(result, case, output_dir::String, overwrite::Bool)
+function _write_element_currents(result, case, output_dir::String, overwrite::Bool,
+                                  csv_opt::CsvExportOptions)
     filepath = joinpath(output_dir, "element_currents.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -192,6 +285,9 @@ function _write_element_currents(result, case, output_dir::String, overwrite::Bo
 
                 n_steps = length(time_s)
                 for ti in 1:n_steps
+                    if !_should_output_step(csv_opt, cyc, ti, n_steps)
+                        continue
+                    end
                     t = time_s[ti]
                     for e in 1:ne
                         I_e = _safe_get(I_e_all, e, ti)
@@ -218,7 +314,8 @@ end
 # 3. node_temperature.csv
 # ========================================================================
 
-function _write_node_temperature(result, case, output_dir::String, overwrite::Bool)
+function _write_node_temperature(result, case, output_dir::String, overwrite::Bool,
+                                  csv_opt::CsvExportOptions)
     filepath = joinpath(output_dir, "node_temperature.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -251,6 +348,9 @@ function _write_node_temperature(result, case, output_dir::String, overwrite::Bo
                 n_steps = length(time_s)
 
                 for ti in 1:n_steps
+                    if !_should_output_step(csv_opt, cyc, ti, n_steps)
+                        continue
+                    end
                     t = time_s[ti]
                     for n in 1:nnode
                         T_K = _safe_get(T_nodes_all, n, ti)
@@ -268,7 +368,8 @@ end
 # ========================================================================
 
 function _write_cohesive_damage(result, case, czm_mesh,
-                                 output_dir::String, overwrite::Bool)
+                                 output_dir::String, overwrite::Bool,
+                                 csv_opt::CsvExportOptions)
     filepath = joinpath(output_dir, "cohesive_damage.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -289,10 +390,17 @@ function _write_cohesive_damage(result, case, czm_mesh,
         push!(theta_degs, atan(my, mx) * 180.0 / pi)
     end
 
+    last_snap_keys = _compute_last_snap_keys(result.czm_snapshots)
+
     open(filepath, "w") do f
         println(f, "time_s,cycle,phase,coh_id,length,D,delta_n,delta_t,T_n,T_t,fractured,theta_deg")
 
         for snap in result.czm_snapshots
+            key = (snap.cycle, snap.phase)
+            is_last = key in last_snap_keys
+            if !_should_output_snapshot(csv_opt, snap.cycle, is_last)
+                continue
+            end
             t = snap.time_s
             cyc = snap.cycle
             phase = snap.phase
@@ -315,7 +423,8 @@ end
 # ========================================================================
 
 function _write_node_displacement(result, case, czm_mesh,
-                                   output_dir::String, overwrite::Bool)
+                                   output_dir::String, overwrite::Bool,
+                                   csv_opt::CsvExportOptions)
     filepath = joinpath(output_dir, "node_displacement.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -327,10 +436,17 @@ function _write_node_displacement(result, case, czm_mesh,
     node_x = czm_mesh.node[:, 1] * scale.L
     node_y = czm_mesh.node[:, 2] * scale.L
 
+    last_snap_keys = _compute_last_snap_keys(result.czm_snapshots)
+
     open(filepath, "w") do f
         println(f, "time_s,cycle,phase,node_id,x,y,ux,uy")
 
         for snap in result.czm_snapshots
+            key = (snap.cycle, snap.phase)
+            is_last = key in last_snap_keys
+            if !_should_output_snapshot(csv_opt, snap.cycle, is_last)
+                continue
+            end
             t = snap.time_s
             cyc = snap.cycle
             phase = snap.phase
@@ -350,7 +466,8 @@ end
 # ========================================================================
 
 function _write_driving_force(result, case, czm_mesh,
-                               output_dir::String, overwrite::Bool)
+                               output_dir::String, overwrite::Bool,
+                               csv_opt::CsvExportOptions)
     filepath = joinpath(output_dir, "cohesive_driving_force.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -389,10 +506,18 @@ function _write_driving_force(result, case, czm_mesh,
         end
     end
 
+    last_snap_keys = _compute_last_snap_keys(result.czm_snapshots)
+
     open(filepath, "w") do f
         println(f, "time_s,cycle,phase,coh_id,dT_neighbor,dsoc_n_neighbor,dsoc_p_neighbor,eps_0_thermal,eps_0_diffusion,eps_0_total")
 
         for snap in result.czm_snapshots
+            key = (snap.cycle, snap.phase)
+            is_last = key in last_snap_keys
+            if !_should_output_snapshot(csv_opt, snap.cycle, is_last)
+                continue
+            end
+
             t = snap.time_s
             cyc = snap.cycle
             phase = snap.phase
