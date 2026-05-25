@@ -226,9 +226,14 @@ end
 """
 function compute_czm_effective_params(case)
     param = case.param
+    scale = case.param_dim.scale
 
-    # 有效弹性模量（厚度加权平均，均为归一化量）
-    E_eff = (param.NE.E * param.NE.thickness + param.PE.E * param.PE.thickness) /
+    # 将 NE.E (E_n 归一化) 和 PE.E (E_p 归一化) 统一转为 σ_czm 归一化
+    E_ne_czm = param.NE.E * scale.E_n / scale.σ_czm
+    E_pe_czm = param.PE.E * scale.E_p / scale.σ_czm
+
+    # 有效弹性模量（厚度加权平均，σ_czm 归一化）
+    E_eff = (E_ne_czm * param.NE.thickness + E_pe_czm * param.PE.thickness) /
         (param.NE.thickness + param.PE.thickness)
 
     # 有效泊松比（厚度加权平均）
@@ -369,13 +374,43 @@ function update_czm_damage!(case, variables, T_nodes_carry)
     n_load_steps = case.opt.czm_load_steps
     arc_length_alpha = case.opt.czm_arc_length_alpha
 
+    # Viscous regularization: compute visc_beta
+    # β = Δs / (τ_v* + Δs), where Δs = 1/n_load_steps for load_substep, 1.0 for basic
+    visc_beta = 1.0  # default: no regularization
+    if case.opt.czm_viscous_enabled && czm_params.tau_visc > 0.0
+        delta_s = if lowercase(iter_method) == "basic"
+            1.0
+        elseif lowercase(iter_method) in ("arc_length", "arclength", "arc-length")
+            1.0 / max(1, n_load_steps)  # approximate; actual delta_lambda varies per substep
+        else  # load_substep
+            1.0 / max(1, n_load_steps)
+        end
+        visc_beta = delta_s / (czm_params.tau_visc + delta_s)
+    end
+
     result, updated_czm_mesh = solve_czm_step(
         czm_mesh, F_ext, E_eff, ν_eff, czm_params, param, u_czm_prev;
         α_eff=α_eff, β_n=β_n, β_p=β_p,
         dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
         max_iter=max_iter, tol=tol, n_load_steps=n_load_steps, arc_length_alpha=arc_length_alpha, iter_method=iter_method,
-        cache=cache
+        cache=cache, visc_beta=visc_beta
     )
+
+    if case.opt.debug_coupling
+        pre_stats = get_damage_statistics(czm_mesh)
+        trial_stats = get_damage_statistics(updated_czm_mesh)
+        max_delta_n = isempty(result.separation_n) ? 0.0 : maximum(result.separation_n)
+        max_delta_eff = 0.0
+        for (δ_n, δ_t) in zip(result.separation_n, result.separation_t)
+            if czm_params.czm_model == "model1"
+                max_delta_eff = max(max_delta_eff, max(δ_n, 0.0))
+            else
+                max_delta_eff = max(max_delta_eff, sqrt(max(δ_n, 0.0)^2 + δ_t^2))
+            end
+        end
+        D_visc_max_trial = isempty(updated_czm_mesh.damage_states) ? 0.0 : maximum(ds.D_visc for ds in updated_czm_mesh.damage_states)
+        println("[CZM-Debug] max(δ_n)=$(round(max_delta_n; digits=6)), max(δ_eff)=$(round(max_delta_eff; digits=6)), converged=$(result.converged), β=$(round(visc_beta; digits=4)), D_max(before)=$(round(pre_stats.max_D; digits=6)), D_max(trial)=$(round(trial_stats.max_D; digits=6)), D_visc_max(trrial)=$(round(D_visc_max_trial; digits=6)), D_max(commit)=$(result.converged ? round(trial_stats.max_D; digits=6) : round(pre_stats.max_D; digits=6))")
+    end
 
     # 诊断：检查求解结果是否异常
     has_nan_disp = any(isnan, result.displacement)
@@ -411,4 +446,31 @@ function update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry
         case.czm_layout.u_prev = u_czm_prev
     end
     return update_czm_damage!(case, variables, T_nodes_carry)
+end
+
+# ========================================================================
+# CZMSnapshot — per-step CZM state for CSV export
+# ========================================================================
+
+"""
+    CZMSnapshot
+
+Stores per-step CZM solver state for CSV export.
+All physical values are stored in NORMALIZED (dimensionless) form.
+Denormalization happens at CSV write time using `case.param.scale`.
+"""
+mutable struct CZMSnapshot
+    time_s::Float64                     # physical time (already denormalized)
+    cycle::Int                          # cycle number
+    phase::String                       # phase name
+    displacement::Vector{Float64}       # ndof-length, normalized
+    damage::Vector{Float64}             # n_coh-length, [0,1]
+    separation_n::Vector{Float64}       # n_coh-length, normalized
+    separation_t::Vector{Float64}       # n_coh-length, normalized
+    traction_n::Vector{Float64}         # n_coh-length, normalized
+    traction_t::Vector{Float64}         # n_coh-length, normalized
+    converged::Bool
+    iterations::Int
+    residual_norm::Float64
+    method::String                      # "basic", "load_substep", or "arc_length"
 end

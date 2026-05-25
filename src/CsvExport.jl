@@ -1,40 +1,18 @@
 # src/CsvExport.jl
 # CSV export for cycling simulation post-processing
-
-"""
-    CZMSnapshot
-
-Stores per-step CZM solver state for CSV export.
-All physical values are stored in NORMALIZED (dimensionless) form.
-Denormalization happens at CSV write time using `case.param.scale`.
-"""
-mutable struct CZMSnapshot
-    time_s::Float64                     # physical time (already denormalized)
-    cycle::Int                          # cycle number
-    phase::String                       # phase name
-    displacement::Vector{Float64}       # ndof-length, normalized
-    damage::Vector{Float64}             # n_coh-length, [0,1]
-    separation_n::Vector{Float64}       # n_coh-length, normalized
-    separation_t::Vector{Float64}       # n_coh-length, normalized
-    traction_n::Vector{Float64}         # n_coh-length, normalized
-    traction_t::Vector{Float64}         # n_coh-length, normalized
-    converged::Bool
-    iterations::Int
-    residual_norm::Float64
-    method::String                      # "basic", "load_substep", or "arc_length"
-end
+# Note: CZMSnapshot struct is defined in CouplingState.jl (included before Solve.jl)
 
 # ========================================================================
 # Main export function
 # ========================================================================
 
 """
-    export_cycling_csv(result::CyclingResult, case::Case, czm_mesh::CohesiveMesh;
+    export_cycling_csv(result, case, czm_mesh;
                        output_dir="output/csv", overwrite=false)
 
 Export solve_cycling results to CSV files for post-processing.
 """
-function export_cycling_csv(result::CyclingResult, case::Case, czm_mesh::CohesiveMesh;
+function export_cycling_csv(result, case, czm_mesh;
                             output_dir::String="output/csv", overwrite::Bool=false)
     mkpath(output_dir)
 
@@ -138,7 +116,7 @@ end
 # 1. cycle_summary.csv
 # ========================================================================
 
-function _write_cycle_summary(result::CyclingResult, output_dir::String, overwrite::Bool)
+function _write_cycle_summary(result, output_dir::String, overwrite::Bool)
     filepath = joinpath(output_dir, "cycle_summary.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -171,7 +149,7 @@ end
 # 2. element_currents.csv
 # ========================================================================
 
-function _write_element_currents(result::CyclingResult, case::Case, output_dir::String, overwrite::Bool)
+function _write_element_currents(result, case, output_dir::String, overwrite::Bool)
     filepath = joinpath(output_dir, "element_currents.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -240,7 +218,7 @@ end
 # 3. node_temperature.csv
 # ========================================================================
 
-function _write_node_temperature(result::CyclingResult, case::Case, output_dir::String, overwrite::Bool)
+function _write_node_temperature(result, case, output_dir::String, overwrite::Bool)
     filepath = joinpath(output_dir, "node_temperature.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -289,7 +267,7 @@ end
 # 4. cohesive_damage.csv
 # ========================================================================
 
-function _write_cohesive_damage(result::CyclingResult, case::Case, czm_mesh::CohesiveMesh,
+function _write_cohesive_damage(result, case, czm_mesh,
                                  output_dir::String, overwrite::Bool)
     filepath = joinpath(output_dir, "cohesive_damage.csv")
     if isfile(filepath) && !overwrite
@@ -336,7 +314,7 @@ end
 # 5. node_displacement.csv
 # ========================================================================
 
-function _write_node_displacement(result::CyclingResult, case::Case, czm_mesh::CohesiveMesh,
+function _write_node_displacement(result, case, czm_mesh,
                                    output_dir::String, overwrite::Bool)
     filepath = joinpath(output_dir, "node_displacement.csv")
     if isfile(filepath) && !overwrite
@@ -371,7 +349,7 @@ end
 # 6. cohesive_driving_force.csv
 # ========================================================================
 
-function _write_driving_force(result::CyclingResult, case::Case, czm_mesh::CohesiveMesh,
+function _write_driving_force(result, case, czm_mesh,
                                output_dir::String, overwrite::Bool)
     filepath = joinpath(output_dir, "cohesive_driving_force.csv")
     if isfile(filepath) && !overwrite
@@ -469,7 +447,7 @@ end
 # 7. czm_solver_diagnostics.csv
 # ========================================================================
 
-function _write_czm_diagnostics(result::CyclingResult, output_dir::String, overwrite::Bool)
+function _write_czm_diagnostics(result, output_dir::String, overwrite::Bool)
     filepath = joinpath(output_dir, "czm_solver_diagnostics.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -500,7 +478,7 @@ end
 _safe_get(arr, row, col) = NaN
 
 """Find solve_result for a specific cycle+phase"""
-function _find_solve_result(result::CyclingResult, cycle::Int, phase::String)
+function _find_solve_result(result, cycle::Int, phase::String)
     for cr in result.cycle_results
         if cr.cycle_idx == cycle
             if phase == "discharge"
