@@ -1,7 +1,7 @@
 # CZM Post-Processing CSV Export Design
 
 **Date:** 2026-05-25
-**Status:** Draft
+**Status:** Reviewed
 **Scope:** Export cycling simulation results to CSV for Python/Matplotlib post-processing
 
 ---
@@ -51,18 +51,18 @@ Per-element electrochemical and thermal data at each time step.
 | `cycle` | Int | - | Cycle number |
 | `phase` | String | - | Phase name |
 | `elem_id` | Int | - | Thermal element index |
-| `I_e` | Float | A | Element branch current |
-| `area` | Float | m^2 | Element area |
-| `T_e` | Float | K | Element mean temperature |
-| `soc_n` | Float | [0,1] | Negative electrode SOC |
-| `soc_p` | Float | [0,1] | Positive electrode SOC |
-| `eta_n` | Float | V | Negative overpotential |
-| `eta_p` | Float | V | Positive overpotential |
-| `q_rxn_ne` | Float | W/m^3 | Negative reaction heat |
-| `q_sp` | Float | W/m^3 | Separator ohmic heat |
-| `q_rxn_pe` | Float | W/m^3 | Positive reaction heat |
+| `I_e` | Float | A | Element branch current (× `scale.I_typ`) |
+| `area` | Float | m^2 | Element area (× `scale.L^2`) |
+| `T_e` | Float | K | Element mean temperature (× `scale.T_ref`) |
+| `soc_n` | Float | [0,1] | Negative electrode SOC (intrinsic dimensionless) |
+| `soc_p` | Float | [0,1] | Positive electrode SOC (intrinsic dimensionless) |
+| `eta_n` | Float | V | Negative overpotential (× `scale.phi`) |
+| `eta_p` | Float | V | Positive overpotential (× `scale.phi`) |
+| `q_rxn_ne` | Float | W/m^3 | Negative reaction heat (× `scale.q`) |
+| `q_sp` | Float | W/m^3 | Separator ohmic heat (× `scale.q`) |
+| `q_rxn_pe` | Float | W/m^3 | Positive reaction heat (× `scale.q`) |
 
-**Source:** `variables["thermal2D element current"]`, `variables["thermal2D element soc_n"]`, etc.
+**Source:** `variables["thermal2D element current"]`, `variables["thermal2D element soc_n"]`, etc. **All values are normalized** in the `variables` dictionary; must be denormalized using `case.param.scale` factors before writing to CSV. See Section 5.3 for the complete conversion table.
 
 ### 2.3 `node_temperature.csv`
 
@@ -99,7 +99,13 @@ Per-cohesive-element damage state at each CZM update step.
 | `fractured` | Bool | - | Whether fully fractured |
 | `theta_deg` | Float | deg | Angular position |
 
-**Source:** CZM snapshots saved during `solve_cycling` (requires enhancement, see Section 4).
+**Source:** CZM snapshots saved during `solve_cycling` (requires enhancement, see Section 4). **theta_deg** is computed from the element midpoint coordinates using `atan(y, x) * 180/π`.
+
+**Unit conversion:**
+- `delta_n`, `delta_t`: multiply by `scale.r0` (not `scale.L`) — confirmed in `PostProcessing.jl:110`
+- `T_n`, `T_t`: multiply by `scale.σ_czm`
+- `length`: multiply by `scale.L`
+- `D`, `fractured`: already physical units, no scaling needed
 
 ### 2.5 `node_displacement.csv`
 
@@ -196,15 +202,16 @@ mutable struct CZMSnapshot
     time_s::Float64
     cycle::Int
     phase::String
-    displacement::Vector{Float64}        # ndof-length vector
+    displacement::Vector{Float64}        # ndof-length vector (normalized)
     damage::Vector{Float64}              # n_coh-length vector
-    separation_n::Vector{Float64}        # n_coh-length vector
-    separation_t::Vector{Float64}        # n_coh-length vector
-    traction_n::Vector{Float64}          # n_coh-length vector
-    traction_t::Vector{Float64}          # n_coh-length vector
+    separation_n::Vector{Float64}        # n_coh-length vector (normalized)
+    separation_t::Vector{Float64}        # n_coh-length vector (normalized)
+    traction_n::Vector{Float64}          # n_coh-length vector (normalized)
+    traction_t::Vector{Float64}          # n_coh-length vector (normalized)
     converged::Bool
     iterations::Int
     residual_norm::Float64
+    method::String                       # "basic", "load_substep", or "arc_length"
 end
 ```
 
@@ -217,7 +224,11 @@ czm_snapshots::Vector{CZMSnapshot}    # filled when save_detailed=true
 
 ### 4.3 Collection Point
 
-In `solve_cycling`, after each CZM solve step (inside the per-time-step loop), when `save_detailed=true`, push a `CZMSnapshot` to the result.
+The CZM solve happens inside `CallModel_MultiSPMe` (in `src/Solve.jl`), not directly in `solve_cycling`. The snapshot collection must be placed in `CallModel_MultiSPMe` after the CZM solve call, inside the CZM update block.
+
+**Implementation approach:** Add an optional `czm_snapshots` vector parameter to `CallModel_MultiSPMe`. When provided (non-nothing), after each CZM solve, push a snapshot. `solve_cycling` creates this vector and passes it through.
+
+Alternatively, the CZM result data is already stored in the `variables` dictionary via `CzmPostProcess.czmo_output_to_variables`. We can extract CZM per-element data from `variables` keys like `"czm D_max"`, `"czm separation normal"`, etc. However, these are aggregate statistics, not per-element data. **The per-element CZM snapshot is required for the cohesive_damage.csv and node_displacement.csv files.**
 
 ## 5. Implementation Notes
 
@@ -231,11 +242,28 @@ Only standard library: `DelimitedFiles` (for `writedlm`) or `CSV.jl` if availabl
 
 ### 5.3 Unit Conversion
 
-All values must be converted to physical units before writing:
-- Temperature: multiply by `case.param.scale.T_ref`
-- Length/area: multiply by `case.param.scale.L` / `L^2`
-- Displacement: CZM displacement is in normalized coordinates, multiply by `scale.L`
-- Separation: CZM separation is in normalized units, multiply by `scale.L`
+All values in the `variables` dictionary are **normalized** (dimensionless). The following table specifies the conversion for each column:
+
+| Variable | Raw Source | Scale Factor | Physical Unit |
+|----------|-----------|-------------|---------------|
+| Temperature | `T_nodes` | × `scale.T_ref` | K |
+| Element current | `I_e` | × `scale.I_typ` | A |
+| Area | `A_elem` (from mesh) | × `scale.L^2` | m^2 |
+| Node coordinates | `mesh.node` | × `scale.L` | m |
+| Time | `t` (normalized) | × `scale.t0` | s |
+| Voltage | `V` (normalized) | × `scale.phi` | V |
+| Overpotential | `eta_n/p` | × `scale.phi` | V |
+| Heat source | `q_*` | × `scale.q` | W/m^3 |
+| SOC | `soc_n/p` | — | dimensionless [0,1] |
+| CZM displacement | `u` | × `scale.L` | m |
+| CZM separation | `δ_n/t` | × `scale.r0` | m |
+| CZM traction | `T_n/t` | × `scale.σ_czm` | Pa |
+| CZM damage | `D` | — | dimensionless [0,1] |
+| CZM length | `L_elem` | × `scale.L` | m |
+| Thermal strain | `α·ΔT` | — | dimensionless |
+| Diffusion strain | `β·ΔSOC` | — | dimensionless |
+
+**Key note:** CZM separation uses `scale.r0` (particle radius scale), NOT `scale.L` (electrode thickness scale). This is confirmed by `PostProcessing.jl:110` which uses `case.param.scale.r0` for separation denormalization.
 
 ### 5.4 Memory Considerations
 
@@ -248,7 +276,29 @@ For long simulations (many cycles, many time steps), the snapshot vector can gro
 
 Node coordinates in `case.mesh["thermal2D"]` are normalized. Must multiply by `scale.L` before writing to CSV.
 
-## 6. Testing Plan
+## 6. Prerequisites and Backward Compatibility
+
+### 6.1 Usage Prerequisites
+
+- `solve_cycling` must be called with `save_detailed=true` for per-step data (element_currents, node_temperature, cohesive_damage, node_displacement)
+- CZM must be enabled (`opt.czm_enabled = true`) for CZM-related CSV files
+- Thermal must be enabled (`opt.thermal_enabled = true`) for temperature data
+- `cohesive_driving_force.csv` requires `α_eff`, `β_n`, `β_p` parameters to be non-zero
+
+### 6.2 Backward Compatibility
+
+- `CZMSnapshot` and the `czm_snapshots` field in `CyclingResult` are only populated when `save_detailed=true`
+- Existing code that does not call `export_cycling_csv` is unaffected
+- The `CyclingResult` struct change (adding `czm_snapshots` field with default empty vector) is backward compatible
+
+### 6.3 Graceful Degradation
+
+When certain data is unavailable, the function should:
+- Skip writing the corresponding CSV file (e.g., if CZM is disabled, skip cohesive_damage.csv)
+- Print a warning to stdout listing which files were skipped and why
+- Always write `cycle_summary.csv` if any cycle data is available
+
+## 7. Testing Plan
 
 1. Run `coupled_czm_thermal_example.jl` with `n_cycles=1`
 2. Call `export_cycling_csv` on the result
