@@ -33,6 +33,7 @@ include("Jellyrollmodel.jl")
 include("ring.jl")
 include("CycleSolver.jl")  # 充放电循环求解器
 include("CycleData.jl")
+include("CsvExport.jl")
 
 export Assemble, ElectrodeDiffusion, ElectrolyteDiffusion, Postprocessing, SetCase, SetMesh, ChooseCell
 export Mesh1D, Mesh2D, GetGS, LagrangeBasis, GSweight, ShapeFunction1D, NormaliseParam, StandardVariables
@@ -77,4 +78,6 @@ export compute_cs0_from_soc, apply_initial_soc!
 export TimeStepData, CycleExportData
 export solve_phase_with_export, solve_cycle_with_export
 export export_cycle_data_to_csv, load_cycle_data_from_csv
+# CSV export for cycling results
+export CZMSnapshot, export_cycling_csv
 end
