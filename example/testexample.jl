@@ -56,6 +56,7 @@ function main()
     opt.debug_coupling = true
     opt.debug_log_path = "output/simple_coupling_debug.log"
     opt.czm_enabled = true
+    opt.czm_fix_inner = false
     opt.czm_iter_method = "basic"
     opt.czm_load_steps = 10
     opt.czm_tol = 1e-3
@@ -216,13 +217,13 @@ function main()
 
     # ── 图3: 损伤D及容量随时间变化 ──
     if has_czm
-        p3_D = plot(t_s, D_max .* 100,
+        p3 = plot(t_s, D_max .* 100,
             xlabel="Time (s)", ylabel="Damage (%)",
             label="D_max", lw=2, color=:red, legend=:topleft,
             title="Damage & Capacity vs Time")
-        plot!(p3_D, t_s, D_mean .* 100,
+        plot!(p3, t_s, D_mean .* 100,
             label="D_mean", lw=2, color=:blue, ls=:dash)
-        p3_C = twinx(p3_D)
+        p3_C = twinx(p3)
         plot!(p3_C, t_s, capacity_Ah,
             ylabel="Capacity (Ah)", label="Capacity", lw=2, color=:green,
             legend=:topright)
@@ -231,7 +232,7 @@ function main()
     end
 
     # ── 组合输出 ──
-    p_combined = plot(p1_T, p2, p3_D, layout=(3, 1), size=(800, 900))
+    p_combined = plot(p1_T, p2, p3, layout=(3, 1), size=(800, 900))
     savefig(p_combined, joinpath(output_dir, "testexample_results.png"))
     @printf("  结果图已保存: %s\n", joinpath(output_dir, "testexample_results.png"))
 

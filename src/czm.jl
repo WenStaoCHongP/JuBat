@@ -460,7 +460,7 @@ end
 构建 CZM 装配缓存，包括 K_bulk、cohesive 几何、边界条件。
 当 E/ν 不变时，整个缓存可在多次 Newton 迭代中复用。
 """
-function build_czm_cache(czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64, param)
+function build_czm_cache(czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64, param; fix_inner::Bool=true)
     cache = CZMAssemblyCache()
 
     # 1. 缓存 K_bulk（最高 ROI：消除 ~60 次/更新 的冗余 bulk 重组）
@@ -514,7 +514,7 @@ function build_czm_cache(czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64
     end
 
     # 4. 缓存边界条件
-    bc_nodes, _, _ = identify_bc_nodes_czm(czm_mesh, param)
+    bc_nodes, _, _ = identify_bc_nodes_czm(czm_mesh, param; fix_inner=fix_inner)
     bc_dofs = Int64[]
     bc_vals = Float64[]
     for (node, bc_type) in bc_nodes
@@ -533,6 +533,7 @@ function build_czm_cache(czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64
     # 5. 记录参数用于失效判断
     cache.E_eff = E_eff
     cache.ν_eff = ν_eff
+    cache.fix_inner = fix_inner
 
     # 6. 创建可复用工作区（ndof × n_coh，跨时间步复用）
     ndof = 2 * czm_mesh.nnode
@@ -548,12 +549,13 @@ end
 
 确保 `case.czm_cache` 可用且未过期。如果缓存不存在或参数不匹配则重建。
 """
-function ensure_czm_cache(case::Case, czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64)
+function ensure_czm_cache(case::Case, czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64; fix_inner::Bool=true)
     cache = case.czm_cache
     if cache === nothing || !cache.valid ||
        cache.E_eff != E_eff || cache.ν_eff != ν_eff ||
+       cache.fix_inner != fix_inner ||
        length(cache.cohesive_geom) != czm_mesh.n_cohesive
-        cache = build_czm_cache(czm_mesh, E_eff, ν_eff, case.param)
+        cache = build_czm_cache(czm_mesh, E_eff, ν_eff, case.param; fix_inner=fix_inner)
         case.czm_cache = cache
     end
     return cache
@@ -639,15 +641,15 @@ function apply_bc_czm(K::SparseMatrixCSC{Float64,Int64}, F::Vector{Float64}; bc_
     return K_new, F_new
 end
 
-function identify_bc_nodes_czm(czm_mesh::CohesiveMesh, param; opt=nothing)
+function identify_bc_nodes_czm(czm_mesh::CohesiveMesh, param; opt=nothing, fix_inner::Bool=true)
     nnode = czm_mesh.nnode
     bc_nodes = Dict{Int64, Symbol}()
-    
+
     is_inner, is_outer = identify_boundary_nodes(czm_mesh, param, opt)
     inner_count = 0
     outer_count = 0
     for i in 1:nnode
-        if is_inner[i]
+        if fix_inner && is_inner[i]
             bc_nodes[i] = :fixed_xy
             inner_count += 1
         end
@@ -656,6 +658,6 @@ function identify_bc_nodes_czm(czm_mesh::CohesiveMesh, param; opt=nothing)
             outer_count += 1
         end
     end
-    
+
     return bc_nodes, inner_count, outer_count
 end

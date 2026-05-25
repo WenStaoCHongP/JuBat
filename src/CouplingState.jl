@@ -176,12 +176,13 @@ mutable struct CZMAssemblyCache
     ws::CZMAssemblyWorkspace                    # 可复用工作区（跨时间步）
     E_eff::Float64                              # 缓存对应的 E_eff
     ν_eff::Float64                              # 缓存对应的 ν_eff
+    fix_inner::Bool                             # 是否固定内圈节点
     valid::Bool                                 # 缓存是否有效
 
     function CZMAssemblyCache()
         empty_ws = CZMAssemblyWorkspace(0, 0)
         new(spzeros(0, 0), Vector{Vector{Int64}}(), CohesiveElementGeom[],
-            Int64[], Float64[], empty_ws, 0.0, 0.0, false)
+            Int64[], Float64[], empty_ws, 0.0, 0.0, true, false)
     end
 end
 
@@ -341,7 +342,7 @@ function update_czm_damage!(case, variables, T_nodes_carry)
     E_eff, ν_eff, α_eff, β_n, β_p = compute_czm_effective_params(case)
 
     # 构建或复用 CZM 缓存
-    cache = ensure_czm_cache(case, czm_mesh, E_eff, ν_eff)
+    cache = ensure_czm_cache(case, czm_mesh, E_eff, ν_eff; fix_inner=case.opt.czm_fix_inner)
 
     # 计算应变输入
     dT_elem, Δsoc_n_elem, Δsoc_p_elem = compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)

@@ -302,7 +302,7 @@ function _write_cohesive_damage(result, case, czm_mesh,
                 dt_val = i <= length(snap.separation_t) ? snap.separation_t[i] * scale.r0 : 0.0
                 tn = i <= length(snap.traction_n) ? snap.traction_n[i] * scale.σ_czm : 0.0
                 tt = i <= length(snap.traction_t) ? snap.traction_t[i] * scale.σ_czm : 0.0
-                frac = D >= 0.99
+                frac = D >= 0.95
                 println(f, "$t,$cyc,$phase,$i,$(lengths_phys[i]),$D,$dn,$dt_val,$tn,$tt,$frac,$(theta_degs[i])")
             end
         end

@@ -58,6 +58,7 @@ opt.czm_model = "model1"              # 只考虑法向脱粘
 opt.czm_update_interval = 1             # 每步更新损伤
 opt.czm_soh_threshold = 0.8             # SOH终止阈值 80%
 opt.czm_inner_exit_only = true          # 仅内圈单元在断裂时退出
+opt.czm_fix_inner = false               # 力学边界：内圈自由，外圈固定
 opt.czm_iter_method = "basic"     # 使用弧长法处理后峰软化（配合粘性正则化）
 opt.czm_load_steps = 10                 # 载荷子步数
 opt.debug_coupling = true               # 打印 CZM 每步诊断
@@ -72,6 +73,7 @@ println("    czm_model = $(opt.czm_model)")
 println("    czm_soh_threshold = $(opt.czm_soh_threshold)")
 println("    czm_iter_method = $(opt.czm_iter_method)")
 println("    czm_viscous_enabled = $(opt.czm_viscous_enabled)")
+println("    czm_fix_inner = $(opt.czm_fix_inner) (边界条件: 内圈$(opt.czm_fix_inner ? "固定" : "自由"), 外圈固定)")
 if opt.czm_viscous_enabled
     println("    czm_visc_tau = $(opt.czm_visc_tau) s")
 end
@@ -83,7 +85,7 @@ println("\n[3] 生成统一网格...")
 
 # 先创建Case以获取归一化参数
 case_temp = JuBat.SetCase(param_dim, opt)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(case_temp.param; nθ=80, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(case_temp.param; nθ=20, gsorder=2)
 
 println("  热网格单元数: $(mesh_data.ne)")
 println("  热网格节点数: $(mesh_data.nnode)")
@@ -121,7 +123,7 @@ mesh_th = case.mesh["thermal2D"]
 println("\n[6] 设置循环参数...")
 
 cycle_opt = JuBat.CycleOption(
-    n_cycles = 1,           # 循环次数
+    n_cycles = 10,           # 循环次数
     SOC_init = 0.65,         # 初始SOC 90%
     t_discharge = 1800.0,   # 放电时间 1小时
     t_charge = 1800.0,      # 充电时间 1小时

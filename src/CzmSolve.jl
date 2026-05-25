@@ -49,11 +49,11 @@ end
 从 czm_mesh 提取 Dirichlet BC 的自由度列表和对应值。
 优先使用缓存中的 bc_dofs/bc_vals，否则从 identify_bc_nodes_czm 重新计算。
 """
-function extract_bc_dofs(czm_mesh::CohesiveMesh, param; cache::Union{Nothing, CZMAssemblyCache}=nothing)
+function extract_bc_dofs(czm_mesh::CohesiveMesh, param; cache::Union{Nothing, CZMAssemblyCache}=nothing, fix_inner::Bool=true)
     if cache !== nothing
         return cache.bc_dofs, cache.bc_vals
     end
-    bc_nodes, _, _ = identify_bc_nodes_czm(czm_mesh, param)
+    bc_nodes, _, _ = identify_bc_nodes_czm(czm_mesh, param; fix_inner=fix_inner)
     bc_dofs = Int64[]
     bc_vals = Float64[]
     for (node, bc_type) in bc_nodes

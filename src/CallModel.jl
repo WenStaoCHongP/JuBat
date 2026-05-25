@@ -58,12 +58,20 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     variables["thermal2D element area"] = areas
 
     # 获取CZM失效单元列表（仅在启用CZM时）
-    if case.opt.czm_enabled
+    # 当CZM单元损伤D >= 0.95时，对应热单元电流归零，总电流重分配
+    if case.opt.czm_enabled && case.czm_mesh !== nothing
+        fractured_czm = get_fractured_elements(case.czm_mesh)
         deactivated_elements = Int64[]
-        try
-            deactivated_elements = convert(Vector{Int64}, variables["deactivated_elements"])
-        catch
-            deactivated_elements = Int64[]
+        geom = case.geometry
+        if geom !== nothing && hasfield(typeof(geom), :czm_element_map)
+            for e in 1:ne
+                for czm_idx in get(geom.czm_element_map, e, Int64[])
+                    if czm_idx in fractured_czm
+                        push!(deactivated_elements, e)
+                        break
+                    end
+                end
+            end
         end
     else
         deactivated_elements = Int64[]

@@ -331,14 +331,7 @@ function compute_gap_conductance(D::Float64, δ_n::Float64, cohesive)
 	delta0 = cohesive.δ_0_n
 	delta_c = cohesive.δ_c_n
 	delta = max(δ_n, 0.0)
-	D_sep = if delta <= delta0
-		0.0
-	elseif delta < delta_c
-		(delta - delta0) / (delta_c - delta0)
-	else
-		1.0
-	end
-	D_clamped = clamp(max(D, D_sep), 0.0, 0.9999)
+	D_clamped = clamp(D, 0.0, 0.9999)
 	two_beta_lambda = 2.0 * beta * lambda_m
 
 	h_eff = if delta < delta0
