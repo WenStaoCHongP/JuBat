@@ -1,4 +1,4 @@
-function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing,return_final_state::Bool=false,thermal_variables::Union{Dict{String,Any},Nothing}=nothing,thermal_update_fn::Union{Function,Nothing}=nothing,thermal_record::Bool=false,polar_mesh_data::Any=nothing)
+function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing,return_final_state::Bool=false,thermal_variables::Union{Dict{String,Any},Nothing}=nothing,thermal_update_fn::Union{Function,Nothing}=nothing,thermal_record::Bool=false,polar_mesh_data::Any=nothing,czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing,czm_cycle::Int=1,czm_phase::String="unknown")
     if case.opt.model == "thermal"
             if thermal_variables === nothing
                 error("Solve: model==\"thermal\" requires thermal_variables keyword argument")
@@ -274,10 +274,44 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
                 czm_step_count += 1
                 if czm_step_count % case.opt.czm_update_interval == 0
                     t_czm_ns = time_ns()
+                    czm_converged = false
                     try
                         u_czm_new, czm_converged = update_czm_damage!(
                             case, variables, T_nodes_carry)
                         # u_prev 已由 update_czm_damage! 内部管理
+
+                        # ── Snapshot collection for CSV export ──
+                        if czm_snapshots !== nothing
+                            czm_mesh_local = case.czm_mesh
+                            n_coh = czm_mesh_local.n_cohesive
+                            snap_damage = [s.D for s in czm_mesh_local.damage_states]
+                            snap_sep_n = zeros(n_coh)
+                            snap_sep_t = zeros(n_coh)
+                            snap_trc_n = zeros(n_coh)
+                            snap_trc_t = zeros(n_coh)
+                            if czm_converged
+                                for i in 1:n_coh
+                                    snap_sep_n[i] = czm_mesh_local.damage_states[i].δ_max_n
+                                    snap_sep_t[i] = czm_mesh_local.damage_states[i].δ_max_t
+                                end
+                            end
+
+                            push!(czm_snapshots, CZMSnapshot(
+                                t * case.param.scale.t0,
+                                czm_cycle,
+                                czm_phase,
+                                copy(case.czm_layout.u_prev),
+                                snap_damage,
+                                snap_sep_n,
+                                snap_sep_t,
+                                snap_trc_n,
+                                snap_trc_t,
+                                czm_converged,
+                                0,
+                                0.0,
+                                case.opt.czm_iter_method
+                            ))
+                        end
                     catch e
                         @debug "CZM damage update failed at step $czm_step_count: $e"
                     end

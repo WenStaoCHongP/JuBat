@@ -111,7 +111,7 @@ end
 # 2. 单阶段求解器
 # ========================================================================
 
-function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, V_limit::Float64, initial_state::Dict; czm_mesh=nothing, czm_params=nothing, dt_range::Vector{Float64}=[1.0, 10.0])
+function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, V_limit::Float64, initial_state::Dict; czm_mesh=nothing, czm_params=nothing, dt_range::Vector{Float64}=[1.0, 10.0], czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing, czm_cycle::Int=1)
     result = PhaseResult()
     result.phase_type = phase_type
     result.t_start = get(initial_state, "t_global", 0.0)
@@ -148,7 +148,9 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_curren
             case.param.cell.v_h = 1.0e6
         end
 
-        solve_result = Solve(case; initial_state=initial_state, return_final_state=true)
+        solve_result = Solve(case; initial_state=initial_state, return_final_state=true,
+                             czm_snapshots=czm_snapshots, czm_cycle=czm_cycle,
+                             czm_phase=string(phase_type))
 
         duration = begin
             time_hist = get(solve_result, "time [s]", Float64[])
@@ -211,6 +213,9 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
     
     n_cycles = cycle_opt.n_cycles
     result = CyclingResult(n_cycles)
+
+    # CZM snapshots vector (shared across all phases)
+    czm_snaps = save_detailed && czm_mesh !== nothing ? CZMSnapshot[] : nothing
 
     # 应用初始SOC设置
     soc_init = cycle_opt.SOC_init
@@ -293,7 +298,8 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
             current_state;
             czm_mesh=czm_mesh,
             czm_params=czm_params,
-            dt_range=cycle_opt.dt_cycle
+            dt_range=cycle_opt.dt_cycle,
+            czm_snapshots=czm_snaps, czm_cycle=cycle
         )
         cycle_result.discharge = discharge_result
         current_state = discharge_result.final_state
@@ -321,7 +327,8 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
                 current_state;  # 继承上一步状态
                 czm_mesh=czm_mesh,
                 czm_params=czm_params,
-                dt_range=cycle_opt.dt_cycle
+                dt_range=cycle_opt.dt_cycle,
+                czm_snapshots=czm_snaps, czm_cycle=cycle
             )
             cycle_result.rest1 = rest1_result
             current_state = rest1_result.final_state
@@ -357,14 +364,15 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
         end
         
         charge_result = solve_phase(
-            case, PHASE_CHARGE, 
+            case, PHASE_CHARGE,
             cycle_opt.t_charge,
             -cycle_opt.I_charge,  # 负电流表示充电
             cycle_opt.V_upper,
             current_state;
-            czm_mesh=czm_mesh, 
+            czm_mesh=czm_mesh,
             czm_params=czm_params,
-            dt_range=cycle_opt.dt_cycle
+            dt_range=cycle_opt.dt_cycle,
+            czm_snapshots=czm_snaps, czm_cycle=cycle
         )
         cycle_result.charge = charge_result
         current_state = charge_result.final_state
@@ -391,7 +399,8 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
                 current_state;  # 继承上一步状态
                 czm_mesh=czm_mesh,
                 czm_params=czm_params,
-                dt_range=cycle_opt.dt_cycle
+                dt_range=cycle_opt.dt_cycle,
+                czm_snapshots=czm_snaps, czm_cycle=cycle
             )
             cycle_result.rest2 = rest2_result
             current_state = rest2_result.final_state
@@ -429,7 +438,12 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
             break
         end
     end
-    
+
+    # Attach CZM snapshots to result
+    if czm_snaps !== nothing
+        result.czm_snapshots = czm_snaps
+    end
+
     result.final_czm_mesh = czm_mesh
     if verbose
         _print_cycling_summary(result, initial_capacity, soh_terminated)
