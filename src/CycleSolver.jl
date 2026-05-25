@@ -70,7 +70,7 @@ end
 """
 mutable struct CyclingResult
     n_cycles::Int                       # 完成的循环数
-    
+
     # 每循环指标（向量）
     cycle_idx::Vector{Int}
     capacity_charge::Vector{Float64}
@@ -83,7 +83,10 @@ mutable struct CyclingResult
     soh::Vector{Float64}                # SOH (State of Health)
     # 详细结果（可选）
     cycle_results::Vector{CycleResult}
-    
+
+    # CZM快照（用于CSV导出）
+    czm_snapshots::Vector{CZMSnapshot}
+
     # 最终状态
     final_czm_mesh::Any                 # 最终的CZM网格（包含损伤状态）
     initial_capacity::Float64           # 初始容量（第一个循环的放电容量）
@@ -96,6 +99,7 @@ function CyclingResult(n_cycles::Int)
         Int[], Float64[], Float64[], Float64[],
         Float64[], Float64[], Int[], Float64[], Float64[],
         CycleResult[],
+        CZMSnapshot[],    # czm_snapshots
         nothing,          # final_czm_mesh
         0.0,              # initial_capacity
         false             # soh_terminated
