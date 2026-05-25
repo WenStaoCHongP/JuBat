@@ -26,6 +26,9 @@ mutable struct PhaseResult
     
     # 最终状态（用于传递到下一阶段）
     final_state::Union{Dict, Nothing}
+
+    # Raw solve result (for CSV export, only when save_detailed=true)
+    solve_result::Any   # Dict from Solve(), or nothing
 end
 
 # 默认构造函数
@@ -35,6 +38,7 @@ function PhaseResult()
         0.0, 0.0, 0.0, :none,
         0.0, 0.0,
         0.0, 0.0, 0.0,
+        nothing,
         nothing
     )
 end
@@ -183,6 +187,7 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_curren
         result.D_mean = phase_data["D_mean"]
         result.ΔD_max = phase_data["ΔD_max"]
         result.final_state = phase_data["final_state"]
+        result.solve_result = solve_result
     finally
         case.param.cell.v_l = old_v_l
         case.param.cell.v_h = old_v_h
