@@ -13,7 +13,8 @@ end
 存储每个内聚力单元（或高斯点）的损伤历史。
 
 # 字段
-- `D`: 当前损伤变量 [0, 1]，0=完好，1=完全断裂
+- `D`: 等效损伤 D_eq [0, 1]，由当前双线性律计算
+- `D_visc`: 粘性有效损伤，用于牵引力和切线（粘性正则化关闭时 D_visc = D）
 - `δ_max_n`: 历史最大法向分离位移
 - `δ_max_t`: 历史最大切向分离位移
 - `δ_max_eff`: 历史最大等效分离位移
@@ -21,15 +22,16 @@ end
 - `accumulated_damage`: 累积损伤（用于循环加载）
 """
 mutable struct DamageState <: AbstractDamageState
-    D::Float64                     # 当前损伤变量
+    D::Float64                     # 等效损伤 D_eq
+    D_visc::Float64                # 粘性有效损伤（用于牵引和切线）
     δ_max_n::Float64              # 历史最大法向分离
     δ_max_t::Float64              # 历史最大切向分离
     δ_max_eff::Float64            # 历史最大等效分离
     fractured::Bool               # 是否断裂
     accumulated_damage::Float64   # 累积损伤（循环）
-    
+
     # 默认构造函数
-    DamageState() = new(0.0, 0.0, 0.0, 0.0, false, 0.0)
+    DamageState() = new(0.0, 0.0, 0.0, 0.0, 0.0, false, 0.0)
 end
 
 """
@@ -151,7 +153,7 @@ end
 - `separations`: 每个单元的分离位移
 - `tractions`: 每个单元的牵引力
 """
-function assemble_czm_system(czm_mesh::CohesiveMesh, u::Vector{Float64}, cohesive_params::Cohesive; damage_states=nothing, geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing, ws::Union{Nothing, CZMAssemblyWorkspace}=nothing)
+function assemble_czm_system(czm_mesh::CohesiveMesh, u::Vector{Float64}, cohesive_params::Cohesive; damage_states=nothing, geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing, ws::Union{Nothing, CZMAssemblyWorkspace}=nothing, visc_beta::Float64=1.0)
     nnode = czm_mesh.nnode
     ndof = 2 * nnode
     n_coh = czm_mesh.n_cohesive
@@ -262,8 +264,8 @@ function assemble_czm_system(czm_mesh::CohesiveMesh, u::Vector{Float64}, cohesiv
                 δ_n = ws.δ_local[1]
                 δ_t = ws.δ_local[2]
 
-                T_n, T_t, _, _ = bilinear_traction_state(δ_n, δ_t, damage_state, cohesive_params)
-                dT_dδ = bilinear_tangent(δ_n, δ_t, damage_state, cohesive_params)
+                T_n, T_t, _, _ = bilinear_traction_state(δ_n, δ_t, damage_state, cohesive_params; visc_beta=visc_beta)
+                dT_dδ = bilinear_tangent(δ_n, δ_t, damage_state, cohesive_params; visc_beta=visc_beta)
 
                 J = L / 2.0
                 wJ = w * J
@@ -557,7 +559,7 @@ function ensure_czm_cache(case::Case, czm_mesh::CohesiveMesh, E_eff::Float64, ν
     return cache
 end
 
-function assemble_coupled_system(czm_mesh::CohesiveMesh, u::Vector{Float64},E_eff::Float64, ν_eff::Float64, cohesive_params::Cohesive;F_ext::Union{Vector{Float64}, Nothing}=nothing,F_thermo_chem::Union{Vector{Float64}, Nothing}=nothing,damage_states=nothing,K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,ws::Union{Nothing, CZMAssemblyWorkspace}=nothing)
+function assemble_coupled_system(czm_mesh::CohesiveMesh, u::Vector{Float64},E_eff::Float64, ν_eff::Float64, cohesive_params::Cohesive;F_ext::Union{Vector{Float64}, Nothing}=nothing,F_thermo_chem::Union{Vector{Float64}, Nothing}=nothing,damage_states=nothing,K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,visc_beta::Float64=1.0)
     ndof = 2 * czm_mesh.nnode
 
     # 固体刚度（使用缓存或重新计算）
@@ -566,7 +568,7 @@ function assemble_coupled_system(czm_mesh::CohesiveMesh, u::Vector{Float64},E_ef
     # 内聚力刚度和内力（使用几何缓存和工作区）
     K_coh, f_int_coh, separations, tractions = assemble_czm_system(
         czm_mesh, u, cohesive_params; damage_states=damage_states,
-        geom_cache=geom_cache, ws=ws)
+        geom_cache=geom_cache, ws=ws, visc_beta=visc_beta)
     
     # 固体内力（线性弹性：f_int = K * u）
     f_int_bulk = K_bulk * u
@@ -580,11 +582,11 @@ function assemble_coupled_system(czm_mesh::CohesiveMesh, u::Vector{Float64},E_ef
     return K_total, f_int_total, separations, tractions
 end
 
-function assemble_coupled_system_full(czm_mesh::CohesiveMesh, u::Vector{Float64},E_eff::Float64, ν_eff::Float64,α_eff::Float64, β_n::Float64, β_p::Float64,cohesive_params::Cohesive,dT_elem::Vector{Float64},Δsoc_n_elem::Vector{Float64},Δsoc_p_elem::Vector{Float64};F_ext::Union{Vector{Float64}, Nothing}=nothing,damage_states=nothing,K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,ws::Union{Nothing, CZMAssemblyWorkspace}=nothing)
+function assemble_coupled_system_full(czm_mesh::CohesiveMesh, u::Vector{Float64},E_eff::Float64, ν_eff::Float64,α_eff::Float64, β_n::Float64, β_p::Float64,cohesive_params::Cohesive,dT_elem::Vector{Float64},Δsoc_n_elem::Vector{Float64},Δsoc_p_elem::Vector{Float64};F_ext::Union{Vector{Float64}, Nothing}=nothing,damage_states=nothing,K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,visc_beta::Float64=1.0)
     ndof = 2 * czm_mesh.nnode
 
     # 组装基本系统
-    K_total, f_int_total, separations, tractions = assemble_coupled_system(czm_mesh, u, E_eff, ν_eff, cohesive_params; damage_states=damage_states, K_bulk_cached=K_bulk_cached, geom_cache=geom_cache, ws=ws)
+    K_total, f_int_total, separations, tractions = assemble_coupled_system(czm_mesh, u, E_eff, ν_eff, cohesive_params; damage_states=damage_states, K_bulk_cached=K_bulk_cached, geom_cache=geom_cache, ws=ws, visc_beta=visc_beta)
     
     # 热-化学载荷
     F_thermo_chem = assemble_thermal_chemical_load(czm_mesh, E_eff, ν_eff, α_eff, β_n, β_p,dT_elem, Δsoc_n_elem, Δsoc_p_elem)

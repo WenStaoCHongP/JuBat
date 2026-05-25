@@ -1,7 +1,7 @@
 # CZM 求解器统一设计规格
 
 > 日期: 2026-05-18
-> 状态: proposed
+> 状态: revised (v2) — 已针对评审意见补充收敛准则、损伤更新语义和残差报告说明
 > 关联: `docs/planning-with-files/代码简化/`
 
 ## 1. 问题定义
@@ -63,9 +63,7 @@ solve_czm_step (公开 API，不变)
                 • 构建 new_czm_mesh
 ```
 
-### 3.2 策略分发
-
-在统一函数内部，通过 `iter_method` 参数选择执行路径：
+### 3.2 策略分发伪代码
 
 ```julia
 function solve_czm_newton(czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param, u_prev; ...)
@@ -73,17 +71,22 @@ function solve_czm_newton(czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param
     ndof, n_coh = 2 * czm_mesh.nnode, czm_mesh.n_cohesive
     result = CZMResult(ndof, n_coh)
     u = copy(u_prev)
-    damage_states = czm_mesh.damage_states
+    damage_states = czm_mesh.damage_states  # 策略函数会 clone 起始状态
 
     bc_dofs, bc_vals = extract_bc_dofs(czm_mesh, param; cache=cache)
     F_thermo_chem_total = assemble_thermal_chemical_load(...)
-
-    # 提取缓存
     K_bulk_cached, geom_cache, ws = ...
 
     # === 策略路由 ===
+    # 每个策略函数内部自己管理：
+    #   - 载荷推进 (load_progress / lambda)
+    #   - Newton 循环
+    #   - 收敛准则 (见 3.4)
+    #   - 收敛时的损伤更新 (update_damage)
+    #   - 失败时的回滚 (恢复 u, damage_states)
+    # 详见 3.3 节各策略的行为约定
     if method == "basic"
-        converged, total_iter, R_final = newton_basic!(...)
+        converged, total_iter, R_final, load_progress = newton_basic!(...)
     elseif method == "load_substep"
         converged, total_iter, R_final, load_progress = newton_load_substep!(...)
     elseif method == "arc_length"
@@ -91,16 +94,17 @@ function solve_czm_newton(czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param
     end
 
     # === 公共后处理 ===
-    # 最终装配 + 残差
+    # 最终装配 (使用 load_progress 计算当前 F_thermo_chem)
+    F_thermo_chem = load_progress * F_thermo_chem_total
     K_total, f_int_total, separations, tractions = assemble_coupled_system(...)
     R = F_ext + F_thermo_chem - f_int_total
     apply_czm_dirichlet_bc!(R, bc_dofs, bc_vals)
     R_norm = norm(R)
 
-    # 填充 result
+    # 填充 result（所有方法统一走 fill_czm_result!）
     result.converged = converged
     result.iterations = total_iter
-    result.residual_norm = ...
+    result.residual_norm = R_final
     result.displacement = u
     fill_czm_result!(result, u, damage_states, separations, tractions)
 
@@ -111,22 +115,64 @@ end
 
 ### 3.3 三个策略函数
 
-三个策略函数各自只包含迭代核心逻辑：
+每个策略函数接收预提取的参数（`czm_mesh`, `u`, `damage_states`, `F_thermo_chem_total`, `F_ext`, `bc_dofs/bc_vals`, 缓存等），返回 `(converged, total_iter, R_final, load_progress)`。
 
-- **`newton_basic!`** (~50行)：单步 Newton 循环 + `backtrack_line_search!` 调用
-- **`newton_load_substep!`** (~70行)：自适应子步循环 + 内联线搜索（当前 `newton_raphson_czm` 逻辑）
-- **`newton_arc_length!`** (~100行)：Crisfield 弧长法子步循环（当前 `solve_czm_arc_length_step` 逻辑）
+策略函数内部负责：
+- 载荷推进 (`load_progress` / `lambda`)
+- Newton 迭代与收敛判断
+- 收敛时调用 `update_damage`
+- 失败时回滚 `u` 和 `damage_states`
 
-所有策略函数共享相同的签名约定：接收预提取的参数，通过修改传入的 `u`、`damage_states`、`result` 来返回状态。
+策略函数不负责：
+- 最终装配与残差计算（由公共后处理统一执行）
+- 填充 `CZMResult`（由公共后处理统一执行）
+- 构建 `new_czm_mesh`（由公共后处理统一执行）
 
-### 3.4 辅助函数统一
+三个策略函数：
+
+- **`newton_basic!`** (~50行)：单步 Newton 循环 + `backtrack_line_search!`。载荷分数始终为 1.0。
+- **`newton_load_substep!`** (~80行)：自适应子步循环 + 内联线搜索。`load_progress` 逐步推进，失败时步长减半并回滚。
+- **`newton_arc_length!`** (~110行)：Crisfield 圆柱弧长法子步循环。包含 K\\R 和 K\\F 两次求解 + 二次方程求根。
+
+### 3.4 收敛准则（各策略独立保留，不统一）
+
+三种方法的收敛准则不同，必须保留在策略函数内部，不可提取到公共后处理：
+
+| 策略 | 子步收敛 | 最终收敛声明 |
+|------|----------|-------------|
+| `basic` | `R_norm < tol` 或 `R_norm / R_norm_0 < tol`（相对+绝对） | `converged` 标志 |
+| `load_substep` | `R_norm < tol * 10` | `load_progress >= 1.0` 且 `R_norm < tol * 100` |
+| `arc_length` | `norm(R) < tol * 10` 且 `abs(arc_constraint) < tol * 10` | `load_progress >= 1.0` 且 `converged_substep` |
+
+### 3.5 损伤更新语义（各策略独立保留）
+
+三种方法目前的损伤更新时机不同，策略函数须保留原有行为：
+
+| 策略 | 损伤更新时机 |
+|------|-------------|
+| `basic` | 仅在 Newton 循环内收敛时调用一次 `update_damage`；后处理不再调用 |
+| `load_substep` | 每个子步收敛时调用一次；后处理中如果 `result.converged` 再调用一次（更新到最终装配的分离量） |
+| `arc_length` | 每个子步收敛时调用一次；后处理不再调用 |
+
+策略函数返回的 `damage_states` 已包含最终的损伤状态，公共后处理直接使用，不再调用 `update_damage`。
+
+### 3.6 残差报告语义
+
+`result.residual_norm` 在各策略中的含义有细微差异，策略函数返回的 `R_final` 须保留各自语义：
+
+| 策略 | `R_final` 含义 |
+|------|---------------|
+| `basic` | 收敛时刻的残差（损伤更新前），若未收敛则用最终装配残差 |
+| `load_substep` | 最终装配后的残差 |
+| `arc_length` | 最终装配后的残差 |
+
+### 3.7 辅助函数统一
 
 | 重复项 | 当前状态 | 重构后 |
 |--------|----------|--------|
 | BC 提取 | `extract_bc_dofs` + `build_czm_cache` 内重复 | 只保留 `extract_bc_dofs`，`build_czm_cache` 调用它 |
 | 结果填充 | `fill_czm_result!` + `newton_raphson_czm` 末尾手动填充 | 统一使用 `fill_czm_result!` |
-| 线搜索 | `backtrack_line_search!` + `newton_raphson_czm` 内联 | 统一使用 `backtrack_line_search!` |
-| 收敛后状态更新 | 三处重复 `update_damage(...)` | 统一在后处理中调用 |
+| 线搜索 | `backtrack_line_search!` + `newton_raphson_czm` 内联 | `newton_load_substep!` 使用 `backtrack_line_search!` 替代内联线搜索 |
 
 ## 4. 影响范围
 
@@ -150,15 +196,17 @@ end
 ### API 兼容性
 
 - `solve_czm_step(czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param, u_prev; ...)` — **签名和行为完全不变**
-- `newton_raphson_czm(...)` — 内部函数，改为委托给统一入口
-- `solve_czm_basic_step(...)` — 内部函数，改为委托给统一入口
-- `solve_czm_arc_length_step(...)` — 内部函数，改为委托给统一入口
+- `newton_raphson_czm(...)` — 保留为向后兼容包装函数，内部委托给 `solve_czm_newton(..., method="load_substep")`。注意 `newton_raphson_czm` 在 `JuBat.jl` 中被导出，因此必须保留。
+- `solve_czm_basic_step(...)` — 保留为向后兼容包装函数，内部委托给 `solve_czm_newton(..., method="basic")`
+- `solve_czm_arc_length_step(...)` — 保留为向后兼容包装函数，内部委托给 `solve_czm_newton(..., method="arc_length")`
+
+> 注：`CouplingState.jl` 中的 `update_czm_damage!` 调用 `solve_czm_step`，其内部的 `visc_beta` 计算（依赖 `lowercase(iter_method)`）保持不变，因为方法名字符串不变。
 
 ## 5. 预期收益
 
 | 指标 | 当前 | 重构后 |
 |------|------|--------|
-| `CzmSolve.jl` 行数 | ~664 | ~400 |
+| `CzmSolve.jl` 行数 | ~664 | ~460 |
 | 求解器函数 | 4 个 (3 solver + 1 dispatch) | 2 个 (1 dispatch + 1 unified) |
 | 策略函数 | 内联 | 3 个轻量级策略函数 |
 | 结果填充点 | 4 处 | 1 处 |

@@ -106,3 +106,26 @@
 - 5 个脚本全部编写完成
 - 尚未运行
 - 下一步：按顺序执行脚本，回写运行结果到 findings.md
+
+### 2026-04-29 统计指标升级
+
+**已完成：**
+
+- 创建规格文档 `specs/2026-04-29-grid-sensitivity-statistical-metrics-design.md`
+- 规格评审通过（2 轮，修复 3 严重 + 5 重要问题）
+- 创建共享工具函数 `example/网格敏感性/0_rmspe_utils.jl`
+- 修改 Script 2-5 后处理逻辑
+
+**当前状态：**
+
+- 所有脚本后处理已从点值对比替换为 RMSPE 统计指标
+- 尚未运行修改后的脚本
+- 下一步：运行脚本验证输出格式
+
+**下一步：**
+
+1. 运行 Script 2 验证电化学 RMSPE 输出
+2. 运行 Script 3 验证热学 RMSPE 输出
+3. 运行 Script 4 验证 CZM RMSPE 输出
+4. 运行 Script 5 验证能量守恒 RMS 输出
+5. 汇总结果回写到 findings.md

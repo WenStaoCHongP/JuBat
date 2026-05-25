@@ -318,3 +318,38 @@ $l_c = G_c \cdot E / \sigma_{\max}^2$ 是 Irwin 型过程区长度估计。但�
 | 重要问题 | 4 | P4-P7 需补充说明 |
 | 改进建议 | 4 | S1-S4 可提升计划质量 |
 | 总体评价 | — | 计划框架清晰、交付物定义完整，但核心物理动机需修正后再执行 |
+
+## 8. 统计指标体系升级（2026-04-29）
+
+### 8.1 问题
+
+原有三个 Track 的所有对比指标都基于单点值（snapshot），对局部波动敏感，无法反映整条曲线或空间场的整体收敛质量。
+
+### 8.2 解决方案
+
+将所有指标统一替换为基于 RMSPE 的统计量：
+
+- **电化学 Track**: V(t) RMSPE、T(t) RMSPE、dT/dt(t) RMSPE
+- **热学 Track**: T_max(t) RMSPE、T_range(t) RMSPE、空间场 RMSPE（时间平均）
+- **CZM Track**: D_max(t) RMSPE、n_frac(t) RMSPE、δ_max_n(t) RMSPE、牵引-分离面积偏差
+- **能量守恒**: 保留 ε_R(t) 瞬时值，新增归一化 RMS 残余 ε_R,rms
+
+### 8.3 关键设计决策
+
+- 误差公式：RMSPE（相对均方根百分比误差），带零点保护（threshold = 1e-3 * max|y_ref|）
+- 验收阈值：统一 5%
+- 时间对齐：手写线性插值 `align_to_ref`，不依赖外部包
+- 牵引-分离面积偏差：选取最终时刻 D 值最大的单元进行对比
+- 能量残余：归一化 RMS（非 RMSPE，避免除零）
+
+### 8.4 旧指标放弃理由
+
+- 角变化收敛：Bi_t ≈ 0.004 导致角变化极小，RMSPE 零点保护大量跳过
+- 应力峰值：空间分布不均匀，单点意义有限
+- 损伤起始时间：事件时间，RMSPE 不适用
+- 载荷-位移曲线：需纯机械位移 BC，与电池实际驱动不符
+
+### 8.5 参考文件
+
+- Spec: `docs/superpowers/specs/2026-04-29-grid-sensitivity-statistical-metrics-design.md`
+- Plan: `docs/superpowers/plans/2026-04-29-statistical-metrics-implementation-plan.md`

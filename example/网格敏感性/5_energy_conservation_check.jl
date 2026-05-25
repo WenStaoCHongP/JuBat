@@ -13,6 +13,9 @@ Script 5: 全场耦合能量守恒检查
 """
 
 using Printf, Plots, LinearAlgebra
+using Statistics
+
+include(joinpath(@__DIR__, "0_rmspe_utils.jl"))
 
 root_dir = abspath(joinpath(@__DIR__, "..", ".."))
 include(joinpath(root_dir, "src", "JuBat.jl"))
@@ -178,6 +181,10 @@ function main()
     @printf("  ε_R(终)    = %.4f %%\n", ε_R[end])
     @printf("  max ε_R    = %.4f %%\n", maximum(ε_R[2:end]))
 
+    # ── 归一化 RMS 残余 (spec §3.4) ──
+    ε_R_rms = sqrt(mean(R[2:end].^2)) / abs(W_elec[end]) * 100
+    @printf("  ε_R,rms   = %.4f %%\n", ε_R_rms)
+
     # 汇总表
     println("\n" * "=" ^ 70)
     println("能量平衡汇总")
@@ -189,6 +196,7 @@ function main()
     @printf("  %-25s %15.4e J\n", "E_frac (断裂能)", E_frac[end])
     @printf("  %-25s %15.4e J\n", "R      (残余)", R[end])
     @printf("  %-25s %15.4f %%\n", "ε_R    (相对误差)", ε_R[end])
+    @printf("  %-25s %15.4f %%\n", "ε_R,rms (归一化RMS)", ε_R_rms)
 
     # ================================================================
     # [5] 绘图

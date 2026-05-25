@@ -7,11 +7,13 @@ Script 2: 电化学网格敏感性分析
   - (20,  5, 20)
   - (10,  5, 10)
 
-指标：电压曲线、温度峰值、max|dT/dt|
+指标：V(t) RMSPE、T(t) RMSPE、dT/dt(t) RMSPE
 输出：收敛图
 """
 
-using Printf, Plots
+using Printf, Plots, Statistics
+
+include(joinpath(@__DIR__, "0_rmspe_utils.jl"))
 
 root_dir = abspath(joinpath(@__DIR__, "..", ".."))
 include(joinpath(root_dir, "src", "JuBat.jl"))
@@ -78,20 +80,15 @@ function main()
     t_ref = ref["time [s]"]
     V_ref = ref["cell voltage [V]"]
     T_ref = ref["temperature [K]"]
-    T_peak_ref = maximum(T_ref)
 
-    # dT/dt 参考解
-    dTdt_ref = diff(T_ref) ./ diff(t_ref)
-    t_mid_ref = 0.5 * (t_ref[1:end-1] .+ t_ref[2:end])
-    dTdt_max_ref = maximum(abs.(dTdt_ref))
-
-    # ── 汇总表 ──
+    # ── 汇总表 (RMSPE) ──
     println("\n" * "=" ^ 70)
-    println("电化学网格收敛性汇总")
+    println("电化学网格收敛性汇总 (RMSPE)")
     println("=" ^ 70)
-    @printf("%-16s  %10s  %10s  %12s  %10s\n",
-            "Mesh (Nn,Ns,Np)", "V_end [V]", "T_peak [K]", "dTdt_max [K/s]", "Wall [s]")
-    println("-" ^ 70)
+    @printf("%-16s  %12s  %12s  %12s  %10s  %10s  %10s  %10s\n",
+            "Mesh", "V(t) RMSPE%", "T(t) RMSPE%", "dT/dt RMSPE%",
+            "V_skip%", "T_skip%", "dT_skip%", "Wall [s]")
+    println("-" ^ 100)
 
     V_errors = Float64[]
     T_errors = Float64[]
@@ -99,25 +96,36 @@ function main()
 
     for (i, (Nn, Ns, Np)) in enumerate(MESH_CONFIGS)
         r = results[(Nn, Ns, Np)]
-        V_end = r["cell voltage [V]"][end]
-        T_peak = maximum(r["temperature [K]"])
-        dTdt = diff(r["temperature [K]"]) ./ diff(r["time [s]"])
-        dTdt_max = maximum(abs.(dTdt))
+        t_c = r["time [s]"]
+        V_c = r["cell voltage [V]"]
+        T_c = r["temperature [K]"]
 
-        err_V = abs(V_end - V_ref[end]) / abs(V_ref[end]) * 100
-        err_T = abs(T_peak - T_peak_ref) / T_peak_ref * 100
-        err_dTdt = abs(dTdt_max - dTdt_max_ref) / dTdt_max_ref * 100
+        # 对齐到参考时间网格
+        V_aligned = align_to_ref(t_c, V_c, t_ref)
+        T_aligned = align_to_ref(t_c, T_c, t_ref)
+
+        # 电压曲线 RMSPE
+        err_V, skip_V = i == 1 ? (0.0, 0.0) : rmspe(V_aligned, V_ref)
+
+        # 温度曲线 RMSPE
+        err_T, skip_T = i == 1 ? (0.0, 0.0) : rmspe(T_aligned, T_ref)
+
+        # dT/dt 曲线 RMSPE
+        if i == 1
+            err_dTdt, skip_dTdt = (0.0, 0.0)
+        else
+            dTdt_ref_vals = diff(T_ref) ./ diff(t_ref)
+            dTdt_cand_vals = diff(T_aligned) ./ diff(t_ref)
+            err_dTdt, skip_dTdt = rmspe(dTdt_cand_vals, dTdt_ref_vals)
+        end
 
         push!(V_errors, err_V)
         push!(T_errors, err_T)
         push!(dTdt_errors, err_dTdt)
 
-        @printf("(%2d,%2d,%2d)       %10.4f  %10.3f  %12.4e  %10.2f\n",
-                Nn, Ns, Np, V_end, T_peak, dTdt_max, wall_times[i])
-        if i > 1
-            @printf("   → 偏差:  V %.3f%%,  T %.3f%%,  dT/dt %.3f%%\n",
-                    err_V, err_T, err_dTdt)
-        end
+        @printf("(%2d,%2d,%2d)       %12.4f  %12.4f  %12.4f  %10.1f  %10.1f  %10.1f  %10.2f\n",
+                Nn, Ns, Np, err_V, err_T, err_dTdt,
+                skip_V*100, skip_T*100, skip_dTdt*100, wall_times[i])
     end
 
     # ── 绘图 ──
@@ -150,20 +158,19 @@ function main()
     end
     savefig(p2, joinpath(out_dir, "echem_temperature_convergence.png"))
 
-    # 图3: 收敛误差折线图（横坐标仅 1-4，图内文本框说明网格划分）
+    # 图3: 收敛误差折线图 (RMSPE)
     xp = collect(1:4)
-    p3 = plot(xlabel="Mesh No.", ylabel="Relative Error [%]",
-              title="Electrochemical Mesh: Convergence Error",
+    p3 = plot(xlabel="Mesh No.", ylabel="RMSPE [%]",
+              title="Electrochemical Mesh: Convergence Error (RMSPE)",
               xticks=xp, xlims=(0.5, 4.5),
               legend=:topright)
-    plot!(p3, xp, V_errors, marker=:o, lw=2, label="V_end", color=:blue)
-    plot!(p3, xp, T_errors, marker=:s, lw=2, label="T_peak", color=:orange)
-    plot!(p3, xp, dTdt_errors, marker=:d, lw=2, label="dT/dt_max", color=:green)
+    plot!(p3, xp, V_errors, marker=:o, lw=2, label="V(t) RMSPE", color=:blue)
+    plot!(p3, xp, T_errors, marker=:s, lw=2, label="T(t) RMSPE", color=:orange)
+    plot!(p3, xp, dTdt_errors, marker=:d, lw=2, label="dT/dt RMSPE", color=:green)
     hline!([5.0], label="5% threshold", color=:black, ls=:dash, lw=2)
     hline!([1.0], label="1%", color=:gray, ls=:dot, lw=1)
-    # 网格划分说明文本框
     mesh_txt = "1→(40,20,40) ref\n2→(20,10,20)\n3→(20,5,20)\n4→(10,5,10)"
-    annotate!(p3, 4.4, maximum(V_errors) * 0.95,
+    annotate!(p3, 4.4, maximum([V_errors; T_errors; dTdt_errors]) * 0.95,
               text(mesh_txt, 8, :right, :top, :Courier))
     savefig(p3, joinpath(out_dir, "echem_convergence_error.png"))
 

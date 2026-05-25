@@ -78,4 +78,7 @@ end
     czm_tol::Float64 = 1e-4             # CZM 收敛容差
     czm_load_steps::Int64 = 2          # 载荷子步数（load_substep 模式）
     czm_arc_length_alpha::Float64 = 1.0 # 弧长法系数（arc_length 模式）
+    # CZM viscous regularization
+    czm_viscous_enabled::Bool = false  # 粘性正则化开关
+    czm_visc_tau::Float64 = 0.0        # 物理松弛时间 [s]，推荐 10~100 s
 end

@@ -65,7 +65,7 @@ end
 
 Compute bilinear traction and return updated damage state.
 """
-function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::DamageState, cohesive_params::Cohesive)
+function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::DamageState, cohesive_params::Cohesive; visc_beta::Float64=1.0)
 	K_n = cohesive_params.K_n
 	K_t = cohesive_params.K_t
 	δ_0_n = cohesive_params.δ_0_n
@@ -76,6 +76,7 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 
 	new_state = DamageState()
 	new_state.D = damage_state.D
+	new_state.D_visc = damage_state.D_visc
 	new_state.δ_max_n = damage_state.δ_max_n
 	new_state.δ_max_t = damage_state.δ_max_t
 	new_state.δ_max_eff = damage_state.δ_max_eff
@@ -84,6 +85,7 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 
 	if damage_state.fractured
 		new_state.D = 1.0
+		new_state.D_visc = 1.0
 		new_state.fractured = true
 		return 0.0, 0.0, 1.0, new_state
 	end
@@ -107,15 +109,15 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 	end
 
 	δ_max_hist = damage_state.δ_max_eff
-	D = damage_state.D
+	D_eq = damage_state.D
 
 	if δ_eff > δ_max_hist
 		if δ_eff <= δ_0_eff
-			D = 0.0
+			D_eq = 0.0
 		elseif δ_eff >= δ_c_eff
-			D = 1.0
+			D_eq = 1.0
 		else
-			D = δ_c_eff * (δ_eff - δ_0_eff) / (δ_eff * (δ_c_eff - δ_0_eff))
+			D_eq = δ_c_eff * (δ_eff - δ_0_eff) / (δ_eff * (δ_c_eff - δ_0_eff))
 		end
 
 		new_state.δ_max_eff = δ_eff
@@ -123,17 +125,21 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 		if czm_model != "model1"
 			new_state.δ_max_t = max(new_state.δ_max_t, abs(δ_t))
 		end
-		new_state.D = D
-		new_state.accumulated_damage = max(new_state.accumulated_damage, D)
-		if D >= 1.0 - 1e-10
+		new_state.D = D_eq
+		new_state.accumulated_damage = max(new_state.accumulated_damage, D_eq)
+		if D_eq >= 1.0 - 1e-10
 			new_state.fractured = true
 		end
-	else
-		D = new_state.D
 	end
 
+	# Viscous damage: D_visc = D_visc_committed + visc_beta * (D_eq - D_visc_committed)
+	D_visc = damage_state.D_visc + visc_beta * (D_eq - damage_state.D_visc)
+	D_visc = max(damage_state.D_visc, D_visc)  # monotonicity
+	new_state.D_visc = D_visc
+
+	# Traction uses D_visc (not D_eq)
 	if δ_n >= 0
-		T_n = (1.0 - D) * K_n * δ_n
+		T_n = (1.0 - D_visc) * K_n * δ_n
 	else
 		T_n = K_n * δ_n
 	end
@@ -141,16 +147,17 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 	if czm_model == "model1"
 		T_t = K_t * δ_t
 	else
-		T_t = (1.0 - D) * K_t * δ_t
+		T_t = (1.0 - D_visc) * K_t * δ_t
 	end
 
-    return T_n, T_t, D, new_state
+    return T_n, T_t, D_eq, new_state
 end
 
-function bilinear_traction(δ_n::Float64, δ_t::Float64, damage_state::DamageState, cohesive_params::Cohesive; update::Bool=true)
-	T_n, T_t, D, new_state = bilinear_traction_state(δ_n, δ_t, damage_state, cohesive_params)
+function bilinear_traction(δ_n::Float64, δ_t::Float64, damage_state::DamageState, cohesive_params::Cohesive; update::Bool=true, visc_beta::Float64=1.0)
+	T_n, T_t, D, new_state = bilinear_traction_state(δ_n, δ_t, damage_state, cohesive_params; visc_beta=visc_beta)
 	if update
 		damage_state.D = new_state.D
+		damage_state.D_visc = new_state.D_visc
 		damage_state.δ_max_n = new_state.δ_max_n
 		damage_state.δ_max_t = new_state.δ_max_t
 		damage_state.δ_max_eff = new_state.δ_max_eff
@@ -165,7 +172,7 @@ end
 
 Compute bilinear tangent stiffness matrix.
 """
-function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageState, cohesive_params::Cohesive)
+function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageState, cohesive_params::Cohesive; visc_beta::Float64=1.0)
 	K_n = cohesive_params.K_n
 	K_t = cohesive_params.K_t
 	δ_0_n = cohesive_params.δ_0_n
@@ -199,16 +206,27 @@ function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageStat
 		end
 	end
 
-	D = damage_state.D
+	# Compute D_eq and D_visc (same logic as bilinear_traction_state for consistency)
 	δ_max_hist = damage_state.δ_max_eff
 	is_loading = (δ_eff > δ_max_hist - 1e-15)
+
+	D_eq = damage_state.D
+	if is_loading && δ_eff > δ_0_eff && δ_eff < δ_c_eff
+		D_eq = δ_c_eff * (δ_eff - δ_0_eff) / (δ_eff * (δ_c_eff - δ_0_eff))
+	elseif is_loading && δ_eff >= δ_c_eff
+		D_eq = 1.0
+	elseif is_loading && δ_eff <= δ_0_eff
+		D_eq = 0.0
+	end
+	D_visc = damage_state.D_visc + visc_beta * (D_eq - damage_state.D_visc)
+	D_visc = max(damage_state.D_visc, D_visc)  # monotonicity
 
 	if czm_model == "model1"
 		dT_dδ[2, 2] = K_t
 
 		if δ_eff <= δ_0_eff || !is_loading
 			if δ_n >= 0
-				dT_dδ[1, 1] = (1.0 - D) * K_n
+				dT_dδ[1, 1] = (1.0 - D_visc) * K_n
 			else
 				dT_dδ[1, 1] = K_n
 			end
@@ -217,7 +235,8 @@ function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageStat
 		else
 			if δ_n >= 0 && δ_eff > 1e-15
 				dD_dδn = δ_c_eff * δ_0_eff / (δ_eff^2 * (δ_c_eff - δ_0_eff))
-				dT_dδ[1, 1] = (1.0 - D) * K_n - K_n * δ_n * dD_dδn
+				# Key: dD/dδ multiplied by visc_beta for consistent linearization
+				dT_dδ[1, 1] = (1.0 - D_visc) * K_n - K_n * δ_n * visc_beta * dD_dδn
 			else
 				dT_dδ[1, 1] = K_n
 			end
@@ -227,11 +246,11 @@ function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageStat
 	else
 		if δ_eff <= δ_0_eff || !is_loading
 			if δ_n >= 0
-				dT_dδ[1, 1] = (1.0 - D) * K_n
+				dT_dδ[1, 1] = (1.0 - D_visc) * K_n
 			else
 				dT_dδ[1, 1] = K_n
 			end
-			dT_dδ[2, 2] = (1.0 - D) * K_t
+			dT_dδ[2, 2] = (1.0 - D_visc) * K_t
 		elseif δ_eff >= δ_c_eff
 			dT_dδ[1, 1] = 1e-10 * K_n
 			dT_dδ[2, 2] = 1e-10 * K_t
@@ -240,13 +259,14 @@ function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageStat
 			if δ_n >= 0 && δ_eff > 1e-15
 				dδeff_dδn = δ_n_pos / δ_eff
 				dδeff_dδt = δ_t / δ_eff
-				dT_dδ[1, 1] = (1.0 - D) * K_n - K_n * δ_n * dD_dδeff * dδeff_dδn
-				dT_dδ[1, 2] = -K_n * δ_n * dD_dδeff * dδeff_dδt
-				dT_dδ[2, 1] = -K_t * δ_t * dD_dδeff * dδeff_dδn
-				dT_dδ[2, 2] = (1.0 - D) * K_t - K_t * δ_t * dD_dδeff * dδeff_dδt
+				# Key: dD/dδ multiplied by visc_beta for consistent linearization
+				dT_dδ[1, 1] = (1.0 - D_visc) * K_n - K_n * δ_n * visc_beta * dD_dδeff * dδeff_dδn
+				dT_dδ[1, 2] = -K_n * δ_n * visc_beta * dD_dδeff * dδeff_dδt
+				dT_dδ[2, 1] = -K_t * δ_t * visc_beta * dD_dδeff * dδeff_dδn
+				dT_dδ[2, 2] = (1.0 - D_visc) * K_t - K_t * δ_t * visc_beta * dD_dδeff * dδeff_dδt
 			else
 				dT_dδ[1, 1] = K_n
-				dT_dδ[2, 2] = (1.0 - D) * K_t
+				dT_dδ[2, 2] = (1.0 - D_visc) * K_t
 			end
 		end
 	end
@@ -259,7 +279,7 @@ end
 
 Batch update of damage states.
 """
-function update_damage(damage_states::AbstractVector{<:AbstractDamageState}, separations::Vector{Tuple{Float64, Float64}}, cohesive_params::Cohesive)
+function update_damage(damage_states::AbstractVector{<:AbstractDamageState}, separations::Vector{Tuple{Float64, Float64}}, cohesive_params::Cohesive; visc_beta::Float64=1.0)
 	n = length(damage_states)
 	@assert length(separations) == n "Mismatch in array lengths"
 
@@ -268,7 +288,7 @@ function update_damage(damage_states::AbstractVector{<:AbstractDamageState}, sep
 		state = damage_states[i]
 		state isa DamageState || error("update_damage: expected DamageState, got $(typeof(state))")
 		δ_n, δ_t = separations[i]
-		new_state = last(bilinear_traction_state(δ_n, δ_t, state, cohesive_params))
+		new_state = last(bilinear_traction_state(δ_n, δ_t, state, cohesive_params; visc_beta=visc_beta))
 		new_states[i] = new_state
 	end
 
@@ -282,7 +302,13 @@ end
 """
 	compute_gap_conductance(D, δ_n, cohesive) -> h_eff
 
-Compute effective interface conductance.
+Compute effective interface conductance using a parallel thermal circuit model.
+
+The heat transfer across the interface has two parallel paths:
+  - Solid contact: h_contact = h_c0 * (1 - D)
+  - Gap medium:    h_gap    = k_air / (δ + 2βλ_m)
+
+Effective conductance: h_eff = h_contact + h_gap
 """
 function compute_gap_conductance(D::Float64, δ_n::Float64, cohesive)
 	h_c0 = cohesive.h_c0
@@ -304,7 +330,7 @@ function compute_gap_conductance(D::Float64, δ_n::Float64, cohesive)
 	D_clamped = clamp(max(D, D_sep), 0.0, 0.9999)
 	two_beta_lambda = 2.0 * beta * lambda_m
 
-	denom = if delta < delta0
+	h_eff = if delta < delta0
 		h_c0 + k_air / (delta + two_beta_lambda)
 	elseif delta < threshold
 		h_c0 * (1.0 - D_clamped) + k_air / (delta + two_beta_lambda)
@@ -312,8 +338,8 @@ function compute_gap_conductance(D::Float64, δ_n::Float64, cohesive)
 		h_c0 * (1.0 - D_clamped) + k_air / (delta + delta0)
 	end
 
-	denom > 0 || error("compute_gap_conductance: zero or negative denominator (h_c0=$h_c0, k_air=$k_air, delta=$delta)")
-	return 1.0 / denom
+	h_eff > 0 || error("compute_gap_conductance: zero or negative conductance (h_c0=$h_c0, k_air=$k_air, delta=$delta)")
+	return h_eff
 end
 
 """

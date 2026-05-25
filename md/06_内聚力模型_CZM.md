@@ -169,61 +169,132 @@ $$
 
 ## 4. 求解方法
 
-### 4.1 Newton-Raphson 迭代
+### 4.1 求解框架
 
-**迭代格式**：
-
-$$
-F(u) = f_{int}(u) - F_{ext} - F_{thermo-chem}
-$$
-
-**更新公式**：
-
-$$
-u^{(k+1)} = u^{(k)} - J^{-1} \cdot F
-$$
-
-**函数签名**：
+所有迭代方法通过统一入口 `solve_czm_step` 分发：
 
 ```julia
-function newton_raphson_czm(
-    czm_mesh::CohesiveMesh, 
-    F_ext::Vector{Float64}, 
-    E_eff::Float64, 
-    ν_eff::Float64, 
-    cohesive_params::Cohesive, 
-    param_dim;
-    α_eff::Float64=0.0,      # 热膨胀系数
-    β_n::Float64=0.0,        # 负极化学膨胀系数
-    β_p::Float64=0.0,        # 正极化学膨胀系数
-    dT_elem=nothing,         # 单元温度变化
-    Δsoc_n_elem=nothing,     # 负极 SOC 变化
-    Δsoc_p_elem=nothing,     # 正极 SOC 变化
-    max_iter::Int=50, 
-    tol::Float64=1e-8, 
-    u0=nothing, 
-    n_load_steps::Int=10
+result, updated_czm_mesh = solve_czm_step(
+    czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param, u_prev;
+    iter_method="basic",   # "basic" | "load_substep" | "arc_length"
+    max_iter=50, tol=1e-8, n_load_steps=10, visc_beta=1.0, ...
 )
 ```
 
-**返回**：
-- `result::CZMResult`：求解结果
-- `new_czm_mesh::CohesiveMesh`：更新损伤状态后的网格
+**残差格式**：
 
-### 4.2 热-化学载荷
+$$
+R = F_{applied} - f_{int}(u)
+$$
+
+其中 $F_{applied}$ 为外力向量（含热-化学载荷），$f_{int}$ 为内力向量。
+
+### 4.2 损伤更新策略（隐式冻结）
+
+**所有三种方法采用相同的损伤更新策略**：在一个时间步内，NR 迭代过程中损伤状态保持冻结（使用时间步开始时的 $D$），仅当位移场收敛后才统一更新损伤。
+
+```
+进入时间步 → damage_states = D_begin
+  NR 迭代 (全过程用 D_begin 计算刚度 K 和内力 f_int)
+  → 位移 u 收敛
+  → damage_states = update_damage(D_begin, separations(u_converged))
+退出时间步 → D_end 用于下一时间步
+```
+
+**设计原因**：CZM 软化段的临界分离位移很小，即使微量载荷即可导致损伤从 0 跳至近 1.0。若在 NR 迭代或载荷子步中途更新损伤，刚度矩阵会骤降，导致后续迭代/子步在近乎零刚度的系统上发散。冻结损伤保证刚度矩阵在整个求解过程中一致，与隐式时间积分的物理假设（一个时间步内损伤为常数）相符。
+
+### 4.3 迭代方法
+
+#### 4.3.1 basic — 基本 Newton-Raphson
+
+```julia
+function solve_czm_basic_step(czm_mesh, F_ext, ..., u_prev; ...)
+```
+
+- 从 `u_prev`（上一步收敛位移）出发
+- 一次性施加全量载荷 $F_{ext} + F_{thermo-chem}$
+- NR 迭代 + 回溯线搜索（最多 8 次减半）
+- 收敛后更新损伤
+
+**适用场景**：时间步内载荷增量较小（标准时间步进），是默认且最稳健的方法。
+
+#### 4.3.2 load_substep — 载荷子步法
+
+```julia
+function newton_raphson_czm(czm_mesh, F_ext, ..., param; n_load_steps=10, u0=u_prev, ...)
+```
+
+将载荷从当前平衡态逐步推进到目标态：
+
+$$
+F_{applied} = f_{int}^{ref} + \alpha \cdot F_{\Delta}
+$$
+
+其中：
+- $f_{int}^{ref} = f_{int}(u_{prev})$：上一步平衡态的内力
+- $F_{\Delta} = F_{target} - f_{int}^{ref}$：载荷增量（通常很小）
+- $\alpha \in [0, 1]$：载荷进度，从 0 到 1 逐步推进
+
+**自适应子步控制**：
+- 初始步长：`step_size = 1 / n_load_steps`
+- 子步收敛 → 步长 ×1.25（加速）
+- 子步失败 → 步长 ×0.5（回退），直至 `step_size_min`
+- 每个子步内：NR 迭代 + 线搜索（8 次减半）
+
+**收敛判据**：
+- 子步收敛：`R_norm < tol × 10`
+- 整体收敛：`load_progress ≥ 1 - ε` 且 `R_norm < tol × 100`
+
+**适用场景**：需要更细粒度载荷控制的工况；对 basic 已能收敛的标准仿真不会带来额外精度提升，但代价更高（约 4-5 倍 CZM 耗时）。
+
+#### 4.3.3 arc_length — Crisfield 弧长法
+
+```julia
+function solve_czm_arc_length_step(czm_mesh, F_ext, ..., u_prev; n_load_steps=10, arc_length_alpha=1.0, ...)
+```
+
+在载荷子步的基础上引入 Crisfield 圆柱弧长约束：
+
+$$
+\| \Delta u \|^2 = l_{arc}^2
+$$
+
+**求解过程**（每个子步）：
+1. 预测步：$\Delta u_{pred} = K_{bc}^{-1} F_{\Delta} \cdot \Delta\lambda_{pred}$，计算弧长目标 $l_{arc}$
+2. 校正步（NR 迭代）：求解两个线性系统
+   - $\Delta u_R = K_{bc}^{-1} R_{bc}$（残差校正）
+   - $\Delta u_F = K_{bc}^{-1} F_{\Delta,bc}$（载荷方向）
+3. 通过弧长约束的二次方程求解载荷参数增量 $\Delta\lambda$
+4. 选择与预测方向最接近的根
+
+**适用场景**：snap-through / snap-back 等强非线性问题。
+
+### 4.4 三种方法性能对比
+
+在 testexample.jl（1C 放电，nθ=16，336 单元，368 时间步）上的典型表现：
+
+| 指标 | basic | load_substep | arc_length |
+|------|-------|-------------|------------|
+| CZM 耗时 | ~5.5 s (35%) | ~22 s (68%) | ~22 s (67%) |
+| 总耗时 | ~25 s | ~43 s | ~41 s |
+| 物理结果 | 基准 | 与 basic 一致 | 与 basic 一致 |
+
+对于标准时间步进仿真，`basic` 是推荐的首选方法。
+
+### 4.5 热-化学载荷
 
 **功能**：计算由温度变化和 SOC 变化引起的等效节点力
 
 ```julia
 function assemble_thermal_chemical_load(
-    czm_mesh::CohesiveMesh, 
-    E_eff::Float64, 
+    czm_mesh::CohesiveMesh,
+    E_eff::Float64,
     ν_eff::Float64,
     α_eff::Float64,          # 热膨胀系数
     β_n::Float64,            # 负极化学膨胀系数
     β_p::Float64,            # 正极化学膨胀系数
-    dT_elem::Vector{Float64}, 
-    Δsoc_n_elem::Vector{Float64}, 
+    dT_elem::Vector{Float64},
+    Δsoc_n_elem::Vector{Float64},
     Δsoc_p_elem::Vector{Float64}
 )
 ```
@@ -240,56 +311,28 @@ $$
 F_{thermo-chem} = \int B^T D \varepsilon_0 \, d\Omega
 $$
 
-### 4.3 完整耦合系统组装
+### 4.6 完整耦合系统组装
 
 ```julia
-function assemble_coupled_system_full(
-    czm_mesh::CohesiveMesh, 
+function assemble_coupled_system(
+    czm_mesh::CohesiveMesh,
     u::Vector{Float64},
-    E_eff::Float64, 
+    E_eff::Float64,
     ν_eff::Float64,
-    α_eff::Float64, 
-    β_n::Float64, 
-    β_p::Float64,
-    cohesive_params::Cohesive,
-    dT_elem::Vector{Float64},
-    Δsoc_n_elem::Vector{Float64},
-    Δsoc_p_elem::Vector{Float64};
-    F_ext=nothing,
-    damage_states=nothing
+    cohesive_params::Cohesive;
+    damage_states=nothing,
+    K_bulk_cached=nothing,
+    geom_cache=nothing,
+    ws=nothing,
+    visc_beta=1.0
 )
 ```
 
 **返回**：
 - `K_total`：总刚度矩阵
-- `R`：残差向量
+- `f_int_total`：内力向量
 - `separations`：分离位移
 - `tractions`：牵引力
-
-### 4.4 迭代方法选项
-
-| 方法 | 说明 | 适用场景 |
-|------|------|----------|
-| `"basic"` | 基本 Newton-Raphson | 简单问题，单步载荷 |
-| `"load_substep"` | 载荷子步法（默认） | 一般问题，提高收敛性 |
-| `"arc_length"` | 弧长法 | snap-through/snap-back 问题 |
-
-**载荷子步法**：
-- 将总载荷分成多个子步
-- 每个子步内使用 Newton 迭代
-- 提高收敛性但增加计算量
-
-### 4.5 收敛性改进
-
-**线搜索**：当残差下降缓慢时启用
-
-```julia
-Δu_norm = norm(Δu)
-max_Δu = 1e-6
-if Δu_norm > max_Δu
-    Δu = Δu * (max_Δu / Δu_norm)
-end
-```
 
 ---
 
@@ -400,20 +443,25 @@ function czm_output_to_variables(
 
 ## 8. 代码位置
 
-| 功能 | 文件 | 函数/行号 |
-|------|------|-----------|
+| 功能 | 文件 | 函数 |
+|------|------|------|
 | CZMResult 结构体 | src/CzmSolve.jl | `CZMResult` (1-15) |
-| Newton-Raphson 求解 | src/CzmSolve.jl | `newton_raphson_czm` (30-120) |
-| CZM 单步求解 | src/CzmSolve.jl | `solve_czm_step` |
-| 后处理 | src/CzmSolve.jl | `czm_output_to_variables` (496-514) |
-| 本构模型 | src/Materialmatrix.jl | `bilinear_traction_state` |
+| basic NR 求解 | src/CzmSolve.jl | `solve_czm_basic_step` (154) |
+| 载荷子步法求解 | src/CzmSolve.jl | `newton_raphson_czm` (486) |
+| 弧长法求解 | src/CzmSolve.jl | `solve_czm_arc_length_step` (261) |
+| 统一求解入口 | src/CzmSolve.jl | `solve_czm_step` (662) |
+| 损伤克隆/还原 | src/CzmSolve.jl | `clone_damage_states`, `clone_czm_mesh_with_damage` |
+| BC 处理 | src/CzmSolve.jl | `extract_bc_dofs`, `apply_czm_dirichlet!` |
+| 回溯线搜索 | src/CzmSolve.jl | `backtrack_line_search!` (83) |
+| 弧长增广矩阵 | src/CzmSolve.jl | `build_arc_length_augmented_matrix` (142) |
+| CZM 调度入口 | src/CouplingState.jl | `update_czm_damage!` |
+| 本构模型 | src/Materialmatrix.jl | `bilinear_traction_state`, `update_damage` |
 | 单元矩阵 | src/czm.jl | `cohesive_element_matrices` |
-| 系统组装 | src/czm.jl | `assemble_czm_system`, `assemble_coupled_system` |
-| 完整耦合组装 | src/czm.jl | `assemble_coupled_system_full` (427-443) |
-| 热-化学载荷 | src/czm.jl | `assemble_thermal_chemical_load` (349-403) |
+| 系统组装 | src/czm.jl | `assemble_coupled_system` |
+| 热-化学载荷 | src/czm.jl | `assemble_thermal_chemical_load` |
 | CZM 网格创建 | src/czm.jl | `create_czm_mesh` |
 | 间隙导热 | src/Materialmatrix.jl | `compute_gap_conductance`, `compute_element_gap_conductance` |
 | 损伤统计 | src/czm.jl | `get_damage_statistics`, `check_fracture_criterion` |
-| 损伤更新 | src/CycleSolver.jl | `_update_czm_damage!` |
+| 损伤更新（循环） | src/CycleSolver.jl | `_update_czm_damage!` |
 | SOH 计算 | src/CycleSolver.jl | `_update_soh_and_capacity!` |
 | 循环求解 | src/CycleSolver.jl | `solve_cycling` |

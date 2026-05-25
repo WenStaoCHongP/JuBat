@@ -55,7 +55,7 @@ function run_baseline()
     Δsoc_p_elem = fill(0.0002, ne)
 
     # 4. 构造 CZM 参数（归一化后的参数，与 update_czm_damage! 一致）
-    czm_params = param_dim.cohesive
+    czm_params = case.param.cohesive
     param = case.param
     ndof = 2 * czm_mesh.nnode
     F_ext = zeros(Float64, ndof)

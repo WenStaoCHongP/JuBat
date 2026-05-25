@@ -1,0 +1,16 @@
+CZM standalone verification report
+=================================
+
+Mode I constitutive:
+  max_abs_error = 0.000000e+00
+
+Time-history solves:
+  uniform_cycle: damage_changed=true, changed_steps=17, first_damage_time=0.149, final_D_max=8.471113e-01, final_D_mean=8.471113e-01, n_fractured=0
+  gradient_cycle: damage_changed=true, changed_steps=19, first_damage_time=0.106, final_D_max=9.013496e-01, final_D_mean=9.013496e-01, n_fractured=0
+
+Mix mode:
+  beta=0.00, peak_traction=4.967320e+07, final_damage=1.000000e+00
+  beta=0.25, peak_traction=4.869589e+07, final_damage=1.000000e+00
+  beta=0.50, peak_traction=4.558231e+07, final_damage=1.000000e+00
+  beta=0.75, peak_traction=3.981183e+07, final_damage=1.000000e+00
+  beta=1.00, peak_traction=2.987395e+07, final_damage=1.000000e+00

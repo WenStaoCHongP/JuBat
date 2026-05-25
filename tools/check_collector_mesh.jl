@@ -4,9 +4,9 @@ param=JuBat.ChooseCell("Jellyroll")
 opt = JuBat.Option()
 opt.thermal_enabled = true
 opt.thermalmodel = "distributed2D"
-opt.czm_enabled = false
+opt.czm_enabled = true
 case = JuBat.SetCase(param, opt)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(param; nθ=10, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(param; nθ=80, gsorder=2)
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 mesh = case.mesh["thermal2D"]
 ne=size(mesh.element,1)
@@ -29,6 +29,79 @@ end
 println("first 6 elements:")
 for i in 1:min(6,size(mesh.element,1))
   println(i, " ", mesh.element[i,:])
+end
+
+# ── Export node coordinates and element connectivity to CSV ──
+begin
+  scale = param.scale
+  csv_dir = joinpath(@__DIR__, "..", "output", "csv")
+  mkpath(csv_dir)
+
+  # Node coordinates (physical units: m)
+  node_x = mesh.node[:, 1] * scale.L
+  node_y = mesh.node[:, 2] * scale.L
+  node_csv = joinpath(csv_dir, "mesh_nodes.csv")
+  open(node_csv, "w") do f
+    println(f, "node_id,x,y")
+    for n in 1:mesh.nlen
+      println(f, "$n,$(node_x[n]),$(node_y[n])")
+    end
+  end
+  println("Exported mesh_nodes.csv ($(mesh.nlen) nodes)")
+
+  # Element connectivity (1-based node indices)
+  ne = size(mesh.element, 1)
+  elem_csv = joinpath(csv_dir, "mesh_elements.csv")
+  open(elem_csv, "w") do f
+    println(f, "elem_id,n1,n2,n3,n4")
+    for e in 1:ne
+      n1, n2, n3, n4 = mesh.element[e, 1], mesh.element[e, 2], mesh.element[e, 3], mesh.element[e, 4]
+      println(f, "$e,$n1,$n2,$n3,$n4")
+    end
+  end
+  println("Exported mesh_elements.csv ($ne elements)")
+
+  # Cohesive element connectivity and geometry
+  czm_mesh = JuBat.create_czm_mesh(mesh, param)
+  n_coh = czm_mesh.n_cohesive
+  println("\nCZM: $n_coh cohesive elements, $(czm_mesh.nnode) nodes (after duplication)")
+
+  # Export cohesive node coordinates (physical units: m)
+  czm_node_x = czm_mesh.node[:, 1] * scale.L
+  czm_node_y = czm_mesh.node[:, 2] * scale.L
+  czm_node_csv = joinpath(csv_dir, "czm_nodes.csv")
+  open(czm_node_csv, "w") do f
+    println(f, "node_id,x,y")
+    for n in 1:czm_mesh.nnode
+      println(f, "$n,$(czm_node_x[n]),$(czm_node_y[n])")
+    end
+  end
+  println("Exported czm_nodes.csv ($(czm_mesh.nnode) nodes)")
+
+  # Export cohesive elements (bottom/top node pairs + length + layer index)
+  coh_csv = joinpath(csv_dir, "czm_elements.csv")
+  open(coh_csv, "w") do f
+    println(f, "coh_id,n1_bot,n2_bot,n4_top,n3_top,length,layer_idx")
+    for (i, elem) in enumerate(czm_mesh.cohesive_elements)
+      nb1, nb2 = elem.nodes_bottom
+      nt4, nt3 = elem.nodes_top
+      len_phys = elem.length * scale.L
+      println(f, "$i,$nb1,$nb2,$nt4,$nt3,$len_phys,$(elem.layer_idx)")
+    end
+  end
+  println("Exported czm_elements.csv ($n_coh cohesive elements)")
+
+  # Export CZM bulk (solid Q4) elements — used for displacement cloud plotting
+  n_bulk = size(czm_mesh.bulk_element, 1)
+  bulk_csv = joinpath(csv_dir, "czm_bulk_elements.csv")
+  open(bulk_csv, "w") do f
+    println(f, "elem_id,n1,n2,n3,n4")
+    for e in 1:n_bulk
+      n1, n2, n3, n4 = czm_mesh.bulk_element[e, 1], czm_mesh.bulk_element[e, 2], czm_mesh.bulk_element[e, 3], czm_mesh.bulk_element[e, 4]
+      println(f, "$e,$n1,$n2,$n3,$n4")
+    end
+  end
+  println("Exported czm_bulk_elements.csv ($n_bulk bulk elements)")
 end
 
 # print outer spiral r_out(θ) = a + b θ + s_out endpoint angle and arc lengths

@@ -1,15 +1,17 @@
 """
 Script 4: CZM 网格敏感性分析
 
-先运行 Script 1 确定 nθ 区间，再用 4 组 nθ 运行纯机械模型
-（热-化学载荷驱动 CZM 损伤），对比 D_max、D_mean、n_fractured、
-traction-separation 曲线。
+先运行 Script 1 确定 nθ 区间，再用 4 组 nθ 运行全耦合模型
+（热-化学载荷驱动 CZM 损伤），对比 D_max(t)、n_fractured(t)、
+δ_max_n(t) 的 RMSPE 和牵引-分离面积偏差。
 
-指标：D_max 峰值、损伤演化速率、断裂单元数
+指标：D_max(t) RMSPE、n_frac(t) RMSPE、δ_max_n(t) RMSPE、Traction-Sep 面积偏差
 输出：收敛图
 """
 
-using Printf, Plots
+using Printf, Plots, Statistics
+
+include(joinpath(@__DIR__, "0_rmspe_utils.jl"))
 
 root_dir = abspath(joinpath(@__DIR__, "..", ".."))
 include(joinpath(root_dir, "src", "JuBat.jl"))
@@ -120,23 +122,94 @@ function main()
 
     # ── 参考解 (最细) ──
     ref_idx = length(nθ_list)
+    ref_result = all_results[nθ_list[ref_idx]]
+    t_ref = ref_result["time [s]"]
 
     println("\n" * "=" ^ 70)
-    println("CZM 网格收敛性汇总")
+    println("CZM 网格收敛性汇总 (RMSPE)")
     println("=" ^ 70)
-    @printf("%-10s  %10s  %12s  %12s  %12s  %12s  %10s\n",
-            "nθ", "n_coh", "D_max", "D_mean", "n_frac", "D_max err[%]", "Wall [s]")
-    println("-" ^ 82)
+    @printf("%-10s  %10s  %12s  %12s  %12s  %12s  %10s  %10s  %10s\n",
+            "nθ", "n_coh",
+            "D_max RMSPE%", "n_frac RMSPE%", "δ_max_n RMSPE%", "Area err%",
+            "D_skip%", "nf_skip%", "Wall [s]")
+    println("-" ^ 105)
 
-    D_errors = Float64[]
+    D_rmspe = Float64[]
+    nfrac_rmspe = Float64[]
+    delta_rmspe = Float64[]
+    area_errors = Float64[]
+
     for (i, nθ) in enumerate(nθ_list)
-        err = ref_idx > 1 && i != ref_idx ?
-              abs(all_Dmax_end[i] - all_Dmax_end[ref_idx]) / max(1e-12, all_Dmax_end[ref_idx]) * 100 : 0.0
-        push!(D_errors, err)
+        r = all_results[nθ]
+        t_c = r["time [s]"]
         n_coh = all_czm[nθ].n_cohesive
-        @printf("%-10d  %10d  %12.6f  %12.8f  %12d  %12.4f  %10.2f\n",
-                nθ, n_coh, all_Dmax_end[i], all_Dmean_end[i],
-                Int(all_nfrac_end[i]), err, all_wall[i])
+
+        if i == ref_idx
+            push!(D_rmspe, 0.0)
+            push!(nfrac_rmspe, 0.0)
+            push!(delta_rmspe, 0.0)
+            push!(area_errors, 0.0)
+            @printf("%-10d  %10d  %12s  %12s  %12s  %12s  %10s  %10s  %10.2f\n",
+                    nθ, n_coh, "ref", "ref", "ref", "ref", "-", "-", all_wall[i])
+            continue
+        end
+
+        # D_max(t) RMSPE
+        skip_D = NaN
+        if haskey(r, "czm D_max") && haskey(ref_result, "czm D_max")
+            D_aligned = align_to_ref(t_c, r["czm D_max"], t_ref)
+            err_D, skip_D = rmspe(D_aligned, ref_result["czm D_max"])
+        else
+            err_D = NaN
+        end
+
+        # n_fractured(t) RMSPE
+        skip_nf = NaN
+        if haskey(r, "czm n_fractured") && haskey(ref_result, "czm n_fractured")
+            nf_aligned = align_to_ref(t_c, r["czm n_fractured"], t_ref)
+            err_nf, skip_nf = rmspe(nf_aligned, ref_result["czm n_fractured"])
+        else
+            err_nf = NaN
+        end
+
+        # δ_max_n(t) RMSPE
+        if haskey(r, "czm δ_max_n [m]") && haskey(ref_result, "czm δ_max_n [m]")
+            d_aligned = align_to_ref(t_c, r["czm δ_max_n [m]"], t_ref)
+            err_d, _ = rmspe(d_aligned, ref_result["czm δ_max_n [m]"])
+        else
+            err_d = NaN
+        end
+
+        # 牵引-分离面积偏差（峰值损伤单元）
+        err_area = NaN
+        if haskey(r, "czm traction normal [Pa]") && haskey(ref_result, "czm traction normal [Pa]")
+            traction_c = r["czm traction normal [Pa]"]
+            sep_c = r["czm separation normal [m]"]
+            traction_ref = ref_result["czm traction normal [Pa]"]
+            sep_ref = ref_result["czm separation normal [m]"]
+
+            if ndims(traction_c) == 2 && ndims(traction_ref) == 2
+                # 选取最终时刻 D 值最大的单元
+                D_c = haskey(r, "czm damage [0-1]") ? r["czm damage [0-1]"] : nothing
+                D_r = haskey(ref_result, "czm damage [0-1]") ? ref_result["czm damage [0-1]"] : nothing
+
+                peak_c = D_c !== nothing && ndims(D_c) == 2 ? argmax(D_c[:, end]) : 1
+                peak_r = D_r !== nothing && ndims(D_r) == 2 ? argmax(D_r[:, end]) : 1
+
+                err_area = area_error(
+                    sep_c[peak_c, :], traction_c[peak_c, :],
+                    sep_ref[peak_r, :], traction_ref[peak_r, :])
+            end
+        end
+
+        push!(D_rmspe, err_D)
+        push!(nfrac_rmspe, err_nf)
+        push!(delta_rmspe, err_d)
+        push!(area_errors, err_area)
+
+        @printf("%-10d  %10d  %12.4f  %12.4f  %12.4f  %12.4f  %10.1f  %10.1f  %10.2f\n",
+                nθ, n_coh, err_D, err_nf, err_d, err_area,
+                skip_D*100, skip_nf*100, all_wall[i])
     end
 
     # ── 绘图 ──
@@ -184,13 +257,19 @@ function main()
     end
     savefig(p3, joinpath(out_dir, "czm_separation_evolution.png"))
 
-    # 图4: D_max 收敛误差
+    # 图4: RMSPE 收敛误差
     if ref_idx > 1
-        p4 = plot(nθ_list[1:end-1], D_errors[1:end-1],
-                  xlabel="nθ (per revolution)", ylabel="D_max Relative Error [%]",
-                  title="CZM Mesh: Convergence Error",
-                  marker=:o, lw=2, color=:blue, label="|D_max - D_ref| / D_ref",
-                  yscale=:log10)
+        p4 = plot(xlabel="nθ (per revolution)", ylabel="RMSPE [%]",
+                  title="CZM Mesh: Convergence Error (RMSPE)",
+                  legend=:topright, yscale=:log10)
+        plot!(p4, nθ_list[1:end-1], D_rmspe[1:end-1],
+              marker=:o, lw=2, label="D_max(t)", color=:blue)
+        plot!(p4, nθ_list[1:end-1], nfrac_rmspe[1:end-1],
+              marker=:s, lw=2, label="n_frac(t)", color=:orange)
+        plot!(p4, nθ_list[1:end-1], delta_rmspe[1:end-1],
+              marker=:d, lw=2, label="δ_max_n(t)", color=:green)
+        plot!(p4, nθ_list[1:end-1], area_errors[1:end-1],
+              marker=:p, lw=2, label="Traction-Sep area", color=:purple)
         hline!(p4, [5.0], label="5%", color=:red, ls=:dash)
         savefig(p4, joinpath(out_dir, "czm_convergence_error.png"))
     end

@@ -6,6 +6,9 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
     """
 
     param = NormaliseParam(param_dim)
+
+    # Viscous regularization: normalize tau_visc (τ_v* = τ_v / t0)
+    param.cohesive.tau_visc = opt.czm_visc_tau / param.scale.t0
     # |--negative--|--separator--|--positive--|
     if opt.model == "SPM" || opt.model == "SPMe"
         # negative particle

@@ -170,6 +170,9 @@ end
     lambda_m::Float64 = 70e-9  # 平均自由程 [m]
     beta::Float64 = 1.0        # 参数 beta [-]
     threshold::Float64 = 70e-9 # 阈值厚度 [m]
+
+    # Viscous regularization (normalized)
+    tau_visc::Float64 = 0.0     # 归一化粘性松弛时间 τ_v* = τ_v / t0 [-]
 end
 @with_kw mutable struct Scale
     L::Float64 = 1e-6
@@ -296,7 +299,7 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.h = param_dim.cell.h * param_dim.scale.L / param_dim.cell.lambda_r  # Biot 数
     param_dim.scale.q = param_dim.scale.P_ref / param_dim.scale.L^3
     param_dim.scale.σ_czm = param_dim.cohesive.σ_max_n
-    param_dim.scale.δ_czm = param_dim.cohesive.δ_c_n
+    param_dim.scale.δ_czm = param_dim.scale.L
     param_dim.scale.G_czm = param_dim.scale.σ_czm * param_dim.scale.δ_czm
     param_dim.scale.K_czm = param_dim.scale.σ_czm / param_dim.scale.δ_czm
     return param_dim
