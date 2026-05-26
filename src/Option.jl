@@ -82,4 +82,7 @@ end
     # CZM viscous regularization
     czm_viscous_enabled::Bool = false  # 粘性正则化开关
     czm_visc_tau::Float64 = 0.0        # 物理松弛时间 [s]，推荐 10~100 s
+    # CZM progressive area loss (渐进式有效面积损失)
+    czm_area_loss_enabled::Bool = false      # 启用渐进式面积损失（D > threshold 时缩减有效面积）
+    czm_area_loss_threshold::Float64 = 0.83  # 面积开始缩减的损伤阈值
 end
