@@ -355,9 +355,15 @@ end
 - 总电流由剩余活跃单元承担
 - 失效单元不参与牛顿迭代
 """
-function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, yt::Array{Float64}, t::Float64, I_total::Float64, areas::Vector{Float64}, Te_prev::Vector{Float64}, x_prev::Union{Nothing,Vector{Float64}}=nothing; deactivated_elements::Union{Nothing,Vector{Int64}}=nothing)
+function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, yt::Array{Float64}, t::Float64, I_total::Float64, areas::Vector{Float64}, Te_prev::Vector{Float64}, x_prev::Union{Nothing,Vector{Float64}}=nothing; deactivated_elements::Union{Nothing,Vector{Int64}}=nothing, D_elem::Union{Nothing,Vector{Float64}}=nothing)
 	ne = length(areas)
-	w = areas ./ sum(areas)
+	# 渐进式有效面积损失：损伤调制权重
+	if case.opt.czm_area_loss_enabled && D_elem !== nothing
+		A_eff = areas .* effective_area_factor.(D_elem, case.opt.czm_area_loss_threshold)
+		w = A_eff ./ sum(A_eff)
+	else
+		w = areas ./ sum(areas)
+	end
 	phi_scale = case.param.scale.phi
 	V_MIN, V_MAX = case.param_dim.cell.v_l / phi_scale, case.param_dim.cell.v_h / phi_scale
 

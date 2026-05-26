@@ -1,3 +1,23 @@
+"""
+	map_czm_damage_to_thermal(czm_mesh, geometry, ne) -> Vector{Float64}
+
+将 CZM damage_states 映射为热单元级别的 D 数组。
+
+假设：一个内聚力单元只影响对应的内侧热单元（1-to-1）。
+仅遍历 is_inner_layer[e] = true 的内侧热单元。
+"""
+function map_czm_damage_to_thermal(czm_mesh, geometry, ne)
+	D_elem = zeros(ne)
+	for e in 1:ne
+		czm_indices = get(geometry.czm_element_map, e, Int64[])
+		if !isempty(czm_indices) && geometry.is_inner_layer[e]
+			# 1-to-1: 内侧热单元只对应一个 CZM 单元，直接取其 D
+			D_elem[e] = czm_mesh.damage_states[czm_indices[1]].D
+		end
+	end
+	return D_elem
+end
+
 function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
     # 验证前提条件
     if case.layout === nothing
@@ -76,9 +96,15 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     else
         deactivated_elements = Int64[]
     end
-    
+
+    # 计算渐进式面积损失的 D 映射（仅在启用时）
+    D_elem_area_loss = nothing
+    if case.opt.czm_area_loss_enabled && case.czm_mesh !== nothing && case.geometry !== nothing && hasfield(typeof(case.geometry), :czm_element_map)
+        D_elem_area_loss = map_czm_damage_to_thermal(case.czm_mesh, case.geometry, ne)
+    end
+
     t_branch_ns = time_ns()
-    variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, I_e_prev; deactivated_elements=deactivated_elements)
+    variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, I_e_prev; deactivated_elements=deactivated_elements, D_elem=D_elem_area_loss)
     t_branch_s = (time_ns() - t_branch_ns) * 1e-9
     
     # 4) 并行求解每个单元的SPMe（使用线程本地精简工作区）
