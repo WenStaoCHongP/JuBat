@@ -1,7 +1,7 @@
 # CZM 渐进式有效面积损失机制设计
 
 **日期**: 2026-05-26
-**状态**: 已批准
+**状态**: 审阅修正后
 **前置文档**: `2026-05-26-czm-damage-convergence-analysis-design.md`
 
 ---
@@ -33,7 +33,9 @@ D = 1.0:          A_eff[e] = 0
 - 公式在 D = D_threshold 处连续（A_eff = A_e）
 
 **D_threshold 物理含义**：
-- D = 0.83 对应 δ ≈ δ₀/(1-D) = 0.34nm/0.17 ≈ 2.0 nm
+- 精确公式反解：δ = δ₀·δ_c / (δ_c - D·(δ_c - δ₀))
+- D = 0.83 时：δ = 0.34e-9 × 617e-9 / (617e-9 - 0.83 × 616.66e-9) = 2.095e-9 / 105.83e-9 ≈ 1.98 nm
+- 约等于近似值 δ₀/(1-D) = 2.0 nm（因 δ_c >> δ₀，近似误差 <5%）
 - 此时界面脱粘开始显著影响电接触
 
 **有效面积对应值**：
@@ -50,22 +52,9 @@ D = 1.0:          A_eff[e] = 0
 
 ## 3. CZM → 热单元 D 映射
 
-每个内聚力单元直接对应一个热单元（1-to-1 映射）。
+`czm_element_map` 的类型为 `Dict{Int,Vector{Int}}`（`CouplingState.jl:91`），即**一对多映射**：一个热单元可能对应多个 CZM 单元。
 
-**映射方式**：
-- 利用 `geometry.czm_element_map`
-- D_elem[e] = czm_mesh.damage_states[对应 czm_idx].D
-- 无需取 max 或 mean——直接 1-to-1
-
-**实现**：新增辅助函数 `map_czm_damage_to_thermal`
-
----
-
-## 4. 四个修改位置
-
-### 4.1 位置 1：D 映射（`CallModel.jl`，新增函数）
-
-新增函数将 CZM damage_states 映射为热单元级别的 D 数组：
+**映射策略**：取最大损伤值。
 
 ```julia
 function map_czm_damage_to_thermal(czm_mesh, geometry, ne)
@@ -73,15 +62,26 @@ function map_czm_damage_to_thermal(czm_mesh, geometry, ne)
     for e in 1:ne
         czm_indices = get(geometry.czm_element_map, e, Int64[])
         if !isempty(czm_indices)
-            # 1-to-1: 取第一个（也是唯一一个）
-            D_elem[e] = czm_mesh.damage_states[czm_indices[1]].D
+            D_elem[e] = maximum(czm_mesh.damage_states[idx].D for idx in czm_indices)
         end
     end
     return D_elem
 end
 ```
 
+**选择 maximum 的物理依据**：一个热单元只要有一个界面严重脱粘，该单元的有效接触面积就受限于最严重的损伤。取 mean 或 min 会低估界面失效的影响。
+
+---
+
+## 4. 修改位置
+
+### 4.1 位置 1：D 映射（`CallModel.jl`，新增函数）
+
+如第 3 节所述，新增 `map_czm_damage_to_thermal` 函数。
+
 ### 4.2 位置 2：分流求解器权重（`Parallelsolution.jl`）
+
+**这是唯一的干预点。** 仅修改分流求解器的面积权重，后续效应全部自动传导。
 
 **当前代码**（约第 360 行）：
 ```julia
@@ -90,8 +90,13 @@ w = areas ./ sum(areas)
 
 **修改为**：
 ```julia
-A_eff = areas .* effective_area_factor.(D_elem, D_threshold)
-w = A_eff ./ sum(A_eff)
+if czm_area_loss_enabled
+    D_elem = map_czm_damage_to_thermal(czm_mesh, geometry, ne)
+    A_eff = areas .* effective_area_factor.(D_elem, D_threshold)
+    w = A_eff ./ sum(A_eff)
+else
+    w = areas ./ sum(areas)
+end
 ```
 
 其中 `effective_area_factor(D, D_th)` 实现为：
@@ -102,39 +107,42 @@ function effective_area_factor(D::Float64, D_threshold::Float64)
 end
 ```
 
-**影响**：
-- D > D_threshold 的单元在分流求解器中权重降低
-- 分配到这些单元的电流减少
-- 剩余电流自动重分配到未损伤/低损伤单元
-
-### 4.3 位置 3：SPMe 内部电流密度（`CallModel.jl` / `SPMe.jl`）
-
-SPMe 模型计算电流密度时使用 A_eff 而非 A_e：
+**影响传导链**（全部自动，无需额外修改）：
 
 ```
-j_e = I_e / A_eff[e]
+w[e]↓ (受损单元权重降低)
+  → Newton 迭代调整 I_e 分配：
+    受损单元 I_e↓，健康单元 I_e↑
+  → SPMe: j_n = I_e / (as × thickness) 自动变化
+    受损单元 j_n↓，健康单元 j_n↑
+  → 热源: 两条路径均自动响应
+    欧姆热: Q_ohm = I_local² / (3σ) → 健康单元↑
+    反应热: Q_rxn = as × |j_n| × |η| → 健康单元↑
+  → 温度场 → 热应变 → CZM 驱动力 → δ → D
 ```
 
-**修改方式**：
-- 将 A_eff 数组传递给 `CallModel_MultiSPMe`
-- 在调用 `SPMe_element` 时传入 `A_eff[e]` 作为有效面积参数
-- SPMe 内部用此面积计算电流密度
+### 4.3 SPMe 和热源：无需修改
 
-**影响**：
-- 电流密度在并联电路中仍对所有单元相等：j = I_total / sum(A_eff)
-- 但 j > j_original（因为 sum(A_eff) < sum(A)）
-- 系统级电流密度上升
+**SPMe 电流密度**（`SPMe.jl:111`）：
+```julia
+j_n = I_app / param.NE.as / param.NE.thickness  # 体积电流密度 (A/m³)
+```
+这是体积电流密度，输入 `I_app` 来自分流求解器输出的 `I_e[e]`。权重修改后 `I_e[e]` 自动变化，`j_n` 随之变化。**不需要额外修改 SPMe。**
 
-### 4.4 位置 4：热源计算（`ThermalDistributed.jl`）
+**热源计算**（`ThermalDistributed.jl:455-471`）使用两条混合路径：
 
-**不需要额外缩放因子**。热源由 SPMe 内部计算：
-- Q_rxn ∝ j（反应热）
-- Q_ohm ∝ j²（焦耳热，二次方放大）
-- Q_rev ∝ j（可逆热）
+| 热源分量 | 计算方式 | 对 I_e 变化的响应 |
+|----------|----------|-------------------|
+| Q_ohm_s (固相欧姆) | `I_local² / (3σ)` | 直接响应 I_e² |
+| Q_ohm_e (液相欧姆) | `I_local² / (3κ)` | 直接响应 I_e² |
+| Q_SP (隔膜) | `I_local² / κ_sp` | 直接响应 I_e² |
+| Q_PCC/NCC (集流体) | `I_local² / (3σ)` | 直接响应 I_e² |
+| Q_rxn (反应热) | `as × \|j_n\| × \|η\|` | 通过 j_n 间接响应 |
+| Q_rev (可逆热) | `as × j_n × T × dU/dT` | 通过 j_n 间接响应 |
 
-当 SPMe 正确使用 A_eff 计算电流密度后，热源自动反映增大的 j。
+其中 `I_local = I_e[e]`。权重修改后 `I_e[e]` 变化 → 两条路径均自动响应。**不需要额外修改热源计算。**
 
-### 4.5 保留 D ≥ 0.99 硬截止
+### 4.4 保留 D ≥ 0.99 硬截止
 
 `get_fractured_elements`（`Materialmatrix.jl:365`）的完全失活机制保留作为安全阀：
 - D ≥ 0.99 时 A_eff ≈ 6% A_e，接近完全失活
@@ -144,35 +152,29 @@ j_e = I_e / A_eff[e]
 
 ## 5. 反馈链分析
 
-### 5.1 系统级焦耳热反馈
+### 5.1 通过分流求解器的反馈机制
 
-在并联电路模型中，所有活跃单元的电流密度相同：
+分流求解器的 Newton 迭代求解：
+- `V_e(I_e[e]) = V`（所有活跃单元等电压）
+- `sum(w[e] × I_e[e]) = I_total`（电流守恒）
 
-```
-j = I_total / sum(A_eff)
-```
-
-当某些单元 D > 0.83 → sum(A_eff) ↓ → j 全局上升。
+当受损单元 w[e] 减小，Newton 迭代调整 V 和所有 I_e[e] 的分配：
 
 **正反馈链**：
 ```
-D_e↑ → A_eff_e↓ → sum(A_eff)↓
-    → j = I_total/sum(A_eff) ↑ (所有单元)
-    → Q_ohm ∝ j² ↑ (焦耳热二次方放大)
-    → ΔT↑ (全局温升)
-    → 热应变↑ → F_thermo_chem↑ → δ↑ → D↑ (所有单元)
+D_e↑ → A_eff_e↓ → w[e]↓
+    → Newton 迭代：受损单元 I_e↓，健康单元 I_e↑
+    → 健康单元 I_local²↑ → Q_ohm↑ (欧姆热二次方放大)
+    → 健康单元温升↑ → 热应变↑ → CZM 驱动力↑
+    → δ↑ → D↑ (所有单元，包括已损伤的)
 ```
 
-**反馈强度估算**（20 个等面积单元，1 个单元 D=0.96）：
+**反馈强度**取决于：
+- 受损单元数量和严重程度
+- 健康单元对额外电流的热响应灵敏度
+- 具体的 Newton 迭代结果（非线性，无法简化为线性公式）
 
-| 指标 | 改前 | 改后 (D=0.96) | 变化 |
-|------|------|--------------|------|
-| sum(A_eff) | 20A | 19.24A | -3.8% |
-| j (所有单元) | I/20A | I/19.24A | +3.8% |
-| Q_ohm (∝ j²) | 基准 | ×1.078 | +7.8% |
-| Q_rxn (∝ j) | 基准 | ×1.038 | +3.8% |
-
-当更多单元同时损伤时反馈更强。
+**定量分析需通过实际仿真验证**，不建议使用简化公式估算。
 
 ### 5.2 局部热障反馈（已有机制增强）
 
@@ -183,17 +185,18 @@ D_e↑ → h_eff_e↓ → 局部 ΔT_interface↑
     → 局部热应变额外↑ → δ_e↑ → D_e↑ (单元级正反馈)
 ```
 
-在系统级 j 上升的背景下，局部热障效应被放大（更多热流通过受损界面）。
+在健康单元 I_e 增加的背景下（更多热生成），局部热障效应被放大。
 
 ### 5.3 渐进式容量损失
 
 ```
-D > 0.83 → A_eff↓ → 可参与反应的活性面积↓
-    → 该单元可提取锂量↓
-    → 并联模型总容量↓
+D > D_threshold → w[e]↓ → I_e[e]↓
+    → 受损单元承载电流减少 → 可提取电荷减少
+    → 健康单元承载更多电流 → 更快达到电压截止
+    → 总放电时间缩短 → capacity = I_total × duration↓
 ```
 
-不再有 D=0~0.99 的死区。任何 D > 0.83 的损伤都立即反映为容量能力的下降。
+不再有 D=0~0.99 的死区。任何 D > D_threshold 的损伤都通过电压响应间接反映为容量损失。
 
 ---
 
@@ -201,8 +204,9 @@ D > 0.83 → A_eff↓ → 可参与反应的活性面积↓
 
 ### 6.1 单次放电
 
-- D 收敛值应高于 0.96（因系统级焦耳热反馈增强）
+- D 收敛值应高于 0.96（因正反馈增强）
 - 收敛值取决于 D_threshold、单元数、C-rate 等参数
+- 具体数值需通过仿真验证
 
 ### 6.2 多循环
 
@@ -212,7 +216,8 @@ D > 0.83 → A_eff↓ → 可参与反应的活性面积↓
 
 ### 6.3 与现有机制的兼容性
 
-- D < D_threshold (0.83)：无面积缩减，行为与改前完全一致
+- `czm_area_loss_enabled = false`：行为与改前完全一致（回归保证）
+- D < D_threshold (0.83)：无面积缩减
 - D_threshold < D < 0.99：渐进式面积缩减（新机制）
 - D ≥ 0.99：完全失活（原有机制保留作为安全阀）
 
@@ -225,7 +230,13 @@ D > 0.83 → A_eff↓ → 可参与反应的活性面积↓
 | 字段 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `czm_area_loss_enabled` | Bool | false | 启用渐进式面积损失 |
-| `czm_area_loss_threshold` | Float64 | 0.83 | 面积开始缩减的 D 阈值 |
+| `czm_area_loss_threshold` | Float64 | 0.83 | 面积开始缩减的 D 阈值（可调） |
+
+**D_threshold 调参建议**：
+- 建议范围：0.70–0.90
+- 较低值（0.70）：更早启动面积缩减，反馈更强，但可能过度惩罚轻微损伤
+- 较高值（0.90）：仅在严重脱粘时启动，反馈更温和
+- 推荐通过参数扫描对比（0.75, 0.80, 0.83, 0.85, 0.90）确定最优值
 
 ---
 
@@ -234,18 +245,21 @@ D > 0.83 → A_eff↓ → 可参与反应的活性面积↓
 | 文件 | 修改内容 | 复杂度 |
 |------|----------|--------|
 | `src/Option.jl` | 新增 `czm_area_loss_enabled`, `czm_area_loss_threshold` 字段 | 低 |
-| `src/CallModel.jl` | 新增 `map_czm_damage_to_thermal` 函数；调用时计算 D_elem 并传递 | 中 |
-| `src/Parallelsolution.jl` | `solve_branch_currents` 接收 D_elem，计算 A_eff 用于权重 | 中 |
-| `src/CallModel.jl` / `SPMe.jl` | SPMe 使用 A_eff 计算电流密度 | 中 |
-| `src/ThermalDistributed.jl` | 无需修改（热源由 SPMe 自动计算） | — |
+| `src/CallModel.jl` | 新增 `map_czm_damage_to_thermal` 函数；计算 D_elem 传递给分流求解器 | 中 |
+| `src/Parallelsolution.jl` | `solve_branch_currents` 新增 `D_elem` 参数，计算 A_eff 用于权重 | 中 |
 | `src/Materialmatrix.jl` | 新增 `effective_area_factor` 辅助函数 | 低 |
+| `src/SPMe.jl` | **无需修改**（I_e 自动反映权重变化） | — |
+| `src/ThermalDistributed.jl` | **无需修改**（I_local 自动反映 I_e 变化） | — |
 
 ---
 
 ## 9. 验证方案
 
 1. **单元测试**：`effective_area_factor` 在 D=0, D=0.83, D=0.96, D=1.0 处的返回值
-2. **单次放电**：对比启用/禁用面积损失的 D_max 收敛值
-3. **多循环**：验证渐进式容量衰减（SOH 曲线不再是阶跃式）
-4. **守恒检查**：电流守恒 sum(w .* I_e) = I_total 仍然成立
-5. **回归**：D_threshold=1.0 时行为与改前完全一致（面积不缩减）
+2. **映射测试**：`map_czm_damage_to_thermal` 对 1-to-many 情况取 maximum 的正确性
+3. **单次放电**：对比启用/禁用面积损失的 D_max 收敛值
+4. **多循环**：验证渐进式容量衰减（SOH 曲线不再是阶跃式）
+5. **能量守恒**：总产热功率与电功率输入的平衡检查
+6. **回归**：`czm_area_loss_enabled = false` 时行为与改前完全一致
+7. **衔接测试**：D 从 0.98 → 0.99 时渐进面积损失与原有硬截止的平滑过渡
+8. **参数扫描**：D_threshold 在 0.75–0.90 范围内的灵敏度分析
