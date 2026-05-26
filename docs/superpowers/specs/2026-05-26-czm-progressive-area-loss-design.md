@@ -52,9 +52,16 @@ D = 1.0:          A_eff[e] = 0
 
 ## 3. CZM → 热单元 D 映射
 
-`czm_element_map` 的类型为 `Dict{Int,Vector{Int}}`（`CouplingState.jl:91`），即**一对多映射**：一个热单元可能对应多个 CZM 单元。
+**映射关系：CZM → 内侧热单元是 1-to-1。**
 
-**映射策略**：取最大损伤值。
+依据：
+- `create_czm_mesh`（`czm.jl:87-110`）中，每个 CZM 单元的底面节点 `(n_in_1, n_in_2)` 恰好对应唯一一个内侧热单元的边界节点
+- `get_active_elements`（`Materialmatrix.jl:381`）只影响 `is_inner_layer[e] = true` 的热单元
+- 一个 CZM 单元只对应一个内侧热单元
+
+`czm_element_map` 的类型为 `Dict{Int,Vector{Int}}`（`CouplingState.jl:91`），是热→CZM 方向的映射。一个内侧热单元可能在内外两个界面都有 CZM 单元，因此 `Vector{Int}`。但反方向 CZM→内侧热单元是 1-to-1。
+
+**映射策略**：从 `czm_element_map` 反向构建，对每个热单元取其关联 CZM 的最大损伤值（处理一个热单元对应多个 CZM 的边界情况）。
 
 ```julia
 function map_czm_damage_to_thermal(czm_mesh, geometry, ne)
@@ -62,6 +69,7 @@ function map_czm_damage_to_thermal(czm_mesh, geometry, ne)
     for e in 1:ne
         czm_indices = get(geometry.czm_element_map, e, Int64[])
         if !isempty(czm_indices)
+            # 一个热单元可能关联多个 CZM（内、外界面），取最大损伤
             D_elem[e] = maximum(czm_mesh.damage_states[idx].D for idx in czm_indices)
         end
     end
@@ -69,7 +77,7 @@ function map_czm_damage_to_thermal(czm_mesh, geometry, ne)
 end
 ```
 
-**选择 maximum 的物理依据**：一个热单元只要有一个界面严重脱粘，该单元的有效接触面积就受限于最严重的损伤。取 mean 或 min 会低估界面失效的影响。
+**取 maximum 的物理依据**：一个热单元只要有一个界面严重脱粘，该单元的有效接触面积就受限于最严重的损伤。这在大多数情况下退化为 1-to-1（因为 CZM→内侧热单元是一一对应的）。
 
 ---
 
@@ -77,7 +85,7 @@ end
 
 ### 4.1 位置 1：D 映射（`CallModel.jl`，新增函数）
 
-如第 3 节所述，新增 `map_czm_damage_to_thermal` 函数。
+如第 3 节所述，新增 `map_czm_damage_to_thermal` 函数。映射方向为热→CZM（利用现有 `czm_element_map`），对每个热单元取关联 CZM 的 maximum D。
 
 ### 4.2 位置 2：分流求解器权重（`Parallelsolution.jl`）
 
