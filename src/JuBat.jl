@@ -70,6 +70,7 @@ export czm_output_to_variables
 # CZM gap conductance exports
 export compute_gap_conductance, compute_element_gap_conductance
 export get_fractured_elements, get_active_elements, compute_all_gap_conductances
+export effective_area_factor, map_czm_damage_to_thermal
 # Cycle solver exports
 export CycleOption, PhaseType, PHASE_CHARGE, PHASE_REST, PHASE_DISCHARGE
 export PhaseResult, CycleResult, CyclingResult

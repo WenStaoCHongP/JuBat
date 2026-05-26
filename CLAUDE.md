@@ -194,6 +194,8 @@ CZM (内聚力模型)
 | `czm_enabled` | false | 启用 CZM |
 | `czm_update_interval` | 1 | 损伤更新间隔 |
 | `czm_iter_method` | "basic" | CZM 迭代方法 |
+| `czm_area_loss_enabled` | false | 启用渐进式有效面积损失（D > threshold 时缩减面积） |
+| `czm_area_loss_threshold` | 0.83 | 面积开始缩减的 D 阈值 |
 
 ---
 
