@@ -73,16 +73,19 @@ $$
 
 ### 2.4 bilinear_traction_state 函数
 
-**功能**：计算双线性本构的牵引力和切线模量
+**功能**：计算双线性本构的牵引力、损伤变量和更新后的损伤状态
 
 ```julia
-function bilinear_traction_state(δ_n, δ_t, δ0_n, δc_n, δ0_t, δc_t, K_n, K_t, D_prev, mixed_mode)
+function bilinear_traction_state(δ_n::Float64, δ_t::Float64,
+    damage_state::DamageState, cohesive_params::Cohesive; visc_beta::Float64=1.0)
 ```
 
 **返回**：
 - T_n, T_t：法向/切向牵引力
-- D_tan_n, D_tan_t：法向/切向切线模量
-- D：损伤变量
+- D_eq：等效损伤变量
+- new_state::DamageState：更新后的损伤状态（含 D_visc、δ_max_eff、accumulated_damage、fractured）
+
+**粘性正则化**：牵引力使用 $D_{visc}$ 而非 $D_{eq}$：$T_n = (1 - D_{visc}) K_n \delta_n$
 
 ---
 
@@ -99,6 +102,9 @@ function bilinear_traction_state(δ_n, δ_t, δ0_n, δc_n, δ0_t, δc_t, K_n, K_
 - `D`：损伤变量 (0-1)
 - `δ_max_n`：历史最大法向分离
 - `δ_max_t`：历史最大切向分离
+- `D_visc`：粘性正则化损伤变量
+- `δ_max_eff`：等效最大分离位移
+- `accumulated_damage`：累积损伤
 - `fractured`：是否已完全断裂
 
 ### 3.2 CZMResult 结构体
@@ -140,7 +146,7 @@ $$
 **切线刚度矩阵**：
 
 $$
-K_{coh} = \int B^T D_{tan} B \, dA
+K_{coh} = \int_L B^T D_{tan} B \, dL
 $$
 
 其中 \(D_{tan}\) 为本构切线模量。
@@ -148,7 +154,7 @@ $$
 **内力向量**：
 
 $$
-f_{int} = \int B^T T \, dA
+f_{int} = \int_L B^T T \, dL
 $$
 
 ### 3.4 系统组装
@@ -176,7 +182,7 @@ $$
 ```julia
 result, updated_czm_mesh = solve_czm_step(
     czm_mesh, F_ext, E_eff, ν_eff, cohesive_params, param, u_prev;
-    iter_method="basic",   # "basic" | "load_substep" | "arc_length"
+    iter_method="load_substep",   # "basic" | "load_substep" | "arc_length"
     max_iter=50, tol=1e-8, n_load_steps=10, visc_beta=1.0, ...
 )
 ```
@@ -340,17 +346,27 @@ function assemble_coupled_system(
 
 ### 5.1 界面导热系数模型
 
-**间隙导热系数**：
+**并联热路模型**（`src/Materialmatrix.jl` — `compute_gap_conductance`）：
 
-$$
-h_{eff} = \frac{1}{h_{c0}(1-D) + \frac{k_{air}}{\delta + 2\beta\lambda_m}}
-$$
+界面传热由两条并联路径组成：
+- 固体接触路径：$h_{contact} = h_{c0} \cdot (1 - D)$
+- 间隙介质路径：$h_{gap} = k_{air} / (\delta + 2\beta\lambda_m)$
+
+有效导热系数为两者之和：
+
+| 间隙状态 | 公式 |
+|----------|------|
+| 小间隙（$\delta < \delta_0$） | $h_{eff} = h_{c0} + k_{air} / (\delta + 2\beta\lambda_m)$ |
+| 中等间隙（$\delta_0 \leq \delta < threshold$） | $h_{eff} = h_{c0}(1 - D) + k_{air} / (\delta + 2\beta\lambda_m)$ |
+| 大间隙（$\delta \geq threshold$） | $h_{eff} = h_{c0}(1 - D) + k_{air} / (\delta + \delta_0)$ |
 
 其中：
-- h_c0：完好界面导热系数
-- k_air：空气导热系数
-- λ_m：微观粗糙度参数
-- β：间隙尺度系数
+- h_c0：完好界面导热系数 [W/(m²·K)]
+- k_air：空气导热系数 [W/(m·K)]
+- λ_m：微观粗糙度参数 [m]
+- β：间隙尺度系数 [-]
+- D：损伤变量（经 `clamp(D, 0, 0.9999)` 限幅）
+- δ₀：损伤起始分离位移，threshold：大间隙判定阈值
 
 ### 5.2 损伤对导热的影响
 
@@ -449,7 +465,7 @@ function czm_output_to_variables(
 | basic NR 求解 | src/CzmSolve.jl | `solve_czm_basic_step` (154) |
 | 载荷子步法求解 | src/CzmSolve.jl | `newton_raphson_czm` (486) |
 | 弧长法求解 | src/CzmSolve.jl | `solve_czm_arc_length_step` (261) |
-| 统一求解入口 | src/CzmSolve.jl | `solve_czm_step` (662) |
+| 统一求解入口 | src/CzmSolve.jl | `solve_czm_step` (662, 默认 `load_substep`) |
 | 损伤克隆/还原 | src/CzmSolve.jl | `clone_damage_states`, `clone_czm_mesh_with_damage` |
 | BC 处理 | src/CzmSolve.jl | `extract_bc_dofs`, `apply_czm_dirichlet!` |
 | 回溯线搜索 | src/CzmSolve.jl | `backtrack_line_search!` (83) |
@@ -461,7 +477,8 @@ function czm_output_to_variables(
 | 热-化学载荷 | src/czm.jl | `assemble_thermal_chemical_load` |
 | CZM 网格创建 | src/czm.jl | `create_czm_mesh` |
 | 间隙导热 | src/Materialmatrix.jl | `compute_gap_conductance`, `compute_element_gap_conductance` |
-| 损伤统计 | src/czm.jl | `get_damage_statistics`, `check_fracture_criterion` |
-| 损伤更新（循环） | src/CycleSolver.jl | `_update_czm_damage!` |
+| 损伤统计 | src/CzmPostProcess.jl | `get_damage_statistics`, `check_fracture_criterion` |
+| CZM 后处理 | src/CzmPostProcess.jl | `czm_output_to_variables` |
+| 损伤更新（循环） | src/CouplingState.jl | `update_czm_damage!` |
 | SOH 计算 | src/CycleSolver.jl | `_update_soh_and_capacity!` |
 | 循环求解 | src/CycleSolver.jl | `solve_cycling` |

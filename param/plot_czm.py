@@ -17,6 +17,8 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.tri import Triangulation, LinearTriInterpolator
 from matplotlib.colors import Normalize
+from matplotlib.patches import Polygon as MplPolygon
+from matplotlib.collections import PatchCollection
 
 # =====================================================================
 # User Configuration
@@ -275,44 +277,57 @@ PLOTTERS["displacement"] = make_displacement
 
 def make_current(cfg: dict):
     df_elem = pd.read_csv(os.path.join(cfg["data_dir"], "element_currents.csv"))
-    df_node = pd.read_csv(os.path.join(cfg["data_dir"], "node_temperature.csv"))
+    df_mesh_nodes = pd.read_csv(_resolve_path(cfg, "mesh_nodes.csv"))
+    df_mesh_elems = pd.read_csv(_resolve_path(cfg, "mesh_elements.csv"))
 
     df_e = df_elem[(df_elem["cycle"] == cfg["cycle"]) & (df_elem["phase"] == cfg["phase"])].copy()
-    df_n = df_node[(df_node["cycle"] == cfg["cycle"]) & (df_node["phase"] == cfg["phase"])].copy()
 
     times = df_e["time_s"].unique()
     t_closest = times[np.argmin(np.abs(times - cfg["target_time"]))]
 
     df_e_t = df_e[df_e["time_s"] == t_closest].copy()
-    df_n_t = df_n[df_n["time_s"] == t_closest].copy()
 
     if len(df_e_t) == 0:
         print(f"  [current] No data at t={t_closest:.1f}s")
         return
 
-    node_coords = df_n_t[["node_id", "x", "y"]].drop_duplicates("node_id").set_index("node_id")
-    I_e = df_e_t["I_e"].values
-    elem_ids = df_e_t["elem_id"].values
+    # Node coordinates (1-indexed -> 0-indexed)
+    x_n = df_mesh_nodes["x"].values * 1000  # m -> mm
+    y_n = df_mesh_nodes["y"].values * 1000
 
-    x_ec = np.full(len(elem_ids), np.nan)
-    y_ec = np.full(len(elem_ids), np.nan)
-    for i, eid in enumerate(elem_ids):
-        n1, n2 = int(2 * eid - 1), int(2 * eid)
-        if n1 in node_coords.index and n2 in node_coords.index:
-            x_ec[i] = 0.5 * (node_coords.loc[n1, "x"] + node_coords.loc[n2, "x"]) * 1000
-            y_ec[i] = 0.5 * (node_coords.loc[n1, "y"] + node_coords.loc[n2, "y"]) * 1000
+    # Build elem_id -> I_e lookup
+    I_lookup = dict(zip(df_e_t["elem_id"].values, df_e_t["I_e"].values))
 
-    valid = ~np.isnan(x_ec)
-    if valid.sum() == 0:
-        print("  [current] No valid element positions")
+    # Build Q4 polygon patches colored by branch current
+    patches = []
+    colors = []
+    for _, row in df_mesh_elems.iterrows():
+        eid = int(row["elem_id"]) if "elem_id" in df_mesh_elems.columns else int(row.name) + 1
+        if eid not in I_lookup:
+            continue
+        n1, n2, n3, n4 = int(row["n1"]) - 1, int(row["n2"]) - 1, int(row["n3"]) - 1, int(row["n4"]) - 1
+        quad = [[x_n[n1], y_n[n1]], [x_n[n2], y_n[n2]], [x_n[n3], y_n[n3]], [x_n[n4], y_n[n4]]]
+        patches.append(MplPolygon(quad, closed=True))
+        colors.append(I_lookup[eid])
+
+    if not patches:
+        print("  [current] No matching elements between mesh and current data")
         return
 
+    colors = np.array(colors)
+
     fig, ax = plt.subplots(figsize=(5.5, 5.0), dpi=300)
-    sc = ax.scatter(x_ec[valid], y_ec[valid], c=I_e[valid], cmap="coolwarm", s=3.0, marker="s", edgecolors="none", alpha=0.9)
-    cbar = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, format="%.3f")
+    pc = PatchCollection(patches, cmap="coolwarm", edgecolors="face", linewidths=0.1)
+    pc.set_array(colors)
+    pc.set_clim(colors.min(), colors.max())
+    ax.add_collection(pc)
+
+    cbar = fig.colorbar(pc, ax=ax, fraction=0.046, pad=0.04, format="%.3f")
     cbar.set_label("Branch current $I_e$ (A)", fontsize=9)
     cbar.ax.tick_params(labelsize=8)
 
+    ax.set_xlim(x_n.min(), x_n.max())
+    ax.set_ylim(y_n.min(), y_n.max())
     ax.set_aspect("equal")
     ax.set_xlabel("x (mm)", fontsize=9)
     ax.set_ylabel("y (mm)", fontsize=9)
@@ -483,33 +498,24 @@ def make_mesh_geometry(cfg: dict):
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5.5), dpi=300, constrained_layout=True)
 
-    # (a) Thermal mesh + CZM cohesive elements
-    x_m = df_mesh_nodes["x"].values * 1000
-    y_m = df_mesh_nodes["y"].values * 1000
-    ax1.scatter(x_m, y_m, s=0.3, c="gray", alpha=0.5, label="Thermal nodes")
-
-    # Draw CZM cohesive elements as lines (bottom nodes)
-    x_c = df_czm_nodes["x"].values * 1000
-    y_c = df_czm_nodes["y"].values * 1000
-    layers = df_czm_elems["layer_idx"].values
-    cmap = plt.cm.Set1
-    unique_layers = sorted(set(layers))
-    for lay in unique_layers:
-        mask = layers == lay
-        elems_lay = df_czm_elems[mask]
-        for _, row in elems_lay.iterrows():
-            n1, n2 = int(row["n1_bot"]) - 1, int(row["n2_bot"]) - 1
-            ax1.plot([x_c[n1], x_c[n2]], [y_c[n1], y_c[n2]], "-",
-                     color=cmap(lay / max(unique_layers)), lw=0.3, alpha=0.6)
+    # (a) Thermal mesh Q4 element outlines
+    x_m = df_mesh_nodes["x"].values
+    y_m = df_mesh_nodes["y"].values
+    for _, row in df_mesh_elems.iterrows():
+        n1, n2, n3, n4 = int(row["n1"]) - 1, int(row["n2"]) - 1, int(row["n3"]) - 1, int(row["n4"]) - 1
+        xs = [x_m[n1], x_m[n2], x_m[n3], x_m[n4], x_m[n1]]
+        ys = [y_m[n1], y_m[n2], y_m[n3], y_m[n4], y_m[n1]]
+        ax1.plot(xs, ys, "k-", lw=0.15)
 
     ax1.set_aspect("equal")
-    ax1.set_xlabel("x (mm)", fontsize=9)
-    ax1.set_ylabel("y (mm)", fontsize=9)
-    ax1.set_title("(a) Thermal mesh + CZM cohesive elements", fontsize=10)
+    ax1.set_xlabel("x (m)", fontsize=9)
+    ax1.set_ylabel("y (m)", fontsize=9)
+    ax1.set_title("(a) Thermal mesh outline", fontsize=10)
     ax1.tick_params(labelsize=8)
-    ax1.legend(fontsize=7, markerscale=10)
 
     # (b) CZM bulk mesh outline
+    x_c = df_czm_nodes["x"].values * 1000
+    y_c = df_czm_nodes["y"].values * 1000
     ax2.scatter(x_c, y_c, s=0.3, c="blue", alpha=0.5, label="CZM nodes")
     for _, row in df_czm_bulk.iterrows():
         n1, n2, n3, n4 = int(row["n1"]) - 1, int(row["n2"]) - 1, int(row["n3"]) - 1, int(row["n4"]) - 1

@@ -27,7 +27,7 @@ PE.sig = 0.18
 # Mechanical/thermal expansion (example values)
 PE.E = 3.75e10         # Pa
 PE.nu = 0.20          # -
-PE.alphaT = 1.0e-5    # 1/K
+PE.alphaT = 1.5e-5    # 1/K
 PE.Omega = -7.28e-7     # m^3/mol (placeholder if diffusion-stress needed)
 PE.Eac_D = 0
 PE.Eac_k = 17800
@@ -55,7 +55,7 @@ NE.sig = 215.0
 # Mechanical/thermal expansion (example values)
 NE.E = 1.5e10         # Pa
 NE.nu = 0.28          # -
-NE.alphaT = 3.0e-6    # 1/K
+NE.alphaT = 8.0e-6    # 1/K
 NE.Omega = 3.1e-6    # m^3/mol (placeholder if diffusion-stress needed)
 NE.Eac_D = 0.
 NE.Eac_k = 35000.
@@ -146,18 +146,18 @@ binder = Binder()
 cohesive = Cohesive()
 
 # 法向参数 (Mode I - 张开模式)
-cohesive.σ_max_n = 92e6 # 最大法向牵引力 [Pa]
-cohesive.K_n = 1.2e17 # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
+cohesive.σ_max_n = 82e6 # 最大法向牵引力 [Pa]
+cohesive.K_n = 2.4e17 # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
 cohesive.δ_0_n = cohesive.σ_max_n / cohesive.K_n # 损伤起始分离位移 [m]
-cohesive.G_c_n = 6.2  # 断裂能 [J/m²]
+cohesive.G_c_n = 25.3  # 断裂能 [J/m²]
 cohesive.δ_c_n = 2.0 * cohesive.G_c_n / cohesive.σ_max_n  # 临界分离位移 [m]
 
 
 # 切向参数 (Mode II - 剪切模式)
-cohesive.τ_max_t = 92e6      # 最大切向牵引力 [Pa] (0.15 MPa)
-cohesive.K_t = 1.2e17  # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
+cohesive.τ_max_t = 82e6      # 最大切向牵引力 [Pa] (0.15 MPa)
+cohesive.K_t = 2.4e17  # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
 cohesive.δ_0_t = cohesive.τ_max_t / cohesive.K_t         # 损伤起始切向位移 [m] (35 nm)
-cohesive.G_c_t = 6.2  # [J/m²] ≈ 0.0135 J/m²
+cohesive.G_c_t = 25.3  # [J/m²]
 cohesive.δ_c_t = 2.0 * cohesive.G_c_t / cohesive.τ_max_t        # 临界切向位移 [m] (180 nm)
 
 # 混合模式参数

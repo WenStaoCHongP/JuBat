@@ -135,11 +135,13 @@ $$
 - \(K_s\)：扩散刚度矩阵
 - \(f_s\)：边界通量项
 
-**时间离散**（后退欧拉，\(\theta=1\)）：
+**时间离散**（广义 θ 方法，默认 Crank-Nicolson θ=0.5）：
 
 $$
-\left( \frac{M_s}{\Delta t} - K_s \right) c_s^{n+1} = \frac{M_s}{\Delta t} c_s^n + f_s^{n+1}
+\left( \frac{M_s}{\Delta t} - \theta K_s \right) c_s^{n+1} = \frac{M_s}{\Delta t} c_s^n + (1-\theta) K_s c_s^n + \theta f_s^{n+1} + (1-\theta) f_s^n
 $$
+
+> **注意**：默认 `opt.solveType = "Crank-Nicolson"` 对应 θ = 0.5。
 
 ### 4.2 电解液扩散（有限元）
 
@@ -182,7 +184,7 @@ $$
 **各分量组成**：
 
 $$
-V_{cell} = U_p - U_n + \eta_p - \eta_n + \Delta\phi_{ohm}
+V_{cell} = U_p - U_n + \eta_p - \eta_n + \Delta\phi_{ohm} + \Delta\phi_{conc}
 $$
 
 其中：
@@ -190,6 +192,7 @@ $$
 - \(U_p - U_n\)：开路电压差
 - \(\eta_p - \eta_n\)：过电位差（反应过电位）
 - \(\Delta\phi_{ohm}\)：欧姆电压降（固相+液相）
+- \(\Delta\phi_{conc} = 2T(1-t^+)(c_{sp} - c_{sn})/c_{e0}\)：电解质浓度扩散电位
 
 **欧姆电压降**：
 

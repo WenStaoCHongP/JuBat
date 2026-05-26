@@ -96,9 +96,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     Threads.@threads for e in 1:ne
         tid = Threads.threadid()
         ws_e = ws_pool[tid]
-        M_e, K_e, F_e, vars_e = SPMe_element(case, yt_chem[e], t, e;
-                                               I_e=I_e[e], T_e=Te_prev[e],
-                                               jacobi=jacobi, workspace=ws_e)
+        M_e, K_e, F_e, vars_e = SPMe_element(case, yt_chem[e], t, e;I_e=I_e[e], T_e=Te_prev[e],jacobi=jacobi, workspace=ws_e)
         M_elems[e] = M_e
         K_elems[e] = K_e
         F_elems[e] = vec(F_e)

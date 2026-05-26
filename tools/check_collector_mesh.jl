@@ -6,7 +6,7 @@ opt.thermal_enabled = true
 opt.thermalmodel = "distributed2D"
 opt.czm_enabled = true
 case = JuBat.SetCase(param, opt)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(param; nθ=80, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(param; nθ=20, gsorder=2)
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 mesh = case.mesh["thermal2D"]
 ne=size(mesh.element,1)
