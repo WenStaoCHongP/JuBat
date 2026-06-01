@@ -137,8 +137,9 @@ function main()
         Dmax_end = haskey(r, "czm D_max") ? r["czm D_max"][end] : NaN
         nfrac_end = haskey(r, "czm n_fractured") ? r["czm n_fractured"][end] : NaN
 
+        nfrac_display = isnan(nfrac_end) ? 0 : Int(nfrac_end)
         @printf("  耗时 %.2f s,  D_max = %.4f,  n_frac = %d,  E_frac = %.4e,  h = %.6f\n",
-                dt_wall, Dmax_end, Int(nfrac_end), E_frac[end], h)
+                dt_wall, Dmax_end, nfrac_display, E_frac[end], h)
     end
 
     # ── 参考解 ──
