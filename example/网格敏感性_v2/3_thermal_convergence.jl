@@ -28,178 +28,245 @@ function run_thermal_case(param_dim, nθ)
     opt.time = [0.0, 3600]
     opt.dt = [5, 5]
     opt.gsorder = 2
-    opt.thermal_enabled = true
-    opt.per_element_spme = false  # 纯热模型，禁用 SPMe
+    opt.Nn = 5; opt.Ns = 3; opt.Np = 5
+    opt.Nrn = 5; opt.Nrp = 5
 
-    # 禁用 CZM 和电化学
-    opt.czm_enabled = false
-    opt.mechanicalmodel = "none"
-
-    # 创建案例
     case = JuBat.SetCase(param_dim, opt)
-
-    # 创建 Jellyroll 热网格
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 
-    # 添加均匀体积热源（纯热模型）
-    ne = length(case.mesh["thermal2D"].element)
-    q_source = fill(Q0, ne)
-    case.q_source = q_source
+    # 切换为纯热模式
+    case.opt.model = "thermal"
 
-    # 求解
-    result = JuBat.Solve(case)
+    mesh = case.mesh["thermal2D"]
+    ne = size(mesh.element, 1)
+    nnode = mesh.nlen
+    scale = param_dim.scale
 
-    # 提取结果
-    t = result.time
-    T = result["thermal2D temperature [K]"]
-    T_max = maximum(T, dims=2)[:]
-    T_range = maximum(T, dims=2)[:] .- minimum(T, dims=2)[:]
+    q0_nd = Q0 / scale.q
 
-    return t, T, T_max, T_range
+    variables = Dict{String,Any}()
+    variables["thermal2D temperature at nodes"] = fill(param_dim.cell.T0 / scale.T_ref, nnode)
+    variables["heat_source_fields"] = fill(q0_nd, ne)
+
+    update_fn = (t, vars) -> begin
+        vars["heat_source_fields"] = fill(q0_nd, ne)
+    end
+
+    solve_t0 = time_ns()
+    result = JuBat.Solve(case;
+        thermal_variables=variables,
+        thermal_update_fn=update_fn,
+        thermal_record=true)
+    solve_wall = (time_ns() - solve_t0) * 1e-9
+
+    T_nodes = result.T_nodes .* scale.T_ref
+    times   = result.time .* scale.t0
+    T_hist  = result.T_hist .* scale.T_ref
+
+    return (T_nodes=T_nodes, times=times, T_hist=T_hist,
+            mesh=mesh, mesh_data=mesh_data, solve_wall=solve_wall)
 end
 
 function main()
     println("=" ^ 70)
-    println("Script 3: 热学网格收敛性分析 (GCI 框架)")
+    println("Script 3: 热学网格收敛性分析 (GCI, q0=$(Q0) W/m³)")
     println("=" ^ 70)
 
-    # 选择 Jellyroll 电池参数
     param_dim = JuBat.ChooseCell("Jellyroll")
-    param_dim.cell.v_l = 2.5
-    param_dim.cell.v_h = 4.2
 
-    # 运行所有网格配置
-    results = Dict()
+    all_results = Dict{Int, Any}()
+    h_vals = Float64[]
+    wall_times = Float64[]
+
     for nθ in THERMAL_Nθ
-        @printf("运行 nθ = %d...\n", nθ)
-        t, T, T_max, T_range = run_thermal_case(param_dim, nθ)
-        results[nθ] = (t, T, T_max, T_range)
+        @printf("\n--- 运行 nθ = %d ---\n", nθ)
+        r = run_thermal_case(param_dim, nθ)
+        all_results[nθ] = r
+
+        h = effective_h(r.mesh)
+        push!(h_vals, h)
+        push!(wall_times, r.solve_wall)
+
+        T_final = r.T_nodes
+        @printf("  耗时 %.2f s,  T_max = %.3f K,  T_min = %.3f K,  h = %.6f\n",
+            r.solve_wall, maximum(T_final), minimum(T_final), h)
     end
 
-    # 参考解：最细网格 (nθ=160)
-    ref_nθ = maximum(THERMAL_Nθ)
-    t_ref, T_ref, T_max_ref, T_range_ref = results[ref_nθ]
+    # ── 参考解 (nθ=160) ──
+    ref_idx = length(THERMAL_Nθ)
+    ref_result = all_results[THERMAL_Nθ[ref_idx]]
+    T_hist_ref = ref_result.T_hist
+    t_ref = ref_result.times
+    nt_ref = length(t_ref)
+    mesh_ref = ref_result.mesh
 
-    # 创建输出目录
-    out_dir = joinpath(@__DIR__, "..", "..", "output", "mesh_convergence")
+    # 参考节点笛卡尔坐标
+    ref_x = mesh_ref.node[:, 1]
+    ref_y = mesh_ref.node[:, 2]
+
+    Tmax_ref_curve = [maximum(T_hist_ref[:, k]) for k in 1:nt_ref]
+    Trange_ref_curve = [maximum(T_hist_ref[:, k]) - minimum(T_hist_ref[:, k]) for k in 1:nt_ref]
+
+    # ── 收敛误差表 ──
+    Tmax_l2 = Float64[]; Trange_l2 = Float64[]; Spatial_l2 = Float64[]
+    Tmax_linf = Float64[]
+
+    println("\n" * "=" ^ 70)
+    println("热学网格收敛性误差 (L2 范数)")
+    println("=" ^ 70)
+    @printf("%-10s  %10s  %12s  %12s  %12s  %12s  %10s\n",
+            "nθ", "h", "Tmax L2_rel%", "Trange L2", "Spatial L2%", "Tmax Linf", "Wall [s]")
+    println("-" ^ 100)
+
+    for (i, nθ) in enumerate(THERMAL_Nθ)
+        r = all_results[nθ]
+        T_hist = r.T_hist
+        t_c = r.times
+        nt_c = length(t_c)
+        mesh_c = r.mesh
+
+        if i == ref_idx
+            push!(Tmax_l2, 0.0); push!(Trange_l2, 0.0)
+            push!(Spatial_l2, 0.0); push!(Tmax_linf, 0.0)
+            @printf("%-10d  %10.6f  %12s  %12s  %12s  %12s  %10.2f\n",
+                    nθ, h_vals[i], "ref", "ref", "ref", "ref", wall_times[i])
+            continue
+        end
+
+        # T_max(t) 曲线 L2_rel
+        Tmax_cand = [maximum(T_hist[:, k]) for k in 1:nt_c]
+        Tmax_cand_aligned = align_to_ref(t_c, Tmax_cand, t_ref)
+        err_Tmax = l2_rel_norm(Tmax_cand_aligned, Tmax_ref_curve) * 100
+        err_Tmax_inf = max_norm(Tmax_cand_aligned, Tmax_ref_curve)
+
+        # T_range(t) L2（绝对值）
+        Trange_cand = [maximum(T_hist[:, k]) - minimum(T_hist[:, k]) for k in 1:nt_c]
+        Trange_cand_aligned = align_to_ref(t_c, Trange_cand, t_ref)
+        err_Trange = l2_norm(Trange_cand_aligned, Trange_ref_curve)
+
+        # 空间场 L2_rel（需要 IDW 插值到参考网格）
+        err_spatial = NaN
+        nt_overlap = min(nt_c, nt_ref)
+        if size(T_hist, 1) != size(T_hist_ref, 1)
+            # 节点数不同，使用 IDW 插值
+            coarse_x = mesh_c.node[:, 1]
+            coarse_y = mesh_c.node[:, 2]
+            spatial_errs = Float64[]
+            for k in 1:nt_overlap
+                T_cand_interp = interpolate_to_ref_field(
+                    T_hist[:, k], coarse_x, coarse_y, ref_x, ref_y)
+                val = l2_rel_norm(T_cand_interp, T_hist_ref[:, k])
+                isnan(val) || push!(spatial_errs, val)
+            end
+            err_spatial = isempty(spatial_errs) ? NaN : mean(spatial_errs) * 100
+        else
+            # 节点数相同，直接计算
+            spatial_errs = Float64[]
+            for k in 1:nt_overlap
+                val = l2_rel_norm(T_hist[:, k], T_hist_ref[:, k])
+                isnan(val) || push!(spatial_errs, val)
+            end
+            err_spatial = isempty(spatial_errs) ? NaN : mean(spatial_errs) * 100
+        end
+
+        push!(Tmax_l2, err_Tmax); push!(Trange_l2, err_Trange)
+        push!(Spatial_l2, err_spatial); push!(Tmax_linf, err_Tmax_inf)
+
+        @printf("%-10d  %10.6f  %12.4f  %12.4f  %12.4f  %12.4f  %10.2f\n",
+                nθ, h_vals[i], err_Tmax, err_Trange, err_spatial,
+                err_Tmax_inf, wall_times[i])
+    end
+
+    # ── GCI 计算 ──
+    Tmax_end_vals = [maximum(all_results[nθ].T_nodes) for nθ in THERMAL_Nθ]
+
+    println("\n" * "=" ^ 70)
+    println("GCI 汇总表")
+    println("=" ^ 70)
+    @printf("%-12s  %8s  %12s  %8s  %12s\n",
+            "Pair", "r", "epsilon", "p_obs", "GCI(T_max)")
+    println("-" ^ 60)
+
+    gci_results = []
+    for i in 1:length(THERMAL_Nθ)-1
+        r21 = h_vals[i+1] / h_vals[i]
+        r32 = i+1 < length(THERMAL_Nθ) ? h_vals[i+2] / h_vals[i+1] : r21
+
+        if i + 2 <= length(THERMAL_Nθ)
+            p_T = observed_order(Tmax_end_vals[i], Tmax_end_vals[i+1],
+                                 Tmax_end_vals[i+2], r21, r32)
+        else
+            p_T = 2.0
+        end
+
+        gci_T = compute_gci(Tmax_end_vals[i], Tmax_end_vals[i+1], r21;
+                            p=isnan(p_T) ? 2.0 : p_T)
+        push!(gci_results, (r21, p_T, gci_T))
+
+        eps_T = abs(Tmax_end_vals[i+1] - Tmax_end_vals[i]) / abs(Tmax_end_vals[i])
+        @printf("L%d→L%d       %8.3f  %12.6f  %8.2f  %12.4f\n",
+                i, i+1, r21, eps_T, isnan(p_T) ? -1.0 : p_T, gci_T)
+    end
+
+    # ── 渐近收敛检查 ──
+    if length(gci_results) >= 2
+        println("\n渐近收敛检查:")
+        for (name, gcis) in [("T_max", [r[3] for r in gci_results])]
+            ratio = asymptotic_check(gcis[1], gcis[2],
+                                     gci_results[1][1], gci_results[1][2])
+            @printf("  %-8s: GCI_12/GCI_23 ratio = %.4f %s\n",
+                    name, isnan(ratio) ? 0.0 : ratio,
+                    isnan(ratio) ? "(insufficient data)" :
+                    0.8 <= ratio <= 1.2 ? "✓ asymptotic" : "✗ not asymptotic")
+        end
+    end
+
+    # ── 绘图 ──
+    out_dir = joinpath(root_dir, "output", "mesh_convergence")
     mkpath(out_dir)
 
-    # 计算收敛误差
-    error_table = []
-    for nθ in THERMAL_Nθ
-        t, T, T_max, T_range = results[nθ]
+    colors = [:red, :orange, :green, :blue]
 
-        # 时间对齐
-        T_aligned = [align_to_ref(t, T[:,i], t_ref) for i in 1:size(T,2)]
-        T_max_aligned = align_to_ref(t, T_max, t_ref)
-        T_range_aligned = align_to_ref(t, T_range, t_ref)
+    # 图1: 温度场时间演化
+    p1 = plot(xlabel="Time [s]", ylabel="Mean Temperature [K]",
+              title="Thermal Mesh: Temperature (q0=$(Q0) W/m³)",
+              legend=:bottomright)
+    for (i, nθ) in enumerate(THERMAL_Nθ)
+        r = all_results[nθ]
+        T_hist = r.T_hist
+        if !isempty(T_hist)
+            nt = size(T_hist, 2)
+            T_mean = [mean(T_hist[:, k]) for k in 1:nt]
+            label = i == ref_idx ? "ref nθ=$nθ" : "nθ=$nθ"
+            ls = i == ref_idx ? :solid : :dash
+            plot!(p1, r.times[1:nt], T_mean, label=label, lw=1.5, color=colors[i], ls=ls)
+        end
+    end
+    savefig(p1, joinpath(out_dir, "thermal_temperature_convergence.png"))
 
-        # 空间场 L2 误差（选择 t=1800s 时刻）
-        t_idx = findfirst(x -> x >= 1800, t_ref)
-        T_1800_ref = T_ref[t_idx, :]
-        T_1800 = T_aligned[t_idx, :]
+    # 图2: log-log 收敛误差图
+    h_plot = h_vals[2:end]
+    Tmax_plot = Tmax_l2[2:end]
+    Spatial_plot = Spatial_l2[2:end]
 
-        # IDW 插值到参考网格
-        mesh = results[ref_nθ][2].mesh["thermal2D"]
-        x_ref = mesh.node[:,1]
-        y_ref = mesh.node[:,2]
+    p3 = plot(xlabel="h (element size)", ylabel="L2_rel error [%]",
+              title="Thermal Mesh: Convergence",
+              xscale=:log10, yscale=:log10, legend=:topright)
 
-        T_1800_interp = [interpolate_to_ref_field(T_1800, t, t_ref, x_ref, y_ref; k=4)
-                       for (T_1800, t) in zip(eachcol(T_1800), t_ref)]
-        T_1800_interp = hcat(T_1800_interp...)
+    plot!(p3, h_plot, Tmax_plot, marker=:o, lw=2, label="T_max(t) L2_rel", color=:blue)
+    plot!(p3, h_plot, Spatial_plot, marker=:d, lw=2, label="Spatial L2_rel", color=:green)
 
-        l2_err = l2_rel_norm(T_1800_interp, T_1800_ref)
-        max_err = max_norm(T_1800_interp, T_1800_ref)
-
-        # 时间序列 L2 误差
-        l2_err_Tmax = l2_rel_norm(T_max_aligned, T_max_ref)
-        l2_err_Trange = l2_norm(T_range_aligned, T_range_ref)
-
-        push!(error_table, (nθ, l2_err, max_err, l2_err_Tmax, l2_err_Trange))
+    # 理论斜率线 O(h^2) (Q4, k=1)
+    if length(h_plot) >= 2 && Tmax_plot[1] > 0
+        h_ref_line = [minimum(h_plot), maximum(h_plot)]
+        e_ref = Tmax_plot[1]
+        h_ref_val = h_plot[1]
+        theory_line = e_ref .* (h_ref_line ./ h_ref_val).^2
+        plot!(p3, h_ref_line, theory_line, lw=1, ls=:dash, color=:blue, label="O(h²) theory")
     end
 
-    # 打印误差表
-    @printf("\n热学收敛误差表 (参考解: nθ=%d)\n", ref_nθ)
-    @printf("%-8s %-12s %-12s %-12s %-12s\n", "nθ", "L2_rel(场)", "L∞(场)", "L2_rel(Tmax)", "L2(T_range)")
-    @printf("%-8s %-12s %-12s %-12s %-12s\n", "-"^8, "-"^12, "-"^12, "-"^12, "-"^12)
-    for (nθ, l2_err, max_err, l2_err_Tmax, l2_err_Trange) in error_table
-        @printf("%-8d %-12.4e %-12.4e %-12.4e %-12.4e\n",
-                nθ, l2_err, max_err, l2_err_Tmax, l2_err_Trange)
-    end
-
-    # GCI 分析
-    # 计算等效 h（基于单元面积）
-    h_values = []
-    for nθ in THERMAL_Nθ
-        mesh = results[nθ][2].mesh["thermal2D"]
-        h = effective_h(mesh)
-        push!(h_values, h)
-    end
-
-    # GCI 标量：T_max(t_end)
-    T_max_end = [results[nθ][3][end] for nθ in THERMAL_Nθ]
-
-    # 计算收敛阶和 GCI
-    p, gci = compute_gci(T_max_end, h_values)
-
-    @printf("\nGCI 汇总表 (T_max(t_end))\n")
-    @printf("%-8s %-12s %-12s %-12s %-12s\n", "nθ", "h", "T_max(end)", "p", "GCI(95%)")
-    @printf("%-8s %-12s %-12s %-12s %-12s\n", "-"^8, "-"^12, "-"^12, "-"^12, "-"^12)
-    for i in 1:length(THERMAL_Nθ)
-        @printf("%-8d %-12.4e %-12.4f %-12.4f %-12.4f\n",
-                THERMAL_Nθ[i], h_values[i], T_max_end[i], p[i], gci[i])
-    end
-
-    # 渐近检查
-    asymptotic_check(T_max_end, h_values)
-
-    # 绘制收敛图
-    p1 = plot(h_values, T_max_end,
-             xlabel="h (等效单元尺寸)", ylabel="T_max(t_end) [K]",
-             title="热学 GCI 收敛性",
-             xscale=:log10, yscale=:log10,
-             marker=:circle, label="数据点")
-
-    # 添加理论收敛线
-    if !isnan(p[end])
-        h_ref = h_values[end]
-        T_ref = T_max_end[end]
-        p_val = p[end]
-        h_range = [h_ref * 0.5, h_ref * 2.0]
-        T_theory = T_ref .* (h_range ./ h_ref).^p_val
-        plot!(h_range, T_theory, label="理论 p=$(round(p_val, digits=3))",
-              linestyle=:dash, color=:red)
-    end
-
-    savefig(p1, joinpath(out_dir, "thermal_gci_convergence.png"))
-
-    # 绘制时间序列误差
-    p2 = plot(t_ref, T_max_ref, label="参考解 (nθ=$(ref_nθ))",
-              xlabel="时间 [s]", ylabel="T_max [K]",
-              title="最大温度时间序列")
-
-    for (nθ, t, T_max) in zip(THERMAL_Nθ, [results[nθ][1] for nθ in THERMAL_Nθ],
-                            [results[nθ][3] for nθ in THERMAL_Nθ])
-        plot!(t, T_max, label="nθ=$(nθ)")
-    end
-
-    savefig(p2, joinpath(out_dir, "thermal_Tmax_time_series.png"))
-
-    # 绘制空间场误差
-    t_plot = 1800  # 选择 t=1800s 时刻
-    t_idx = findfirst(x -> x >= t_plot, t_ref)
-
-    p3 = plot(t_ref, T_max_ref, label="参考解 (nθ=$(ref_nθ))",
-              xlabel="时间 [s]", ylabel="T_max [K]",
-              title="最大温度时间序列")
-
-    for (nθ, t, T_max) in zip(THERMAL_Nθ, [results[nθ][1] for nθ in THERMAL_Nθ],
-                            [results[nθ][3] for nθ in THERMAL_Nθ])
-        plot!(t, T_max, label="nθ=$(nθ)")
-    end
-
-    savefig(p3, joinpath(out_dir, "thermal_Tmax_time_series.png"))
+    savefig(p3, joinpath(out_dir, "thermal_spatial_error.png"))
 
     @printf("\n图已保存到 %s\n", out_dir)
     println("=" ^ 70)
