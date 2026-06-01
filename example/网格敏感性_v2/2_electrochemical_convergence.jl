@@ -150,7 +150,8 @@ function main()
             "Pair", "r", "epsilon", "p_obs", "GCI(V_end)", "GCI(T_peak)", "GCI(dTdt)")
     println("-" ^ 90)
 
-    gci_results = []  # (r21, p, gci_V, gci_T, gci_dTdt)
+    gci_results = []
+    p_V = NaN; p_T = NaN; p_dTdt = NaN  # 在循环外初始化，避免作用域问题
     for i in 1:length(MESH_CONFIGS)-1
         r21 = h_vals[i+1] / h_vals[i]
         r32 = i+1 < length(MESH_CONFIGS) ? h_vals[i+2] / h_vals[i+1] : r21
@@ -159,7 +160,7 @@ function main()
         if i + 2 <= length(MESH_CONFIGS)
             p_V = observed_order(V_end_vals[i], V_end_vals[i+1], V_end_vals[i+2], r21, r32)
             p_T = observed_order(T_peak_vals[i], T_peak_vals[i+1], T_peak_vals[i+2], r21, r32)
-            p_dT = observed_order(dTdt_max_vals[i], dTdt_max_vals[i+1], dTdt_max_vals[i+2], r21, r32)
+            p_dTdt = observed_order(dTdt_max_vals[i], dTdt_max_vals[i+1], dTdt_max_vals[i+2], r21, r32)
         else
             p_V = 2.0; p_T = 2.0; p_dTdt = 2.0  # 回退到理论值
         end
