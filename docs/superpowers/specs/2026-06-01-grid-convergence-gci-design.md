@@ -213,15 +213,13 @@ $$\text{Ratio} = \frac{\text{GCI}_{23}}{r_{21}^p \cdot \text{GCI}_{12}}$$
 
 **空间场插值策略**：不同 nθ 的网格节点数不同。需将粗网格场插值到细网格参考节点上：
 
-1. 将所有节点坐标从极坐标 $(r, \theta)$ 转换为笛卡尔坐标 $(x, y)$：$x = r\cos\theta$, $y = r\sin\theta$
-2. 取最细网格 (nθ=160) 的笛卡尔节点坐标作为参考
-3. 对每级粗网格，使用反距离加权 (IDW) 插值到参考节点
-4. 在插值后的场上计算 L2 范数
+1. 取最细网格 (nθ=160) 的笛卡尔节点坐标 (`mesh.node[:,1]`, `mesh.node[:,2]`) 作为参考
+2. 对每级粗网格，使用反距离加权 (IDW) 插值到参考节点
+3. 在插值后的场上计算 L2 范数
 
 **使用笛卡尔坐标的原因**：
-- 极坐标下 $\theta$ 具有周期性（$\theta=0$ 和 $\theta=2\pi$ 物理上相邻），直接在 $(r, \theta)$ 空间计算距离会导致边界附近邻居搜索错误
-- $r$（米）和 $\theta$（弧度）量纲不匹配，会导致距离计算偏向 $\theta$ 方向
-- 笛卡尔坐标天然消除了周期性和量纲问题
+- JuBat Mesh 结构的 `node` 字段存储的已经是笛卡尔坐标 (x, y)，生成时从极坐标 $(r, \theta)$ 通过 $x = r\cos\theta$, $y = r\sin\theta$ 转换
+- 笛卡尔坐标天然消除了 $\theta$ 的周期性问题（$\theta=0$ 和 $\theta=2\pi$ 物理上相邻）和 $r$-$\theta$ 量纲不匹配问题
 
 IDW 公式：
 
@@ -432,27 +430,24 @@ function align_to_ref(t_cand, y_cand, t_ref)
 end
 
 """
-    interpolate_to_ref_field(coarse_vals, coarse_r, coarse_theta,
-                             ref_r, ref_theta; k=4)
+    interpolate_to_ref_field(coarse_vals, coarse_x, coarse_y,
+                             ref_x, ref_y; k=4)
 
 使用反距离加权 (IDW) 将粗网格场插值到参考节点上。
-所有距离计算在笛卡尔坐标下进行，以正确处理 θ 的周期性和 r-θ 量纲不匹配。
+坐标为笛卡尔 (x, y)，直接从 mesh.node[:,1] 和 mesh.node[:,2] 获取。
+
+注：JuBat Mesh 结构的 node 字段存储的已经是笛卡尔坐标
+（生成时从极坐标 r*cos(θ), r*sin(θ) 转换），无需额外转换。
 
 coarse_vals: 粗网格节点值 (n_coarse,)
-coarse_r, coarse_theta: 粗网格节点极坐标
-ref_r, ref_theta: 参考网格节点极坐标
+coarse_x, coarse_y: 粗网格节点笛卡尔坐标
+ref_x, ref_y: 参考网格节点笛卡尔坐标
 k: 最近邻数量
 """
-function interpolate_to_ref_field(coarse_vals, coarse_r, coarse_theta,
-                                  ref_r, ref_theta; k=4)
-    # 极坐标 → 笛卡尔坐标
-    coarse_x = coarse_r .* cos.(coarse_theta)
-    coarse_y = coarse_r .* sin.(coarse_theta)
-    ref_x = ref_r .* cos.(ref_theta)
-    ref_y = ref_r .* sin.(ref_theta)
-
-    n_ref = length(ref_r)
-    n_coarse = length(coarse_r)
+function interpolate_to_ref_field(coarse_vals, coarse_x, coarse_y,
+                                  ref_x, ref_y; k=4)
+    n_ref = length(ref_x)
+    n_coarse = length(coarse_x)
     result = similar(coarse_vals, n_ref)
     k_eff = min(k, n_coarse)
 

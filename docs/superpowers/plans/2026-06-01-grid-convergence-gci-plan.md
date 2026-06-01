@@ -272,7 +272,10 @@ end
                              ref_x, ref_y; k=4)
 
 使用反距离加权 (IDW) 将粗网格场插值到参考节点上。
-所有坐标为笛卡尔 (x, y)（调用前已完成极坐标→笛卡尔转换）。
+坐标为笛卡尔 (x, y)，直接从 mesh.node[:,1] 和 mesh.node[:,2] 获取。
+
+注：JuBat Mesh 结构的 node 字段存储的已经是笛卡尔坐标（生成时从
+极坐标 r*cos(θ), r*sin(θ) 转换），无需额外转换。
 
 coarse_vals: 粗网格节点值 (n_coarse,)
 coarse_x, coarse_y: 粗网格节点笛卡尔坐标
@@ -844,6 +847,19 @@ function main()
                 i, i+1, r21, eps_T, isnan(p_T) ? -1.0 : p_T, gci_T)
     end
 
+    # ── 渐近收敛检查 ──
+    if length(gci_results) >= 2
+        println("\n渐近收敛检查:")
+        for (name, gcis) in [("T_max", [r[3] for r in gci_results])]
+            ratio = asymptotic_check(gcis[1], gcis[2],
+                                     gci_results[1][1], gci_results[1][2])
+            @printf("  %-8s: GCI_12/GCI_23 ratio = %.4f %s\n",
+                    name, isnan(ratio) ? 0.0 : ratio,
+                    isnan(ratio) ? "(insufficient data)" :
+                    0.8 <= ratio <= 1.2 ? "✓ asymptotic" : "✗ not asymptotic")
+        end
+    end
+
     # ── 绘图 ──
     out_dir = joinpath(root_dir, "output", "mesh_convergence")
     mkpath(out_dir)
@@ -1185,6 +1201,23 @@ function main()
                 i, i+1, r21,
                 isnan(p_E) ? -1.0 : p_E,
                 gci_E, isnan(gci_D) ? NaN : gci_D)
+    end
+
+    # ── 渐近收敛检查 ──
+    if length(gci_results) >= 2
+        println("\n渐近收敛检查:")
+        for (name, gcis) in [("E_frac", [r[3] for r in gci_results]),
+                             ("D_max", [r[4] for r in gci_results])]
+            gcis_valid = filter(!isnan, gcis)
+            if length(gcis_valid) >= 2
+                ratio = asymptotic_check(gcis_valid[1], gcis_valid[2],
+                                         gci_results[1][1], gci_results[1][2])
+                @printf("  %-8s: GCI_12/GCI_23 ratio = %.4f %s\n",
+                        name, isnan(ratio) ? 0.0 : ratio,
+                        isnan(ratio) ? "(insufficient data)" :
+                        0.8 <= ratio <= 1.2 ? "✓ asymptotic" : "✗ not asymptotic")
+            end
+        end
     end
 
     # ── 绘图 ──
