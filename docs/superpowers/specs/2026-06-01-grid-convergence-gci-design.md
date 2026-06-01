@@ -130,14 +130,23 @@ $$\|e\|_{\infty} = \max_i |f_i - f_{\text{ref},i}|$$
 
 $$p = \frac{\ln|(f_3 - f_2)/(f_2 - f_1)|}{\ln(r)}$$
 
-对于非恒定细化比（本项目情况），使用推广公式：
+对于非恒定细化比（本项目情况），遵循 Celik et al. (2008) 的迭代求解法。
 
-$$p = \frac{\ln|(f_3 - f_2)/(f_2 - f_1)| + q \cdot \ln(r_{21}/r_{32})}{q \cdot \ln(r_{21}) + (1 - q) \cdot \ln(r_{32})}$$
+定义：
 
-其中 $q$ 为权重因子。实际实现中，可用简化迭代法：
+$$\alpha = \frac{f_3 - f_2}{f_2 - f_1}$$
 
-1. 取初始值 $p_0$ 为恒定比公式结果
-2. Newton 迭代修正直到 $|p_{k+1} - p_k| < 10^{-6}$
+迭代方程（固定点迭代）：
+
+$$p_{k+1} = \frac{1}{\ln(r_{21})} \left| \ln|\alpha| + \ln\left(\frac{r_{21}^{p_k} - 1}{r_{32}^{p_k} - 1}\right) \right|$$
+
+迭代步骤：
+
+1. 取初始值 $p_0 = \ln|\alpha| / \ln(r_{21})$（恒定比近似）
+2. 固定点迭代：$p_{k+1} = \frac{1}{\ln(r_{21})} |\ln|\alpha| + \ln\frac{r_{21}^{p_k} - 1}{r_{32}^{p_k} - 1}|$
+3. 收敛判据：$|p_{k+1} - p_k| < 10^{-6}$
+4. 最大迭代次数：100（防止发散）
+5. 若发散（$p_k > 20$ 或 NaN），回退到恒定比近似值 $p_0$
 
 ### 3.3 等效单元尺寸
 
@@ -147,7 +156,15 @@ $$h = \sqrt{\frac{A_{\text{total}}}{N_{\text{elem}}}}$$
 
 其中 $A_{\text{total}}$ 是热网格总面积，$N_{\text{elem}}$ 是单元数。这是 ASME V&V 10 推荐的等效 $h$ 定义。
 
-### 3.4 渐近收敛检查
+### 3.4 GCI 适用范围说明
+
+**GCI 仅适用于标量值**。对于每个 Track，从每个网格级别提取一个标量结果（如 $V_{\text{end}}$、$T_{\max}$、$E_{\text{frac}}(t_{\text{end}})$），然后用这些标量值计算 GCI。
+
+**L2 范数适用于曲线和场量**。对于时间序列（如 $V(t)$）和空间场（如 $T(r, \theta)$），计算 L2 误差范数量化整体差异。
+
+两者不可混用：不要对 L2 范数值序列计算 GCI，也不要对曲线做 GCI 计算。
+
+### 3.5 渐近收敛检查
 
 $$\text{Ratio} = \frac{\text{GCI}_{23}}{r_{21}^p \cdot \text{GCI}_{12}}$$
 
@@ -196,17 +213,25 @@ $$\text{Ratio} = \frac{\text{GCI}_{23}}{r_{21}^p \cdot \text{GCI}_{12}}$$
 
 **空间场插值策略**：不同 nθ 的网格节点数不同。需将粗网格场插值到细网格参考节点上：
 
-1. 取最细网格 (nθ=160) 的节点坐标 $(r_i, \theta_i)$ 作为参考
-2. 对每级粗网格，使用反距离加权 (IDW) 插值到参考节点
-3. 在插值后的场上计算 L2 范数
+1. 将所有节点坐标从极坐标 $(r, \theta)$ 转换为笛卡尔坐标 $(x, y)$：$x = r\cos\theta$, $y = r\sin\theta$
+2. 取最细网格 (nθ=160) 的笛卡尔节点坐标作为参考
+3. 对每级粗网格，使用反距离加权 (IDW) 插值到参考节点
+4. 在插值后的场上计算 L2 范数
+
+**使用笛卡尔坐标的原因**：
+- 极坐标下 $\theta$ 具有周期性（$\theta=0$ 和 $\theta=2\pi$ 物理上相邻），直接在 $(r, \theta)$ 空间计算距离会导致边界附近邻居搜索错误
+- $r$（米）和 $\theta$（弧度）量纲不匹配，会导致距离计算偏向 $\theta$ 方向
+- 笛卡尔坐标天然消除了周期性和量纲问题
 
 IDW 公式：
 
-$$\hat{T}(r, \theta) = \frac{\sum_j w_j T_j}{\sum_j w_j}, \quad w_j = \frac{1}{d_j^2}$$
+$$\hat{T}(x, y) = \frac{\sum_j w_j T_j}{\sum_j w_j}, \quad w_j = \frac{1}{d_j^2}$$
 
-其中 $d_j$ 是目标点到第 $j$ 个源节点的欧式距离，搜索半径取最近 4 个节点。
+其中 $d_j = \sqrt{(x - x_j)^2 + (y - y_j)^2}$ 是目标点到第 $j$ 个源节点的笛卡尔距离，搜索半径取最近 4 个节点。
 
-**理论收敛阶**：对于 gsorder=2 的 2D FEM，L2 收敛阶 $O(h^3)$。
+**理论收敛阶**：本项目使用 Q4（4 节点双线性四边形单元），多项式阶数 $k=1$。L2 收敛阶 $O(h^2)$，H1 收敛阶 $O(h^1)$。
+
+**注**：参考文献 Ai & Liu (2023) 的 "2nd order FEM" 指的是方法达到二阶收敛率 $O(h^2)$，而非使用二次单元（Q8/Q9）。
 
 ### 4.3 CZM Track (Script 4)
 
@@ -228,6 +253,8 @@ $$\hat{T}(r, \theta) = \frac{\sum_j w_j T_j}{\sum_j w_j}, \quad w_j = \frac{1}{d
 $$E_{\text{frac}}(t) = \sum_{e=1}^{N_{\text{coh}}} G_c \cdot l_e \cdot D_e(t)$$
 
 其中 $l_e$ 是第 $e$ 个 cohesive 单元的长度，$D_e(t)$ 是其损伤值。这是积分量，单调收敛，不受损伤前沿位置偏移影响。
+
+**单位说明**：$G_c$ [J/m²] × $l_e$ [m] × $D_e$ [-] = [J/m]，即单位深度（2D 模型假设平面应变）的断裂能。不同网格级别的 $E_{\text{frac}}$ 比较时使用相对值（GCI），单位不影响收敛性分析。
 
 **牵引-分离面积偏差的单元选择策略**（保留旧设计）：选取 $D_{\max}$ 达到最大值的单元的 traction-separation 时间序列。
 
@@ -294,27 +321,49 @@ end
 """
     observed_order(f1, f2, f3, r21, r32) -> Float64
 
-计算观测收敛阶 p。
+计算观测收敛阶 p，使用 Celik et al. (2008) 的迭代法处理非恒定细化比。
 f1: 最细网格标量值, f2: 中间, f3: 最粗
 r21 = h2/h1, r32 = h3/h2
+
+迭代方程：
+  p_{k+1} = |ln|alpha| + ln((r21^p_k - 1)/(r32^p_k - 1))| / ln(r21)
+其中 alpha = (f3 - f2) / (f2 - f1)
 """
 function observed_order(f1, f2, f3, r21, r32)
-    # 恒定比简化公式（初值）
     denom = f2 - f1
     numer = f3 - f2
     if abs(denom) < 1e-15 || abs(numer) < 1e-15
         return NaN  # 无法确定收敛阶
     end
-    # 使用推广公式处理非恒定细化比
-    s = sign(denom / numer)  # 确保单调收敛
+    s = sign(denom / numer)  # 检查单调收敛
     if s < 0
-        # 非单调收敛，GCI 不适用
-        return NaN
+        return NaN  # 非单调收敛，GCI 不适用
     end
-    # 简化：用等效细化比
-    r_eff = r21  # 近似
-    p = log(abs(numer / denom)) / log(r_eff)
-    return abs(p)
+
+    alpha = numer / denom
+
+    # 初始值：恒定比近似
+    p = abs(log(abs(alpha)) / log(r21))
+
+    # 固定点迭代（Celik et al. 2008）
+    for _ in 1:100
+        r21p = r21^p
+        r32p = r32^p
+        if r21p - 1 < 1e-15 || r32p - 1 < 1e-15
+            break
+        end
+        correction = log((r21p - 1) / (r32p - 1))
+        p_new = abs(log(abs(alpha)) + correction) / log(r21)
+        if abs(p_new - p) < 1e-6
+            return p_new
+        end
+        p = p_new
+        if p > 20 || isnan(p)
+            # 发散，回退到恒定比近似
+            return abs(log(abs(alpha)) / log(r21))
+        end
+    end
+    return p
 end
 
 """
@@ -348,7 +397,9 @@ end
 """
     effective_h(mesh) -> Float64
 
-计算等效单元尺寸 h = sqrt(A_total / N_elem)
+计算等效单元尺寸 h = sqrt(A_total / N_elem)。
+接收 thermal2D mesh 对象（case.mesh["thermal2D"]），需有 .area 和 .element 字段。
+对于电化学 Track（无热网格），h 可从 (1/Nn + 1/Np) 的倒数近似。
 """
 function effective_h(mesh)
     A_total = sum(mesh.area)
@@ -381,26 +432,39 @@ function align_to_ref(t_cand, y_cand, t_ref)
 end
 
 """
-    interpolate_to_ref_field(coarse_vals, coarse_coords, ref_coords; k=4)
+    interpolate_to_ref_field(coarse_vals, coarse_r, coarse_theta,
+                             ref_r, ref_theta; k=4)
 
 使用反距离加权 (IDW) 将粗网格场插值到参考节点上。
+所有距离计算在笛卡尔坐标下进行，以正确处理 θ 的周期性和 r-θ 量纲不匹配。
+
 coarse_vals: 粗网格节点值 (n_coarse,)
-coarse_coords: 粗网格节点坐标 (n_coarse, 2)
-ref_coords: 参考网格节点坐标 (n_ref, 2)
+coarse_r, coarse_theta: 粗网格节点极坐标
+ref_r, ref_theta: 参考网格节点极坐标
 k: 最近邻数量
 """
-function interpolate_to_ref_field(coarse_vals, coarse_coords, ref_coords; k=4)
-    n_ref = size(ref_coords, 1)
+function interpolate_to_ref_field(coarse_vals, coarse_r, coarse_theta,
+                                  ref_r, ref_theta; k=4)
+    # 极坐标 → 笛卡尔坐标
+    coarse_x = coarse_r .* cos.(coarse_theta)
+    coarse_y = coarse_r .* sin.(coarse_theta)
+    ref_x = ref_r .* cos.(ref_theta)
+    ref_y = ref_r .* sin.(ref_theta)
+
+    n_ref = length(ref_r)
+    n_coarse = length(coarse_r)
     result = similar(coarse_vals, n_ref)
+    k_eff = min(k, n_coarse)
+
     for i in 1:n_ref
-        # 计算到所有粗网格节点的距离
+        # 笛卡尔距离
         dists = sqrt.(
-            (coarse_coords[:,1] .- ref_coords[i,1]).^2 .+
-            (coarse_coords[:,2] .- ref_coords[i,2]).^2
+            (coarse_x .- ref_x[i]).^2 .+
+            (coarse_y .- ref_y[i]).^2
         )
         # 取最近 k 个
-        idx = partialsortperm(dists, 1:min(k, length(dists)))
-        w = 1.0 ./ dists[idx].^2
+        idx = partialsortperm(dists, 1:k_eff)
+        w = 1.0 ./ (dists[idx].^2 .+ 1e-30)  # 加小量防止除零
         result[i] = sum(w .* coarse_vals[idx]) / sum(w)
     end
     return result
@@ -480,13 +544,13 @@ example/网格敏感性_v2/
 - **叠加**：理论收敛阶斜率线 $O(h^p)$
 - **标注**：观测收敛阶 $p_{\text{obs}}$，与理论值 $p_{\text{theory}}$ 的比较
 
-**理论收敛阶参考**（gsorder=2 的二阶 FEM）：
+**理论收敛阶参考**（本项目单元类型与离散方法）：
 
-| 物理场 | L2 理论阶 | H1 理论阶 | 说明 |
-|--------|-----------|-----------|------|
-| 2D 热场 | $O(h^3)$ | $O(h^2)$ | 标准 FEM 理论 |
-| 1D 电化学 | $O(h^2)$ | $O(h)$ | Crank-Nicolson + FDM |
-| CZM | 无通用理论 | — | 依赖问题，观测值为准 |
+| 物理场 | 单元类型 | L2 理论阶 | H1 理论阶 | 说明 |
+|--------|----------|-----------|-----------|------|
+| 2D 热场 | Q4 ($k=1$) | $O(h^2)$ | $O(h^1)$ | 标准 FEM：$L_2 = O(h^{k+1})$ |
+| 1D 电化学 | 线性 FEM + CN | $O(h^2)$ | $O(h^1)$ | Crank-Nicolson 时间 + FEM 空间 |
+| CZM | 依赖问题 | 观测值为准 | — | 无通用理论，以观测收敛阶为准 |
 
 ### 6.4 输出目录
 
