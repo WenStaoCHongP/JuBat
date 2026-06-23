@@ -65,3 +65,29 @@ expected_E_coat = (
 @assert !isnan(param_lgm.scale.E_coat) "LGM50 scale.E_coat 不能是 NaN"
 
 println("  PASS: scale.E_coat 计算正确，NaN 防御有效")
+
+println("\n" * "="^60)
+println("TEST 4: NormaliseParam 归一化一致性")
+println("="^60)
+
+opt = JuBat.Option()
+opt.model = "SPMe"
+opt.per_element_spme = true
+case = JuBat.SetCase(param_dim, opt)
+
+expected_PE_E_coat_norm = param_dim.PE.E_coat / param_dim.scale.E_coat
+expected_NE_E_coat_norm = param_dim.NE.E_coat / param_dim.scale.E_coat
+
+@assert abs(case.param.PE.E_coat - expected_PE_E_coat_norm) / expected_PE_E_coat_norm < 1e-8 "PE.E_coat 归一化错位：$(case.param.PE.E_coat) vs $expected_PE_E_coat_norm"
+@assert abs(case.param.NE.E_coat - expected_NE_E_coat_norm) / expected_NE_E_coat_norm < 1e-8 "NE.E_coat 归一化错位：$(case.param.NE.E_coat) vs $expected_NE_E_coat_norm"
+@assert case.param.PE.nu_coat == param_dim.PE.nu_coat "nu_coat 不应被归一化"
+@assert case.param.NE.nu_coat == param_dim.NE.nu_coat "nu_coat 不应被归一化"
+
+@printf("  PE.E_coat: 物理=%.3e Pa, 归一化=%.3f, 还原=%.3e Pa\n",
+        param_dim.PE.E_coat, case.param.PE.E_coat,
+        case.param.PE.E_coat * param_dim.scale.E_coat)
+@printf("  NE.E_coat: 物理=%.3e Pa, 归一化=%.3f, 还原=%.3e Pa\n",
+        param_dim.NE.E_coat, case.param.NE.E_coat,
+        case.param.NE.E_coat * param_dim.scale.E_coat)
+
+println("  PASS: 归一化一致性（容差 1e-8）")

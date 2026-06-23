@@ -350,6 +350,8 @@ function NormaliseParam(param_dim::Params)
     param.PE.rs = param_dim.PE.rs / param.scale.r0
     param.PE.sig = param_dim.PE.sig / param.scale.sig
     param.PE.E = param_dim.PE.E / param_dim.scale.E_p
+    param.PE.E_coat  = param_dim.PE.E_coat  / param.scale.E_coat
+    param.PE.nu_coat = param_dim.PE.nu_coat
     param.PE.nu = param_dim.PE.nu
     param.PE.alphaT = param_dim.PE.alphaT* param.scale.T_ref
     param.PE.Omega = param_dim.PE.Omega * param_dim.PE.cs_max
@@ -375,6 +377,8 @@ function NormaliseParam(param_dim::Params)
     param.NE.rs = param_dim.NE.rs / param.scale.r0
     param.NE.sig = param_dim.NE.sig / param.scale.sig
     param.NE.E = param_dim.NE.E / param_dim.scale.E_n
+    param.NE.E_coat  = param_dim.NE.E_coat  / param.scale.E_coat
+    param.NE.nu_coat = param_dim.NE.nu_coat
     param.NE.nu = param_dim.NE.nu
     param.NE.alphaT = param_dim.NE.alphaT * param.scale.T_ref
     param.NE.Omega = param_dim.NE.Omega * param_dim.NE.cs_max
