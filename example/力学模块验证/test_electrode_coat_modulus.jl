@@ -116,3 +116,24 @@ expected_nu = (
 @printf("  nu_eff         = %.6f (预期 %.6f)\n", nu_eff, expected_nu)
 @printf("  alpha_eff      = %.6e\n", alpha_eff)
 println("  PASS: compute_effective_coating_modulus 输出正确")
+
+println("\n" * "="^60)
+println("TEST 6: compute_czm_effective_params 与共享函数尺度换算一致")
+println("="^60)
+
+E_eff_czm, nu_eff_czm, alpha_eff_czm, beta_n, beta_p = JuBat.compute_czm_effective_params(case)
+
+E_eff_coat_norm, _, _ = JuBat.compute_effective_coating_modulus(case)
+expected_E_eff_czm = E_eff_coat_norm * param_dim.scale.E_coat / param_dim.scale.σ_czm
+
+@assert abs(E_eff_czm - expected_E_eff_czm) / expected_E_eff_czm < 1e-12 "CZM E_eff 与共享函数尺度换算不一致：$E_eff_czm vs $expected_E_eff_czm"
+
+_, expected_nu_czm, _ = JuBat.compute_effective_coating_modulus(case)
+@assert nu_eff_czm == expected_nu_czm "nu_eff 应与共享函数完全一致"
+
+@assert beta_n == case.param.NE.Omega / 3.0
+@assert beta_p == case.param.PE.Omega / 3.0
+
+@printf("  E_eff (σ_czm 归一化) = %.6e\n", E_eff_czm)
+@printf("  E_eff (E_coat 归一化→σ_czm) = %.6e\n", expected_E_eff_czm)
+println("  PASS: compute_czm_effective_params 与共享函数一致")

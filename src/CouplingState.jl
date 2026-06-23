@@ -245,10 +245,13 @@ end
 计算 CZM 求解所需的有效材料参数，全部基于 `SetParams.NormaliseParam`
 后的归一化参数。
 
+实现：调用 `compute_effective_coating_modulus` 获取 scale.E_coat 归一化
+下的全叠合有效模量，再切换到 scale.σ_czm 归一化以匹配下游 CZM 公式。
+
 # 返回
-- `E_eff`: 有效弹性模量 [-]
+- `E_eff`: 有效弹性模量 [-]（σ_czm 归一化）
 - `ν_eff`: 有效泊松比 [-]
-- `α_eff`: 有效热膨胀系数 [-]
+- `α_eff`: 有效热膨胀系数 [-]（T_ref 归一化）
 - `β_n`: 负极扩散应变系数 [-]
 - `β_p`: 正极扩散应变系数 [-]
 """
@@ -256,18 +259,10 @@ function compute_czm_effective_params(case)
     param = case.param
     scale = case.param_dim.scale
 
-    # 将 NE.E (E_n 归一化) 和 PE.E (E_p 归一化) 统一转为 σ_czm 归一化
-    E_ne_czm = param.NE.E * scale.E_n / scale.σ_czm
-    E_pe_czm = param.PE.E * scale.E_p / scale.σ_czm
-
-    # 有效弹性模量（厚度加权平均，σ_czm 归一化）
-    E_eff = (E_ne_czm * param.NE.thickness + E_pe_czm * param.PE.thickness) /(param.NE.thickness + param.PE.thickness)
-
-    # 有效泊松比（厚度加权平均）
-    ν_eff = (param.NE.nu * param.NE.thickness + param.PE.nu * param.PE.thickness) /(param.NE.thickness + param.PE.thickness)
-
-    # 有效热膨胀系数（厚度加权平均，已按 T_ref 归一化）
-    α_eff = (param.NE.alphaT * param.NE.thickness + param.PE.alphaT * param.PE.thickness) /(param.NE.thickness + param.PE.thickness)
+    # 共享函数给出 scale.E_coat 归一化下的有效模量
+    E_eff_norm, ν_eff, α_eff = compute_effective_coating_modulus(case)
+    # 切换到 σ_czm 归一化以匹配下游 CZM 公式
+    E_eff = E_eff_norm * scale.E_coat / scale.σ_czm
 
     # 扩散应变系数 β = (Ω * c_s,max) / 3 已在 SetParams 中完成归一化
     β_n = param.NE.Omega / 3.0
