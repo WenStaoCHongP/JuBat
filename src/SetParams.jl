@@ -57,6 +57,11 @@
     nu::Float64 = 0           # Poisson's ratio [-]
     alphaT::Float64 = 0       # Thermal expansion coefficient [1/K]
     Omega::Float64 = 0        # Partial molar volume [m^3/mol]
+    # Legacy 极片模量字段（Task 1.3+1.4 将重命名为 E_coat/nu_coat）
+    E_p::Float64 = 0
+    nu_p::Float64 = 0
+    E_n::Float64 = 0
+    nu_n::Float64 = 0
     Eac_D::Float64 = 0
     Eac_k::Float64 = 0
     alpha::Float64 = 0
@@ -76,6 +81,9 @@ end
     eps::Float64 = 0
     eps_fi::Float64 = 0
     brugg::Float64 = 0
+    E::Float64 = 0            # 弹性模量 [Pa]
+    nu::Float64 = 0           # 泊松比 [-]
+    alphaT::Float64 = 0       # 热膨胀系数 [1/K]
 end
 
 @with_kw mutable struct CurrentCollector
@@ -83,7 +91,10 @@ end
     lambda::Float64 = 0
     rho::Float64 = 0 
     heat_Q::Float64 = 0
-    sig::Float64 = 0 
+    sig::Float64 = 0
+    E::Float64 = 0            # 弹性模量 [Pa]
+    nu::Float64 = 0           # 泊松比 [-]
+    alphaT::Float64 = 0       # 热膨胀系数 [1/K]
 end
 
 @with_kw mutable struct Electrolyte
@@ -413,7 +424,7 @@ function NormaliseParam(param_dim::Params)
     param.tab.length = param_dim.tab.length / param.scale.L
     param.tab.width = param_dim.tab.width / param.scale.L
     param.tab.area = param_dim.tab.area / param.scale.L^2
-    param.tab.h = param_dim.tab.h * param.scale.T_ref / param.scale.phi / param.scale.I_typ
+    param.tab.h = param_dim.tab.h * param_dim.scale.L / param_dim.cell.lambda_r
     
     # cohesive zone model 
     # 法向参数归一化
