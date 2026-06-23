@@ -362,6 +362,24 @@ opt.debug_sample_elems = [1, 40, 80]  # 跟踪特定单元
 - `gsorder` 控制积分精度 (2-3)
 - 平衡精度与计算成本
 
+### 9.4 弹性模量字段层级（颗粒 vs 极片）
+
+JuBat 区分两个尺度的弹性模量，**不可混用**：
+
+| 字段 | 物理对象 | 典型值 | 用于 |
+|------|----------|--------|------|
+| `PE.E` / `NE.E` | 活性物质**颗粒**（particle） | ~1e10 Pa | 颗粒扩散应力（`Calstressdisp`） |
+| `PE.E_coat` / `NE.E_coat` | **极片**涂层（coating） | ~5e8 Pa | CZM 应变驱动、二维宏观应力 |
+| `SP.E` / `PCC.E` / `NCC.E` | 隔膜/集流体连续层 | — | 同极片，参与厚度加权 |
+| `scale.E_p` / `scale.E_n` | 颗粒扩散应力归一化尺度 | cs_max·R·T_ref | 颗粒应力无量纲化 |
+| `scale.E_coat` | 极片宏观模量参考（全叠合厚度加权） | — | CZM/宏观应力无量纲化 |
+
+**CZM/二维宏观应力统一入口**：`compute_effective_coating_modulus(case)` → 返回 `(E_eff, ν_eff, α_eff)`。
+
+**防御**：缺失 `E_coat` 时 `ChooseCell` 触发 `@warn`，`compute_czm_effective_params` 与 `thermal_diffusion_stress_2D` 入口处 `@assert` 拦截。
+
+详见 `md/15_颗粒与极片模量区分.md`。
+
 ---
 
 ## 10. 示例文件

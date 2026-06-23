@@ -62,6 +62,8 @@ $$
 | 初始分离 | δ₀ = T_max/K | 开始损伤的分离位移 |
 | 临界分离 | δ_c = 2G_c/T_max | 完全断裂的分离位移 |
 | 断裂能 | G_c | 界面断裂所需能量 |
+| 极片弹性模量 | E_coat | PE/NE 极片（涂层）宏观弹性模量，用于 CZM 应变驱动的有效模量计算 |
+| 极片泊松比 | nu_coat | PE/NE 极片宏观泊松比 |
 
 ### 2.3 BK 混合模式准则
 
@@ -339,6 +341,28 @@ function assemble_coupled_system(
 - `f_int_total`：内力向量
 - `separations`：分离位移
 - `tractions`：牵引力
+
+### 4.7 应变驱动的有效模量（极片层级）
+
+CZM 应变驱动所需的 `E_eff`、`ν_eff`、`α_eff` 必须使用**极片（涂层）宏观弹性模量**，而**非**颗粒层面的 `PE.E`/`NE.E`。两者物理尺度相差约两个数量级（典型值：颗粒 ~1e10 Pa，极片 ~5e8 Pa），错误使用会造成刚度矩阵系统性偏差。
+
+**统一计算入口**：`compute_effective_coating_modulus(case)`（`src/CouplingState.jl`）
+
+**全叠合厚度加权平均**（PE+NE+SP+PCC+NCC 五层）：
+
+$$
+E_{eff} = \frac{\sum_i E_i \, t_i}{\sum_i t_i}, \quad
+\nu_{eff} = \frac{\sum_i \nu_i \, t_i}{\sum_i t_i}, \quad
+\alpha_{eff} = \frac{\sum_i \alpha_i \, t_i}{\sum_i t_i}
+$$
+
+其中 $i \in \{PE, NE, SP, PCC, NCC\}$，$t_i$ 为各层厚度。
+
+**调用路径**：
+- `thermal_diffusion_stress_2D`（`src/Mechanical.jl`）：直接调用，用于 2D 宏观应力-位移分析
+- `compute_czm_effective_params`（`src/CouplingState.jl`）：调用后做归一化逆变换 $E_{eff}^{dim} = E_{eff}^{norm} \cdot \text{scale.E\_coat} / \text{scale.}\sigma_{czm}$
+
+**参数来源约束**：若 `PE.E_coat == 0` 或 `NE.E_coat == 0`，`ChooseCell` 会发出 `@warn`，并在后续调用处被 `@assert` 拦截（防止 `NaN` 通过厚度加权公式传播）。
 
 ---
 
