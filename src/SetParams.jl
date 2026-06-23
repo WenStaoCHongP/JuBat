@@ -57,11 +57,8 @@
     nu::Float64 = 0           # Poisson's ratio [-]
     alphaT::Float64 = 0       # Thermal expansion coefficient [1/K]
     Omega::Float64 = 0        # Partial molar volume [m^3/mol]
-    # Legacy 极片模量字段（Task 1.3+1.4 将重命名为 E_coat/nu_coat）
-    E_p::Float64 = 0
-    nu_p::Float64 = 0
-    E_n::Float64 = 0
-    nu_n::Float64 = 0
+    E_coat::Float64 = 0       # 极片（涂层）宏观弹性模量 [Pa]
+    nu_coat::Float64 = 0      # 极片（涂层）宏观泊松比 [-]
     Eac_D::Float64 = 0
     Eac_k::Float64 = 0
     alpha::Float64 = 0
@@ -212,6 +209,7 @@ end
     R_cell::Float64 = 0
     E_n::Float64 = 0
     E_p::Float64 = 0
+    E_coat::Float64 = 0       # 极片模量参考尺度 [Pa]
     # --- Thermal scaling (统一能量尺度) ---
     rho::Float64 = 0          # 密度尺度 = 电池平均密度 [kg/m³]
     P_ref::Float64 = 0

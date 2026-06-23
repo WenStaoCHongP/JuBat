@@ -24,3 +24,21 @@ param_dim = JuBat.ChooseCell("Jellyroll")
 @assert hasproperty(param_dim.NCC, :alphaT) "NCC 缺少 alphaT 字段"
 
 println("  PASS: SP/PCC/NCC 结构体字段全部就位")
+
+println("\n" * "="^60)
+println("TEST 2: Electrode.E_coat/nu_coat 字段 + Scale.E_coat")
+println("="^60)
+
+@assert !hasproperty(param_dim.PE, :E_p)  "PE.E_p 应已重命名为 PE.E_coat"
+@assert !hasproperty(param_dim.PE, :nu_p) "PE.nu_p 应已重命名为 PE.nu_coat"
+@assert !hasproperty(param_dim.NE, :E_n)  "NE.E_n 应已重命名为 NE.E_coat"
+@assert !hasproperty(param_dim.NE, :nu_n) "NE.nu_n 应已重命名为 NE.nu_coat"
+
+param_lgm = JuBat.ChooseCell("LG M50")
+@assert param_lgm.PE.E_coat == 0 "LGM50 PE.E_coat 应默认 0"
+@assert param_lgm.NE.E_coat == 0 "LGM50 NE.E_coat 应默认 0"
+
+@assert hasproperty(param_dim.scale, :E_coat) "Scale 缺少 E_coat 字段"
+@assert hasproperty(param_lgm.scale, :E_coat) "Scale 缺少 E_coat 字段（LGM50）"
+
+println("  PASS: 字段定义符合规格")

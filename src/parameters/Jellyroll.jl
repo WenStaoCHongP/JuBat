@@ -25,9 +25,11 @@ PE.cs0 = 17038
 PE.rs = 5.22e-6
 PE.sig = 0.18
 # Mechanical/thermal expansion (example values)
-PE.E = 3.75e10         # Pa
-PE.nu = 0.20          # -
+PE.E = 3.75e10         # Pa颗粒的弹性模量
+PE.nu = 0.20          # -颗粒的泊松比
 PE.alphaT = 1.5e-5    # 1/K
+PE.E_coat = 4.6e8         # Pa 正极片弹性模量
+PE.nu_coat = 0.3          # 正极片泊松比
 PE.Omega = -7.28e-7     # m^3/mol (placeholder if diffusion-stress needed)
 PE.Eac_D = 0
 PE.Eac_k = 17800
@@ -53,9 +55,11 @@ NE.cs0 = 29866
 NE.rs = 5.86e-6          # Chen2020 negative particle radius
 NE.sig = 215.0
 # Mechanical/thermal expansion (example values)
-NE.E = 1.5e10         # Pa
-NE.nu = 0.28          # -
+NE.E = 1.5e10         # Pa颗粒的弹性模量
+NE.nu = 0.28          # -颗粒的泊松比
 NE.alphaT = 8.0e-6    # 1/K
+NE.E_coat = 4.8e8         # Pa 负极片弹性模量
+NE.nu_coat = 0.25          # 负极片泊松比
 NE.Omega = 3.1e-6    # m^3/mol (placeholder if diffusion-stress needed)
 NE.Eac_D = 0.
 NE.Eac_k = 35000.
@@ -82,6 +86,8 @@ SP.heat_Q = 1128        # Specific_heat_capacity_sep (J/kg/K)
 SP.eps = 0.47            # Chen2020 separator porosity
 SP.eps_fi = 0.
 SP.brugg = 1.5           # Chen2020 electrolyte Bruggeman for separator
+SP.E = 1e9         # Pa 隔膜的弹性模量
+SP.nu = 0.3          # 隔膜的泊松比
 
 # Positive Current Collector 
 PCC = CurrentCollector()
@@ -90,6 +96,8 @@ PCC.lambda = 237.   # 热导率 (W/m/K)
 PCC.rho = 2702.    # 密度 (kg/m³)
 PCC.heat_Q = 8.76e2      # 比热容 (J/kg/K)
 PCC.sig =3.55e7
+PCC.E = 70e9         # Pa 正极集流体的弹性模量
+PCC.nu = 0.3          # 正极集流体的泊松比
 
 # Negative Current Collector
 NCC = CurrentCollector()
@@ -98,6 +106,8 @@ NCC.lambda = 401.   # 热导率 (W/m/K)
 NCC.rho = 8933.    # 密度 (kg/m³)
 NCC.heat_Q = 3.83e2      # 比热容 (J/kg/K)
 NCC.sig = 5.96e7
+NCC.E = 69e9         # Pa 负极集流体的弹性模量
+NCC.nu = 0.3          # 负极集流体的泊松比
 
 # Tab
 tab = Tab()
@@ -146,18 +156,18 @@ binder = Binder()
 cohesive = Cohesive()
 
 # 法向参数 (Mode I - 张开模式)
-cohesive.σ_max_n = 82e6 # 最大法向牵引力 [Pa]
-cohesive.K_n = 2.4e17 # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
+cohesive.σ_max_n = 8.2e6 # 最大法向牵引力 [Pa]
+cohesive.K_n = 24e12 # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
 cohesive.δ_0_n = cohesive.σ_max_n / cohesive.K_n # 损伤起始分离位移 [m]
 cohesive.G_c_n = 25.3  # 断裂能 [J/m²]
 cohesive.δ_c_n = 2.0 * cohesive.G_c_n / cohesive.σ_max_n  # 临界分离位移 [m]
 
 
 # 切向参数 (Mode II - 剪切模式)
-cohesive.τ_max_t = 82e6      # 最大切向牵引力 [Pa] (0.15 MPa)
-cohesive.K_t = 2.4e17  # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
+cohesive.τ_max_t = cohesive.σ_max_n      # 最大切向牵引力 [Pa] (0.15 MPa)
+cohesive.K_t = cohesive.K_n  # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
 cohesive.δ_0_t = cohesive.τ_max_t / cohesive.K_t         # 损伤起始切向位移 [m] (35 nm)
-cohesive.G_c_t = 25.3  # [J/m²]
+cohesive.G_c_t = cohesive.G_c_n  # [J/m²]
 cohesive.δ_c_t = 2.0 * cohesive.G_c_t / cohesive.τ_max_t        # 临界切向位移 [m] (180 nm)
 
 # 混合模式参数
