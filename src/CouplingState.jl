@@ -213,6 +213,33 @@ end
 # ========================================================================
 
 """
+    compute_effective_coating_modulus(case)
+
+返回全叠合厚度加权有效模量 (E_eff, ν_eff, α_eff)。
+
+返回值约定：
+- E_eff 通过 scale.E_coat 归一化
+- ν_eff 无量纲
+- α_eff 已按 T_ref 归一化
+
+极片用 E_coat/nu_coat，SP/PCC/NCC 用各自 E/nu。
+α_eff 中集流体/隔膜 alphaT 默认 0（见 spec §5.1.1 近似说明）。
+"""
+function compute_effective_coating_modulus(case)
+    p = case.param
+    t_pe, t_ne = p.PE.thickness, p.NE.thickness
+    t_sp, t_pcc, t_ncc = p.SP.thickness, p.PCC.thickness, p.NCC.thickness
+    Σt = t_pe + t_ne + t_sp + t_pcc + t_ncc
+    E_eff = (p.PE.E_coat*t_pe + p.NE.E_coat*t_ne +
+             p.SP.E*t_sp + p.PCC.E*t_pcc + p.NCC.E*t_ncc) / Σt
+    ν_eff = (p.PE.nu_coat*t_pe + p.NE.nu_coat*t_ne +
+             p.SP.nu*t_sp + p.PCC.nu*t_pcc + p.NCC.nu*t_ncc) / Σt
+    α_eff = (p.PE.alphaT*t_pe + p.NE.alphaT*t_ne +
+             p.SP.alphaT*t_sp + p.PCC.alphaT*t_pcc + p.NCC.alphaT*t_ncc) / Σt
+    return E_eff, ν_eff, α_eff
+end
+
+"""
     compute_czm_effective_params(case)
 
 计算 CZM 求解所需的有效材料参数，全部基于 `SetParams.NormaliseParam`

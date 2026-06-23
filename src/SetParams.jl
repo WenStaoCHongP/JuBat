@@ -399,6 +399,14 @@ function NormaliseParam(param_dim::Params)
     param.SP.lambda = param_dim.SP.lambda / param.scale.lambda
     param.SP.rho = param_dim.SP.rho / param.scale.rho
     param.SP.heat_Q = param_dim.SP.heat_Q * param.scale.rho * param.scale.L^3 * param.scale.T_ref / (param.scale.t0 * param.scale.phi * param.scale.I_typ)
+    # 力学模量归一化（统一到 scale.E_coat 供 compute_effective_coating_modulus 使用）
+    if param.scale.E_coat > 0
+        param.SP.E = param_dim.SP.E / param.scale.E_coat
+    else
+        param.SP.E = 0.0
+    end
+    param.SP.nu = param_dim.SP.nu
+    param.SP.alphaT = param_dim.SP.alphaT * param.scale.T_ref
 
     # positive current colloctor
     param.PCC.thickness = param_dim.PCC.thickness / param.scale.L
@@ -406,12 +414,26 @@ function NormaliseParam(param_dim::Params)
     param.PCC.lambda = param_dim.PCC.lambda / param.scale.lambda
     param.PCC.rho = param_dim.PCC.rho / param.scale.rho
     param.PCC.heat_Q = param_dim.PCC.heat_Q * param.scale.rho * param.scale.L^3 * param.scale.T_ref / (param.scale.t0 * param.scale.phi * param.scale.I_typ)
+    if param.scale.E_coat > 0
+        param.PCC.E = param_dim.PCC.E / param.scale.E_coat
+    else
+        param.PCC.E = 0.0
+    end
+    param.PCC.nu = param_dim.PCC.nu
+    param.PCC.alphaT = param_dim.PCC.alphaT * param.scale.T_ref
     # negative current colloctor
     param.NCC.thickness = param_dim.NCC.thickness / param.scale.L
     param.NCC.sig = param_dim.NCC.sig / param.scale.sig
     param.NCC.lambda = param_dim.NCC.lambda / param.scale.lambda
     param.NCC.rho = param_dim.NCC.rho / param.scale.rho
     param.NCC.heat_Q = param_dim.NCC.heat_Q * param.scale.rho * param.scale.L^3 * param.scale.T_ref / (param.scale.t0 * param.scale.phi * param.scale.I_typ)
+    if param.scale.E_coat > 0
+        param.NCC.E = param_dim.NCC.E / param.scale.E_coat
+    else
+        param.NCC.E = 0.0
+    end
+    param.NCC.nu = param_dim.NCC.nu
+    param.NCC.alphaT = param_dim.NCC.alphaT * param.scale.T_ref
 
     # electrolyte (wrap with invokelatest to avoid world-age issues for closures from parameters)
     param.EL.De = (x, y=1)-> Base.invokelatest(param_dim.EL.De, x * param.scale.ce, y * param.scale.T_ref) / param.scale.De

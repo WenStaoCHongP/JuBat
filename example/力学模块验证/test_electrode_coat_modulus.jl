@@ -91,3 +91,28 @@ expected_NE_E_coat_norm = param_dim.NE.E_coat / param_dim.scale.E_coat
         case.param.NE.E_coat * param_dim.scale.E_coat)
 
 println("  PASS: 归一化一致性（容差 1e-8）")
+
+println("\n" * "="^60)
+println("TEST 5: compute_effective_coating_modulus 全叠合加权")
+println("="^60)
+
+E_eff, nu_eff, alpha_eff = JuBat.compute_effective_coating_modulus(case)
+
+@assert abs(E_eff - 1.0) < 1e-8 "归一化 E_eff 应≈1.0（同尺度），实际 $E_eff"
+
+expected_nu = (
+    case.param.PE.nu_coat * case.param.PE.thickness +
+    case.param.NE.nu_coat * case.param.NE.thickness +
+    case.param.SP.nu      * case.param.SP.thickness  +
+    case.param.PCC.nu     * case.param.PCC.thickness +
+    case.param.NCC.nu     * case.param.NCC.thickness
+) / (case.param.PE.thickness + case.param.NE.thickness +
+    case.param.SP.thickness  + case.param.PCC.thickness + case.param.NCC.thickness)
+@assert abs(nu_eff - expected_nu) < 1e-12 "nu_eff 与手算不符：$nu_eff vs $expected_nu"
+
+@assert alpha_eff >= 0 "alpha_eff 应非负"
+
+@printf("  E_eff (归一化) = %.6f\n", E_eff)
+@printf("  nu_eff         = %.6f (预期 %.6f)\n", nu_eff, expected_nu)
+@printf("  alpha_eff      = %.6e\n", alpha_eff)
+println("  PASS: compute_effective_coating_modulus 输出正确")
