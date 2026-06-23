@@ -137,3 +137,31 @@ _, expected_nu_czm, _ = JuBat.compute_effective_coating_modulus(case)
 @printf("  E_eff (σ_czm 归一化) = %.6e\n", E_eff_czm)
 @printf("  E_eff (E_coat 归一化→σ_czm) = %.6e\n", expected_E_eff_czm)
 println("  PASS: compute_czm_effective_params 与共享函数一致")
+
+println("\n" * "="^60)
+println("TEST 7: thermal_diffusion_stress_2D 使用极片模量（@assert 防御）")
+println("="^60)
+
+mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=20, gsorder=2)
+case = JuBat.setup_thermal2D_mesh(case, mesh_data)
+
+variables = Dict{String, Union{Array{Float64},Float64}}()
+thermal_mesh = case.mesh["thermal2D"]
+nnodes = size(thermal_mesh.node, 1)
+nelems = size(thermal_mesh.element, 1)
+# 注意：函数内部读取归一化 T_nodes 与归一化 param.cell.T0 比较，
+# 因此零扰动情景需用归一化温度（case.param.cell.T0），而非物理温度。
+variables["T_nodes"] = fill(case.param.cell.T0, nnodes)
+variables["thermal2D element soc_n"] = fill(case.param.NE.cs0, nelems)
+variables["thermal2D element soc_p"] = fill(case.param.PE.cs0, nelems)
+
+new_vars = JuBat.thermal_diffusion_stress_2D(case, variables)
+
+@assert haskey(new_vars, "diffusion stress vonMises") "thermal_diffusion_stress_2D 未输出 vonMises"
+@assert haskey(new_vars, "displacement x") "thermal_diffusion_stress_2D 未输出 displacement"
+@printf("  max vonMises = %.3e Pa\n", maximum(new_vars["diffusion stress vonMises"]))
+@printf("  max disp_x   = %.3e m\n",  maximum(abs.(new_vars["displacement x"])))
+
+@assert maximum(abs.(new_vars["diffusion stress vonMises"])) < 1e-3 "零扰动情景应力应≈0"
+
+println("  PASS: thermal_diffusion_stress_2D 正常运行，零扰动情景应力≈0")

@@ -163,26 +163,27 @@ function Calstressdisp(electrode::Electrode, mesh::Mesh, cs::Array{Float64}, T::
 
 """
 function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{Array{Float64},Float64}})
+    # === 入口断言：参数集必须定义 E_coat 才能启用宏观力学 ===
+    @assert case.param_dim.PE.E_coat > 0 && case.param_dim.NE.E_coat > 0 "宏观力学分析需要 PE/NE.E_coat > 0；当前参数集未定义极片模量（E_coat=0）。请在参数文件中补全 PE.E_coat/PE.nu_coat/NE.E_coat/NE.nu_coat，或禁用 mechanicalmodel=\"full\"。"
+
     mesh = case.mesh["thermal2D"]
     @assert mesh.type == "Q4" "diffusion_stress_2D requires Q4 mesh"
-    
+
     param = case.param
     Tref = param.scale.T_ref
     T0 = param.cell.T0
-    
+
     # 提取温度场和SOC分布
     T_nodes = variables["T_nodes"]
     T_nodes = isa(T_nodes, AbstractVector) ? T_nodes : T_nodes[:, end]
     soc_n_elem = variables["thermal2D element soc_n"]
     soc_p_elem = variables["thermal2D element soc_p"]
-    soc_ref_n = param.NE.cs0 
+    soc_ref_n = param.NE.cs0
     soc_ref_p = param.PE.cs0
-    # 获取材料参数
-    E_eff = (param.NE.E * param.NE.thickness + param.PE.E * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
-    ν_eff = (param.NE.nu * param.NE.thickness + param.PE.nu * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
-    α_eff = (param.NE.alphaT * param.NE.thickness + param.PE.alphaT * param.PE.thickness) / (param.NE.thickness + param.PE.thickness)
-    β_n = param.NE.Omega / 3.0 
-    β_p = param.PE.Omega / 3.0 
+    # 获取材料参数（全叠合厚度加权）
+    E_eff, ν_eff, α_eff = compute_effective_coating_modulus(case)
+    β_n = param.NE.Omega / 3.0
+    β_p = param.PE.Omega / 3.0
 
     # 计算单元级别的温度和SOC
     ne = size(mesh.element, 1)
