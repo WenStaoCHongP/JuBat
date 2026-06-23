@@ -185,10 +185,21 @@ try
     error("FAIL: 期望抛 AssertionError 但未抛")
 catch e
     @assert e isa AssertionError "期望 AssertionError，实际抛 $(typeof(e)): $(e.msg)"
-    println("  拦截成功：$(e.msg)")
+    @assert occursin("E_coat", e.msg) "AssertionError 消息应包含 E_coat，实际：$(e.msg)"
+    println("  拦截成功（thermal_diffusion_stress_2D）：$(e.msg)")
 end
 
-println("  PASS: LGM50 启用宏观力学被 @assert 拦截，未产生 NaN 污染")
+# CZM 路径入口断言（compute_czm_effective_params）—— 对称防御
+try
+    JuBat.compute_czm_effective_params(case_lgm)
+    error("FAIL: 期望抛 AssertionError 但未抛")
+catch e
+    @assert e isa AssertionError "期望 AssertionError，实际抛 $(typeof(e)): $(e.msg)"
+    @assert occursin("E_coat", e.msg) "AssertionError 消息应包含 E_coat，实际：$(e.msg)"
+    println("  拦截成功（compute_czm_effective_params）：$(e.msg)")
+end
+
+println("  PASS: LGM50 启用宏观力学/CZM 均被入口 @assert 拦截，未产生 NaN 污染")
 println("\n" * "="^60)
 println("ALL TESTS PASSED")
 println("="^60)

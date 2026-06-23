@@ -256,6 +256,9 @@ end
 - `β_p`: 正极扩散应变系数 [-]
 """
 function compute_czm_effective_params(case)
+    # === 入口断言：参数集必须定义 E_coat 才能启用 CZM 应变驱动 ===
+    @assert case.param_dim.PE.E_coat > 0 && case.param_dim.NE.E_coat > 0 "CZM 应变驱动需要 PE/NE.E_coat > 0；当前参数集未定义极片模量（E_coat=0）。请补全 PE.E_coat/PE.nu_coat/NE.E_coat/NE.nu_coat，或禁用 czm_enabled。"
+
     param = case.param
     scale = case.param_dim.scale
 
