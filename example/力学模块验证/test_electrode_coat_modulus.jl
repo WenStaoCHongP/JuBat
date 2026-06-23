@@ -165,3 +165,30 @@ new_vars = JuBat.thermal_diffusion_stress_2D(case, variables)
 @assert maximum(abs.(new_vars["diffusion stress vonMises"])) < 1e-3 "零扰动情景应力应≈0"
 
 println("  PASS: thermal_diffusion_stress_2D 正常运行，零扰动情景应力≈0")
+
+println("\n" * "="^60)
+println("TEST 8: LGM50（无 E_coat）启用力学应被拦截")
+println("="^60)
+
+param_lgm = JuBat.ChooseCell("LG M50")
+@assert param_lgm.scale.E_coat == 0 "LGM50 scale.E_coat 应保持 0"
+@assert !isnan(param_lgm.scale.E_coat) "scale.E_coat 不能是 NaN"
+
+opt_lgm = JuBat.Option()
+opt_lgm.model = "SPMe"
+case_lgm = JuBat.SetCase(param_lgm, opt_lgm)
+
+variables_lgm = Dict{String, Union{Array{Float64},Float64}}()
+
+try
+    JuBat.thermal_diffusion_stress_2D(case_lgm, variables_lgm)
+    error("FAIL: 期望抛 AssertionError 但未抛")
+catch e
+    @assert e isa AssertionError "期望 AssertionError，实际抛 $(typeof(e)): $(e.msg)"
+    println("  拦截成功：$(e.msg)")
+end
+
+println("  PASS: LGM50 启用宏观力学被 @assert 拦截，未产生 NaN 污染")
+println("\n" * "="^60)
+println("ALL TESTS PASSED")
+println("="^60)
