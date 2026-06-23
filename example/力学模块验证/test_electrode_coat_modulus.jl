@@ -83,12 +83,20 @@ expected_NE_E_coat_norm = param_dim.NE.E_coat / param_dim.scale.E_coat
 @assert case.param.PE.nu_coat == param_dim.PE.nu_coat "nu_coat 不应被归一化"
 @assert case.param.NE.nu_coat == param_dim.NE.nu_coat "nu_coat 不应被归一化"
 
+# SP/PCC/NCC.E 也须按 scale.E_coat 归一化（spec §4.4 增补）
+for (comp, label) in ((:SP, "SP"), (:PCC, "PCC"), (:NCC, "NCC"))
+    dim_E = getfield(param_dim, comp).E
+    norm_E = getfield(case.param, comp).E
+    @assert abs(norm_E - dim_E / param_dim.scale.E_coat) / (dim_E / param_dim.scale.E_coat) < 1e-8 "$label.E 归一化错位：$norm_E vs $(dim_E / param_dim.scale.E_coat)"
+end
+
 @printf("  PE.E_coat: 物理=%.3e Pa, 归一化=%.3f, 还原=%.3e Pa\n",
         param_dim.PE.E_coat, case.param.PE.E_coat,
         case.param.PE.E_coat * param_dim.scale.E_coat)
 @printf("  NE.E_coat: 物理=%.3e Pa, 归一化=%.3f, 还原=%.3e Pa\n",
         param_dim.NE.E_coat, case.param.NE.E_coat,
         case.param.NE.E_coat * param_dim.scale.E_coat)
+@printf("  SP/PCC/NCC.E 已按 scale.E_coat 归一化（spec §4.4）\n")
 
 println("  PASS: 归一化一致性（容差 1e-8）")
 
