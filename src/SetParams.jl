@@ -299,6 +299,20 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.ce = param_dim.EL.ce0
     param_dim.scale.E_n = param_dim.NE.cs_max * param_dim.scale.R * param_dim.scale.T_ref
     param_dim.scale.E_p = param_dim.PE.cs_max * param_dim.scale.R * param_dim.scale.T_ref
+    # --- 极片模量尺度（全叠合厚度加权平均，避开 0/0 = NaN 静默失败）---
+    if param_dim.PE.E_coat == 0 || param_dim.NE.E_coat == 0
+        @warn "[ChooseCell] PE.E_coat/NE.E_coat 未定义；scale.E_coat 将保持 0，宏观力学分析不可用。请补全 E_coat 字段后再启用 mechanicalmodel=\"full\"。"
+        param_dim.scale.E_coat = 0
+    else
+        param_dim.scale.E_coat = (
+            param_dim.PE.E_coat * param_dim.PE.thickness +
+            param_dim.NE.E_coat * param_dim.NE.thickness +
+            param_dim.SP.E      * param_dim.SP.thickness  +
+            param_dim.PCC.E     * param_dim.PCC.thickness +
+            param_dim.NCC.E     * param_dim.NCC.thickness
+        ) / (param_dim.PE.thickness + param_dim.NE.thickness +
+            param_dim.SP.thickness  + param_dim.PCC.thickness + param_dim.NCC.thickness)
+    end
     param_dim.scale.k_p = param_dim.scale.j / param_dim.PE.cs_max / sqrt(param_dim.EL.ce0)
     param_dim.scale.k_n = param_dim.scale.j / param_dim.NE.cs_max / sqrt(param_dim.EL.ce0)
     param_dim.scale.R_cell = param_dim.scale.phi / param_dim.scale.I_typ

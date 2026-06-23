@@ -42,3 +42,26 @@ param_lgm = JuBat.ChooseCell("LG M50")
 @assert hasproperty(param_lgm.scale, :E_coat) "Scale 缺少 E_coat 字段（LGM50）"
 
 println("  PASS: 字段定义符合规格")
+
+println("\n" * "="^60)
+println("TEST 3: scale.E_coat 计算正确性 + NaN 防御")
+println("="^60)
+
+p = param_dim
+expected_E_coat = (
+    p.PE.E_coat * p.PE.thickness +
+    p.NE.E_coat * p.NE.thickness +
+    p.SP.E      * p.SP.thickness  +
+    p.PCC.E     * p.PCC.thickness +
+    p.NCC.E     * p.NCC.thickness
+) / (p.PE.thickness + p.NE.thickness + p.SP.thickness + p.PCC.thickness + p.NCC.thickness)
+
+@assert abs(param_dim.scale.E_coat - expected_E_coat) / expected_E_coat < 1e-12 "scale.E_coat 与手算不一致：$(param_dim.scale.E_coat) vs $expected_E_coat"
+
+@printf("  scale.E_coat = %.3e Pa (预期 %.3e)\n", param_dim.scale.E_coat, expected_E_coat)
+@assert 1e9 < param_dim.scale.E_coat < 1e11 "scale.E_coat 量级应在 1e9-1e11 Pa（集流体主导），实际 $(param_dim.scale.E_coat)"
+
+@assert param_lgm.scale.E_coat == 0 "LGM50 scale.E_coat 应为 0（未定义），实际 $(param_lgm.scale.E_coat)"
+@assert !isnan(param_lgm.scale.E_coat) "LGM50 scale.E_coat 不能是 NaN"
+
+println("  PASS: scale.E_coat 计算正确，NaN 防御有效")
