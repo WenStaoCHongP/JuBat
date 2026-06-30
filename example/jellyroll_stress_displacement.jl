@@ -235,8 +235,12 @@ function main()
     @printf("  sanity: param_dim.NE.cs0=%.1f [mol/m3]  (物理浓度, 仅对比)\n", case.param_dim.NE.cs0)
     @printf("  sanity: soc_n range=[%.4f, %.4f]  (期望 [0,1])\n",
             minimum(soc_n_last), maximum(soc_n_last))
-    @printf("  sanity: σ_vm_global_max=%.3e Pa（极片尺度，期望 1e7–1e9；若 ~1e10 说明误用颗粒 E）\n",
+    @printf("  sanity: σ_vm_global_max=%.3e Pa（电极尺度；典型 1e9–1e11，被集流体主导）\n",
             σ_vm_global_max)
+    @printf("  sanity: scale.E_coat=%.3e Pa（厚度加权有效模量；PE/NE.E_coat=%.2e/%.2e，PCC/NCC.E=%.2e/%.2e）\n",
+            case.param_dim.scale.E_coat,
+            case.param_dim.PE.E_coat, case.param_dim.NE.E_coat,
+            case.param_dim.PCC.E, case.param_dim.NCC.E)
 
     # 若所有节点位移为零，疑似力学求解失败
     @assert Umag_global_max > 0 "所有节点位移均为零，疑似力学求解失败（K_mech\\F_mech 异常），请检查 src/Mechanical.jl:289 catch 分支是否触发"
