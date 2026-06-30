@@ -9,6 +9,7 @@
 ⚠️ 尺度说明：本脚本输出的是 **极片/电极尺度（coating-scale, 二维平面应力）** 的场，
    由全叠合厚度加权有效模量 E_eff（~5e8 Pa 量级）计算；
    与颗粒尺度 Calstressdisp（颗粒 E ~1e10 Pa）不同，二者不可混用。
+   注意：thermal_diffusion_stress_2D 返回 σ 为归一化值，本脚本乘 case.param_dim.scale.E_coat 还原为 Pa。
 
 日期：2026-06-30
 """
@@ -202,10 +203,14 @@ function main()
         @assert length(variables_ti["thermal2D element soc_n"]) == ne
 
         vars_out = JuBat.thermal_diffusion_stress_2D(case, variables_ti)
-        σ_xx = vars_out["diffusion stress xx"]
-        σ_yy = vars_out["diffusion stress yy"]
-        σ_xy = vars_out["diffusion stress xy"]
-        σ_vm = vars_out["diffusion stress vonMises"]
+        # thermal_diffusion_stress_2D 返回的 σ 为归一化值（E_eff 通过 scale.E_coat 归一化，
+        # 见 src/CouplingState.jl:220-223 compute_effective_coating_modulus docstring）；
+        # 乘 scale.E_coat (~5e8 Pa) 还原为物理 Pa。位移字段函数内已 × L_ref，无需再缩放。
+        E_coat_scale = case.param_dim.scale.E_coat
+        σ_xx = vars_out["diffusion stress xx"]      .* E_coat_scale
+        σ_yy = vars_out["diffusion stress yy"]      .* E_coat_scale
+        σ_xy = vars_out["diffusion stress xy"]      .* E_coat_scale
+        σ_vm = vars_out["diffusion stress vonMises"] .* E_coat_scale
         U_x  = vars_out["displacement x"]
         U_y  = vars_out["displacement y"]
         @assert length(σ_vm) == ne
