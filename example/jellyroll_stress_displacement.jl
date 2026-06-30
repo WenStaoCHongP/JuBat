@@ -115,6 +115,68 @@ function main()
     @printf("  仿真时间: %.1f s\n", opt.time[end])
     println("  CZM: 关闭（仅传统固体力学）")
 
+    # ====================================================================
+    # 2. 创建案例与 Jellyroll 网格
+    # ====================================================================
+    println("\n[2/5] 创建案例与 Jellyroll 网格...")
+
+    case = JuBat.SetCase(param_dim, opt)
+
+    n_theta = 360
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, gsorder=2)
+    case = JuBat.setup_thermal2D_mesh(case, mesh_data)
+    mesh_th = case.mesh["thermal2D"]
+
+    # czm_enabled=false：不创建 case.czm_mesh
+
+    ne   = size(mesh_th.element, 1)
+    nlen = mesh_th.nlen
+    println("OK: 网格创建完成")
+    @printf("  n_theta=%d, ne=%d, nlen=%d\n", n_theta, ne, nlen)
+
+    # 前置字段核查（避免后续 helper 误用字段名）
+    @assert hasproperty(mesh_th, :node)    "thermal2D mesh 缺少 .node 字段，实际字段: $(propertynames(mesh_th))"
+    @assert hasproperty(mesh_th, :element) "thermal2D mesh 缺少 .element 字段"
+    @assert size(mesh_th.node, 2) >= 2     "mesh_th.node 列数 < 2"
+    @assert size(mesh_th.element, 2) == 4  "Q4 单元应有 4 列"
+
+    # ====================================================================
+    # 3. 求解
+    # ====================================================================
+    println("\n[3/5] 运行 SPMe+热 求解器（无 CZM）...")
+
+    t_wall_start = time_ns()
+    result = JuBat.Solve(case)
+    t_wall_s = (time_ns() - t_wall_start) * 1e-9
+    println("OK: 求解完成")
+    @printf("  wall-clock: %.2f s\n", t_wall_s)
+
+    # ====================================================================
+    # 4. 时间节点选择
+    # ====================================================================
+    println("\n[4/5] 选择时间节点...")
+
+    t_s = result["time [s]"]
+    @assert haskey(result, "thermal2D temperature at nodes [K]") "result 缺少 'thermal2D temperature at nodes [K]'，请确认 opt.thermalmodel == \"distributed2D\""
+    @assert haskey(result, "thermal2D element soc_n") "result 缺少 'thermal2D element soc_n'"
+    @assert haskey(result, "thermal2D element soc_p") "result 缺少 'thermal2D element soc_p'"
+
+    ti_list = Int[]
+    for t_target in PLOT_TIMES_S
+        if t_target < t_s[1] || t_target > t_s[end]
+            @warn "PLOT_TIMES_S 中 $(t_target) s 超出 [$(t_s[1]), $(t_s[end])] 范围，钳到端点" maxlog=1
+        end
+        ti = argmin(abs.(t_s .- t_target))
+        push!(ti_list, ti)
+    end
+    unique!(ti_list)
+    sort!(ti_list)
+
+    println("OK: 选定时间节点")
+    for ti in ti_list
+        @printf("  ti=%d  t=%.1f s\n", ti, t_s[ti])
+    end
+
     # === ANCHOR_END_PARAMS ===
 end
 
