@@ -46,7 +46,7 @@ end
 # 注：xs[e]/ys[e] 含 5 个点（第 5 = 第 1 闭合），所以 deform 循环用 mod1(k,4)
 #     把第 5 个点也映射到 node 1，保持闭合。
 # --------------------------------------------------------------------------
-function plot_q4_field!(plt, mesh, field_elem, xs, ys; title="", cmap=:RdYlBu_r,
+function plot_q4_field!(plt, mesh, field_elem, xs, ys; title="", cmap=:RdBu,
                         clim=nothing, deform_xy=nothing, def_scale=0.0)
     fmin, fmax = (clim === nothing) ? (minimum(field_elem), maximum(field_elem)) : clim
     if fmax - fmin < 1e-30
@@ -176,6 +176,125 @@ function main()
     for ti in ti_list
         @printf("  ti=%d  t=%.1f s\n", ti, t_s[ti])
     end
+
+    # ====================================================================
+    # 5. 在所有选定时间节点重建场 + 数量级 sanity check
+    # ====================================================================
+    println("\n[5/5] 重建二维场（$(length(ti_list)) 个时间节点）...")
+
+    L_ref = case.param.scale.L
+
+    # NamedTuple 向量（保留类型信息）
+    FieldPack = NamedTuple{(:t, :σ_xx, :σ_yy, :σ_xy, :σ_vm, :U_x, :U_y),
+                           Tuple{Float64, Vector{Float64}, Vector{Float64}, Vector{Float64},
+                                 Vector{Float64}, Vector{Float64}, Vector{Float64}}}
+    fields_per_ti = FieldPack[]
+
+    σ_vm_global_max = 0.0
+    Umag_global_max = 0.0
+    for ti in ti_list
+        variables_ti = Dict{String, Union{Array{Float64},Float64}}(
+            "T_nodes"                 => result["thermal2D temperature at nodes [K]"][:, ti],
+            "thermal2D element soc_n" => result["thermal2D element soc_n"][:, ti],
+            "thermal2D element soc_p" => result["thermal2D element soc_p"][:, ti],
+        )
+        @assert length(variables_ti["T_nodes"]) == nlen
+        @assert length(variables_ti["thermal2D element soc_n"]) == ne
+
+        vars_out = JuBat.thermal_diffusion_stress_2D(case, variables_ti)
+        σ_xx = vars_out["diffusion stress xx"]
+        σ_yy = vars_out["diffusion stress yy"]
+        σ_xy = vars_out["diffusion stress xy"]
+        σ_vm = vars_out["diffusion stress vonMises"]
+        U_x  = vars_out["displacement x"]
+        U_y  = vars_out["displacement y"]
+        @assert length(σ_vm) == ne
+        @assert length(U_x) == nlen
+
+        Umag = sqrt.(U_x.^2 .+ U_y.^2)
+        σ_vm_global_max = max(σ_vm_global_max, maximum(σ_vm))
+        Umag_global_max = max(Umag_global_max, maximum(Umag))
+
+        push!(fields_per_ti, (t=t_s[ti], σ_xx=σ_xx, σ_yy=σ_yy, σ_xy=σ_xy,
+                              σ_vm=σ_vm, U_x=U_x, U_y=U_y))
+
+        @printf("  t=%7.1f s: σ_vm_max=%.3e Pa (%.2f MPa), |U|_max=%.3e m (%.3f µm)\n",
+                t_s[ti], maximum(σ_vm), maximum(σ_vm)*1e-6,
+                maximum(Umag), maximum(Umag)*1e6)
+    end
+
+    # === sanity check：量级 + 量纲 ===
+    ti_last = ti_list[end]
+    soc_n_last = result["thermal2D element soc_n"][:, ti_last]
+    @printf("  sanity: param.NE.cs0(normalized)=%.4f  (期望 [0,1], 典型~0.9)\n", case.param.NE.cs0)
+    @printf("  sanity: param_dim.NE.cs0=%.1f [mol/m3]  (物理浓度, 仅对比)\n", case.param_dim.NE.cs0)
+    @printf("  sanity: soc_n range=[%.4f, %.4f]  (期望 [0,1])\n",
+            minimum(soc_n_last), maximum(soc_n_last))
+    @printf("  sanity: σ_vm_global_max=%.3e Pa（极片尺度，期望 1e7–1e9；若 ~1e10 说明误用颗粒 E）\n",
+            σ_vm_global_max)
+
+    # 若所有节点位移为零，疑似力学求解失败
+    @assert Umag_global_max > 0 "所有节点位移均为零，疑似力学求解失败（K_mech\\F_mech 异常），请检查 src/Mechanical.jl:289 catch 分支是否触发"
+
+    # 自适应变形放大系数：使最大变形 ≈ 5% L_ref
+    DEF_SCALE = 0.05 * L_ref / Umag_global_max
+    @printf("  DEF_SCALE=%.3e（自适应，使 |U|_max×DEF_SCALE ≈ 5%% L_ref）\n", DEF_SCALE)
+
+    # ====================================================================
+    # 6. 绘图：一张大图，行=场分量，列=时间节点
+    # ====================================================================
+    println("\n[绘图]")
+
+    output_dir = joinpath(@__DIR__, "..", "output")
+    mkpath(output_dir)
+
+    nT = length(fields_per_ti)
+    row_labels = ["σ_xx [MPa]", "σ_yy [MPa]", "σ_xy [MPa]", "σ_vm [MPa]", "|U| [μm]"]
+    nrow = length(row_labels)
+    subplots = Plots.Plot[]
+
+    xs0, ys0 = q4_element_polygons(mesh_th)
+
+    for col in 1:nT
+        pack = fields_per_ti[col]
+        Umag = sqrt.(pack.U_x.^2 .+ pack.U_y.^2)
+        # 节点量 |U| 映射到单元常数场（4 角点平均）
+        Umag_elem = zeros(ne)
+        for e in 1:ne
+            n1, n2, n3, n4 = mesh_th.element[e, 1], mesh_th.element[e, 2],
+                             mesh_th.element[e, 3], mesh_th.element[e, 4]
+            Umag_elem[e] = 0.25 * (Umag[n1] + Umag[n2] + Umag[n3] + Umag[n4])
+        end
+        # 单位换算到 MPa / μm
+        col_fields = [pack.σ_xx*1e-6, pack.σ_yy*1e-6, pack.σ_xy*1e-6,
+                      pack.σ_vm*1e-6, Umag_elem*1e6]
+        for row in 1:nrow
+            p = plot(legend=false)
+            if row < 5
+                clim = (minimum(col_fields[row]), maximum(col_fields[row]))
+                plot_q4_field!(p, mesh_th, col_fields[row], xs0, ys0;
+                    title=(@sprintf("t=%.0f s, %s", pack.t, row_labels[row])),
+                    cmap=:RdBu, clim=clim)
+            else
+                clim = (minimum(col_fields[row]), maximum(col_fields[row]))
+                plot_q4_field!(p, mesh_th, col_fields[row], xs0, ys0;
+                    title=(@sprintf("t=%.0f s, %s (def ×%.0f)", pack.t, row_labels[row], DEF_SCALE)),
+                    cmap=:viridis, clim=clim,
+                    deform_xy=(pack.U_x, pack.U_y), def_scale=DEF_SCALE)
+            end
+            push!(subplots, p)
+        end
+    end
+
+    p_combined = plot(subplots..., layout=(nrow, nT),
+                      size=(450*nT, 350*nrow), left_margin=5Plots.mm, bottom_margin=5Plots.mm)
+    out_path = joinpath(output_dir, "jellyroll_stress_displacement.png")
+    savefig(p_combined, out_path)
+    @printf("  大图已保存: %s\n", out_path)
+
+    println("\n" * "="^80)
+    @printf("完成：σ_vm 全局峰值 = %.2f MPa（极片/电极尺度）\n", σ_vm_global_max*1e-6)
+    println("="^80)
 
     # === ANCHOR_END_PARAMS ===
 end
