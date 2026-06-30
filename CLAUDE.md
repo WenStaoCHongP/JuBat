@@ -390,3 +390,4 @@ JuBat 区分两个尺度的弹性模量，**不可混用**：
 | `example/SPMe_Thermal_example.jl` | 电化学-热耦合 |
 | `example/czm_cycle_example.jl` | CZM 循环仿真 |
 | `example/testexample.jl` | 全耦合仿真 |
+| `example/jellyroll_stress_displacement.jl` | 二维应力/位移场后处理（无 CZM） |
