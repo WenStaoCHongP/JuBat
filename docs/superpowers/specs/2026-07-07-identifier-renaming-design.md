@@ -27,12 +27,12 @@
 | # | 当前名 | 目标名 | 性质 |
 |---|--------|--------|------|
 | 1 | `p` (= `case.param`) | `param` | 局部别名 |
-| 2 | `mesh_th` | `mesh_thermal` | 跨 5 文件 + 1 函数形参 |
+| 2 | `mesh_th` | `mesh_thermal` | 跨 6 文件 + 1 函数形参 |
 | 3 | `ws` (自由变量 + CZM kwarg/字段) | `workspace` | 局部 + kwarg + struct 字段 |
 | 4 | `ws_e` | `elem_workspace` | 局部 |
 | 5 | `ws_pool` | `workspace_pool` | 局部 |
 | 6 | `vars_e` | `elem_vars` | 局部 + 1 函数形参 |
-| 7 | `vars_hist` | `history_vars` | 跨文件函数形参 |
+| 7 | `variables_hist` | `history_vars` | 跨 2 文件、15 处引用 |
 | 8 | `Te_prev` | `T_elem_prev` | 局部 |
 | 9 | `fks` | `layer_weights` | 含义不明→明确；跨文件函数形参 |
 | 10 | `T_nodes_carry` | `T_nodes_step` | 跨文件 + 多处函数形参 |
@@ -157,20 +157,21 @@ end
 | # | 当前 | 目标 | 位置 |
 |---|------|------|------|
 | 6 | `vars_e` | `elem_vars` | CallModel.jl:137, 167（局部）；CallModel.jl:242（调用 `copy_element_results(vars_e)`）；CallModel.jl:248（**函数定义形参**，§4.3 例外）；函数体 18+ 处 `vars_e["..."]`；ThermalDistributed.jl:413 |
-| 7 | `vars_hist` | `history_vars` | Variables.jl:236（**函数定义形参**，§4.3 例外）；Solve.jl 调用处 |
+| 7 | `variables_hist` | `history_vars` | Variables.jl:236（**函数定义形参**，§4.3 例外，11 处引用）；Solve.jl:152（赋值）、187（调用）、241（调用）、371（调用） |
 
 **函数签名同步改**（§4.3 例外条款）：
 ```julia
 # Before
-function Variable_update!(vars_hist::Dict{...}, vars::Dict{...}, v::Int64)
+function Variable_update!(variables_hist::Dict{...}, variables::Dict{...}, v::Int64)
 function copy_element_results(vars_e)
 
 # After
-function Variable_update!(history_vars::Dict{...}, vars::Dict{...}, v::Int64)
+function Variable_update!(history_vars::Dict{...}, variables::Dict{...}, v::Int64)
 function copy_element_results(elem_vars)
 ```
 
 注：第三个参数 `v`（步索引）保留原命名（紧凑循环计数惯例）。
+注：第二个参数 `variables`（当前步变量）保留原命名（含义已明确）。
 
 ### 3.5 第 8 项：`Te_prev` → `T_elem_prev`
 
@@ -281,8 +282,7 @@ end
 **引用计数实测**：仅 2 处（行 478 赋值 + 行 548 使用 `- T_ref`）。
 
 **决策**：**保留别名**。删除后只剩 1 次使用，行 548 反而变长且无明显收益。
-- 本项**从范围内移除**，归入"不在范围"。
-- §2.1 表格第 14 项标记为 `已移除`。
+- 本项**从范围内移除**（见 §2.1 末尾"已移除项"清单）。
 
 #### 3.8.4 第 15 项：`T_ref = case.param_dim.scale.T_ref` 内联
 
@@ -291,8 +291,7 @@ end
 **引用计数实测**：共 5 处（行 41 赋值 + 行 99/154/176/244 使用）。
 
 **决策**：**保留别名**。5 次引用中 4 次作为表达式因子；若全部内联为 `case.param_dim.scale.T_ref`，多处行将显著变长，可读性下降。
-- 本项**从范围内移除**，归入"不在范围"。
-- §2.1 表格第 15 项标记为 `已移除`。
+- 本项**从范围内移除**（见 §2.1 末尾"已移除项"清单）。
 
 **修订后第 11-15 项小计**：仅第 11-13 项执行（共 3 项属性别名内联）。
 
@@ -386,4 +385,4 @@ julia example/minimal_example.jl   # 仅当此文件已 commit 且未 modified
 
 ---
 
-**附**：本 spec 的实施应严格遵循"每处修改须向用户询问"的要求，按 11 项顺序逐项推进，每项改动后向用户报告并确认再进入下一项。
+**附**：本 spec 的实施应严格遵循"每处修改须向用户询问"的要求，按 13 项顺序逐项推进，每项改动后向用户报告并确认再进入下一项。
