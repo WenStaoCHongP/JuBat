@@ -20,34 +20,36 @@
 
 ## 2. 范围
 
-### 2.1 在范围内（15 项）
+### 2.1 在范围内（13 项）
 
 **A. 标识符改名（10 项）**
 
 | # | 当前名 | 目标名 | 性质 |
 |---|--------|--------|------|
 | 1 | `p` (= `case.param`) | `param` | 局部别名 |
-| 2 | `mesh_th` | `mesh_thermal` | 跨 5 文件 |
-| 3 | `ws` (自由变量) | `workspace` | 局部 |
+| 2 | `mesh_th` | `mesh_thermal` | 跨 5 文件 + 1 函数形参 |
+| 3 | `ws` (自由变量 + CZM kwarg/字段) | `workspace` | 局部 + kwarg + struct 字段 |
 | 4 | `ws_e` | `elem_workspace` | 局部 |
 | 5 | `ws_pool` | `workspace_pool` | 局部 |
-| 6 | `vars_e` | `elem_vars` | 局部 |
-| 7 | `vars_hist` | `history_vars` | 跨文件参数 |
+| 6 | `vars_e` | `elem_vars` | 局部 + 1 函数形参 |
+| 7 | `vars_hist` | `history_vars` | 跨文件函数形参 |
 | 8 | `Te_prev` | `T_elem_prev` | 局部 |
-| 9 | `fks` | `layer_weights` | 含义不明→明确 |
-| 10 | `T_nodes_carry` | `T_nodes_step` | 跨文件 |
+| 9 | `fks` | `layer_weights` | 含义不明→明确；跨文件函数形参 |
+| 10 | `T_nodes_carry` | `T_nodes_step` | 跨文件 + 多处函数形参 |
 
-**B. 纯属性别名内联（5 项）**
+**B. 纯属性别名内联（3 项）**
 
 | # | 位置 | 当前模式 | 处理 |
 |---|------|----------|------|
 | 11 | `CouplingState.jl:230-231` | `t_pe, t_ne, t_sp, t_pcc, t_ncc = param.X.thickness ...` | 内联到公式（保留 `Σt`，因 3× 分母复用） |
 | 12 | `ThermalDistributed.jl:59` | `T_amb = param.cell.T_amb` | 后续 1 次引用直接用 `param.cell.T_amb` |
 | 13 | `ThermalDistributed.jl:185` | `T_amb = param.cell.T_amb` | 同上 |
-| 14 | `CsvExport.jl:478` | `T_ref = scale.T_ref` | 多处引用直接用 `scale.T_ref` |
-| 15 | `CycleData.jl:41` | `T_ref = case.param_dim.scale.T_ref` | 多处引用直接用完整路径 |
 
-**说明**：第 11-15 项与第 1 项（`p` → `param`）在 `compute_effective_coating_modulus` 内部协同修改。
+**说明**：第 11 项与第 1 项（`p` → `param`）在 `compute_effective_coating_modulus` 内部协同修改。
+
+**已移除项**（审查后从范围剔除）：
+- ~~`CsvExport.jl:478`：`T_ref = scale.T_ref`~~ —— 实测仅 2 处引用，内联后无收益，保留别名。
+- ~~`CycleData.jl:41`：`T_ref = case.param_dim.scale.T_ref`~~ —— 实测 5 处引用，内联会使表达式显著变长，保留别名。
 
 ### 2.2 不在范围内
 
@@ -120,12 +122,16 @@ end
 
 ### 3.2 第 2 项：`mesh_th` → `mesh_thermal`
 
-**位置**（共 6 处赋值，引用更多）：
+**赋值位置**（6 处）：
 - `src/Jellyrollmodel.jl:537, 540`
 - `src/CallModel.jl:31`
 - `src/CsvExport.jl:256, 329`
 - `src/CycleData.jl:112, 269`
 - `src/PostProcessing.jl:69`
+
+**函数形参位置**（同步改，§4.3 例外条款）：
+- `src/CouplingState.jl:31`：`function MultiSPMeLayout(ne::Int, n_chem::Int, nT::Int, mesh_th)` → `..., mesh_thermal)`
+- 函数体内 4 处引用（行 34/36/37）一并改
 
 **Before**: `mesh_th = case.mesh["thermal2D"]`
 **After**: `mesh_thermal = case.mesh["thermal2D"]`
@@ -134,28 +140,34 @@ end
 
 ### 3.3 第 3-5 项：`ws` 系列改名
 
-| 当前 | 目标 | 位置 |
-|------|------|------|
-| `ws`（自由变量） | `workspace` | Variables.jl:164；czm.jl:164；CzmSolve.jl:275, 503 |
-| `ws_e` | `elem_workspace` | CallModel.jl:132 |
-| `ws_pool` | `workspace_pool` | CallModel.jl:126 |
+| # | 当前 | 目标 | 位置与范围 |
+|---|------|------|------------|
+| 3a | `ws`（自由变量） | `workspace` | **仅** `Variables.jl:164`（`create_element_workspace` 内部），40+ 处 `ws["..."]` 引用 |
+| 3b | `ws` kwarg/字段（CZM 模块） | `workspace` | `czm.jl:156,164,186,238,540`；`CzmSolve.jl:75,89,99,275,281,309,353,447,503,510,541,578,623`。共 15+ 处调用点；同步改 kwarg 名 |
+| 3b 注意 | `cache.ws` 字段访问 | `cache.workspace` | `CouplingState.jl:176`（struct 字段 `ws::CZMAssemblyWorkspace`）、`czm.jl:540`、`CzmSolve.jl:275,503`（`cache.ws` 读取）。**struct 字段名也同步改**，否则 kwarg 与字段割裂 |
+| 4 | `ws_e` | `elem_workspace` | `CallModel.jl:132`（局部） |
+| 5 | `ws_pool` | `workspace_pool` | `CallModel.jl:126`（局部） |
 
-注：`workspace` 仍是局部变量名，**不**改成 `case.workspace` 之类的属性，避免引入新的 struct 字段。
+**说明**：
+- `ws` 在 CZM 模块既是 kwarg 又是 struct 字段（`CZMAssemblyCache.ws`），跨"参数/字段"两种身份。本 spec 选择**全部同步改名**（§4.3 例外条款），保证一致性。
+- `workspace` 仍是局部变量/形参名，**不**改成 `case.workspace` 之类的属性，避免引入新的 struct 字段（`cache.ws` 例外，因为本来就在）。
 
 ### 3.4 第 6-7 项：`vars_*` 改名
 
-| 当前 | 目标 | 位置 |
-|------|------|------|
-| `vars_e` | `elem_vars` | CallModel.jl:137, 167；ThermalDistributed.jl:413 |
-| `vars_hist` | `history_vars` | Variables.jl:236（函数形参）；Solve.jl 调用处 |
+| # | 当前 | 目标 | 位置 |
+|---|------|------|------|
+| 6 | `vars_e` | `elem_vars` | CallModel.jl:137, 167（局部）；CallModel.jl:242（调用 `copy_element_results(vars_e)`）；CallModel.jl:248（**函数定义形参**，§4.3 例外）；函数体 18+ 处 `vars_e["..."]`；ThermalDistributed.jl:413 |
+| 7 | `vars_hist` | `history_vars` | Variables.jl:236（**函数定义形参**，§4.3 例外）；Solve.jl 调用处 |
 
-**函数签名同时改**：
+**函数签名同步改**（§4.3 例外条款）：
 ```julia
 # Before
 function Variable_update!(vars_hist::Dict{...}, vars::Dict{...}, v::Int64)
+function copy_element_results(vars_e)
 
 # After
-function Variable_update!(history_vars::Dict{...}, current_vars::Dict{...}, v::Int64)
+function Variable_update!(history_vars::Dict{...}, vars::Dict{...}, v::Int64)
+function copy_element_results(elem_vars)
 ```
 
 注：第三个参数 `v`（步索引）保留原命名（紧凑循环计数惯例）。
@@ -177,16 +189,25 @@ end
 ```julia
 T_elem_prev = zeros(Float64, ne)
 @inbounds for e in 1:ne
-    nds = mesh_thermal.element[e, :]
+    nds = mesh_thermal.element[e, :]            # 注：此处 mesh_thermal 改名属第 2 项
     T_elem_prev[e] = sum(T_nodes[nds]) / length(nds)
 end
 ```
 
 **含义**：上一步的逐单元温度（elemental temperature）。
+**注意**：示例中 `mesh_th → mesh_thermal` 是第 2 项改动，非第 8 项；展示在一起仅为节省篇幅。
 
 ### 3.6 第 9 项：`fks` → `layer_weights`
 
-**位置**：`src/ThermalDistributed.jl:15, 385`
+**赋值位置**（2 处）：
+- `src/ThermalDistributed.jl:15, 385`
+
+**函数形参位置 + 调用方**（跨文件，§4.3 例外条款）：
+- `src/Materialmatrix.jl:10, 16`：`thermal_capacity_weights_2d(param, fks, ele_of_gp, wJ)` 定义 → `..., layer_weights, ...)`
+- `src/Materialmatrix.jl:20`：调用方同步改
+- `src/Materialmatrix.jl:26, 30`：`thermal_anisotropic_conductivity_2d(param, fks, ...)` 定义 → `..., layer_weights, ...)`
+- `src/Materialmatrix.jl:35`：调用方同步改
+- `src/ThermalDistributed.jl:477-488`：函数体内 12 处 `fks[e,1]/[e,2]/...` 数组索引引用一并改
 
 **Before**:
 ```julia
@@ -202,7 +223,18 @@ layer_weights = case.geometry !== nothing ? case.geometry.layer_weights : jellyr
 
 ### 3.7 第 10 项：`T_nodes_carry` → `T_nodes_step`
 
-**位置**：`src/CycleData.jl:71, 78, 81, 149, 152`；`src/Solve.jl:181, 228`
+**赋值位置**：
+- `src/CycleData.jl:71, 78, 81, 149, 152`
+- `src/Solve.jl:181, 228`
+
+**函数形参位置 + 调用方**（跨文件，§4.3 例外条款）：
+- `src/CouplingState.jl:278`（`compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)` 调用方）
+- `src/CouplingState.jl:287`（`function compute_czm_strain_inputs(case, variables::Dict, czm_mesh, T_nodes_carry)` 定义）
+- `src/CouplingState.jl:301, 307, 308`（函数体内引用）
+- `src/CouplingState.jl:338`（`update_czm_damage!(case, variables, T_nodes_carry)` 调用）
+- `src/CouplingState.jl:348`（注释提及）
+- `src/CouplingState.jl:354`（`function update_czm_damage!(case, variables, T_nodes_carry)` 定义）
+- `src/CouplingState.jl:370, 377, 458, 462, 471`（多处形参与调用）
 
 **Before**: `T_nodes_carry = ...` （"carry" 含义模糊——是携带？保留？传递？）
 **After**: `T_nodes_step = ...` （明确表示"当前时间步的节点温度"）
@@ -246,17 +278,23 @@ end
 
 **位置**：`src/CsvExport.jl:478`
 
-**Before**: `T_ref = scale.T_ref` 后续多处 `* T_ref`
-**After**: 删除局部别名，所有引用替换为 `scale.T_ref`
+**引用计数实测**：仅 2 处（行 478 赋值 + 行 548 使用 `- T_ref`）。
+
+**决策**：**保留别名**。删除后只剩 1 次使用，行 548 反而变长且无明显收益。
+- 本项**从范围内移除**，归入"不在范围"。
+- §2.1 表格第 14 项标记为 `已移除`。
 
 #### 3.8.4 第 15 项：`T_ref = case.param_dim.scale.T_ref` 内联
 
 **位置**：`src/CycleData.jl:41`
 
-**Before**: `T_ref = case.param_dim.scale.T_ref`
-**After**: 删除局部别名，引用替换为 `case.param_dim.scale.T_ref`
+**引用计数实测**：共 5 处（行 41 赋值 + 行 99/154/176/244 使用）。
 
-**注意**：若该函数内引用次数 ≥ 5，可考虑保留 `T_ref` 别名（防止行过长）。实施时按实际引用次数判断。
+**决策**：**保留别名**。5 次引用中 4 次作为表达式因子；若全部内联为 `case.param_dim.scale.T_ref`，多处行将显著变长，可读性下降。
+- 本项**从范围内移除**，归入"不在范围"。
+- §2.1 表格第 15 项标记为 `已移除`。
+
+**修订后第 11-15 项小计**：仅第 11-13 项执行（共 3 项属性别名内联）。
 
 ## 4. 实施约束
 
@@ -270,9 +308,16 @@ end
 ### 4.2 不允许
 
 - ❌ 借机"顺手"做其他重构（如键注册表、struct 化）
-- ❌ 修改函数签名（仅改局部变量名/参数名）
+- ❌ **引入新的**函数参数（仅允许同步改名现有参数）
 - ❌ 引入新依赖或新文件
 - ❌ 改动字符串字面量（变量键 `"cell voltage"` 等保持原样）
+
+### 4.3 允许（例外条款）
+
+- ✅ **同步修改形参名**：当某标识符在本次范围内、且在某函数签名中作为形参出现，允许同步改形参名（例如 `Materialmatrix.jl` 中 `thermal_capacity_weights_2d(param, fks, ...)` → `..., layer_weights, ...`）。所有调用方一并改。
+- ✅ **同步修改命名参数（kwarg）名**：仅当 kwarg 名与本次范围内的局部变量同名时允许（例如 CZM 模块的 `ws` kwarg）。所有 `kw=val` 调用点一并改。
+
+**例外条款适用前提**：spec §3 各项下明确列出形参/kwarg 位置；调用方清单完整。
 
 ## 5. 验证方案
 
@@ -286,11 +331,23 @@ julia -e 'include("src/JuBat.jl"); using .JuBat'
 
 ### 5.2 行为验证
 
-完成所有改名后，运行现有示例脚本对比结果：
+**基准锁定**：以本 spec 提交 commit 的父 commit（即 spec 落地前最后一个代码 commit）作为基准：
 ```bash
-julia example/testexample.jl
+git rev-parse HEAD~1   # 基准 commit
 ```
-预期：输出与改名前**完全一致**（同一随机种子、同一结果文件 hash）。
+所有改名后的输出（变量值、CSV、图）应与该基准 commit 在**相同分支、相同 Julia 版本**下的输出**完全一致**。
+
+**最小 smoke 测试**：
+```bash
+julia --project=. -e 'include("src/JuBat.jl"); using .JuBat; opt = JuBat.Option(); println("load ok")'
+```
+
+**回归测试**（可选，若已 commit 的最小示例存在）：
+```bash
+julia example/minimal_example.jl   # 仅当此文件已 commit 且未 modified
+```
+
+**注意**：`example/testexample.jl` 当前处于 modified 状态（见 `git status`），**不可**作为本次回归基准，否则基准本身在变动。
 
 ### 5.3 回归检查
 
