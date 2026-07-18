@@ -1,3 +1,39 @@
+# CZM Plot Post-Processing Implementation Plan
+
+> **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Create a unified `param/plot_czm.py` script that produces 8 types of CZM post-processing plots from CSV data, controlled by a top-level CONFIG dict.
+
+**Architecture:** Single Python file with shared geometry-loading functions and 8 independent plot-maker functions dispatched by CONFIG. No external module dependencies beyond numpy/pandas/matplotlib.
+
+**Tech Stack:** Python 3, numpy, pandas, matplotlib
+
+**Spec:** `docs/superpowers/specs/2026-05-26-czm-plot-postprocessing-design.md`
+
+---
+
+## File Structure
+
+| File | Action | Responsibility |
+|------|--------|----------------|
+| `param/plot_czm.py` | Create | Unified plotting script (CONFIG + shared utils + 8 plotters + dispatch) |
+
+Existing scripts (`param/csv_*.py`) remain untouched for backward compatibility.
+
+---
+
+## Chunk 1: Skeleton, CONFIG, and Shared Functions
+
+### Task 1: Create script skeleton with CONFIG and shared utilities
+
+**Files:**
+- Create: `param/plot_czm.py`
+
+- [ ] **Step 1: Create the file with header, imports, CONFIG dict, and shared functions**
+
+Write `param/plot_czm.py` with the following content (skeleton only, plot functions will be added in subsequent tasks):
+
+```python
 #!/usr/bin/env python3
 """Unified CZM post-processing plotter.
 
@@ -17,20 +53,18 @@ import pandas as pd
 import matplotlib.pyplot as plt
 from matplotlib.tri import Triangulation, LinearTriInterpolator
 from matplotlib.colors import Normalize
-from matplotlib.patches import Polygon as MplPolygon
-from matplotlib.collections import PatchCollection
 
 # =====================================================================
 # User Configuration
 # =====================================================================
 
 CONFIG = {
-    "data_dir": "output/csv/czm_study_2",   # simulation result CSVs
-    "mesh_dir": "output/csv/180",             # mesh geometry CSVs
+    "data_dir": "output/csv/czm_study_1",   # simulation result CSVs
+    "mesh_dir": "output/csv/20",             # mesh geometry CSVs
     "output_dir": "output",                  # PNG output directory
 
     "cycle": 1,                              # which cycle to plot
-    "target_time": 1800.0,                   # target time (s)
+    "target_time": 1200.0,                   # target time (s)
     "phase": "discharge",                    # phase name (for thermal/current)
 
     "plots": [
@@ -42,7 +76,6 @@ CONFIG = {
         "mesh_geometry",
         "traction_separation",
         "separation_cloud",
-        "deformed_shape",
     ],
 }
 
@@ -64,6 +97,7 @@ def _load_mesh_geometry(cfg: dict):
 
     Returns (node_x_orig, node_y_orig, tri, orig_to_unique)
     """
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     df_nodes = pd.read_csv(_resolve_path(cfg, "mesh_nodes.csv"))
     df_elems = pd.read_csv(_resolve_path(cfg, "mesh_elements.csv"))
 
@@ -134,15 +168,60 @@ def _save_fig(fig, cfg, name):
     plt.close(fig)
     print(f"Saved: {out}")
     return out
+```
 
+- [ ] **Step 2: Add dispatch main block at the end of the file**
 
+```python
 # =====================================================================
-# Plotter Registry
+# Dispatch
 # =====================================================================
 
-PLOTTERS: dict[str, callable] = {}
+PLOTTERS: dict[str, callable] = {}  # filled as functions are defined below
 
+def main(cfg: dict | None = None):
+    _setup_rc()
+    c = cfg or CONFIG
+    for plot_type in c["plots"]:
+        fn = PLOTTERS.get(plot_type)
+        if fn:
+            try:
+                fn(c)
+            except Exception as e:
+                print(f"  [!] {plot_type} failed: {e}")
+        else:
+            print(f"  [!] Unknown plot type: {plot_type}")
 
+if __name__ == "__main__":
+    main()
+```
+
+- [ ] **Step 3: Verify script runs without errors (no plots yet)**
+
+Run: `python param/plot_czm.py`
+Expected: No output (empty PLOTTERS dict), no errors.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add param/plot_czm.py
+git commit -m "feat(plot): add unified plot_czm.py skeleton with shared utilities"
+```
+
+---
+
+## Chunk 2: Port Existing 4 Plots
+
+### Task 2: Add `make_temperature` (port from csv_temperature_cloud.py)
+
+**Files:**
+- Modify: `param/plot_czm.py` (append after shared utilities, before dispatch)
+
+- [ ] **Step 1: Add temperature plot function**
+
+Append after `_save_fig` and before `PLOTTERS`:
+
+```python
 # =====================================================================
 # 1. Temperature cloud map
 # =====================================================================
@@ -200,8 +279,23 @@ def make_temperature(cfg: dict):
     _save_fig(fig, cfg, "csv_temperature_cloud.png")
 
 PLOTTERS["temperature"] = make_temperature
+```
 
+- [ ] **Step 2: Run to verify**
 
+Run: `python param/plot_czm.py` (with only `"temperature"` in CONFIG.plots)
+Expected: `Saved: output/csv_temperature_cloud.png`
+
+### Task 3: Add `make_displacement` (port from csv_displacement_cloud.py)
+
+**Files:**
+- Modify: `param/plot_czm.py`
+
+- [ ] **Step 1: Add displacement plot function**
+
+Same pattern: append after temperature section. Uses CZM geometry (not thermal mesh). Phase name uses `"PHASE_" + cfg["phase"].upper()` for CZM data. Produces 3-panel (|u|, ux, uy) figure. Port logic directly from `csv_displacement_cloud.py:make_figure`.
+
+```python
 # =====================================================================
 # 2. Displacement cloud map
 # =====================================================================
@@ -270,65 +364,69 @@ def make_displacement(cfg: dict):
     _save_fig(fig, cfg, "csv_displacement_cloud.png")
 
 PLOTTERS["displacement"] = make_displacement
+```
 
+- [ ] **Step 2: Commit**
 
+```bash
+git add param/plot_czm.py
+git commit -m "feat(plot): add temperature and displacement cloud map plotters"
+```
+
+### Task 4: Add `make_current` and `make_damage_evolution`
+
+**Files:**
+- Modify: `param/plot_czm.py`
+
+- [ ] **Step 1: Add current cloud map function**
+
+Port from `csv_current_cloud.py`. Uses element_currents.csv with thermal mesh for approximate element centers. Key: element e has center at average of nodes (2e-1, 2e) from node_temperature data.
+
+```python
 # =====================================================================
 # 3. Current distribution cloud map
 # =====================================================================
 
 def make_current(cfg: dict):
     df_elem = pd.read_csv(os.path.join(cfg["data_dir"], "element_currents.csv"))
-    df_mesh_nodes = pd.read_csv(_resolve_path(cfg, "mesh_nodes.csv"))
-    df_mesh_elems = pd.read_csv(_resolve_path(cfg, "mesh_elements.csv"))
+    df_node = pd.read_csv(os.path.join(cfg["data_dir"], "node_temperature.csv"))
 
     df_e = df_elem[(df_elem["cycle"] == cfg["cycle"]) & (df_elem["phase"] == cfg["phase"])].copy()
+    df_n = df_node[(df_node["cycle"] == cfg["cycle"]) & (df_node["phase"] == cfg["phase"])].copy()
 
     times = df_e["time_s"].unique()
     t_closest = times[np.argmin(np.abs(times - cfg["target_time"]))]
 
     df_e_t = df_e[df_e["time_s"] == t_closest].copy()
+    df_n_t = df_n[df_n["time_s"] == t_closest].copy()
 
     if len(df_e_t) == 0:
         print(f"  [current] No data at t={t_closest:.1f}s")
         return
 
-    # Node coordinates (1-indexed -> 0-indexed)
-    x_n = df_mesh_nodes["x"].values * 1000  # m -> mm
-    y_n = df_mesh_nodes["y"].values * 1000
+    node_coords = df_n_t[["node_id", "x", "y"]].drop_duplicates("node_id").set_index("node_id")
+    I_e = df_e_t["I_e"].values
+    elem_ids = df_e_t["elem_id"].values
 
-    # Build elem_id -> I_e lookup
-    I_lookup = dict(zip(df_e_t["elem_id"].values, df_e_t["I_e"].values))
+    x_ec = np.full(len(elem_ids), np.nan)
+    y_ec = np.full(len(elem_ids), np.nan)
+    for i, eid in enumerate(elem_ids):
+        n1, n2 = int(2 * eid - 1), int(2 * eid)
+        if n1 in node_coords.index and n2 in node_coords.index:
+            x_ec[i] = 0.5 * (node_coords.loc[n1, "x"] + node_coords.loc[n2, "x"]) * 1000
+            y_ec[i] = 0.5 * (node_coords.loc[n1, "y"] + node_coords.loc[n2, "y"]) * 1000
 
-    # Build Q4 polygon patches colored by branch current
-    patches = []
-    colors = []
-    for _, row in df_mesh_elems.iterrows():
-        eid = int(row["elem_id"]) if "elem_id" in df_mesh_elems.columns else int(row.name) + 1
-        if eid not in I_lookup:
-            continue
-        n1, n2, n3, n4 = int(row["n1"]) - 1, int(row["n2"]) - 1, int(row["n3"]) - 1, int(row["n4"]) - 1
-        quad = [[x_n[n1], y_n[n1]], [x_n[n2], y_n[n2]], [x_n[n3], y_n[n3]], [x_n[n4], y_n[n4]]]
-        patches.append(MplPolygon(quad, closed=True))
-        colors.append(I_lookup[eid])
-
-    if not patches:
-        print("  [current] No matching elements between mesh and current data")
+    valid = ~np.isnan(x_ec)
+    if valid.sum() == 0:
+        print("  [current] No valid element positions")
         return
 
-    colors = np.array(colors)
-
     fig, ax = plt.subplots(figsize=(5.5, 5.0), dpi=300)
-    pc = PatchCollection(patches, cmap="coolwarm", edgecolors="face", linewidths=0.1)
-    pc.set_array(colors)
-    pc.set_clim(colors.min(), colors.max())
-    ax.add_collection(pc)
-
-    cbar = fig.colorbar(pc, ax=ax, fraction=0.046, pad=0.04, format="%.3f")
+    sc = ax.scatter(x_ec[valid], y_ec[valid], c=I_e[valid], cmap="coolwarm", s=3.0, marker="s", edgecolors="none", alpha=0.9)
+    cbar = fig.colorbar(sc, ax=ax, fraction=0.046, pad=0.04, format="%.3f")
     cbar.set_label("Branch current $I_e$ (A)", fontsize=9)
     cbar.ax.tick_params(labelsize=8)
 
-    ax.set_xlim(x_n.min(), x_n.max())
-    ax.set_ylim(y_n.min(), y_n.max())
     ax.set_aspect("equal")
     ax.set_xlabel("x (mm)", fontsize=9)
     ax.set_ylabel("y (mm)", fontsize=9)
@@ -337,8 +435,13 @@ def make_current(cfg: dict):
     _save_fig(fig, cfg, "csv_current_cloud.png")
 
 PLOTTERS["current"] = make_current
+```
 
+- [ ] **Step 2: Add damage evolution function**
 
+Port from `csv_damage_evolution.py`. Uses cohesive_damage.csv. 4-panel: D_max(t), D(θ), δ_n(θ), D(t) most damaged element. Phase names use `PHASE_DISCHARGE/PHASE_CHARGE/PHASE_REST`.
+
+```python
 # =====================================================================
 # 4. Damage & separation evolution
 # =====================================================================
@@ -441,8 +544,32 @@ def make_damage_evolution(cfg: dict):
     _save_fig(fig, cfg, "csv_damage_evolution.png")
 
 PLOTTERS["damage_evolution"] = make_damage_evolution
+```
 
+- [ ] **Step 3: Run all 4 existing plots**
 
+Run: `python param/plot_czm.py` (with first 4 plots in CONFIG)
+Expected: 4 PNG files saved successfully.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add param/plot_czm.py
+git commit -m "feat(plot): add current cloud and damage evolution plotters"
+```
+
+---
+
+## Chunk 3: New Plots (capacity_soh, mesh_geometry, traction_separation, separation_cloud)
+
+### Task 5: Add `make_capacity_soh`
+
+**Files:**
+- Modify: `param/plot_czm.py`
+
+- [ ] **Step 1: Add capacity/SOH plot function**
+
+```python
 # =====================================================================
 # 5. Capacity loss & SOH curve
 # =====================================================================
@@ -484,8 +611,18 @@ def make_capacity_soh(cfg: dict):
     _save_fig(fig, cfg, "csv_capacity_soh.png")
 
 PLOTTERS["capacity_soh"] = make_capacity_soh
+```
 
+### Task 6: Add `make_mesh_geometry`
 
+**Files:**
+- Modify: `param/plot_czm.py`
+
+- [ ] **Step 1: Add mesh geometry visualization function**
+
+Shows thermal mesh nodes + CZM element outlines + cohesive element positions colored by layer_idx.
+
+```python
 # =====================================================================
 # 6. Mesh geometry overview
 # =====================================================================
@@ -499,24 +636,33 @@ def make_mesh_geometry(cfg: dict):
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5.5), dpi=300, constrained_layout=True)
 
-    # (a) Thermal mesh Q4 element outlines
-    x_m = df_mesh_nodes["x"].values
-    y_m = df_mesh_nodes["y"].values
-    for _, row in df_mesh_elems.iterrows():
-        n1, n2, n3, n4 = int(row["n1"]) - 1, int(row["n2"]) - 1, int(row["n3"]) - 1, int(row["n4"]) - 1
-        xs = [x_m[n1], x_m[n2], x_m[n3], x_m[n4], x_m[n1]]
-        ys = [y_m[n1], y_m[n2], y_m[n3], y_m[n4], y_m[n1]]
-        ax1.plot(xs, ys, "k-", lw=0.15)
+    # (a) Thermal mesh + CZM cohesive elements
+    x_m = df_mesh_nodes["x"].values * 1000
+    y_m = df_mesh_nodes["y"].values * 1000
+    ax1.scatter(x_m, y_m, s=0.3, c="gray", alpha=0.5, label="Thermal nodes")
 
-    ax1.set_aspect("equal")
-    ax1.set_xlabel("x (m)", fontsize=9)
-    ax1.set_ylabel("y (m)", fontsize=9)
-    ax1.set_title("(a) Thermal mesh outline", fontsize=10)
-    ax1.tick_params(labelsize=8)
-
-    # (b) CZM bulk mesh outline
+    # Draw CZM cohesive elements as lines (bottom nodes)
     x_c = df_czm_nodes["x"].values * 1000
     y_c = df_czm_nodes["y"].values * 1000
+    layers = df_czm_elems["layer_idx"].values
+    cmap = plt.cm.Set1
+    unique_layers = sorted(set(layers))
+    for lay in unique_layers:
+        mask = layers == lay
+        elems_lay = df_czm_elems[mask]
+        for _, row in elems_lay.iterrows():
+            n1, n2 = int(row["n1_bot"]) - 1, int(row["n2_bot"]) - 1
+            ax1.plot([x_c[n1], x_c[n2]], [y_c[n1], y_c[n2]], "-",
+                     color=cmap(lay / max(unique_layers)), lw=0.3, alpha=0.6)
+
+    ax1.set_aspect("equal")
+    ax1.set_xlabel("x (mm)", fontsize=9)
+    ax1.set_ylabel("y (mm)", fontsize=9)
+    ax1.set_title("(a) Thermal mesh + CZM cohesive elements", fontsize=10)
+    ax1.tick_params(labelsize=8)
+    ax1.legend(fontsize=7, markerscale=10)
+
+    # (b) CZM bulk mesh outline
     ax2.scatter(x_c, y_c, s=0.3, c="blue", alpha=0.5, label="CZM nodes")
     for _, row in df_czm_bulk.iterrows():
         n1, n2, n3, n4 = int(row["n1"]) - 1, int(row["n2"]) - 1, int(row["n3"]) - 1, int(row["n4"]) - 1
@@ -535,8 +681,16 @@ def make_mesh_geometry(cfg: dict):
     _save_fig(fig, cfg, "csv_mesh_geometry.png")
 
 PLOTTERS["mesh_geometry"] = make_mesh_geometry
+```
 
+### Task 7: Add `make_traction_separation`
 
+**Files:**
+- Modify: `param/plot_czm.py`
+
+- [ ] **Step 1: Add traction-separation phase diagram function**
+
+```python
 # =====================================================================
 # 7. Traction-separation phase diagram
 # =====================================================================
@@ -575,7 +729,8 @@ def make_traction_separation(cfg: dict):
     ax1.tick_params(labelsize=8)
     ax1.grid(True, alpha=0.3)
 
-    # (b) All elements at final time: delta_n vs T_n colored by D
+    # (b) All elements at target time: delta_n vs T_n colored by D
+    sub_t = df[df["time_s"] == t_closest]
     sub_f = df[df["time_s"] == t_final]
 
     if len(sub_f) > 0:
@@ -593,8 +748,18 @@ def make_traction_separation(cfg: dict):
     _save_fig(fig, cfg, "csv_traction_separation.png")
 
 PLOTTERS["traction_separation"] = make_traction_separation
+```
 
+### Task 8: Add `make_separation_cloud`
 
+**Files:**
+- Modify: `param/plot_czm.py`
+
+- [ ] **Step 1: Add separation cloud map function**
+
+Plots delta_n as a function of theta (angular position), similar to temperature cloud but using cohesive element data mapped to CZM geometry.
+
+```python
 # =====================================================================
 # 8. Separation displacement cloud map
 # =====================================================================
@@ -613,7 +778,6 @@ def make_separation_cloud(cfg: dict):
 
     fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(11, 4.5), dpi=300, constrained_layout=True)
 
-    sc = None
     for ax, t_val, label in [(ax1, t_closest, f"t = {t_closest:.0f} s"), (ax2, t_final, f"t = {t_final:.0f} s")]:
         sub = df[df["time_s"] == t_val].sort_values("theta_deg")
         if len(sub) == 0:
@@ -634,107 +798,74 @@ def make_separation_cloud(cfg: dict):
         ax.tick_params(labelsize=8)
         ax.grid(True, alpha=0.3)
 
-    if sc is not None:
-        fig.colorbar(sc, ax=ax2, fraction=0.046, pad=0.04, label="Damage D")
+    fig.colorbar(sc, ax=ax2, fraction=0.046, pad=0.04, label="Damage D")
     fig.suptitle(f"Separation Displacement Profile  |  Cycle {cfg['cycle']}", fontsize=12, fontweight="bold")
     _save_fig(fig, cfg, "csv_separation_cloud.png")
 
 PLOTTERS["separation_cloud"] = make_separation_cloud
+```
 
+- [ ] **Step 2: Run all 8 plots**
 
-# =====================================================================
-# 9. Deformed shape visualization
-# =====================================================================
+Run: `python param/plot_czm.py` (with all 8 plots in CONFIG)
+Expected: 8 PNG files saved.
 
-def make_deformed_shape(cfg: dict):
-    """Plot deformed Q4 element mesh (line outlines only, no color fill)."""
-    df_nodes = pd.read_csv(_resolve_path(cfg, "czm_nodes.csv"))
-    df_elems = pd.read_csv(_resolve_path(cfg, "czm_bulk_elements.csv"))
+- [ ] **Step 3: Commit**
 
-    df_disp = pd.read_csv(os.path.join(cfg["data_dir"], "node_displacement.csv"))
-    czm_phase = "PHASE_" + cfg["phase"].upper()
-    df_disp = df_disp[(df_disp["cycle"] == cfg["cycle"]) & (df_disp["phase"] == czm_phase)].copy()
+```bash
+git add param/plot_czm.py
+git commit -m "feat(plot): add 4 new plotters (capacity_soh, mesh_geometry, traction_separation, separation_cloud)"
+```
 
-    if len(df_disp) == 0:
-        print(f"  [deformed_shape] No displacement data for cycle {cfg['cycle']}, phase {czm_phase}")
-        return
+---
 
-    times = df_disp["time_s"].unique()
-    t_closest = times[np.argmin(np.abs(times - cfg["target_time"]))]
-    sub = df_disp[df_disp["time_s"] == t_closest].copy()
+## Chunk 4: Final Verification
 
-    if len(sub) == 0:
-        print(f"  [deformed_shape] No data at t={t_closest:.1f}s")
-        return
+### Task 9: End-to-end verification
 
-    # Original coordinates (m) -> mm
-    x0 = df_nodes["x"].values
-    y0 = df_nodes["y"].values
-    s = 1000
-    x0_mm, y0_mm = x0 * s, y0 * s
+- [ ] **Step 1: Run the complete script**
 
-    # Build displacement arrays (m)
-    ux = np.zeros(len(x0))
-    uy = np.zeros(len(y0))
-    for _, row in sub.iterrows():
-        nid = int(row["node_id"]) - 1
-        ux[nid] = row["ux"]
-        uy[nid] = row["uy"]
+Run: `python param/plot_czm.py`
+Expected: 8 PNG files saved to `output/`:
+- `csv_temperature_cloud.png`
+- `csv_displacement_cloud.png`
+- `csv_current_cloud.png`
+- `csv_damage_evolution.png`
+- `csv_capacity_soh.png`
+- `csv_mesh_geometry.png`
+- `csv_traction_separation.png`
+- `csv_separation_cloud.png`
 
-    # Auto amplification: max deformation = 10% of model size
-    L = np.sqrt((x0.max() - x0.min()) ** 2 + (y0.max() - y0.min()) ** 2)
-    d_max = np.max(np.sqrt(ux ** 2 + uy ** 2))
-    if d_max > 1e-30:
-        amp = L * 0.10 / d_max
-    else:
-        amp = 1.0
+- [ ] **Step 2: Visually verify each plot**
 
-    # Deformed coordinates (mm)
-    x_def_mm = (x0 + amp * ux) * s
-    y_def_mm = (y0 + amp * uy) * s
+Check that:
+- Temperature cloud shows spatial distribution on jellyroll cross-section
+- Displacement cloud shows 3 panels (|u|, ux, uy) with colorbar
+- Current cloud shows element scatter on cross-section
+- Damage evolution shows 4 panels with proper phase labels
+- Capacity/SOH shows bar+line chart and SOH curve
+- Mesh geometry shows thermal nodes and CZM elements
+- Traction-separation shows phase curves and scatter
+- Separation cloud shows delta_n vs theta at two time points
 
-    nn = df_elems[["n1", "n2", "n3", "n4"]].values.astype(int) - 1
+- [ ] **Step 3: Test selective plotting**
 
-    fig, ax = plt.subplots(figsize=(6, 6), dpi=300)
+Change `CONFIG["plots"]` to `["temperature", "capacity_soh"]` and run again.
+Expected: Only 2 PNG files generated.
 
-    # Draw deformed Q4 element outlines only
-    for i in range(len(df_elems)):
-        n1, n2, n3, n4 = nn[i]
-        xs = [x_def_mm[n1], x_def_mm[n2], x_def_mm[n3], x_def_mm[n4], x_def_mm[n1]]
-        ys = [y_def_mm[n1], y_def_mm[n2], y_def_mm[n3], y_def_mm[n4], y_def_mm[n1]]
-        ax.plot(xs, ys, "k-", lw=0.15)
+---
 
-    ax.set_aspect("equal")
-    ax.set_xlabel("x (mm)", fontsize=9)
-    ax.set_ylabel("y (mm)", fontsize=9)
-    ax.set_title(
-        f"Deformed Q4 mesh  (×{amp:.0f})\n"
-        f"t = {t_closest:.0f} s, {cfg['phase']}, cycle {cfg['cycle']}",
-        fontsize=10,
-    )
-    ax.tick_params(labelsize=8)
+## Summary
 
-    _save_fig(fig, cfg, "csv_deformed_shape.png")
-
-PLOTTERS["deformed_shape"] = make_deformed_shape
-
-
-# =====================================================================
-# Dispatch
-# =====================================================================
-
-def main(cfg: dict | None = None):
-    _setup_rc()
-    c = cfg or CONFIG
-    for plot_type in c["plots"]:
-        fn = PLOTTERS.get(plot_type)
-        if fn:
-            try:
-                fn(c)
-            except Exception as e:
-                print(f"  [!] {plot_type} failed: {e}")
-        else:
-            print(f"  [!] Unknown plot type: {plot_type}")
-
-if __name__ == "__main__":
-    main()
+| Task | Description | Est. Lines |
+|------|-------------|------------|
+| 1 | Skeleton + CONFIG + shared utils | ~130 lines |
+| 2 | make_temperature | ~40 lines |
+| 3 | make_displacement | ~55 lines |
+| 4 | make_current + make_damage_evolution | ~120 lines |
+| 5 | make_capacity_soh | ~35 lines |
+| 6 | make_mesh_geometry | ~55 lines |
+| 7 | make_traction_separation | ~50 lines |
+| 8 | make_separation_cloud | ~40 lines |
+| 9 | Verification | 0 lines |
+| **Total** | | **~525 lines** |

@@ -190,8 +190,9 @@ function main()
 
     gci_results = []
     for i in 1:length(THERMAL_Nθ)-1
-        r21 = h_vals[i+1] / h_vals[i]
-        r32 = i+1 < length(THERMAL_Nθ) ? h_vals[i+2] / h_vals[i+1] : r21
+        # r > 1: 粗网格 h / 细网格 h（THERMAL_Nθ 从粗到细排列）
+        r21 = h_vals[i] / h_vals[i+1]
+        r32 = i+1 < length(THERMAL_Nθ) ? h_vals[i+1] / h_vals[i+2] : r21
 
         if i + 2 <= length(THERMAL_Nθ)
             p_T = observed_order(Tmax_end_vals[i], Tmax_end_vals[i+1],
@@ -200,7 +201,8 @@ function main()
             p_T = 2.0
         end
 
-        gci_T = compute_gci(Tmax_end_vals[i], Tmax_end_vals[i+1], r21;
+        # compute_gci(f_fine, f_coarse, r): fine=细网格(i+1), coarse=粗网格(i)
+        gci_T = compute_gci(Tmax_end_vals[i+1], Tmax_end_vals[i], r21;
                             p=isnan(p_T) ? 2.0 : p_T)
         push!(gci_results, (r21, p_T, gci_T))
 
@@ -245,10 +247,10 @@ function main()
     end
     savefig(p1, joinpath(out_dir, "thermal_temperature_convergence.png"))
 
-    # 图2: log-log 收敛误差图
-    h_plot = h_vals[2:end]
-    Tmax_plot = Tmax_l2[2:end]
-    Spatial_plot = Spatial_l2[2:end]
+    # 图2: log-log 收敛误差图（排除参考解的 0 误差）
+    h_plot = h_vals[1:end-1]
+    Tmax_plot = Tmax_l2[1:end-1]
+    Spatial_plot = Spatial_l2[1:end-1]
 
     p3 = plot(xlabel="h (element size)", ylabel="L2_rel error [%]",
               title="Thermal Mesh: Convergence",

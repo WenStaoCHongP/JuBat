@@ -34,8 +34,7 @@ function SPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
     return M, K, F, variables
 end
 
-function SPMe_element(case::Case, yt_e, t::Float64, e::Int; I_e::Float64, T_e::Float64, jacobi::String="update",
-                       workspace::Union{Nothing, Dict{String, Union{Array{Float64},Float64}}}=nothing)
+function SPMe_element(case::Case, yt_e, t::Float64, e::Int; I_e::Float64, T_e::Float64, jacobi::String="update",workspace::Union{Nothing, Dict{String, Union{Array{Float64},Float64}}}=nothing)
     # 1) 使用 workspace 或创建新 variables
     if workspace !== nothing
         variables_e = SPMe_variables!(workspace, case, yt_e, t; I_app=I_e, T_e=T_e)

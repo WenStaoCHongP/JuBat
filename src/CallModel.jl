@@ -101,6 +101,14 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     D_elem_area_loss = nothing
     if case.opt.czm_area_loss_enabled && case.czm_mesh !== nothing && case.geometry !== nothing && hasfield(typeof(case.geometry), :czm_element_map)
         D_elem_area_loss = map_czm_damage_to_thermal(case.czm_mesh, case.geometry, ne)
+        # 调试：输出 D 映射统计
+        D_above = filter(d -> d > case.opt.czm_area_loss_threshold, D_elem_area_loss)
+        if !isempty(D_above) && case.opt.debug_coupling
+            inner_count = count(case.geometry.is_inner_layer)
+            active_inner = count(e -> case.geometry.is_inner_layer[e] && D_elem_area_loss[e] > case.opt.czm_area_loss_threshold, 1:ne)
+            t_phys = round(t * case.param.scale.t0, digits=1)
+            println("  [AreaLoss] t=$(t_phys)s | D_max=$(round(maximum(D_elem_area_loss), digits=4)) | 超阈值单元=$(length(D_above))/$(inner_count)内侧 | threshold=$(case.opt.czm_area_loss_threshold)")
+        end
     end
 
     t_branch_ns = time_ns()

@@ -305,13 +305,13 @@ function ChooseCell(CellType::String="LG M50")
         param_dim.scale.E_coat = 0
     else
         param_dim.scale.E_coat = (
-            param_dim.PE.E_coat * param_dim.PE.thickness +
-            param_dim.NE.E_coat * param_dim.NE.thickness +
-            param_dim.SP.E      * param_dim.SP.thickness  +
+            param_dim.PE.E_coat * param_dim.PE.thickness * 2 +
+            param_dim.NE.E_coat * param_dim.NE.thickness * 2 +
+            param_dim.SP.E      * param_dim.SP.thickness * 2 +
             param_dim.PCC.E     * param_dim.PCC.thickness +
             param_dim.NCC.E     * param_dim.NCC.thickness
-        ) / (param_dim.PE.thickness + param_dim.NE.thickness +
-            param_dim.SP.thickness  + param_dim.PCC.thickness + param_dim.NCC.thickness)
+        ) / (param_dim.PE.thickness * 2 + param_dim.NE.thickness * 2 +
+            param_dim.SP.thickness * 2 + param_dim.PCC.thickness + param_dim.NCC.thickness)
     end
     param_dim.scale.k_p = param_dim.scale.j / param_dim.PE.cs_max / sqrt(param_dim.EL.ce0)
     param_dim.scale.k_n = param_dim.scale.j / param_dim.NE.cs_max / sqrt(param_dim.EL.ce0)

@@ -49,7 +49,7 @@ opt.dtType = "auto"
 opt.thermal_enabled = true
 opt.thermalmodel = "distributed2D"
 opt.thermal_dim = "2D"
-opt.cool_method = "surface"
+opt.cool_method = "tab"
 opt.per_element_spme = true
 
 # CZM选项
@@ -62,7 +62,8 @@ opt.czm_fix_inner = false               # 力学边界：内圈自由，外圈�
 opt.czm_iter_method = "basic"     # 使用弧长法处理后峰软化（配合粘性正则化）
 opt.czm_load_steps = 10                 # 载荷子步数
 opt.debug_coupling = false               # 打印 CZM 每步诊断
-
+opt.czm_area_loss_enabled = false        # 启用渐进式有效面积损失
+opt.czm_area_loss_threshold = 0.83      # 面积开始缩减的 D 阈值
 # 粘性正则化（推荐配合 load_substep 或 arc_length 使用）
 opt.czm_viscous_enabled = false         # 关闭粘性正则化（回归测试）
 opt.czm_visc_tau = 0                  # 松弛时间
@@ -74,6 +75,8 @@ println("    czm_soh_threshold = $(opt.czm_soh_threshold)")
 println("    czm_iter_method = $(opt.czm_iter_method)")
 println("    czm_viscous_enabled = $(opt.czm_viscous_enabled)")
 println("    czm_fix_inner = $(opt.czm_fix_inner) (边界条件: 内圈$(opt.czm_fix_inner ? "固定" : "自由"), 外圈固定)")
+println("    czm_area_loss_enabled = $(opt.czm_area_loss_enabled)")
+println("    czm_area_loss_threshold = $(opt.czm_area_loss_threshold)")
 if opt.czm_viscous_enabled
     println("    czm_visc_tau = $(opt.czm_visc_tau) s")
 end
@@ -85,7 +88,7 @@ println("\n[3] 生成统一网格...")
 
 # 先创建Case以获取归一化参数
 case_temp = JuBat.SetCase(param_dim, opt)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(case_temp.param; nθ=20, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(case_temp.param; nθ=80, gsorder=2)
 
 println("  热网格单元数: $(mesh_data.ne)")
 println("  热网格节点数: $(mesh_data.nnode)")
@@ -123,7 +126,7 @@ mesh_th = case.mesh["thermal2D"]
 println("\n[6] 设置循环参数...")
 
 cycle_opt = JuBat.CycleOption(
-    n_cycles = 10,           # 循环次数
+    n_cycles = 1,           # 循环次数
     SOC_init = 0.65,         # 初始SOC 90%
     t_discharge = 1800.0,   # 放电时间 1小时
     t_charge = 1800.0,      # 充电时间 1小时
@@ -133,7 +136,7 @@ cycle_opt = JuBat.CycleOption(
     I_charge = 5.0,         # 充电电流 1C (5A)
     V_lower = 2.5,          # 放电截止电压
     V_upper = 4.2,          # 充电截止电压
-    dt_cycle = [1.0, 10.0], # 时间步范围
+    dt_cycle = [0.1, 5.0], # 时间步范围
     reset_T_each_cycle = false
 )
 
@@ -156,13 +159,13 @@ println("\n[7.5] 导出CSV文件...")
 
 output_dir = joinpath(@__DIR__, "..", "output")
 mkpath(output_dir)
-csv_dir = joinpath(output_dir, "csv", "czm_study_1")
+csv_dir = joinpath(output_dir, "csv", "czm_study_2")
 
 # 配置CSV导出选项：仅输出每个阶段首尾步，指定循环完整输出
 csv_opt = JuBat.CsvExportOptions(
     :phase_ends,                # 仅阶段首尾
     1,                          # save_every (仅 :custom 模式使用)
-    [1, result.n_cycles],       # 第1个和最后一个循环完整输出
+    [1],       # 第1个和最后一个循环完整输出
     String[]                    # 不跳过任何文件
 )
 

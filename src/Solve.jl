@@ -155,12 +155,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     t = t0
     vt = 2  
     v = 1
-    timing_totals = Dict{String,Float64}(
-        "spme" => 0.0,
-        "branch" => 0.0,
-        "thermal" => 0.0,
-        "czm" => 0.0,
-    )
+    timing_totals = Dict{String,Float64}("spme" => 0.0,"branch" => 0.0,"thermal" => 0.0,"czm" => 0.0,)
     timing_call_count = 0
 
     function accumulate_callmodel_timing!(totals::Dict{String,Float64}, vars::Dict{String, Union{Array{Float64},Float64}})

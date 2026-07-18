@@ -4,11 +4,7 @@ if !isdefined(@__MODULE__, :ShapeFunction2D)
     include(joinpath(@__DIR__, "SetMesh.jl"))
 end
 
-function ring_mesh(param;
-    ntheta::Int=40,
-    nr::Int=20,
-    phase::Float64=0.0,
-    gsorder::Int=2)
+function ring_mesh(param;ntheta::Int=40,nr::Int=20,phase::Float64=0.0,gsorder::Int=2)
 
     Rin = param.cell.Rin
     Rout = param.cell.Rout
@@ -70,13 +66,5 @@ function ring_mesh(param;
     inner_nodes = [idx(1, it) for it in 1:ntheta]
     outer_nodes = [idx(nr + 1, it) for it in 1:ntheta]
 
-    return (
-        mesh = mesh,
-        inner_nodes = inner_nodes,
-        outer_nodes = outer_nodes,
-        r = r,
-        theta = vcat(theta, theta[1] + 2.0 * pi),
-        nr = nr,
-        ntheta = ntheta
-    )
+    return (mesh = mesh,inner_nodes = inner_nodes,outer_nodes = outer_nodes,r = r,theta = vcat(theta, theta[1] + 2.0 * pi),nr = nr,ntheta = ntheta)
 end

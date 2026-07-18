@@ -31,15 +31,17 @@ function get_czm_nθ(param_dim)
     nθ_inner = ceil(Int, 2π * R_in  / l_c)
     nθ_outer = ceil(Int, 2π * R_out / l_c)
 
-    step = max(1, round(Int, (nθ_outer - nθ_inner) / 3))
-    nθ_list = [nθ_inner + i * step for i in 0:3]
-    nθ_list[4] = nθ_outer
+    # 确保最小 nθ 足够大（全耦合模型需要足够细的网格才能收敛）
+    # 参考 testexample.jl 使用 nθ=360，CZM 收敛分析使用 80-320 范围
+    nθ_list = [80, 160, 240, 320]
 
     return nθ_list, l_c, E_eff
 end
 
 function run_czm_case(param_dim, nθ)
     opt = JuBat.Option()
+    Crates = 3.0
+    i = 5 * Crates
     opt.model = "SPMe"
     opt.dimension = 1
     opt.Nn = 10; opt.Ns = 5; opt.Np = 10
@@ -48,7 +50,7 @@ function run_czm_case(param_dim, nθ)
     opt.solveType = "Crank-Nicolson"
     opt.dtType = "auto"
     opt.dt = [0.5, 10.0]
-    opt.time = [0.0, 3600]
+    opt.time = [0.0, 600]
 
     opt.thermal_enabled = true
     opt.thermalmodel = "distributed2D"
@@ -154,7 +156,7 @@ function main()
     println("\n" * "=" ^ 70)
     println("CZM 网格收敛性误差 (L2 范数)")
     println("=" ^ 70)
-    @printf("%-10s  %10s  %10s  %12s  %12s  %12s  %12s  %12s  %12s  %10s\n",
+    @printf("%-10s  %10s  %10s  %12s  %12s  %12s  %12s  %12s  %10s\n",
             "nθ", "n_coh", "h",
             "E_frac L2", "D_max L2%", "n_frac L2", "δ L2%", "Area err%", "Wall [s]")
     println("-" ^ 115)
@@ -167,8 +169,8 @@ function main()
         if i == ref_idx
             push!(D_l2, 0.0); push!(nfrac_l2, 0.0); push!(delta_l2, 0.0)
             push!(area_errors, 0.0); push!(Efrac_l2, 0.0)
-            @printf("%-10d  %10d  %10.6f  %12s  %12s  %12s  %12s  %12s  %12s  %10.2f\n",
-                    nθ, n_coh, h_vals[i], "ref", "ref", "ref", "ref", "ref", "ref", all_wall[i])
+            @printf("%-10d  %10d  %10.6f  %12s  %12s  %12s  %12s  %12s  %10.2f\n",
+                    nθ, n_coh, h_vals[i], "ref", "ref", "ref", "ref", "ref", all_wall[i])
             continue
         end
 
@@ -223,7 +225,7 @@ function main()
         end
         push!(area_errors, err_area)
 
-        @printf("%-10d  %10d  %10.6f  %12.4e  %12.4f  %12.4f  %12.4f  %12.4f  %12.4f  %10.2f\n",
+        @printf("%-10d  %10d  %10.6f  %12.4e  %12.4f  %12.4f  %12.4f  %12.4f  %10.2f\n",
                 nθ, n_coh, h_vals[i], err_Efrac, err_D, err_nf, err_d, err_area, all_wall[i])
     end
 
@@ -240,8 +242,9 @@ function main()
 
     gci_results = []
     for i in 1:length(nθ_list)-1
-        r21 = h_vals[i+1] / h_vals[i]
-        r32 = i+1 < length(nθ_list) ? h_vals[i+2] / h_vals[i+1] : r21
+        # r > 1: 粗网格 h / 细网格 h（nθ_list 从粗到细排列）
+        r21 = h_vals[i] / h_vals[i+1]
+        r32 = i+1 < length(nθ_list) ? h_vals[i+1] / h_vals[i+2] : r21
 
         if i + 2 <= length(nθ_list)
             p_E = observed_order(Efrac_end_vals[i], Efrac_end_vals[i+1],
@@ -252,10 +255,11 @@ function main()
             p_E = NaN; p_D = NaN
         end
 
-        gci_E = compute_gci(Efrac_end_vals[i], Efrac_end_vals[i+1], r21;
+        # compute_gci(f_fine, f_coarse, r): fine=细网格(i+1), coarse=粗网格(i)
+        gci_E = compute_gci(Efrac_end_vals[i+1], Efrac_end_vals[i], r21;
                             p=isnan(p_E) ? 2.0 : p_E)
         gci_D = isnan(Dmax_end_vals[i]) ? NaN :
-                compute_gci(Dmax_end_vals[i], Dmax_end_vals[i+1], r21;
+                compute_gci(Dmax_end_vals[i+1], Dmax_end_vals[i], r21;
                             p=isnan(p_D) ? 2.0 : p_D)
 
         push!(gci_results, (r21, p_E, gci_E, gci_D))

@@ -1,4 +1,4 @@
-function ThermalDistributed2D(case::Case, variables::Dict{String,Union{Array{Float64},Float64}})
+function ThermalDistributed2D(case::Case, variables::Dict{String,<:Any})
     mesh = case.mesh["thermal2D"]
     param = case.param  # 只使用无量纲参数
     nnode = mesh.nlen

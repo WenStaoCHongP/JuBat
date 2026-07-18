@@ -1,0 +1,7 @@
+# Local IDE / agent settings
+.claude/settings.local.json
+
+# Generated outputs (regenerable artifacts)
+output/csv/180/
+output/csv/czm_study_2/
+output/mesh_convergence/

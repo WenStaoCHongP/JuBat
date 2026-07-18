@@ -229,13 +229,13 @@ function compute_effective_coating_modulus(case)
     p = case.param
     t_pe, t_ne = p.PE.thickness, p.NE.thickness
     t_sp, t_pcc, t_ncc = p.SP.thickness, p.PCC.thickness, p.NCC.thickness
-    Σt = t_pe + t_ne + t_sp + t_pcc + t_ncc
-    E_eff = (p.PE.E_coat*t_pe + p.NE.E_coat*t_ne +
-             p.SP.E*t_sp + p.PCC.E*t_pcc + p.NCC.E*t_ncc) / Σt
-    ν_eff = (p.PE.nu_coat*t_pe + p.NE.nu_coat*t_ne +
-             p.SP.nu*t_sp + p.PCC.nu*t_pcc + p.NCC.nu*t_ncc) / Σt
-    α_eff = (p.PE.alphaT*t_pe + p.NE.alphaT*t_ne +
-             p.SP.alphaT*t_sp + p.PCC.alphaT*t_pcc + p.NCC.alphaT*t_ncc) / Σt
+    Σt = t_pe * 2 + t_ne * 2 + t_sp * 2 + t_pcc + t_ncc
+    E_eff = (p.PE.E_coat*t_pe *2 + p.NE.E_coat*t_ne *2 +
+             p.SP.E*t_sp *2 + p.PCC.E*t_pcc + p.NCC.E*t_ncc) / Σt
+    ν_eff = (p.PE.nu_coat*t_pe*2 + p.NE.nu_coat*t_ne*2 +
+             p.SP.nu*t_sp*2 + p.PCC.nu*t_pcc + p.NCC.nu*t_ncc) / Σt
+    α_eff = (p.PE.alphaT*t_pe*2 + p.NE.alphaT*t_ne*2 +
+             p.SP.alphaT*t_sp*2 + p.PCC.alphaT*t_pcc + p.NCC.alphaT*t_ncc) / Σt
     return E_eff, ν_eff, α_eff
 end
 

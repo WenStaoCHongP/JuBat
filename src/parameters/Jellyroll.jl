@@ -86,7 +86,7 @@ SP.heat_Q = 1128        # Specific_heat_capacity_sep (J/kg/K)
 SP.eps = 0.47            # Chen2020 separator porosity
 SP.eps_fi = 0.
 SP.brugg = 1.5           # Chen2020 electrolyte Bruggeman for separator
-SP.E = 1e9         # Pa 隔膜的弹性模量
+SP.E = 500e6         # Pa 隔膜的弹性模量
 SP.nu = 0.3          # 隔膜的泊松比
 
 # Positive Current Collector 
@@ -96,7 +96,7 @@ PCC.lambda = 237.   # 热导率 (W/m/K)
 PCC.rho = 2702.    # 密度 (kg/m³)
 PCC.heat_Q = 8.76e2      # 比热容 (J/kg/K)
 PCC.sig =3.55e7
-PCC.E = 70e9         # Pa 正极集流体的弹性模量
+PCC.E = 500e6         # Pa 正极集流体的弹性模量
 PCC.nu = 0.3          # 正极集流体的泊松比
 
 # Negative Current Collector
@@ -106,7 +106,7 @@ NCC.lambda = 401.   # 热导率 (W/m/K)
 NCC.rho = 8933.    # 密度 (kg/m³)
 NCC.heat_Q = 3.83e2      # 比热容 (J/kg/K)
 NCC.sig = 5.96e7
-NCC.E = 69e9         # Pa 负极集流体的弹性模量
+NCC.E = 500e6         # Pa 负极集流体的弹性模量
 NCC.nu = 0.3          # 负极集流体的泊松比
 
 # Tab
@@ -156,8 +156,8 @@ binder = Binder()
 cohesive = Cohesive()
 
 # 法向参数 (Mode I - 张开模式)
-cohesive.σ_max_n = 8.2e6 # 最大法向牵引力 [Pa]
-cohesive.K_n = 24e12 # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
+cohesive.σ_max_n = 82e6 # 最大法向牵引力 [Pa]
+cohesive.K_n = 2.4e17 # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
 cohesive.δ_0_n = cohesive.σ_max_n / cohesive.K_n # 损伤起始分离位移 [m]
 cohesive.G_c_n = 25.3  # 断裂能 [J/m²]
 cohesive.δ_c_n = 2.0 * cohesive.G_c_n / cohesive.σ_max_n  # 临界分离位移 [m]

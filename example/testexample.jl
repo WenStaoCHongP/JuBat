@@ -75,7 +75,7 @@ function main()
 
     case = JuBat.SetCase(param_dim, opt)
 
-    n_theta = 16
+    n_theta = 360
     mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
