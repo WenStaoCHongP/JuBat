@@ -334,9 +334,11 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 读取 `src/Materialmatrix.jl` 全文（约 420 行）。
 - 第 10 行：`function thermal_capacity_weights_2d(param, fks, ele_of_gp, wJ)` → `..., layer_weights, ...)`
 - 第 16 行：函数体内 `fks` 引用 → `layer_weights`
+- 第 17 行：`ne = size(fks, 1)` → `size(layer_weights, 1)`（**易漏**，单独列）
 - 第 20 行：调用 `thermal_capacity_weights_2d(param, fks, ele_of_gp, wJ)` → 同步改
 - 第 26 行：`function thermal_anisotropic_conductivity_2d(param, fks, ...)` → `..., layer_weights, ...)`
 - 第 30 行：函数体内 `fks` 引用 → `layer_weights`
+- 第 31 行：`ne = size(fks, 1)` → `size(layer_weights, 1)`（**易漏**，单独列）
 - 第 35 行：调用同步改
 
 - [ ] **Step 3: 改 ThermalDistributed.jl**
@@ -543,9 +545,10 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 
 读取 `src/Variables.jl:157-234`（`create_element_workspace` 函数）。
 - 第 164 行：`ws = Dict{...}()` → `workspace = Dict{...}()`
+- 第 233 行：`return ws` → `return workspace`（**易漏**：不含 `ws[`，`replace_all` 不会覆盖）
 - 函数体内所有 `ws["..."] = ...` → `workspace["..."] = ...`（约 40 处）
 
-**实施技巧**：用 Edit 工具的 `replace_all=true`，把 `ws[` 全部替换为 `workspace[`。先确认函数体内 `ws[` 都是指本变量。
+**实施技巧**：用 Edit 工具的 `replace_all=true`，把 `ws[` 全部替换为 `workspace[`。先确认函数体内 `ws[` 都是指本变量。**替换完后再手工补 164 行和 233 行**（这两行不含 `ws[`），最后 grep `\bws\b` 确认 Variables.jl 内 0 残留。
 
 子提交：
 ```bash
