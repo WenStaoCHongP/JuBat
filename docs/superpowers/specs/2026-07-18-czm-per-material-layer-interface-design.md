@@ -1,9 +1,29 @@
 # CZM 内聚力网格按材料层界面重构设计
 
-**日期**: 2026-07-18
+**日期**: 2026-07-18（2026-07-20 修订 v2）
 **作者**: brainstorm with user
 **分支**: czm-refactor
-**状态**: 待审查
+**状态**: 修订 v2（基于 plan reviewer 反馈补漏洞）
+
+**v2 修订要点**（2026-07-20）：
+- §3.2 `CohesiveElement` 新增 `host_outer_elem / host_inner_elem` 字段
+- §3.3 `CohesiveMesh` 新增 `cohesive_to_thermal` 字段，澄清 `n_layers` 语义
+- §3.5 `CzmInterfaceParams` 从 7 字段扩到 20 字段（含 Mode I/II/BK/热阻），新增 `param_ref / id`；§3.5.3 明确 `case.czm_param_cache` 存储位置
+- §4.1 `jellyroll_czm_submesh` 签名加 `thermal_mesh`；§4.1.1 明确 `thermal_elem_map` 用 O(1) 解析式反查
+- §4.2 明确每卷绕圈 cohesive 界面数 = 2（非 4）
+- §4.3 节点复制策略加"重写外层 bulk 单元"契约与 3 条正确性自检
+- §4.4 签名改为 3 参；§4.4.1 列出 16 处 create_czm_mesh 调用点
+- §5.0 区分 `thermal_elem_map`（体单元维度）与 `cohesive_to_thermal`（cohesive 单元维度）
+- §5.1 Δsoc 数据源回到 `variables["thermal2D element soc_p/n"]`
+- §5.2 max 归约用显式循环（不可用矩阵乘法）
+- §6.3 加 `SetParams.jl:324` 处理；§6.5 新增 `ensure_czm_cache` 失效判据
+- §7.1 `assemble_coupled_system` 调用点 11→16（加 _full + 工具）
+- §7.1 Materialmatrix.jl 涉及函数清单完整化
+- §8.1 单元级验证断言改为"与 param_cache 自洽"（不硬编码占位数值）
+- §8.2/8.4 与"不保留旧路径"调和，移除 git-stash 回滚步骤
+- §9.1 测试基础设施约定（Test.jl stdlib、test/ 目录结构）
+- §9.2 迁移清单加 create_czm_mesh 与 assemble_coupled_system 签名变更
+- §10 移除已查清的 create_czm_mesh / assemble_coupled_system 未决项
 
 ---
 
@@ -84,17 +104,30 @@ end
 
 ### 3.2 `CohesiveElement` 扩展（`src/czm.jl:1-8`）
 
-新增 `interface_type::Symbol` 字段（取值 `:PE_PCC` 或 `:NE_NCC`）。
+新增 3 个字段：
+```julia
+interface_type::Symbol   # :PE_PCC 或 :NE_NCC
+host_outer_elem::Int     # 外层 Q4 单元 id（在 czm_submesh.mesh.element 中的行号）
+host_inner_elem::Int     # 内层 Q4 单元 id
+```
 
 `layer_idx::Int64` 字段：当前代码中无任何读取方（grep 确认仅在 `czm.jl:106` 构造函数处硬编码为 1）。**直接删除该字段**——既然没有任何消费方，保留只会留一个语义不清的"占位"。
 
+`host_outer_elem` / `host_inner_elem` 在 `create_czm_mesh` 界面识别时填入，用于：
+- 构造 `cohesive_to_thermal`（§5.0）
+- 按界面类型分组归约（§5.2）
+
+
 ### 3.3 `CohesiveMesh` 扩展（`src/SetMesh.jl:26-46`）
 
-新增两个字段：
+新增字段：
 ```julia
-czm_submesh::Union{Nothing, CzmSubmesh}
-thermal_to_czm::Union{Nothing, SparseMatrixCSC{Float64, Int}}  # 粗热→细 CZM 节点插值矩阵
+czm_submesh::Union{Nothing, CzmSubmesh}               # 关联的细化子网格
+thermal_to_czm::Union{Nothing, SparseMatrixCSC{Float64, Int}}  # 粗热节点 → 细 CZM 节点插值矩阵（n_czm_node × n_thermal_node，每行 ≤4 个非零元，行和=1）
+cohesive_to_thermal::Vector{Int}                      # 每个 cohesive 单元 → 所属粗热单元 id（长度 = n_cohesive；用于 D 反向归约）
 ```
+
+**`n_layers` 字段语义重定义**（`SetMesh.jl:35` 当前定义但语义不清）：原意"径向分离面数"，但旧代码硬编码为 2（与 8 材料层混淆）。本次重构明确 `n_layers = 2`（恒等：PE-PCC + NE-NCC 两个分离面类型），**不**表示材料层数（8）。新增 `czm_submesh.material_type` 才是 8 材料层语义的唯一来源。后续代码读取 `n_layers` 时须按"分离面类型数"理解。
 
 ### 3.4 `Cohesive` 参数 struct 扩展（`src/SetParams.jl:155-180`）
 
@@ -125,21 +158,68 @@ G_c_pe_pcc_t::Float64    # Mode II 断裂能 [J/m²]
 
 ### 3.5 新增 `CzmParamCache` 与 `CzmInterfaceParams`（`src/CouplingState.jl`）
 
+#### 3.5.1 `CzmInterfaceParams` 字段定义
+
+`CzmInterfaceParams` 必须涵盖 `Materialmatrix.jl:bilinear_traction_state`（行 68）与 `bilinear_tangent`（行 182）实际读取的**全部**字段，外加 `E_eff / ν / α` 用于体刚度与热化学载荷组装。**字段名与 `Cohesive` struct 保持一致**（避免 K_0 vs K_n 命名分裂）。
+
 ```julia
 struct CzmInterfaceParams
+    # ---- 体模量与热化学载荷（assemble_bulk_stiffness、assemble_thermal_chemical_load 用）----
     E_eff::Float64      # 涂层模量（PE.E_coat 或 NE.E_coat），非全栈均一化
-    ν::Float64
-    α::Float64
-    K0::Float64         # 初始刚度，由 E_eff / 涂层厚度推出
-    σ_max::Float64
-    δ_c::Float64
-    G_c::Float64
-end
+    ν::Float64          # 涂层泊松比（PE.nu_coat 或 NE.nu_coat）
+    α::Float64          # 涂层热膨胀系数（PE.alphaT 或 NE.alphaT）
 
-struct CzmParamCache
-    by_interface::Dict{Symbol, CzmInterfaceParams}
+    # ---- Mode I（法向）---- bilinear_* 与 compute_gap_conductance 用
+    σ_max::Float64      # 最大法向牵引 [归一化]
+    K_n::Float64        # 法向初始刚度 [归一化]
+    δ_0_n::Float64      # 法向损伤起始位移 [归一化]
+    δ_c_n::Float64      # 法向临界位移 [归一化]
+    G_c::Float64        # Mode I 断裂能 [归一化]
+
+    # ---- Mode II（切向）---- bilinear_* 用
+    τ_max::Float64      # 最大切向牵引 [归一化]
+    K_t::Float64        # 切向初始刚度 [归一化]
+    δ_0_t::Float64      # 切向损伤起始位移 [归一化]
+    δ_c_t::Float64      # 切向临界位移 [归一化]
+    G_c_t::Float64      # Mode II 断裂能 [归一化]
+
+    # ---- BK 混合模式 + 本构选择 ----
+    η::Float64          # BK 准则指数（来自 Cohesive.eta，全网格单一值复制）
+    czm_model::String   # 本构模型标识（来自 Cohesive.czm_model，"model1" 等）
+
+    # ---- 界面热阻（compute_gap_conductance 用）----
+    h_c0::Float64       # 完全接触界面传热系数
+    k_air::Float64      # 空气导热系数
+    lambda_m::Float64   # 界面微观粗糙度尺度
+    beta::Float64       # 粗糙度指数
+    threshold::Float64  # 间隙阈值
 end
 ```
+
+**与 `Cohesive` struct 的对应关系**：每个 `:PE_PCC` 接面的 `CzmInterfaceParams` 字段值来自 `Cohesive.σ_max_pe_pcc / K_n_pe_pcc / ...`，体模量来自 `param.PE.E_coat / PE.nu_coat / PE.alphaT`；`:NE_NCC` 接面对应 NE 字段。
+
+**归一化说明**：`E_eff / σ_max / τ_max` 用 `scale.σ_czm` 归一化，`K_n / K_t` 用 `scale.K_czm`，`δ_0_n / δ_c_n / δ_0_t / δ_c_t` 用 `scale.δ_czm`，`G_c / G_c_t` 用 `scale.G_czm`，`h_c0 / k_air` 等热阻参数沿用现有归一化（`scale.K_czm` 与温度尺度复合，见 §6.3）。
+
+#### 3.5.2 `CzmParamCache` 定义
+
+```julia
+struct CzmParamCache
+    by_interface::Dict{Symbol, CzmInterfaceParams}   # 键 ∈ {:PE_PCC, :NE_NCC}
+    param_ref::Params                                 # 用于 assemble_bulk_stiffness 读 PE/NE/E_coat 等
+    id::UInt64                                        # objectid(param) 快速比对
+end
+```
+
+#### 3.5.3 在 `case` 中的存储位置
+
+新增 `case.czm_param_cache::Union{Nothing, CzmParamCache}` 字段（在 `Case` struct 中，与 `case.czm_cache::CZMAssemblyCache` 并列）：
+
+| 字段 | 类型 | 职责 | 生命周期 |
+|------|------|------|----------|
+| `case.czm_param_cache` | `Union{Nothing, CzmParamCache}` | per-interface 材料参数（只读） | `SetCase` 后由用户/求解器一次性计算，整次仿真不变 |
+| `case.czm_cache` | `CZMAssemblyCache` | 装配缓存（K_bulk、geom_cache、ws） | 每个 NR 迭代按需重建，由 `ensure_czm_cache` 管理 |
+
+**约束**：`CzmParamCache` 一旦构造即为只读；`ensure_czm_cache` 仅管理 `czm_cache`，不重建 `czm_param_cache`。
 
 ---
 
@@ -148,23 +228,39 @@ end
 ### 4.1 新增 `jellyroll_czm_submesh`（`src/Jellyrollmodel.jl`）
 
 ```julia
-function jellyroll_czm_submesh(param; nθ_czm::Int, gsorder::Int=2)
+function jellyroll_czm_submesh(param, thermal_mesh::Mesh; nθ_czm::Int=80, gsorder::Int=2)
     # 1. 沿螺旋线生成 8 个径向分层的 Q4 单元/卷绕圈
     # 2. 径向分层边界（从内到外）：
     #    r_PE_inner, r_PE_outer = r_PE_inner + t_PE,
     #    r_PCC_inner, r_PCC_outer = r_PCC_inner + t_PCC,
     #    ...（按层序 PE → PCC → PE → SP → NE → NCC → NE → SP 累计）
     # 3. 每个单元的材料类型按生成顺序直接打标（不依赖坐标反推）
-    # 4. thermal_elem_map：网格构造时一次性建立 CZM单元 → 粗热单元 映射
+    # 4. thermal_elem_map：网格构造时一次性建立 CZM体单元 → 粗热单元 映射（O(1) 解析式，见下）
 end
 ```
 
 **关键设计点**：
+- **入参**：`param`（归一化后的 `case.param`，与 `jellyroll_collector_seed_mesh` 同约定）+ `thermal_mesh`（粗热网格 `Mesh` 对象，用于解析反查）
 - **不依赖坐标重合检测**（避免 `create_czm_mesh:75-80` 那种 tol=1e-8 脆弱判断）
 - 材料类型直接从构造顺序确定
-- `thermal_elem_map` 在网格构造时**一次性预建立**（amortized once）；由于 CZM 子网格与粗热网格共享螺旋几何参数（`param.cell.Rin`、`param.cell.layer`），映射可通过 θ 区间与径向圈号直接解析判定，无需空间搜索。运行时查询是 O(1) Dict/Vector 访问。
 
-### 4.2 界面识别
+#### 4.1.1 `thermal_elem_map` 反查算法（O(1) 解析式）
+
+由于 CZM 子网格与粗热网格**共享螺旋几何参数**（`param.cell.Rin`、`param.cell.layer`），反查是解析式，**禁止使用 `findmin` 空间搜索**（O(n_thermal)）：
+
+```
+对每个 CZM 体单元 e_czm：
+    1. 计算中心半径 r_center 与 θ_center（用 4 节点均值）
+    2. 卷绕圈号 turn = floor((r_center - Rin) / cell.layer) + 1
+    3. 在同一 turn 的粗热单元中，按 θ_center 落在的周向区间 [θ_seg, θ_seg+dθ_thermal] 取 segment_id
+    4. thermal_elem_map[e_czm] = (turn-1) * n_thermal_segments + segment_id
+```
+
+**前置条件**：粗热网格的节点排列与 segment 划分必须在函数内部以 `thermal_mesh.element / node` 解析得到（n_thermal_segments、turn 划分方式）。`thermal_mesh` 在函数内被**只读**使用一次以建立映射，之后运行时查询是 O(1) Vector 访问。
+
+**正确性约束**：每个 CZM 体单元必须映射到**同一卷绕圈**内的粗热单元（不可跨圈）。映射失败（CZM 单元中心落在粗热网格外）时填 -1 并在 cache 构造时 @warn。
+
+### 4.2 界面识别与 cohesive 单元数量预期
 
 在 CZM 子网格内部，遍历径向相邻 Q4 单元对 `(e_inner, e_outer)`：
 
@@ -174,45 +270,136 @@ end
 | `(NE, NCC)` 或 `(NCC, NE)` | `:NE_NCC` | ✓ |
 | 其他（PE-SP、SP-NE、PE-PE 等） | — | ✗ |
 
+**每卷绕圈合格径向界面数 = 2**（一个 PE-PCC + 一个 NE-NCC）。整个网格预期 cohesive 单元数：
+
+```
+n_cohesive_expected = 2 × nθ_czm × n_turns_active
+```
+
+其中 `n_turns_active` 是 CZM 子网格覆盖的有效卷绕圈数（不含边界裁剪）。**测试断言必须用 `== n_cohesive_expected ± nθ_czm`**（±nθ_czm 容差来自最内/最外圈边界），不可用 `> 50% × ...` 这类过宽阈值。注意：旧 plan 中"4 × n_segments × n_turns"是**错误的**——一个卷绕圈的层序 `PE → PCC → PE → SP → NE → NCC → NE → SP` 内虽然有 7 个径向相邻对，但只有 2 对材料组合符合上表。
+
 ### 4.3 Cohesive 单元几何与节点复制策略
 
 每个 cohesive 单元的 4 节点来自相邻两个 Q4 单元的共边：
 - 底面 = 内层单元的外边（2 节点）
-- 顶面 = 外层单元的内边（2 节点）
+- 顶面 = 外层单元的内边（2 节点，为副本）
 
 **节点复制策略**（新逻辑，正向描述）：
-- CZM 子网格的 Q4 单元生成时，**径向相邻的两个 Q4 单元共享一条边**（2 个共节点）
-- 在共边位置插入 cohesive 单元时，复制该边的 2 个节点，使内层单元与外层单元各自拥有独立节点
-- cohesive 单元的 4 个节点 = 内层单元的外边 2 节点（底面）+ 外层单元的内边 2 节点（顶面）
-- 这样保证分离位移发生在两节点对之间，与现有 `CohesiveElement` 几何约定一致
+1. CZM 子网格的 Q4 单元生成时，**径向相邻的两个 Q4 单元共享一条边**（2 个共节点）
+2. 在共边位置插入 cohesive 单元时，**复制该边的 2 个节点**（产生 2 个新节点，与原节点共享坐标）
+3. **必须重写外层 Q4 单元的连接表**：把外层单元共边上的 2 个原节点替换为对应的副本节点。否则 cohesive 顶面节点与外层 bulk 单元共边节点不共享 DOF，分离位移恒为 0
+4. 内层 Q4 单元的连接表**不变**（继续指向原节点）
+5. cohesive 单元的 4 节点 = `[n_a, n_b, n_b_copy, n_a_copy]`（按逆时针，`n_a/n_b` 按 θ 递增排序）
+6. 节点副本需**记忆化**：同一原节点若被多个 cohesive 共边引用（如角点处），只复制一次；用 `Dict{Int, Int}`（原节点 → 副本节点）实现
+
+**正确性自检**（实现时必须在 `create_czm_mesh` 入口或测试中断言）：
+- 对每个 cohesive 单元：`czm_mesh.node[n_a, :] ≈ czm_mesh.node[n_a_copy, :]` 且 `czm_mesh.node[n_b, :] ≈ czm_mesh.node[n_b_copy, :]`
+- `length(unique(czm_mesh.cohesive_elements[i].nodes)) == 4`（4 节点不重复）
+- 外层 bulk 单元的 4 节点中，共边位置必须是副本节点（非原节点）
+
+**与现有 `CohesiveElement` 几何约定的一致性**：底/顶面节点顺序按 `czm.jl:1-8` docstring "顶面节点顺序与底面一致"。
 
 ### 4.4 重构 `create_czm_mesh`
 
 - **旧逻辑**（`src/czm.jl:56-136`，坐标重合检测 + 螺旋界面）**移除**
-- 新签名：`create_czm_mesh(czm_submesh::CzmSubmesh, param)` —— 接受细化子网格作为输入，按 §4.2 规则识别 PE-PCC / NE-NCC 界面，按 §4.3 策略复制节点并构造 cohesive 单元
-- **调用点定位**：需在实施时 grep `create_czm_mesh(` 找到所有调用方并适配。已知 `create_czm_mesh` 当前在 `src/CallModel.jl` 之外的位置被调用（具体调用点在 plan 阶段核实）
+- 新签名：`create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param) -> CohesiveMesh`
+  - `czm_submesh`：细化子网格（含 `thermal_elem_map`，已预建）
+  - `thermal_mesh`：粗热网格（用于建立 `thermal_to_czm` 与 `cohesive_to_thermal`）
+  - `param`：归一化参数（用于 `Cohesive` 字段读取与 `scale` 信息）
+- 实现职责：按 §4.2 识别 PE-PCC / NE-NCC 界面；按 §4.3 复制节点、重写外层 bulk 连接；构造 `CohesiveMesh` 含 `thermal_to_czm`、`cohesive_to_thermal` 字段
+- **正确性自检**：构造完成后必须运行 §4.3 中列出的三条自检（throw AssertionError on failure）
+
+#### 4.4.1 调用点清单（已核实，2026-07-20 grep）
+
+src/ 内部仅函数定义本身，无调用。**外部调用共 16 处**（src + example + tools）：
+
+| 文件 | 行号 | 当前调用形式 |
+|------|------|--------------|
+| `tools/verify_czm_system.jl` | 44 | `JuBat.create_czm_mesh(thermal_mesh, param_dim)` |
+| `tools/verify_czm_standalone.jl` | 66, 129 | `JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)` |
+| `tools/czm_convergence_diag.jl` | 26 | 同上 |
+| `tools/czm_baseline_probe.jl` | 40, 71 | 同上 |
+| `tools/check_czm_methods_coupled.jl` | 45, 123 | `JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)`（赋给 `case.czm_mesh`）|
+| `tools/check_collector_mesh.jl` | 65 | `JuBat.create_czm_mesh(mesh, param)` |
+| `example/coupled_czm_thermal_example.jl` | 104 | `JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)` |
+| `example/testexample.jl` | 85 | 赋给 `case.czm_mesh` |
+| `example/网格敏感性/5_energy_conservation_check.jl` | 69 | 同上 |
+| `example/网格敏感性_v2/5_energy_conservation.jl` | 62 | 同上 |
+| `example/网格敏感性/4_czm_mesh_sensitivity.jl` | 74 | 同上 |
+| `example/网格敏感性_v2/4_czm_convergence.jl` | 74 | 同上 |
+| `example/循环验证/czm_from_precomputed_example.jl` | 301 | `JuBat.create_czm_mesh(mesh_data.Jellyroll_czm, param_dim; tol=1e-8)` |
+| `example/循环验证/czm_cycle_example.jl` | 98 | 同上 |
+
+**统一替换模式**：
+
+```julia
+# 旧
+czm_mesh = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
+
+# 新（两步）
+czm_submesh = JuBat.jellyroll_czm_submesh(param, mesh_data.thermal2D; nθ_czm=opt.nθ_czm)
+czm_mesh = JuBat.create_czm_mesh(czm_submesh, mesh_data.thermal2D, param)
+```
+
+每处替换均需逐文件确认变量名（`param` vs `param_dim` vs `case.param`、`mesh_data.thermal2D` vs `case.mesh["thermal2D"]`）。
 
 ---
 
 ## 5. 耦合数据流（粗热 → 细 CZM）
 
+### 5.0 两个映射字段的维度与职责
+
+本设计区分**两条映射**，长度与索引各不相同，**不可混用**：
+
+| 字段 | 所属结构 | 长度 | 索引语义 | 值语义 | 用途 |
+|------|----------|------|----------|--------|------|
+| `CzmSubmesh.thermal_elem_map` | 子网格 | `= size(mesh.element, 1)`（CZM **体**单元数） | `e_czm_bulk` ∈ [1, n_bulk] | 粗热单元 id | 温度、dT、Δsoc 的**正向**插值（粗热→细 CZM） |
+| `CohesiveMesh.cohesive_to_thermal` | 内聚力网格 | `= n_cohesive`（cohesive 单元数） | `e_coh` ∈ [1, n_cohesive] | 粗热单元 id | 损伤 D 的**反向**归约（CZM→粗热） |
+
+**构造关系**：`cohesive_to_thermal[e_coh] = thermal_elem_map[e_czm_outer]`，其中 `e_czm_outer` 是 cohesive 单元 `e_coh` 对应的外层 Q4 单元（在 `create_czm_mesh` 中界面识别时建立，存入 `CohesiveElement.host_outer_elem::Int` 字段）。
+
+**新增 `CohesiveElement` 字段**（在 §3.2 已有 `interface_type` 基础上再加）：
+```julia
+host_outer_elem::Int   # 外层 Q4 单元 id（在 czm_submesh.mesh.element 中的行号）
+host_inner_elem::Int   # 内层 Q4 单元 id
+```
+这两个字段在节点复制时填入，供 `cohesive_to_thermal` 构造与按界面类型分组归约使用。
+
 ### 5.1 输入映射（粗热 → 细 CZM）
 
 | 来源 | 目标 | 方法 |
 |------|------|------|
-| `T_nodes`（粗热网格节点温度） | CZM 子网格节点温度 | 双线性插值，预生成 `thermal_to_czm` 稀疏矩阵 |
-| `dT_elem`（粗热单元温升） | CZM 单元 `dT` | 通过 `thermal_elem_map` 取对应粗单元值 |
-| `Δsoc_n_elem`, `Δsoc_p_elem`（粗热单元粒度） | CZM 单元 Δsoc | 见下方契约 |
+| `T_nodes`（粗热网格节点温度，长度 `n_thermal_node`） | CZM 体网格节点温度（长度 `n_czm_node`） | 双线性插值，预生成 `thermal_to_czm::SparseMatrixCSC`（`n_czm_node × n_thermal_node`，每行 ≤4 个非零元 = 1，行和 = 1）。每行非零元 = 该 CZM 节点所在粗热单元的 4 个节点，权重 = 双线性形函数值 |
+| `dT_elem`（粗热单元温升，长度 `n_thermal_elem`） | CZM **体**单元 dT | `dT_czm_bulk[e] = dT_elem[thermal_elem_map[e]]`（1-to-1 取值） |
+| `Δsoc_p_elem`, `Δsoc_n_elem`（粗热单元粒度） | CZM **体**单元 Δsoc | 按材料类型分发，见下方契约 |
 
-**Δsoc 映射契约**（按 CZM 子网格材料类型）：
-- `material_type == :PE` 的 CZM 单元：`Δsoc_p = Δsoc_p_elem[thermal_elem_map[e]]`，`Δsoc_n = 0`
-- `material_type == :NE` 的 CZM 单元：`Δsoc_n = Δsoc_n_elem[thermal_elem_map[e]]`，`Δsoc_p = 0`
-- `material_type ∈ {:PCC, :NCC, :SP}` 的 CZM 单元：`Δsoc_p = Δsoc_n = 0`（这些材料不产生扩散应变，仅参与热应变）
+**Δsoc 映射契约**（按 CZM 子网格材料类型，对 CZM **体**单元）：
+- `material_type[e] == :PE`：`Δsoc_p[e] = Δsoc_p_elem[thermal_elem_map[e]]`，`Δsoc_n[e] = 0`
+- `material_type[e] == :NE`：`Δsoc_n[e] = Δsoc_n_elem[thermal_elem_map[e]]`，`Δsoc_p[e] = 0`
+- `material_type[e] ∈ {:PCC, :NCC, :SP}`：`Δsoc_p[e] = Δsoc_n[e] = 0`（这些材料不产生扩散应变，仅参与热应变）
+
+**Δsoc 数据来源（在 `variables` 字典中）**：
+- 现有键 `"thermal2D element soc_p"` / `"thermal2D element soc_n"`（粗热单元粒度的当前 soc）
+- `compute_czm_strain_inputs` 计算 `Δsoc_X = soc_X - param.XE.cs0`（绝对差，与现有实现一致）
+- **不需要**新增 `"Δsoc_p_thermal"` / `"Δsoc_n_thermal"` 键（旧 plan 误写）
 
 ### 5.2 输出反馈（CZM → 热/电）
 
-**D_max_per_thermal_elem 归约规则**：
-对每个粗热单元 `e_thermal`，扫描所有 `thermal_elem_map[e_czm] == e_thermal` 的 CZM 单元，取其 `damage_states[e_czm].D` 的**最大值**，赋给 `D_max_per_thermal_elem[e_thermal]`。若该粗热单元无对应 CZM 单元（例如不在 PE-PCC / NE-NCC 界面覆盖范围内），取 `D = 0`。
+**D 反向归约规则**：
+对每个粗热单元 `e_thermal`，扫描所有 `cohesive_to_thermal[e_coh] == e_thermal` 的 **cohesive** 单元（注意：是 cohesive 单元，不是 CZM 体单元），取其 `damage_states[e_coh].D` 的**最大值**，赋给 `D_max_per_thermal_elem[e_thermal]`。若该粗热单元无对应 cohesive 单元，取 `D = 0`。
+
+**实现形式**：max 归约不能用稀疏矩阵乘法表达（矩阵乘只能加权求和），用显式循环 + Dict 实现：
+
+```julia
+D_max_per_thermal_elem = zeros(n_thermal_elem)
+for e_coh in 1:czm_mesh.n_cohesive
+    e_thermal = czm_mesh.cohesive_to_thermal[e_coh]
+    D = czm_mesh.damage_states[e_coh].D
+    if D > D_max_per_thermal_elem[e_thermal]
+        D_max_per_thermal_elem[e_thermal] = D
+    end
+end
+```
 
 **输出变量粒度变更**：
 - `D_max`、`D_mean`：改为按 interface_type 分组（`D_max_pe_pcc`、`D_max_ne_ncc`、`D_mean_pe_pcc`、`D_mean_ne_ncc`），同时保留全网格聚合值用于兼容
@@ -276,11 +463,20 @@ end
 
 ### 6.3 归一化扩展（`src/SetParams.jl:469-479`）
 
-`NormaliseParam` 中需为 20 个新字段（10/界面 × 2 界面）分别除以对应 scale。现有 scale 字段（`src/SetParams.jl:212, 220, 222, 327`）已定义：
+`NormaliseParam` 中需为 20 个新 cohesive 字段（10/界面 × 2 界面）分别除以对应 scale。现有 scale 字段（`src/SetParams.jl:212, 220, 222, 327`）已定义：
 - `scale.σ_czm`（牵引单位）—— 除 σ_max、τ_max 类
-- `scale.G_czm`（断裂能单位）—— 除 G_c 类
+- `scale.G_czm`（断裂能单位）—— 除 G_c、G_c_t 类
 - `scale.K_czm`（刚度单位，= σ_czm / δ_czm）—— 除 K_n、K_t 类
 - `scale.δ_czm`（位移单位）—— 除 δ_0、δ_c 类
+
+**新增归一化**（接口热阻参数）：`h_c0`（传热系数，单位 W/m²/K）、`k_air`（导热，W/m/K）、`lambda_m`、`threshold`（长度）、`beta`（无量纲）沿用 `parameters/Jellyroll.jl:177-181` 现有约定，**本次重构不修改热阻参数语义**（仍为单一值，与 `compute_gap_conductance` 现状一致）。
+
+**新增 `SetParams.jl:324` 处理**：当前代码 `param_dim.scale.σ_czm = param_dim.cohesive.σ_max_n` 在移除 `σ_max_n` 后失效。改为：
+
+```julia
+# 用 PE-PCC 的 σ_max 作为 σ_czm 的参考（任意一个界面均可，仅用于无量纲化基准）
+param_dim.scale.σ_czm = param_dim.cohesive.σ_max_pe_pcc
+```
 
 ### 6.4 入口断言与迁移
 
@@ -292,6 +488,29 @@ end
 
 **迁移破坏性声明**：移除旧字段 `σ_max_n / K_n / G_c_n` 等后，现有 `parameters/Jellyroll.jl` 中相关行（159-171）需同步替换为按界面类型的新字段。任何引用旧字段的外部脚本（包括 `example/czm_*.jl`、`example/testexample.jl`）将**直接报错**——这是预期行为，强制用户迁移到按界面参数。
 
+### 6.5 `ensure_czm_cache` 失效条件
+
+`ensure_czm_cache` 仅管理 `case.czm_cache`（装配缓存），不重建 `case.czm_param_cache`。失效判据：
+
+```julia
+function ensure_czm_cache(case, czm_mesh, param_cache::CzmParamCache; ...)
+    cache = case.czm_cache
+    # 失效条件（任一触发即重建）：
+    # 1. cache === nothing（首次调用）
+    # 2. cache.czm_mesh_id !== objectid(czm_mesh)（网格变化）
+    # 3. cache.param_cache_id !== param_cache.id（参数变化）
+    if cache === nothing ||
+       cache.czm_mesh_id !== objectid(czm_mesh) ||
+       cache.param_cache_id !== param_cache.id
+        cache = build_czm_cache(czm_mesh, param_cache; ...)
+        case.czm_cache = cache
+    end
+    return cache
+end
+```
+
+**约束**：`CZMAssemblyCache` 新增两个字段 `czm_mesh_id::UInt64` 与 `param_cache_id::UInt64`（在 `build_czm_cache` 构造时填入），用作快速比对。`czm_param_cache` 在 `SetCase` 后由 `compute_czm_params_per_interface(case)` 一次性构造并存入 `case.czm_param_cache`，整个仿真过程中**不变**。
+
 ---
 
 ## 7. 求解器适配
@@ -301,14 +520,32 @@ end
 | 函数 | 文件 | 改造内容 |
 |------|------|----------|
 | `compute_czm_effective_params` | `CouplingState.jl:258` | **重命名**为 `compute_czm_params_per_interface`，返回 `CzmParamCache` |
-| `ensure_czm_cache` | `CouplingState.jl:367` | 接受 `CzmParamCache`，按 interface_type 分组缓存 |
-| `assemble_czm_system` | `czm.jl:156` | 接受 `param_cache::CzmParamCache`，循环内按 `interface_type` 取参数 |
-| `assemble_coupled_system` | `czm.jl:564` | 同上，签名从 `(czm_mesh, u, E_eff, ν_eff, cohesive_params)` 改为 `(czm_mesh, u, param_cache)` |
+| `ensure_czm_cache` | `CouplingState.jl:367` | 接受 `CzmParamCache`，失效判据见 §6.5 |
+| `assemble_czm_system` | `czm.jl:156` | 接受 `param_cache::CzmParamCache`，循环内按 `interface_type` 取 `CzmInterfaceParams` |
+| `assemble_coupled_system` | `czm.jl:564` | 签名从 `(czm_mesh, u, E_eff, ν_eff, cohesive_params)` 改为 `(czm_mesh, u, param_cache)` |
+| `assemble_coupled_system_full` | `czm.jl:587` | 同步改造签名；内部 591 行调用 `assemble_coupled_system` 改为传 `param_cache` |
 | `backtrack_line_search!` | `CzmSolve.jl:80` | 传递 `param_cache` 而非单一 E_eff |
-| `solve_czm_basic_step`、`solve_czm_arc_step` 等 | `CzmSolve.jl:170, 215, 280, 321, 412, 503, 585` | 同上（共 7 处 `assemble_coupled_system` 调用需适配） |
-| `compute_czm_strain_inputs` | `CouplingState.jl:287` | 输出按 CZM 子网格粒度（不再按粗热单元） |
-| `Materialmatrix.jl` 中 `cohesive_params.K_n / K_t / δ_0_n / ...` | `Materialmatrix.jl:69-70, 183-185` 等 | 从单一结构取值改为按 `interface_type` 查 `param_cache.by_interface[iface]` |
-| `map_czm_damage_to_thermal` | `CallModel.jl:9-19` | 适配按 interface_type 分组的 damage_states，重写归约规则（§5.2） |
+| `solve_czm_basic_step` / `solve_czm_arc_length_step` / `newton_raphson_czm` | `CzmSolve.jl` | 全部 11 处 `assemble_coupled_system` 调用需适配（见 §7.1.1） |
+| `compute_czm_strain_inputs` | `CouplingState.jl:287` | 输出按 CZM 子网格粒度（不再按粗热单元）；Δsoc 数据来源见 §5.1 |
+| `bilinear_traction_state` / `bilinear_tangent` / `bilinear_traction` / `update_damage` | `Materialmatrix.jl:68, 163, 182, 293` | 签名从 `(δ, damage, cohesive_params::Cohesive)` 改为 `(δ, damage, params::CzmInterfaceParams)`，函数体读取 `params.K_n / K_t / δ_0_n / δ_c_n / δ_0_t / δ_c_t / η / czm_model` |
+| `compute_gap_conductance` / `compute_element_gap_conductance` / `compute_all_gap_conductances` | `Materialmatrix.jl:324, 352, 398` | 接受 `params::CzmInterfaceParams`（用 `params.δ_0_n / δ_c_n / h_c0 / k_air / lambda_m / beta / threshold`），不再读 `cohesive::Cohesive` |
+| `map_czm_damage_to_thermal` | `CallModel.jl:9-19` | 重写归约规则（§5.2）：用 `cohesive_to_thermal` 显式循环 + max |
+
+#### 7.1.1 `assemble_coupled_system` 完整调用点清单（2026-07-20 grep）
+
+**src/CzmSolve.jl 内部 11 处**：行 86, 170, 215, **255**, 280, 321, 412, **475**, 503, **540**, 585（粗体为旧 plan/spec 漏列的）
+
+**src/czm.jl 内部 1 处**：行 591（`assemble_coupled_system_full` 内部调用）
+
+**工具脚本 4 处**：`tools/czm_convergence_diag.jl` 行 103, 191, 259, 293
+
+合计 **16 处**调用需同步改签名。所有调用统一形式：
+```julia
+# 旧
+K, f, seps, tracts = assemble_coupled_system(czm_mesh, u, E_eff, ν_eff, cohesive_params; kwargs...)
+# 新
+K, f, seps, tracts = assemble_coupled_system(czm_mesh, u, param_cache; kwargs...)
+```
 
 ### 7.2 `assemble_czm_system` 内部循环改造（伪代码）
 
@@ -316,7 +553,8 @@ end
 for i in 1:n_coh
     iface = czm_mesh.cohesive_elements[i].interface_type
     params = param_cache.by_interface[iface]
-    # 用 params.K0, params.σ_max, params.δ_c 计算单元刚度矩阵与内力
+    # 用 params.K_n, params.K_t, params.σ_max, params.δ_0_n, params.δ_c_n, params.δ_0_t,
+    #     params.δ_c_t, params.η, params.czm_model 计算单元刚度与内力
     # 其余流程不变
 end
 ```
@@ -336,24 +574,32 @@ end
 新增 `example/内聚力验证/verify_czm_per_interface.jl`：
 - 取单个 PE-PCC cohesive 单元，单轴拉开（位移控制）
 - 输出 σ-δ 曲线，与实验剥离曲线对比
-- **验收**：σ_max、δ_c、双线性形状三者定量匹配
+- **验收**（与参数集自洽，**不与 spec 中的占位数值硬编码比对**）：
+  - `maximum(σ_n_history) ≈ param_cache.by_interface[:PE_PCC].σ_max`（rtol=1e-6）
+  - `δ_at_peak ≈ param_cache.by_interface[:PE_PCC].δ_0_n`
+  - `D_history[end] ≈ 1.0`（完全断裂）
+  - 双线性形状（线性上升 → 线性软化 → 完全失效）肉眼可辨
 
 ### 8.2 全网格回归
 
 - `example/czm_cycle_example.jl`：跑原循环仿真
-- **基线说明**：旧路径跑在 SP-PE 界面（与实验几何不对应），改造前后 δ_max / D_max / n_fractured 的数值差异**不作为验收依据**——这是 apples-to-oranges 比较
+- **基线说明**：旧路径跑在 SP-PE 界面（与实验几何不对应）。根据 §2.2 "不保留旧路径"，**不再跑改造前版本对比**——δ_max / D_max / n_fractured 的数值差异无意义（apples-to-oranges）
 - **有意义基线**：实验 δ_exp（PE-PCC / NE-NCC 剥离曲线）
-- **验收**：新路径在 PE-PCC / NE-NCC 界面的 δ_sim 落在实验 δ_exp ± 20% 范围；同时新路径应显示损伤峰值**位于 PE-PCC / NE-NCC 界面**而非 SP-PE 界面
+- **验收**：
+  - 新路径在 PE-PCC / NE-NCC 界面的 δ_sim 落在实验 δ_exp ± 20% 范围（**用户未提供 δ_exp 时此条 SKIP**）
+  - 损伤峰值**位于 PE-PCC / NE-NCC 界面**（不在 SP-PE）
+  - `D_max ∈ [0, 1]`，无 NaN/Inf
 
 ### 8.3 网格收敛
 
 - 不同 `nθ_czm` ∈ [40, 80, 160] 下 δ_sim 稳定性
 - **验收**：δ_sim 变化 < 5%；同时 δ_max 峰值位置（极坐标角度）应收敛到同一位置（误差 < 一个周向单元）
 
-### 8.4 性能记录
+### 8.4 性能记录（仅计时，不对比数值）
 
-- CZM 求解器单步耗时（改造前 vs 后）
-- **验收**：单步耗时增加 < 30%（单元数约 ×4，参数查表 O(1)）
+- CZM 求解器单步耗时：`@elapsed Solve(case)`
+- **不与旧路径数值对比**（与 §2.2 "不保留旧路径"一致）。如需计时对比，用户须自行在新分支上跑旧版本——本 plan/spec 不内置 git-stash 回滚步骤
+- **验收**：新版本单步耗时合理（无明确上限，记录用于后续优化参考）
 
 ---
 
@@ -361,16 +607,23 @@ end
 
 1. 扩展 `Cohesive` struct（含 Mode I + Mode II 共 20 字段）与 `parameters/Jellyroll.jl`（参数集）
 2. 实现 `CzmSubmesh` 与 `jellyroll_czm_submesh`
-3. 重构 `create_czm_mesh`（基于 CzmSubmesh）
+3. 重构 `create_czm_mesh`（基于 CzmSubmesh，含节点复制+外层 bulk 重写）
 4. 实现 `CzmParamCache` + `compute_czm_params_per_interface`
-5. 改造 `assemble_czm_system`、`assemble_coupled_system` 与 `CzmSolve.jl` 全部 7 处 `assemble_coupled_system` 调用
-6. 改造 `Materialmatrix.jl`（按 interface_type 取 K_n / K_t / δ_0 等）
-7. 实现粗热→细 CZM 插值（`thermal_to_czm` 矩阵）+ Δsoc 映射契约
-8. 改造 `map_czm_damage_to_thermal`（按 §5.2 归约规则）
+5. 改造 `assemble_czm_system`、`assemble_coupled_system`、`assemble_coupled_system_full` 与 `CzmSolve.jl` 全部 11 处 + `czm.jl:591` 共 12 处 `assemble_coupled_system` 调用，以及 `tools/czm_convergence_diag.jl` 4 处
+6. 改造 `Materialmatrix.jl`（`bilinear_*`、`update_damage`、`compute_*gap_conductance*` 全部按 `CzmInterfaceParams` 取参）
+7. 实现粗热→细 CZM 插值（`thermal_to_czm` 矩阵）+ Δsoc 映射契约（按 CZM 体单元粒度）
+8. 改造 `map_czm_damage_to_thermal`（按 §5.2 归约规则，用 `cohesive_to_thermal`）
 9. 单元级验证脚本
-10. 全网格回归
+10. 全网格回归（不与旧路径对比数值）
 
-### 9.1 用户可见的破坏性变更（迁移清单）
+### 9.1 测试基础设施约定
+
+- **Test.jl 引入方式**：通过 `using Test` 内联导入。Test.jl 是 Julia stdlib，**不需要**在 `Project.toml` 添加 `[extras]` 或 `[targets]` 段（避免污染包依赖）
+- **测试运行方式**：`julia --project=. -e 'include("test/test_xxx.jl")'`，不使用 `Pkg.test()`（后者需要 `[extras]` 配置且会激活整个 test 环境，过重）
+- **test/ 目录结构**：在 Chunk 1 Task 1（数据结构扩展）首步创建 `test/` 目录；每个 Task 一个独立测试文件 `test/test_<feature>.jl`，文件内用 `@testset` 包裹
+- **测试运行汇总命令**：`for f in test/test_*.jl; do julia --project=. -e "include(\"$f\")" || exit 1; done`
+
+### 9.2 用户可见的破坏性变更（迁移清单）
 
 实施完成后，以下用户行为将受影响：
 
@@ -379,6 +632,8 @@ end
 | `Cohesive` struct 字段重命名（旧 σ_max_n / K_n / ... 移除） | 更新自定义参数集脚本，使用新按界面类型字段 |
 | `parameters/Jellyroll.jl` 中 cohesive 参数块整体替换 | 已由实施步骤 1 同步更新；自定义参数集用户需同步更新 |
 | 任何 `example/*.jl` 引用旧 cohesive 字段 | 实施时同步更新所有 example 脚本 |
+| `create_czm_mesh` 调用签名变更（旧 2 参 → 新 3 参） | §4.4.1 列出的 16 处调用全部需迁移 |
+| `assemble_coupled_system` 调用签名变更 | §7.1.1 列出的 16 处调用全部需迁移 |
 | CZM 单元数增加（约 ×4） | 内存占用上升；预期行为 |
 | 损伤峰值位置改变（从 SP-PE → PE-PCC / NE-NCC） | 后处理脚本（含 `CsvExport`）若硬编码位置需更新 |
 
@@ -387,9 +642,10 @@ end
 ## 10. 待澄清/未决事项
 
 - **实验参数具体数值**：用户需提供 PE-PCC / NE-NCC 的 σ_max、G_c、K_n 实验值（Mode II 若无独立测量，沿用 §6.1 的 Mode II = Mode I 简化）
-- **nθ_czm 默认值**：建议 80（与现 nθ=80 默认一致），用户可在 `Option` 中调整。需在 Option struct 新增 `nθ_czm::Int` 字段
-- **`create_czm_mesh` 现有调用点**：当前 spec 中调用链尚未完全核实（`CallModel.jl:12` 是 `map_czm_damage_to_thermal` 内部，非 `create_czm_mesh` 调用点）。实施时需 grep `create_czm_mesh(` 找到所有调用方并适配
-- **Mode II 实验数据**：当前 `parameters/Jellyroll.jl:167-171` 的 Mode II 参数沿用 Mode I 值（`τ_max_t = σ_max_n`），新设计若保持这一简化，需在 spec 注释中明示
+- **nθ_czm 默认值**：建议 80（与现 nθ=80 默认一致），用户可在 `Option` 中调整。需在 `Option` struct 新增 `nθ_czm::Int` 字段
+- **`create_czm_mesh` 调用点**：✅ 已核实，见 §4.4.1（16 处）
+- **`assemble_coupled_system` 调用点**：✅ 已核实，见 §7.1.1（16 处）
+- **Mode II 实验数据**：当前 `parameters/Jellyroll.jl:167-171` 的 Mode II 参数沿用 Mode I 值（`τ_max_t = σ_max_n`），新设计保持这一简化，由 `compute_czm_params_per_interface` 内部复制到 `CzmInterfaceParams.τ_max / K_t / δ_0_t / δ_c_t / G_c_t`
 
 ---
 
