@@ -258,6 +258,8 @@ end
 function compute_czm_effective_params(case)
     # === 入口断言：参数集必须定义 E_coat 才能启用 CZM 应变驱动 ===
     @assert case.param_dim.PE.E_coat > 0 && case.param_dim.NE.E_coat > 0 "CZM 应变驱动需要 PE/NE.E_coat > 0；当前参数集未定义极片模量（E_coat=0）。请补全 PE.E_coat/PE.nu_coat/NE.E_coat/NE.nu_coat，或禁用 czm_enabled。"
+    # === 入口断言：scale.σ_czm 必须为正，否则下游除以 σ_czm 会产生 Inf/NaN ===
+    @assert case.param_dim.scale.σ_czm > 0 "scale.σ_czm = 0; must populate cohesive.σ_max_pe_pcc (Task 2.1) before enabling CZM"
 
     param = case.param
     scale = case.param_dim.scale

@@ -178,6 +178,8 @@ function predict_fracture_cycles()
     
     # δ_0 = coh.δ_0_n  # TODO Chunk 2 Task 2.1
     # δ_c = coh.δ_c_n  # TODO Chunk 2 Task 2.1
+    δ_0 = NaN  # TODO Chunk 2 Task 2.1
+    δ_c = NaN  # TODO Chunk 2 Task 2.1
     δ_init = 16e-9  # 初始分离位移
     
     println("\n[当前参数]")

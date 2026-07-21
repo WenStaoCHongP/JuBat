@@ -29,6 +29,8 @@ function main()
     t_PE  = param_dim.PE.thickness      # m
     # G_c   = param_dim.cohesive.G_c_n    # J/m²                              # TODO Chunk 2 Task 2.1
     # σ_max = param_dim.cohesive.σ_max_n  # Pa                                # TODO Chunk 2 Task 2.1
+    G_c   = NaN  # TODO Chunk 2 Task 2.1
+    σ_max = NaN  # TODO Chunk 2 Task 2.1
     R_in  = param_dim.cell.Rin          # m
     R_out = param_dim.cell.Rout         # m
     nu_NE = param_dim.NE.nu

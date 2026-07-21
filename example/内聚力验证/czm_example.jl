@@ -77,6 +77,7 @@ function test_monotonic_loading(cohesive_params)
     
     # 法向加载参数
     # δ_max_n = cohesive_params.δ_c_n * 1.2  # 超过临界分离  # TODO Chunk 2 Task 2.1
+    δ_max_n = NaN  # TODO Chunk 2 Task 2.1
     n_points = 200
     δ_n_vals = range(0, δ_max_n, length=n_points)
     
@@ -92,6 +93,7 @@ function test_monotonic_loading(cohesive_params)
     
     # 切向加载参数
     # δ_max_t = cohesive_params.δ_c_t * 1.2  # TODO Chunk 2 Task 2.1
+    δ_max_t = NaN  # TODO Chunk 2 Task 2.1
     δ_t_vals = range(0, δ_max_t, length=n_points)
     
     T_t_vals = zeros(n_points)
@@ -135,6 +137,7 @@ function test_cyclic_loading(cohesive_params; n_cycles::Int=3, max_amp_factor::F
     
     # 周期性加载幅值逐渐增大
     # δ_max_n = cohesive_params.δ_c_n * max_amp_factor  # TODO Chunk 2 Task 2.1
+    δ_max_n = NaN  # TODO Chunk 2 Task 2.1
     
     δ_n_history = Float64[]
     T_n_history = Float64[]
@@ -172,6 +175,7 @@ function test_cyclic_loading(cohesive_params; n_cycles::Int=3, max_amp_factor::F
     damage_state_t = JuBat.DamageState()
     
     # δ_max_t = cohesive_params.δ_c_t * max_amp_factor  # TODO Chunk 2 Task 2.1
+    δ_max_t = NaN  # TODO Chunk 2 Task 2.1
     
     δ_t_history = Float64[]
     T_t_history = Float64[]
@@ -246,6 +250,7 @@ function test_mixed_mode_loading(cohesive_params)
         # => δ_t = β * δ_eff, δ_n = sqrt(1 - β²) * δ_eff
         
         # δ_eff_max = max(cohesive_params.δ_c_n, cohesive_params.δ_c_t) * 1.2  # TODO Chunk 2 Task 2.1
+        δ_eff_max = NaN  # TODO Chunk 2 Task 2.1
         
         δ_eff_vals = range(0, δ_eff_max, length=n_points)
         δ_n_vals = zeros(n_points)
@@ -302,6 +307,7 @@ function test_sinusoidal_displacement(cohesive_params; n_cycles::Int=5, frequenc
     
     # 位移幅值
     # δ_amp = cohesive_params.δ_c_n * amplitude_factor  # TODO Chunk 2 Task 2.1
+    δ_amp = NaN  # TODO Chunk 2 Task 2.1
     
     # 正弦位移历史
     δ_n_vals = δ_amp .* sin.(2 * pi * frequency .* t_vals)

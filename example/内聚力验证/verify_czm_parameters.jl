@@ -105,6 +105,8 @@ function analyze_parameters()
     
     # δ_0 = coh.δ_0_n  # TODO Chunk 2 Task 2.1
     # δ_c = coh.δ_c_n  # TODO Chunk 2 Task 2.1
+    δ_0 = NaN  # TODO Chunk 2 Task 2.1
+    δ_c = NaN  # TODO Chunk 2 Task 2.1
     
     # 假设的初始分离位移和每循环增量
     # 基于原始问题：损伤收敛于 6.83%，反推初始分离位移
@@ -170,6 +172,8 @@ function compare_with_original()
     param_dim = JuBat.ChooseCell("Jellyroll")
     # δ_0_new = param_dim.cohesive.δ_0_n  # TODO Chunk 2 Task 2.1
     # δ_c_new = param_dim.cohesive.δ_c_n  # TODO Chunk 2 Task 2.1
+    δ_0_new = NaN  # TODO Chunk 2 Task 2.1
+    δ_c_new = NaN  # TODO Chunk 2 Task 2.1
     
     # 典型分离位移范围
     δ_test = [15e-9, 16e-9, 18e-9, 20e-9, 25e-9, 30e-9]

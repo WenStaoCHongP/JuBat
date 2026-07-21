@@ -115,6 +115,7 @@ function main()
 
     # ── 3.3 断裂能 E_frac = Σ_e G_c · l_e · D_e ──
     # G_c = param_dim.cohesive.G_c_n  # J/m²                                # TODO Chunk 2 Task 2.1
+    G_c = NaN  # TODO Chunk 2 Task 2.1
 
     # 获取每个 CZM 单元的长度（使用 create_czm_mesh 预计算值）
     coh_lengths = Float64[]
