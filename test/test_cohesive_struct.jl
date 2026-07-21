@@ -56,3 +56,22 @@ using .JuBat
     @test hasproperty(coh, :threshold)
     @test hasproperty(coh, :tau_visc)
 end
+
+@testset "CohesiveElement interface_type + host elems" begin
+    elem = JuBat.CohesiveElement(
+        1,                          # id
+        [1, 2, 3, 4],               # nodes
+        [1, 2],                     # nodes_bottom
+        [4, 3],                     # nodes_top
+        1.0,                        # length
+        :PE_PCC,                    # interface_type
+        10,                         # host_outer_elem
+        7                           # host_inner_elem
+    )
+    @test elem.interface_type == :PE_PCC
+    @test elem.host_outer_elem == 10
+    @test elem.host_inner_elem == 7
+
+    # 旧 layer_idx 字段已删除
+    @test !hasproperty(elem, :layer_idx)
+end

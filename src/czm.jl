@@ -2,9 +2,11 @@ mutable struct CohesiveElement <: AbstractCohesiveElement
     id::Int64
     nodes::Vector{Int64}           # [n1, n2, n3, n4]
     nodes_bottom::Vector{Int64}    # [n1, n2] 底面节点
-    nodes_top::Vector{Int64}       # [n4, n3] 顶面节点（注意顺序与底面一致）
+    nodes_top::Vector{Int64}       # [n4, n3] 顶面节点（顺序与底面一致）
     length::Float64                # 单元长度
-    layer_idx::Int64               # 层间界面索引
+    interface_type::Symbol         # :PE_PCC 或 :NE_NCC
+    host_outer_elem::Int           # 外层 Q4 单元 id（在 czm_submesh.mesh.element 中的行号）
+    host_inner_elem::Int           # 内层 Q4 单元 id
 end
 
 """
@@ -103,7 +105,9 @@ function create_czm_mesh(thermal_mesh::Mesh, param_dim; tol::Float64=1e-8)
             [n_in_1, n_in_2],
             [n_out_1, n_out_2],
             elem_length,
-            1
+            :PE_PCC,   # TODO Chunk 3: 按实际材料类型判定
+            0,         # TODO Chunk 3: host_outer_elem
+            0          # TODO Chunk 3: host_inner_elem
         )
 
         push!(cohesive_elements, coh_elem)
