@@ -1,9 +1,15 @@
 # CZM 内聚力网格按材料层界面重构设计
 
-**日期**: 2026-07-18（2026-07-20 修订 v2）
+**日期**: 2026-07-18（2026-07-20 修订 v2，2026-07-21 修订 v3）
 **作者**: brainstorm with user
 **分支**: czm-refactor
-**状态**: 修订 v2（基于 plan reviewer 反馈补漏洞）
+**状态**: 修订 v3（重构分层 Q4 子网格的构造路径）
+
+**v3 修订要点**（2026-07-21）：
+- §3.1 `CzmSubmesh` 构造**移入 `jellyroll_collector_seed_mesh`**（不再单独定义 `jellyroll_czm_submesh` 函数）；`JellyrollMesh` struct 新增 `czm_submesh::Union{Nothing, CzmSubmesh}` 字段；新 kwarg `nθ_czm`
+- §4.1 重写：分层 Q4 子网格由 `Jellyrollmodel.jl` 内部辅助函数 `build_czm_submesh` 构造；`thermal_elem_map` 反查的 `nθ_thermal` 从 outer scope `nθ` kwarg 传入
+- §4.2 **cohesive 界面数从 2 改为 4**（每卷绕圈）：层序 PE→PCC→PE→SP→NE→NCC→NE→SP 中，每个集流体（PCC/NCC）两侧均贴涂层，共 4 个材料配对界面；`interface_type` 仍分 2 类（:PE_PCC / :NE_NCC），参数集不拆 inner/outer
+- §4.4 `create_czm_mesh` 职责严格限定为 "cohesive 单元插入"（不做 Q4 生成）；调用模式改为 `mesh_data = jellyroll_collector_seed_mesh(..., nθ_czm=...) + create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, param)`
 
 **v2 修订要点**（2026-07-20）：
 - §3.2 `CohesiveElement` 新增 `host_outer_elem / host_inner_elem` 字段
@@ -122,16 +128,41 @@ C-skip-thermal 完成后若发现 δ_sim 仍偏离 δ_exp，可升级到 C'（�
 
 ## 3. 数据结构变更
 
-### 3.1 新增 `CzmSubmesh`（`src/czm.jl`）
+### 3.1 新增 `CzmSubmesh`（`src/czm.jl`，由 `Jellyrollmodel.jl` 构造）
 
 ```julia
 struct CzmSubmesh
     mesh::Mesh                          # 细化 Q4 网格（8 径向 × nθ_czm 周向）
     material_type::Vector{Symbol}       # 每个单元：:PE / :PCC / :SP / :NE / :NCC
     winding_turn::Vector{Int}           # 每个单元所属卷绕圈号
-    thermal_elem_map::Vector{Int}       # 每个 CZM 单元 → 对应的粗热单元 id（用于耦合）
+    thermal_elem_map::Vector{Int}       # 每个 CZM 体单元 → 对应的粗热单元 id（用于耦合）
 end
 ```
+
+**v3 修订（2026-07-21）：构造由 `Jellyrollmodel.jl::jellyroll_collector_seed_mesh` 一并完成**（不再单独定义 `jellyroll_czm_submesh` 函数）。新增字段到 `JellyrollMesh` struct（`src/Jellyrollmodel.jl:1-15`）：
+
+```julia
+struct JellyrollMesh
+    thermal2D::Mesh
+    thermal2D_merged::Mesh
+    merge_map::Vector{Int}
+    interface_pairs::Vector{Tuple{Int,Int}}
+    czm_element_map::Dict{Int,Vector{Int}}
+    element_layer::Vector{Int}
+    is_inner_layer::Vector{Bool}
+    inner_nodes::Vector{Int}
+    outer_nodes::Vector{Int}
+    pos_tab_nodes::Vector{Int}
+    neg_tab_nodes::Vector{Int}
+    ne::Int
+    nnode::Int
+    czm_submesh::Union{Nothing, CzmSubmesh}   # v3 新增：分层 Q4 子网格（nθ_czm nothing 时不构造）
+end
+```
+
+`jellyroll_collector_seed_mesh` 新增 kwarg `nθ_czm::Union{Nothing,Int}=nothing`：
+- `nθ_czm = nothing`（默认）：`czm_submesh` 字段为 `nothing`，行为与旧版一致（向后兼容）
+- `nθ_czm = Int`（典型 80-200）：函数内在 thermal2D_merged 构造完成后，按 §4.1 算法构造 `CzmSubmesh` 并填入返回值
 
 ### 3.2 `CohesiveElement` 扩展（`src/czm.jl:1-8`）
 
@@ -153,12 +184,14 @@ host_inner_elem::Int     # 内层 Q4 单元 id
 
 新增字段：
 ```julia
-czm_submesh::Union{Nothing, CzmSubmesh}               # 关联的细化子网格
+czm_submesh::Union{Nothing, CzmSubmesh}               # 引用（来自 JellyrollMesh.czm_submesh），供组装时按材料类型查参
 thermal_to_czm::Union{Nothing, SparseMatrixCSC{Float64, Int}}  # 粗热节点 → 细 CZM 节点插值矩阵（n_czm_node × n_thermal_node，每行 ≤4 个非零元，行和=1）
 cohesive_to_thermal::Vector{Int}                      # 每个 cohesive 单元 → 所属粗热单元 id（长度 = n_cohesive；用于 D 反向归约）
 ```
 
-**`n_layers` 字段语义重定义**（`SetMesh.jl:35` 当前定义但语义不清）：原意"径向分离面数"，但旧代码硬编码为 2（与 8 材料层混淆）。本次重构明确 `n_layers = 2`（恒等：PE-PCC + NE-NCC 两个分离面类型），**不**表示材料层数（8）。新增 `czm_submesh.material_type` 才是 8 材料层语义的唯一来源。后续代码读取 `n_layers` 时须按"分离面类型数"理解。
+> **v3 修订**：`czm_submesh` 的**构造**在 `Jellyrollmodel.jl::jellyroll_collector_seed_mesh` 中完成（§3.1、§4.1）；`CohesiveMesh` 仅保存引用，便于 CZM 求解时按材料类型查 `CzmParamCache`。
+
+**`n_layers` 字段语义重定义**（`SetMesh.jl:35` 当前定义但语义不清）：原意"径向分离面数"，但旧代码硬编码为 2（与 8 材料层混淆）。本次重构明确 `n_layers = 2`（恒等：PE-PCC + NE-NCC 两个**材料配对类型**），**不**表示材料层数（8），也**不**表示每卷绕圈的 cohesive 界面数（v3 修订后是 4，见 §4.2）。新增 `czm_submesh.material_type` 才是 8 材料层语义的唯一来源。后续代码读取 `n_layers` 时须按"界面材料配对类型数"理解。
 
 ### 3.4 `Cohesive` 参数 struct 扩展（`src/SetParams.jl:155-180`）
 
@@ -254,36 +287,53 @@ end
 
 ---
 
-## 4. CZM 子网格生成与界面识别
+## 4. 分层 Q4 子网格生成与界面识别
 
-### 4.1 新增 `jellyroll_czm_submesh`（`src/Jellyrollmodel.jl`）
+### 4.1 扩展 `jellyroll_collector_seed_mesh` 生成分层 Q4 子网格（`src/Jellyrollmodel.jl`）
+
+**v3 修订（2026-07-21）**：分层 Q4 子网格的构造**整合进现有 `jellyroll_collector_seed_mesh` 函数**，不再单独定义 `jellyroll_czm_submesh`。函数签名扩展为：
 
 ```julia
-function jellyroll_czm_submesh(param, thermal_mesh::Mesh; nθ_czm::Int=80, gsorder::Int=2)
-    # 1. 沿螺旋线生成 8 个径向分层的 Q4 单元/卷绕圈
-    # 2. 径向分层边界（从内到外）：
-    #    r_PE_inner, r_PE_outer = r_PE_inner + t_PE,
-    #    r_PCC_inner, r_PCC_outer = r_PCC_inner + t_PCC,
-    #    ...（按层序 PE → PCC → PE → SP → NE → NCC → NE → SP 累计）
-    # 3. 每个单元的材料类型按生成顺序直接打标（不依赖坐标反推）
-    # 4. thermal_elem_map：网格构造时一次性建立 CZM体单元 → 粗热单元 映射（O(1) 解析式，见下）
+function jellyroll_collector_seed_mesh(param;
+        nθ::Int=360, gsorder::Int=2, phase::Float64=0.0, tol::Float64=1e-8,
+        nθ_czm::Union{Nothing,Int}=nothing)   # v3 新增：nothing 时不构造分层子网格
+    # ... 既有逻辑：构造 thermal2D / thermal2D_merged ...
+
+    # v3 新增：在 thermal2D_merged 完成后构造分层 Q4 子网格
+    czm_submesh = isnothing(nθ_czm) ? nothing : build_czm_submesh(
+        param, thermal2D_merged, thermal2D; nθ_czm=nθ_czm, gsorder=gsorder)
+
+    return JellyrollMesh(..., czm_submesh)   # 末字段
+end
+```
+
+`build_czm_submesh` 是 `Jellyrollmodel.jl` 内部辅助函数（不导出），职责：
+
+```julia
+function build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm, gsorder)
+    # 1. 沿螺旋线生成 8 个径向分层的 Q4 单元/卷绕圈 × nθ_czm 段
+    # 2. 径向分层边界（从内到外）按层序 PE → PCC → PE → SP → NE → NCC → NE → SP 累计
+    # 3. 每个单元的材料类型按生成顺序直接打标（:PE / :PCC / :SP / :NE / :NCC）
+    # 4. winding_turn[e] = 卷绕圈号（构造时已知）
+    # 5. thermal_elem_map：解析式一次性建立 CZM 体单元 → 粗热单元（见 §4.1.1）
+    return CzmSubmesh(mesh, material_type, winding_turn, thermal_elem_map)
 end
 ```
 
 **关键设计点**：
-- **入参**：`param`（归一化后的 `case.param`，与 `jellyroll_collector_seed_mesh` 同约定）+ `thermal_mesh`（粗热网格 `Mesh` 对象，用于解析反查）
 - **不依赖坐标重合检测**（避免 `create_czm_mesh:75-80` 那种 tol=1e-8 脆弱判断）
-- 材料类型直接从构造顺序确定
+- 材料类型、winding_turn、s_offset 全部从构造顺序直接确定
+- **分层 Q4 子网格的构造与 cohesive 单元插入完全分离**（§4.4）：本函数只产 Q4，不产 cohesive
 
 #### 4.1.1 `thermal_elem_map` 反查算法（O(1) 真正解析式 v3）
 
-由于 CZM 子网格与粗热网格**共享螺旋几何参数**（`param.cell.Rin`、`param.cell.layer`），反查是真正 O(1) 解析式，**禁止使用 `findmin` 空间搜索**（O(n_thermal)，v2 审查发现旧实现仍含 `findmin`）：
+由于分层 Q4 子网格与粗热网格**共享螺旋几何参数**（`param.cell.Rin`、`param.cell.layer`），反查是真正 O(1) 解析式，**禁止使用 `findmin` 空间搜索**（O(n_thermal)，v2 审查发现旧实现仍含 `findmin`）：
 
 ```
 前置：螺旋方程 r = a + b·θ_spiral + s_offset
        其中 a = Rin, b = cell.layer / (2π), s_offset 由 layer_idx 决定（构造时已知）
 
-对每个 CZM 体单元 e_czm（已知 layer_idx 与 s_offset）：
+对每个分层 Q4 体单元 e_czm（已知 layer_idx 与 s_offset）：
     1. r_center = 0.5 * (r[node1] + r[node3])   # 用对角节点平均
     2. θ_spiral = (r_center - a - s_offset) / b  # 直接解析反解（无需 atan，无需 mod 2π）
     3. seg_global = clamp(floor(Int, (θ_spiral - theta0) / dθ_thermal) + 1, 1, n_thermal)
@@ -296,29 +346,41 @@ end
 - 不再有"-1 映射失败"分支（clamp 保证总在 [1, n_thermal] 内）
 
 **前置条件**：
-- 调用方必须传入 `nθ_thermal`（粗热网格的周向分段数，即 `jellyroll_collector_seed_mesh(nθ=nθ_thermal)` 的同一变量）
 - `n_thermal = size(thermal_mesh.element, 1)` 必须 `divrem(n_thermal, nθ_thermal)[2] == 0`（每圈单元数一致）
 - `dθ_thermal = (theta1 - theta0) / n_thermal`
+- `nθ_thermal` 从 outer scope（`jellyroll_collector_seed_mesh` 的 `nθ` kwarg）传入
 
-`thermal_mesh` 在函数内被**只读**使用一次以建立映射，之后运行时查询是 O(1) Vector 访问。
+`thermal2D` 在 `build_czm_submesh` 内**只读**使用一次以建立映射，之后运行时查询是 O(1) Vector 访问。
 
 ### 4.2 界面识别与 cohesive 单元数量预期
 
-在 CZM 子网格内部，遍历径向相邻 Q4 单元对 `(e_inner, e_outer)`：
+在分层 Q4 子网格内部，遍历径向相邻 Q4 单元对 `(e_inner, e_outer)`：
 
 | 材料组合 | 界面类型 | 是否插 cohesive |
 |----------|----------|------------------|
-| `(PE, PCC)` 或 `(PCC, PE)` | `:PE_PCC` | ✓ |
-| `(NE, NCC)` 或 `(NCC, NE)` | `:NE_NCC` | ✓ |
+| `(PE, PCC)` | `:PE_PCC` | ✓ |
+| `(PCC, PE)` | `:PE_PCC` | ✓ |
+| `(NE, NCC)` | `:NE_NCC` | ✓ |
+| `(NCC, NE)` | `:NE_NCC` | ✓ |
 | 其他（PE-SP、SP-NE、PE-PE 等） | — | ✗ |
 
-**每卷绕圈合格径向界面数 = 2**（一个 PE-PCC + 一个 NE-NCC）。整个网格预期 cohesive 单元数：
+**每卷绕圈合格径向界面数 = 4**（v3 修正）：
+- 层序 `PE → PCC → PE → SP → NE → NCC → NE → SP` 中，每个集流体（PCC/NCC）两侧均与涂层相接：
+  - PCC 内侧（PE→PCC）：1 个 PE-PCC 界面
+  - PCC 外侧（PCC→PE）：1 个 PCC-PE 界面
+  - NCC 内侧（NE→NCC）：1 个 NE-NCC 界面
+  - NCC 外侧（NCC→NE）：1 个 NCC-NE 界面
+- 4 个界面**材料配对仅 2 种**（PE-PCC 含正反两侧、NE-NCC 含正反两侧），故 `interface_type::Symbol` 仍取 `:PE_PCC` 或 `:NE_NCC`（参数集不拆 inner/outer）。
+
+整个网格预期 cohesive 单元数：
 
 ```
-n_cohesive_expected = 2 × nθ_czm × n_turns_active
+n_cohesive_expected = 4 × nθ_czm × n_turns_active
 ```
 
-其中 `n_turns_active` 是 CZM 子网格覆盖的有效卷绕圈数（不含边界裁剪）。**测试断言必须用 `== n_cohesive_expected ± nθ_czm`**（±nθ_czm 容差来自最内/最外圈边界），不可用 `> 50% × ...` 这类过宽阈值。注意：旧 plan 中"4 × n_segments × n_turns"是**错误的**——一个卷绕圈的层序 `PE → PCC → PE → SP → NE → NCC → NE → SP` 内虽然有 7 个径向相邻对，但只有 2 对材料组合符合上表。
+其中 `n_turns_active` 是分层 Q4 子网格覆盖的有效卷绕圈数（不含边界裁剪）。**测试断言必须用 `== n_cohesive_expected ± nθ_czm`**（±nθ_czm 容差来自最内/最外圈边界），不可用 `> 50% × ...` 这类过宽阈值。
+
+**几何侧位（inner/outer）追踪**：虽然 interface_type 只有 2 类型，但每个 cohesive 单元的"侧位"（材料层序中是 PE→PCC 还是 PCC→PE）可通过 `host_inner_elem`/`host_outer_elem` 在分层 Q4 子网格中的 `material_type` 反查得到，无需新增字段。若未来需按侧位区分参数，可扩展 `CohesiveElement` 加 `side::Symbol` 字段。
 
 ### 4.3 Cohesive 单元几何与节点复制策略
 
@@ -327,7 +389,7 @@ n_cohesive_expected = 2 × nθ_czm × n_turns_active
 - 顶面 = 外层单元的内边（2 节点，为副本）
 
 **节点复制策略**（新逻辑，正向描述）：
-1. CZM 子网格的 Q4 单元生成时，**径向相邻的两个 Q4 单元共享一条边**（2 个共节点）
+1. 分层 Q4 子网格的 Q4 单元生成时，**径向相邻的两个 Q4 单元共享一条边**（2 个共节点）
 2. 在共边位置插入 cohesive 单元时，**复制该边的 2 个节点**（产生 2 个新节点，与原节点共享坐标）
 3. **必须重写外层 Q4 单元的连接表**：把外层单元共边上的 2 个原节点替换为对应的副本节点。否则 cohesive 顶面节点与外层 bulk 单元共边节点不共享 DOF，分离位移恒为 0
 4. 内层 Q4 单元的连接表**不变**（继续指向原节点）
@@ -345,10 +407,14 @@ n_cohesive_expected = 2 × nθ_czm × n_turns_active
 
 - **旧逻辑**（`src/czm.jl:56-136`，坐标重合检测 + 螺旋界面）**移除**
 - 新签名：`create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param) -> CohesiveMesh`
-  - `czm_submesh`：细化子网格（含 `thermal_elem_map`，已预建）
+  - `czm_submesh`：分层 Q4 子网格（由 `jellyroll_collector_seed_mesh` 构造，含 `thermal_elem_map`）
   - `thermal_mesh`：粗热网格（用于建立 `thermal_to_czm` 与 `cohesive_to_thermal`）
   - `param`：归一化参数（用于 `Cohesive` 字段读取与 `scale` 信息）
-- 实现职责：按 §4.2 识别 PE-PCC / NE-NCC 界面；按 §4.3 复制节点、重写外层 bulk 连接；构造 `CohesiveMesh` 含 `thermal_to_czm`、`cohesive_to_thermal` 字段
+- **v3 修订：职责严格限定为"cohesive 单元插入"**：
+  - 按 §4.2 识别 4 类材料配对界面（PE-PCC / PCC-PE / NE-NCC / NCC-NE）
+  - 按 §4.3 复制节点、重写外层 bulk 连接
+  - 构造 `CohesiveMesh` 含 `thermal_to_czm`、`cohesive_to_thermal` 字段
+  - **不做任何 Q4 体单元生成**（已由 `jellyroll_collector_seed_mesh` 完成）
 - **正确性自检**：构造完成后必须运行 §4.3 中列出的三条自检（throw AssertionError on failure）
 
 #### 4.4.1 调用点清单（已核实，2026-07-20 grep）
@@ -372,15 +438,16 @@ src/ 内部仅函数定义本身，无调用。**外部调用共 16 处**（src 
 | `example/循环验证/czm_from_precomputed_example.jl` | 301 | `JuBat.create_czm_mesh(mesh_data.Jellyroll_czm, param_dim; tol=1e-8)` |
 | `example/循环验证/czm_cycle_example.jl` | 98 | 同上 |
 
-**统一替换模式**：
+**v3 统一替换模式**：
 
 ```julia
-# 旧
+# 旧（两步分离）
+mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ_thermal, gsorder=2)
 czm_mesh = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
 
-# 新（两步）
-czm_submesh = JuBat.jellyroll_czm_submesh(param, mesh_data.thermal2D; nθ_czm=opt.nθ_czm)
-czm_mesh = JuBat.create_czm_mesh(czm_submesh, mesh_data.thermal2D, param)
+# 新（一步出网 + 一步插入 cohesive）
+mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ_thermal, nθ_czm=nθ_czm, gsorder=2)
+czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, param_dim)
 ```
 
 每处替换均需逐文件确认变量名（`param` vs `param_dim` vs `case.param`、`mesh_data.thermal2D` vs `case.mesh["thermal2D"]`）。
@@ -650,8 +717,8 @@ end
 ## 9. 实施步骤（粗略，详细 plan 后续生成）
 
 1. 扩展 `Cohesive` struct（含 Mode I + Mode II 共 20 字段）与 `parameters/Jellyroll.jl`（参数集）
-2. 实现 `CzmSubmesh` 与 `jellyroll_czm_submesh`
-3. 重构 `create_czm_mesh`（基于 CzmSubmesh，含节点复制+外层 bulk 重写）
+2. 扩展 `JellyrollMesh` struct（新增 `czm_submesh` 字段）；在 `jellyroll_collector_seed_mesh` 内实现 `build_czm_submesh`（构造分层 Q4 子网格 + thermal_elem_map）
+3. 重构 `create_czm_mesh`（仅做 cohesive 单元插入：识别 4 类材料配对界面 + 节点复制 + 外层 bulk 重写）
 4. 实现 `CzmParamCache` + `compute_czm_params_per_interface`
 5. 改造 `assemble_czm_system`、`assemble_coupled_system`、`assemble_coupled_system_full` 与 `CzmSolve.jl` 全部 11 处 + `czm.jl:591` 共 12 处 `assemble_coupled_system` 调用，以及 `tools/czm_convergence_diag.jl` 4 处
 6. 改造 `Materialmatrix.jl`（`bilinear_*`、`update_damage`、`compute_*gap_conductance*` 全部按 `CzmInterfaceParams` 取参）
@@ -676,9 +743,10 @@ end
 | `Cohesive` struct 字段重命名（旧 σ_max_n / K_n / ... 移除） | 更新自定义参数集脚本，使用新按界面类型字段 |
 | `parameters/Jellyroll.jl` 中 cohesive 参数块整体替换 | 已由实施步骤 1 同步更新；自定义参数集用户需同步更新 |
 | 任何 `example/*.jl` 引用旧 cohesive 字段 | 实施时同步更新所有 example 脚本 |
-| `create_czm_mesh` 调用签名变更（旧 2 参 → 新 3 参） | §4.4.1 列出的 16 处调用全部需迁移 |
+| `create_czm_mesh` 调用签名变更（旧 2 参 → 新 3 参） | §4.4.1 列出的 16 处调用全部需迁移；同时调用方需在 `jellyroll_collector_seed_mesh` 加 `nθ_czm=...` kwarg |
+| `jellyroll_collector_seed_mesh` 新增 kwarg `nθ_czm` | 若需 CZM 子网格必须传入；不传则 `mesh_data.czm_submesh === nothing`（向后兼容） |
 | `assemble_coupled_system` 调用签名变更 | §7.1.1 列出的 16 处调用全部需迁移 |
-| CZM 单元数增加（约 ×4） | 内存占用上升；预期行为 |
+| CZM 单元数增加（约 ×4，每卷绕圈 4 界面） | 内存占用上升；预期行为 |
 | 损伤峰值位置改变（从 SP-PE → PE-PCC / NE-NCC） | 后处理脚本（含 `CsvExport`）若硬编码位置需更新 |
 | **界面热阻暂禁用**（spec §2.4 v2 修订） | 本版本即使 `czm_enabled=true` 也走合并网格 + 传统二维热传导（无 CZM→热反馈）。若用户依赖损伤影响温度场的旧行为，需知此功能暂停；恢复方式：取消 `ThermalDistributed.jl:292-310` 与 `Jellyrollmodel.jl:531-534` 的注释 |
 
@@ -703,7 +771,7 @@ end
 - `src/parameters/Jellyroll.jl` — 填入两组实验参数
 - `src/CouplingState.jl` — compute_czm_params_per_interface、ensure_czm_cache、CzmParamCache
 - `src/CzmSolve.jl` — backtrack_line_search!、solve_czm_*_step 签名变更
-- `src/Jellyrollmodel.jl` — 新增 jellyroll_czm_submesh
+- `src/Jellyrollmodel.jl` — 扩展 `JellyrollMesh` struct、扩展 `jellyroll_collector_seed_mesh`、新增内部 `build_czm_submesh`
 - `src/CallModel.jl` — 调用链适配
 
 ### A.2 新增文件
@@ -712,7 +780,6 @@ end
 ### A.3 不变文件
 - `src/SPMe.jl` — 电化学不变
 - `src/ThermalDistributed.jl` — 热模型不变
-- `src/jellyroll_collector_seed_mesh` — 粗热网格生成不变
 
 ---
 

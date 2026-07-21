@@ -4,7 +4,12 @@
 
 **Goal:** 将 cohesive 单元从 SP-PE 螺旋界面迁移到 PE-PCC / NE-NCC 电极-集流体界面，使模拟几何与实验剥离数据对齐，消除"代表元均一化"导致的体应力场失真。
 
-**Architecture:** 新增独立细化的 CZM 机械子网格（8 径向分层/卷绕圈），保持粗热网格不变；cohesive 单元按 `interface_type` 取实验参数与涂层模量；通过 `thermal_to_czm` 稀疏插值矩阵实现粗热→细 CZM 耦合。
+**Architecture (v3)：** 分层 Q4 子网格（8 径向分层/卷绕圈）由 `jellyroll_collector_seed_mesh` 一并构造（新增 kwarg `nθ_czm`），存入 `JellyrollMesh.czm_submesh`；`create_czm_mesh` 仅做 cohesive 单元插入（识别 4 类材料配对界面 + 节点复制 + 外层 bulk 重写）。cohesive 单元按 `interface_type` 取实验参数与涂层模量；通过 `thermal_to_czm` 稀疏插值矩阵实现粗热→细 CZM 耦合。
+
+**v3 修订要点（spec §3.1, §4.1, §4.2, §4.4）：**
+- 分层 Q4 子网格构造整合进 `jellyroll_collector_seed_mesh`（删除原 `jellyroll_czm_submesh` 函数）
+- 每卷绕圈 cohesive 界面数 **2 → 4**（PE-PCC / PCC-PE / NE-NCC / NCC-NE）；`interface_type` 仍分 `:PE_PCC` / `:NE_NCC` 两类
+- `create_czm_mesh` 严格只做"cohesive 单元插入"，不做 Q4 生成
 
 **分阶段开放耦合（spec §2.4）：** 本版本**先禁用界面热阻模型**（`compute_*gap_conductance*` 的调用点通过注释关闭，签名保留），走传统二维热传导；CZM→热反馈延迟到 δ_sim 验证达标后再启用。Task 4.6 集中实施此禁用。
 
@@ -1061,26 +1066,31 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 
 ---
 
-## Chunk 3: CZM 子网格生成
+## Chunk 3: 分层 Q4 子网格生成（v3 重构）
 
-本 chunk 按 spec v2 §4.1-§4.4 实现：独立细化 CZM 子网格、O(1) 解析式反查、节点复制+重写外层 bulk 单元、`create_czm_mesh` 3 参签名。
+本 chunk 按 spec v3 §3.1, §4.1-§4.4 实现：分层 Q4 子网格由 `jellyroll_collector_seed_mesh` 一并构造（删除原 `jellyroll_czm_submesh` 独立函数设计），O(1) 解析式反查，节点复制+重写外层 bulk 单元，`create_czm_mesh` 3 参签名且**只做 cohesive 单元插入**。**每卷绕圈 4 个 cohesive 界面**（PE-PCC / PCC-PE / NE-NCC / NCC-NE）。
 
-### Task 3.1: 实现 `jellyroll_czm_submesh`（spec §4.1）
+### Task 3.1: 扩展 `jellyroll_collector_seed_mesh` 生成分层 Q4 子网格（spec v3 §3.1, §4.1）
 
 **Files:**
-- Modify: `src/Jellyrollmodel.jl`（在 `jellyroll_collector_seed_mesh` 函数之后追加 `jellyroll_czm_submesh`）
-- Modify: `src/JuBat.jl`（export）
+- Modify: `src/Jellyrollmodel.jl`（扩展 `JellyrollMesh` struct 加 `czm_submesh` 字段；扩展 `jellyroll_collector_seed_mesh` 加 `nθ_czm` kwarg；新增内部 `build_czm_submesh` 辅助函数）
 - Create: `test/test_czm_submesh.jl`
 
-**说明：** 函数入参 `(param, thermal_mesh::Mesh; nθ_czm, nθ_thermal, gsorder)`，其中 `param` 是 `NormaliseParam(param_dim)` 的输出（与 `jellyroll_collector_seed_mesh` 同约定）。生成 8 径向分层 Q4 子网格，**每 turn** 周向 `nθ_czm` 个单元（总段数 = `n_turns × nθ_czm`，确保比粗热网格更细）。按构造顺序绑定 `material_type`，用 **真正 O(1) 解析式**建立 `thermal_elem_map`（spec §4.1.1，禁止 `findmin` 空间搜索）。
+**说明（v3 修订）**：分层 Q4 子网格的构造**整合进现有 `jellyroll_collector_seed_mesh` 函数**，不再单独定义 `jellyroll_czm_submesh`。`build_czm_submesh` 是 `Jellyrollmodel.jl` 内部辅助函数（不导出），由 `jellyroll_collector_seed_mesh` 在 thermal2D_merged 完成后调用。
 
-**O(1) 反查核心公式**（spec §4.1.1 v3）：
-- 螺旋方程：`r = a + b·θ_spiral + s_offset`，其中 `s_offset` 由 `layer_idx` 决定（已知量）
-- 反解：`θ_spiral = (r_center - a - s_offset) / b` （直接解析，无需搜索）
-- 粗热网格在 `[theta0, theta1]` 上均匀分段，每段 dθ = `(theta1 - theta0) / n_thermal`
-- 全局 segment id：`seg_global = clamp(floor(Int, (θ_spiral - theta0) / dθ) + 1, 1, n_thermal)`
-- `nθ_thermal` 必须显式传入（来自调用方的粗热网格构造参数 `nθ`），不得从 mesh 数组推断
-- `nθ_czm` 语义为 **每 turn 分段数**（非整个螺旋总分段数），总段数 = `n_turns × nθ_czm`
+**v3 关键改动相对 v2**：
+- `JellyrollMesh` struct（`Jellyrollmodel.jl:1-15`）新增 `czm_submesh::Union{Nothing, CzmSubmesh}` 字段
+- `jellyroll_collector_seed_mesh` 签名加 `nθ_czm::Union{Nothing,Int}=nothing` kwarg
+  - `nθ_czm = nothing`（默认）：`czm_submesh` 为 `nothing`，向后兼容
+  - `nθ_czm = Int`（典型 80-200）：构造分层 Q4 子网格并填入返回值
+- `build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm, gsorder, nθ_thermal)` 为内部辅助，不导出
+- 删除 v2 plan 中的 `jellyroll_czm_submesh` export
+
+**O(1) 反查核心公式**（spec v3 §4.1.1）：
+- 螺旋方程：`r = a + b·θ_spiral + s_offset`
+- 反解：`θ_spiral = (r_center - a - s_offset) / b`
+- `seg_global = clamp(floor(Int, (θ_spiral - theta0) / dθ_thermal) + 1, 1, n_thermal)`
+- `nθ_thermal` 从 outer scope `nθ` kwarg 直接传入（不再需要调用方显式传）
 
 - [ ] **Step 1: 写失败测试 `test/test_czm_submesh.jl`**
 
@@ -1088,27 +1098,25 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 using Test
 using JuBat
 
-@testset "jellyroll_czm_submesh" begin
+@testset "jellyroll_collector_seed_mesh 扩展 czm_submesh (v3)" begin
     param_dim = JuBat.ChooseCell("Jellyroll")
-    opt = JuBat.Option()
-    opt.thermal_enabled = true
-    opt.thermalmodel = "distributed2D"
-    opt.per_element_spme = true
-    case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, gsorder=2)
-    case = JuBat.setup_thermal2D_mesh(case, mesh_data)
+    # 默认：nθ_czm=nothing，czm_submesh 应为 nothing（向后兼容）
+    mesh_data_default = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, gsorder=2)
+    @test mesh_data_default.czm_submesh === nothing
 
-    submesh = JuBat.jellyroll_czm_submesh(case.param, case.mesh["thermal2D"]; nθ_czm=40, nθ_thermal=80)
-
+    # 启用分层 Q4 子网格
+    nθ_czm = 40
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, nθ_czm=nθ_czm, gsorder=2)
+    submesh = mesh_data.czm_submesh
     @test submesh isa JuBat.CzmSubmesh
     @test submesh.mesh.type == "Q4"
     ne = size(submesh.mesh.element, 1)
 
-    # 总单元数 = 8 层 × n_turns × nθ_czm（spec §4.1 v3：nθ_czm 是每 turn 分段数）
-    n_thermal_total = size(case.mesh["thermal2D"].element, 1)
-    n_turns_expected = n_thermal_total ÷ 80   # nθ_thermal=80
-    @test ne == 8 * n_turns_expected * 40     # n_layers × n_turns × nθ_czm
+    # 总单元数 = 8 层 × n_turns × nθ_czm
+    nθ_thermal = 80
+    n_turns_expected = size(mesh_data.thermal2D.element, 1) ÷ nθ_thermal
+    @test ne == 8 * n_turns_expected * nθ_czm
 
     # material_type 取值合法
     @test all(m in (:PE, :PCC, :SP, :NE, :NCC) for m in submesh.material_type)
@@ -1118,13 +1126,13 @@ using JuBat
         @test submesh.material_type[1:8] == [:PE, :PCC, :PE, :SP, :NE, :NCC, :NE, :SP]
     end
 
-    # 每个 CZM 体单元都映射到一个粗热单元，且映射值合法
-    n_thermal = size(case.mesh["thermal2D"].element, 1)
+    # 每个 CZM 体单元映射到一个合法粗热单元
+    n_thermal = size(mesh_data.thermal2D.element, 1)
     @test all(1 <= e <= n_thermal for e in submesh.thermal_elem_map)
 
-    # winding_turn 与径向位置一致：r 中心落在 turn*cell.layer 区间内
-    s_total = case.param.cell.layer
-    a = case.param.cell.Rin
+    # winding_turn 与径向位置一致
+    s_total = param_dim.cell.layer
+    a = param_dim.cell.Rin
     for e in 1:length(submesh.winding_turn)
         n1 = submesh.mesh.element[e, 1]
         n3 = submesh.mesh.element[e, 3]
@@ -1133,115 +1141,102 @@ using JuBat
         expected_turn = max(1, Int(floor((r - a) / s_total)) + 1)
         @test submesh.winding_turn[e] == expected_turn
     end
-
-    # O(1) 解析反查正确性验证（spec §4.1.1 v3 公式）
-    # 反查公式：θ_spiral = (r_center - a - s_offset) / b
-    #           seg_global = clamp(floor((θ_spiral - theta0) / dθ) + 1, 1, n_thermal)
-    n_thermal = size(case.mesh["thermal2D"].element, 1)
-    a = case.param.cell.Rin
-    s_total = case.param.cell.layer
-    b = s_total / (2 * pi)
-    layer_thicknesses = [
-        case.param.PE.thickness, case.param.PCC.thickness,
-        case.param.PE.thickness, case.param.SP.thickness,
-        case.param.NE.thickness, case.param.NCC.thickness,
-        case.param.NE.thickness, case.param.SP.thickness,
-    ]
-    s_offsets = [0.0; cumsum(layer_thicknesses)]
-    theta0 = max(0.0, (case.param.cell.Rin - a) / b)
-    theta1 = (case.param.cell.Rout - a - s_total) / b
-    dθ = (theta1 - theta0) / n_thermal
-
-    for e in 1:ne
-        # 取单元中心 r
-        n1 = submesh.mesh.element[e, 1]
-        n3 = submesh.mesh.element[e, 3]
-        r_center = 0.5 * (hypot(submesh.mesh.node[n1, 1], submesh.mesh.node[n1, 2]) +
-                          hypot(submesh.mesh.node[n3, 1], submesh.mesh.node[n3, 2]))
-        # 由 element 顺序反推 layer_idx（外层循环 layer_idx，内层循环 seg）
-        n_layers = 8
-        n_segments = size(submesh.mesh.element, 1) ÷ n_layers
-        layer_idx = ((e - 1) ÷ n_segments) + 1
-        s_offset = s_offsets[layer_idx]
-        θ_spiral = (r_center - a - s_offset) / b
-        expected = clamp(floor(Int, (θ_spiral - theta0) / dθ) + 1, 1, n_thermal)
-        @test submesh.thermal_elem_map[e] == expected
-    end
 end
 ```
 
 - [ ] **Step 2: 运行测试验证失败**
 
 Run: `julia --project=. -e 'include("test/test_czm_submesh.jl")'`
-Expected: FAIL — `jellyroll_czm_submesh` 未定义（或 UndefVarError）
+Expected: FAIL — `mesh_data_default.czm_submesh` 字段不存在
 
-- [ ] **Step 3: 实现 `jellyroll_czm_submesh`（O(1) 解析反查）**
+- [ ] **Step 3: 扩展 `JellyrollMesh` struct 与 `jellyroll_collector_seed_mesh`**
 
-在 `src/Jellyrollmodel.jl` 的 `jellyroll_collector_seed_mesh` 函数之后追加：
+**3a. 扩展 struct（`Jellyrollmodel.jl:1-15`）**：
+
+```julia
+struct JellyrollMesh
+    thermal2D::Mesh
+    thermal2D_merged::Mesh
+    merge_map::Vector{Int}
+    interface_pairs::Vector{Tuple{Int,Int}}
+    czm_element_map::Dict{Int,Vector{Int}}
+    element_layer::Vector{Int}
+    is_inner_layer::Vector{Bool}
+    inner_nodes::Vector{Int}
+    outer_nodes::Vector{Int}
+    pos_tab_nodes::Vector{Int}
+    neg_tab_nodes::Vector{Int}
+    ne::Int
+    nnode::Int
+    czm_submesh::Union{Nothing, CzmSubmesh}   # v3 新增
+end
+```
+
+**3b. 扩展 `jellyroll_collector_seed_mesh` 签名与返回值**：
+
+```julia
+function jellyroll_collector_seed_mesh(param;
+        nθ::Int=360, gsorder::Int=2, phase::Float64=0.0, tol::Float64=1e-8,
+        nθ_czm::Union{Nothing,Int}=nothing)   # v3 新增
+    # ... 既有逻辑：构造 thermal2D / thermal2D_merged / merge_map / ...
+
+    # v3 新增：在 thermal2D_merged 完成后构造分层 Q4 子网格
+    czm_submesh = isnothing(nθ_czm) ? nothing :
+        build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm=nθ_czm, gsorder=gsorder, nθ_thermal=nθ)
+
+    return JellyrollMesh(thermal2D, thermal2D_merged, merge_map, interface_pairs,
+                         czm_element_map, element_layer, is_inner_layer,
+                         inner_nodes, outer_nodes, pos_tab_nodes, neg_tab_nodes,
+                         ne, nnode, czm_submesh)
+end
+```
+
+**3c. 新增内部 `build_czm_submesh`（`Jellyrollmodel.jl` 末尾追加，不导出）**：
 
 ```julia
 """
-    jellyroll_czm_submesh(param, thermal_mesh::Mesh; nθ_czm=80, nθ_thermal=0, gsorder=2) -> CzmSubmesh
+    build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm, gsorder, nθ_thermal) -> CzmSubmesh
 
-生成独立细化的 CZM 机械子网格。径向 8 层/卷绕圈（按 PE→PCC→PE→SP→NE→NCC→NE→SP 顺序），
-**每 turn** 周向 nθ_czm 个单元（总段数 = n_turns × nθ_czm）。与粗热网格共享螺旋几何，
-用真正 O(1) 解析式建立 thermal_elem_map。
-
-# 入参约定
-- `param`: NormaliseParam(param_dim) 的输出（归一化后的 case.param）
-- `thermal_mesh`: 粗热网格 Mesh（来自 jellyroll_collector_seed_mesh）
-- `nθ_czm`: **每 turn** 的 CZM 周向分段数（典型 ≥ nθ_thermal，确保 CZM 比粗热网格更细）
-- `nθ_thermal`: 粗热网格**每 turn** 周向分段数（**必须显式传入**，与 `jellyroll_collector_seed_mesh(nθ=nθ_thermal)` 同一变量）
-
-# O(1) 反查算法（spec §4.1.1 v3）
-螺旋方程：r = a + b·θ_spiral + s_offset，其中 s_offset 由 layer_idx 决定（已知量）。
-反解：θ_spiral = (r_center - a - s_offset) / b
-粗热网格在 [theta0, theta1] 上均匀分段，每段 dθ = (theta1 - theta0) / n_thermal。
-全局 segment id：seg_global = clamp(floor(Int, (θ_spiral - theta0) / dθ) + 1, 1, n_thermal)。
+v3 内部辅助：构造径向 8 层分层 Q4 子网格 + O(1) 解析式 thermal_elem_map。
+不导出（仅由 jellyroll_collector_seed_mesh 调用）。
 """
-function jellyroll_czm_submesh(param, thermal_mesh::Mesh; nθ_czm::Int=80, nθ_thermal::Int=0, gsorder::Int=2)
+function build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm::Int, gsorder::Int, nθ_thermal::Int)
     # 螺旋几何参数（与粗热网格一致，使用归一化值）
     a = param.cell.Rin
-    s_total = param.cell.layer              # 一个卷绕圈的径向厚度（归一化）
+    s_total = param.cell.layer
     b = s_total / (2 * pi)
 
-    # 径向 8 层的厚度（按层序）
-    t_pe  = param.PE.thickness
-    t_pcc = param.PCC.thickness
-    t_sp  = param.SP.thickness
-    t_ne  = param.NE.thickness
-    t_ncc = param.NCC.thickness
-
-    layer_thicknesses = [t_pe, t_pcc, t_pe, t_sp, t_ne, t_ncc, t_ne, t_sp]
+    # 径向 8 层厚度（按层序 PE→PCC→PE→SP→NE→NCC→NE→SP）
+    layer_thicknesses = [
+        param.PE.thickness, param.PCC.thickness,
+        param.PE.thickness, param.SP.thickness,
+        param.NE.thickness, param.NCC.thickness,
+        param.NE.thickness, param.SP.thickness,
+    ]
     material_sequence = [:PE, :PCC, :PE, :SP, :NE, :NCC, :NE, :SP]
     n_layers = 8
-    @assert sum(layer_thicknesses) ≈ s_total rtol=1e-6 "层厚之和必须等于 cell.layer（实际: $(sum(layer_thicknesses)), 期望: $s_total）"
+    @assert sum(layer_thicknesses) ≈ s_total rtol=1e-6
 
-    # theta 范围：与粗热网格一致（参考 jellyroll_collector_seed_mesh:35-44）
     theta0 = max(0.0, (param.cell.Rin - a) / b)
     theta1 = (param.cell.Rout - a - s_total) / b
-    theta1 > theta0 || error("jellyroll_czm_submesh: 无有效 theta 范围 (theta0=$theta0, theta1=$theta1)")
+    theta1 > theta0 || error("build_czm_submesh: 无效 theta 范围")
 
-    # 粗热网格分辨率：nθ_thermal 必须显式传入（禁止从 mesh 数组推断，spec §4.1.1 v3）
-    n_thermal = size(thermal_mesh.element, 1)
-    nθ_thermal > 0 || error("jellyroll_czm_submesh: 必须显式传入 nθ_thermal（粗热网格的周向分段数）")
-    n_turns_thermal, rem = divrem(n_thermal, nθ_thermal)
-    @assert rem == 0 "粗热网格单元数 $n_thermal 必须是 nθ_thermal ($nθ_thermal) 的整数倍"
-    @assert n_turns_thermal >= 1 "n_turns_thermal=$n_turns_thermal 无效"
-    dθ_thermal = (theta1 - theta0) / n_thermal   # 每个粗热 segment 的角宽度
+    n_thermal = size(thermal2D.element, 1)
+    n_turns, rem = divrem(n_thermal, nθ_thermal)
+    @assert rem == 0 && n_turns >= 1
+    dθ_thermal = (theta1 - theta0) / n_thermal
 
-    # 周向采样（CZM 子网格）—— nθ_czm 是**每 turn** 分段数（spec §4.1 v3 澄清）
-    # 总段数 = n_turns_thermal × nθ_czm（与粗热网格覆盖相同的 theta 范围，每 turn 更密）
+    # nθ_czm 是每 turn 分段数
     n_segments_per_turn = max(3, nθ_czm)
-    n_segments = n_turns_thermal * n_segments_per_turn
+    n_segments = n_turns * n_segments_per_turn
     theta = collect(range(theta0, theta1; length=n_segments + 1))
 
-    # 节点：每层 2 条螺旋（内边、外边），共 (n_layers+1) 条螺旋 × (n_segments+1) 个点
+    # 节点：(n_layers+1) 条螺旋 × (n_segments+1) 点
     n_spirals = n_layers + 1
     nnode = n_spirals * (n_segments + 1)
     node = zeros(Float64, nnode, 2)
 
-    s_offsets = [0.0; cumsum(layer_thicknesses)]   # 长度 n_layers+1
+    s_offsets = [0.0; cumsum(layer_thicknesses)]
     for layer_idx in 0:n_layers
         s_offset = s_offsets[layer_idx + 1]
         r = a .+ b .* theta .+ s_offset
@@ -1254,7 +1249,7 @@ function jellyroll_czm_submesh(param, thermal_mesh::Mesh; nθ_czm::Int=80, nθ_t
         end
     end
 
-    # 单元：每层 n_segments 个 Q4 单元
+    # 单元
     ne = n_layers * n_segments
     element = zeros(Int64, ne, 4)
     material_type = Vector{Symbol}(undef, ne)
@@ -1263,80 +1258,69 @@ function jellyroll_czm_submesh(param, thermal_mesh::Mesh; nθ_czm::Int=80, nθ_t
 
     elem_idx = 0
     for layer_idx in 1:n_layers
-        s_offset = s_offsets[layer_idx]   # 该层的径向偏移（已知量）
+        s_offset = s_offsets[layer_idx]
         for seg in 1:n_segments
             elem_idx += 1
-            inner_spiral_base = (layer_idx - 1) * (n_segments + 1)
-            outer_spiral_base = layer_idx * (n_segments + 1)
-            element[elem_idx, 1] = inner_spiral_base + seg
-            element[elem_idx, 2] = outer_spiral_base + seg
-            element[elem_idx, 3] = outer_spiral_base + seg + 1
-            element[elem_idx, 4] = inner_spiral_base + seg + 1
+            inner_base = (layer_idx - 1) * (n_segments + 1)
+            outer_base = layer_idx * (n_segments + 1)
+            element[elem_idx, 1] = inner_base + seg
+            element[elem_idx, 2] = outer_base + seg
+            element[elem_idx, 3] = outer_base + seg + 1
+            element[elem_idx, 4] = inner_base + seg + 1
 
             material_type[elem_idx] = material_sequence[layer_idx]
 
-            # 中心 r 与 θ_spiral（真正 O(1)，无需 findmin/搜索）
             n1 = element[elem_idx, 1]
             n3 = element[elem_idx, 3]
             r_center = 0.5 * (hypot(node[n1, 1], node[n1, 2]) +
                               hypot(node[n3, 1], node[n3, 2]))
 
-            # winding_turn 由径向位置解析（仅用于诊断/输出）
-            turn_czm = max(1, Int(floor((r_center - a) / s_total)) + 1)
-            winding_turn[elem_idx] = turn_czm
+            winding_turn[elem_idx] = max(1, Int(floor((r_center - a) / s_total)) + 1)
 
-            # O(1) 解析反查核心公式（spec §4.1.1 v3）：
-            # θ_spiral = (r_center - a - s_offset) / b
-            # seg_global = clamp(floor((θ_spiral - theta0) / dθ_thermal) + 1, 1, n_thermal)
             θ_spiral = (r_center - a - s_offset) / b
-            seg_global = clamp(floor(Int, (θ_spiral - theta0) / dθ_thermal) + 1, 1, n_thermal)
-            thermal_elem_map[elem_idx] = seg_global
+            thermal_elem_map[elem_idx] = clamp(floor(Int, (θ_spiral - theta0) / dθ_thermal) + 1, 1, n_thermal)
         end
     end
 
     gs = GetGS(element, node, gsorder, "Q4")
     mesh = Mesh("Q4", 2, node, nnode, element, gs)
-
     return CzmSubmesh(mesh, material_type, winding_turn, thermal_elem_map)
 end
 ```
 
-- [ ] **Step 4: 在 `src/JuBat.jl` 导出**
+- [ ] **Step 4: 不要修改 `src/JuBat.jl` export**
 
-在现有 export 段加入：
-```julia
-export jellyroll_czm_submesh, CzmSubmesh
-```
-
-- [ ] **Step 4b: 更新 `setup_thermal2D_mesh` 调用链记录 `nθ`**
-
-调用方（`setup_thermal2D_mesh` 或 case 装配处）需要把 `nθ`（粗热网格构造参数）记入 case 或 mesh_data，便于后续 `jellyroll_czm_submesh` 取用。临时约定：调用方直接传入，无需新增字段。
-
-示例：
-```julia
-nθ = 80
-mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, gsorder=2)
-case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-submesh = JuBat.jellyroll_czm_submesh(case.param, case.mesh["thermal2D"]; nθ_czm=40, nθ_thermal=nθ)
-```
+v3 不再导出 `jellyroll_czm_submesh`（已删除）。`jellyroll_collector_seed_mesh` 已是 export 函数；`CzmSubmesh` 由 Task 1.4 在 Chunk 1 中导出。
 
 - [ ] **Step 5: 运行测试验证通过**
 
 Run: `julia --project=. -e 'include("test/test_czm_submesh.jl")'`
-Expected: PASS（所有断言通过）
+Expected: PASS
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add src/Jellyrollmodel.jl src/JuBat.jl test/test_czm_submesh.jl
-git commit -m "feat(czm): 实现 jellyroll_czm_submesh 生成径向 8 层细化子网格
+git add src/Jellyrollmodel.jl test/test_czm_submesh.jl
+git commit -m "feat(czm): v3 分层 Q4 子网格整合进 jellyroll_collector_seed_mesh
 
-按 spec v3 §4.1.1：真正 O(1) 解析式 thermal_elem_map 反查（θ_spiral = (r_center - a - s_offset) / b）。
+- JellyrollMesh struct 新增 czm_submesh::Union{Nothing, CzmSubmesh} 字段
+- jellyroll_collector_seed_mesh 新增 nθ_czm kwarg（默认 nothing 向后兼容）
+- 新增内部 build_czm_submesh 辅助函数（不导出）
+- 按 spec v3 §4.1.1：O(1) 解析式 thermal_elem_map 反查
 
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 ```
 
----
+**说明：** 函数入参 `(param, thermal_mesh::Mesh; nθ_czm, nθ_thermal, gsorder)`，其中 `param` 是 `NormaliseParam(param_dim)` 的输出（与 `jellyroll_collector_seed_mesh` 同约定）。生成 8 径向分层 Q4 子网格，**每 turn** 周向 `nθ_czm` 个单元（总段数 = `n_turns × nθ_czm`，确保比粗热网格更细）。按构造顺序绑定 `material_type`，用 **真正 O(1) 解析式**建立 `thermal_elem_map`（spec §4.1.1，禁止 `findmin` 空间搜索）。
+
+**O(1) 反查核心公式**（spec §4.1.1 v3）：
+- 螺旋方程：`r = a + b·θ_spiral + s_offset`，其中 `s_offset` 由 `layer_idx` 决定（已知量）
+- 反解：`θ_spiral = (r_center - a - s_offset) / b` （直接解析，无需搜索）
+- 粗热网格在 `[theta0, theta1]` 上均匀分段，每段 dθ = `(theta1 - theta0) / n_thermal`
+- 全局 segment id：`seg_global = clamp(floor(Int, (θ_spiral - theta0) / dθ) + 1, 1, n_thermal)`
+- `nθ_thermal` 必须显式传入（来自调用方的粗热网格构造参数 `nθ`），不得从 mesh 数组推断
+- `nθ_czm` 语义为 **每 turn 分段数**（非整个螺旋总分段数），总段数 = `n_turns × nθ_czm`
+
 
 ### Task 3.2: 重构 `create_czm_mesh`（spec §4.2-§4.4）
 
@@ -1360,10 +1344,10 @@ using JuBat
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, nθ_czm=20, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 
-    submesh = JuBat.jellyroll_czm_submesh(case.param, case.mesh["thermal2D"]; nθ_czm=20, nθ_thermal=80)
+    submesh = mesh_data.czm_submesh
     czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)
 
     @test czm_mesh isa JuBat.CohesiveMesh
@@ -1376,10 +1360,10 @@ using JuBat
         @test elem.host_inner_elem >= 1
     end
 
-    # 数量预期：每卷绕圈 2 个界面（PE-PCC + NE-NCC），每界面 n_segments 个 cohesive 单元
+    # 数量预期（v3）：每卷绕圈 4 个界面（PE-PCC / PCC-PE / NE-NCC / NCC-NE），每界面 n_segments 个 cohesive 单元
     n_segments_per_turn = size(submesh.mesh.element, 1) ÷ 8 ÷ maximum(submesh.winding_turn)
     n_turns_active = length(unique(submesh.winding_turn))
-    n_expected = 2 * n_segments_per_turn * n_turns_active
+    n_expected = 4 * n_segments_per_turn * n_turns_active
     # 容差：边界裁剪允许 ±n_segments_per_turn
     @test abs(czm_mesh.n_cohesive - n_expected) <= n_segments_per_turn
 
@@ -1613,47 +1597,45 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 
 ---
 
-### Task 3.3: 更新 16 处 `create_czm_mesh` 调用点（spec §4.4.1）
+### Task 3.3: 更新 16 处 `create_czm_mesh` 调用点（spec §4.4.1，v3 一步出网）
 
 **Files:**
 - Modify: `example/` 与 `tools/` 共 16 处调用（spec §4.4.1 已列出完整清单）
 
-**说明：** 旧调用形式 `create_czm_mesh(mesh_data.thermal2D, param_dim)` 改为两步：先生成 `CzmSubmesh`，再调用 3 参版 `create_czm_mesh`。
+**说明（v3 修订）**：旧 2 步（`mesh_data = jellyroll_collector_seed_mesh(...)` 然后 `jellyroll_czm_submesh(...)`）合并为 1 步出网——`jellyroll_collector_seed_mesh` 直接加 `nθ_czm=...` kwarg。
 
 - [ ] **Step 1: 设计统一替换模式**
 
-旧：
+旧（2 行）：
 ```julia
+mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, gsorder=2)
 czm_mesh = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
 ```
 
-新（三步）：
+新（v3 一步出网 + 一步插入 cohesive）：
 ```julia
-param = JuBat.NormaliseParam(param_dim)              # 若已有 case.param，直接复用
-czm_submesh = JuBat.jellyroll_czm_submesh(param, mesh_data.thermal2D;
-                                          nθ_czm=80, nθ_thermal=nθ)
-czm_mesh = JuBat.create_czm_mesh(czm_submesh, mesh_data.thermal2D, param)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, nθ_czm=nθ_czm, gsorder=2)
+czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
 ```
 
 **变量名规则**（统一所有 16 处调用点）：
-- **入参 `param` 必须是归一化后的 `case.param`**，不是 `param_dim`。若上下文只有 `param_dim`，统一前置一行 `param = JuBat.NormaliseParam(param_dim)`
-- 必须显式传入 `nθ_thermal`（粗热网格的周向分段数，即调用 `jellyroll_collector_seed_mesh` 时的 `nθ` 参数）
-- 若上下文用 `mesh_data.Jellyroll_czm`（旧属性），改为 `mesh_data.thermal2D`
+- `nθ` 与 `nθ_czm` 都从 `jellyroll_collector_seed_mesh` kwarg 传入
+- `mesh_data.czm_submesh` 直接作为 `create_czm_mesh` 第 1 参
+- 若上下文用 `mesh_data.Jellyroll_czm`（旧属性），改为 `mesh_data.czm_submesh`
 - 若上下文用 `case.czm_mesh = ...`，保持赋值目标
 
 **统一替换模板（所有 16 处共用）**：
 ```julia
 # 旧（任意上下文）
-czm_mesh = JuBat.create_czm_mesh(<thermal_mesh>, <param_or_param_dim>)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(<param>; nθ=N_thermal)
+czm_mesh = JuBat.create_czm_mesh(mesh_data.thermal2D, <param_or_param_dim>)
 
-# 新（三步：归一化 → 子网格 → cohesive 网格）
-param = JuBat.NormaliseParam(param_dim)              # 若已有 case.param，直接复用
-czm_submesh = JuBat.jellyroll_czm_submesh(param, mesh_data.thermal2D;
-                                          nθ_czm=80, nθ_thermal=nθ)
-czm_mesh = JuBat.create_czm_mesh(czm_submesh, mesh_data.thermal2D, param)
+# 新（v3 一步出网）
+mesh_data = JuBat.jellyroll_collector_seed_mesh(<param>; nθ=N_thermal, nθ_czm=N_czm, gsorder=2)
+czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
 ```
 
-`nθ` 来自该文件早先调用 `jellyroll_collector_seed_mesh(param_dim; nθ=nθ, ...)` 时的同一变量。
+`nθ` 来自该文件早先调用 `jellyroll_collector_seed_mesh` 时的同一变量。`nθ_czm` 由调用方按需指定（典型 80；无 CZM 需求则省略）。
 
 - [ ] **Step 2: 逐文件手动替换并 include 验证语法**
 
@@ -1669,22 +1651,20 @@ julia --project=. -e 'include("path/to/file.jl")' 2>&1 | head -30
 
 `example/coupled_czm_thermal_example.jl:104` 上下文：
 ```julia
-# 旧（第 104 行）
+# 旧（第 104 行附近）
+mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, gsorder=2)
 czm_mesh = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
-# 新（替换为 3 行）
-czm_submesh = JuBat.jellyroll_czm_submesh(case.param, mesh_data.thermal2D;
-                                          nθ_czm=80, nθ_thermal=nθ)
-czm_mesh = JuBat.create_czm_mesh(czm_submesh, mesh_data.thermal2D, case.param)
+# 新（v3：jellyroll_collector_seed_mesh 加 nθ_czm kwarg）
+mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, nθ_czm=nθ_czm, gsorder=2)
+czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
 ```
 
 `example/循环验证/czm_cycle_example.jl:98` 上下文（注意旧版用了 `mesh_data.Jellyroll_czm`）：
 ```julia
 # 旧
 czm_mesh = JuBat.create_czm_mesh(mesh_data.Jellyroll_czm, param_dim; tol=1e-8)
-# 新
-czm_submesh = JuBat.jellyroll_czm_submesh(case.param, mesh_data.thermal2D;
-                                          nθ_czm=80, nθ_thermal=nθ)
-czm_mesh = JuBat.create_czm_mesh(czm_submesh, mesh_data.thermal2D, case.param)
+# 新（v3：mesh_data 早先已含 nθ_czm kwarg）
+czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
 ```
 
 - [ ] **Step 3: 修复 `tools/verify_czm_unit.jl:92` 的 CohesiveElement 构造**
@@ -1698,7 +1678,10 @@ elem = JuBat.CohesiveElement(1, [1,2,3,4], [1,2], [4,3], 1.0, :PE_PCC, 2, 1)
 
 ```bash
 git add -u example/ tools/
-git commit -m "refactor(examples): 适配 create_czm_mesh 3 参签名（16 处）
+git commit -m "refactor(examples): v3 一步出网适配 create_czm_mesh（16 处）
+
+按 spec v3 §4.4.1：jellyroll_collector_seed_mesh 加 nθ_czm kwarg，
+create_czm_mesh(czm_submesh, thermal2D, param) 仅做 cohesive 单元插入。
 
 Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 ```
@@ -1861,9 +1844,9 @@ using JuBat
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=20, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-    submesh = JuBat.jellyroll_czm_submesh(case.param, case.mesh["thermal2D"]; nθ_czm=20, nθ_thermal=40)
+    submesh = mesh_data.czm_submesh
     case.czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)
 
     param_cache = JuBat.compute_czm_params_per_interface(case)
@@ -1956,7 +1939,7 @@ end
 function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, param_cache::CzmParamCache)
     param = param_cache.param_ref
     submesh = czm_mesh.czm_submesh
-    submesh === nothing && error("assemble_bulk_stiffness: czm_submesh is nothing (must be built via jellyroll_czm_submesh)")
+    submesh === nothing && error("assemble_bulk_stiffness: czm_submesh is nothing (must be built via jellyroll_collector_seed_mesh with nθ_czm kwarg)")
     n_bulk = size(czm_mesh.bulk_element, 1)
     # 按材料类型查表：返回 (E, ν, α) 元组
     function moduli_of(mt::Symbol)
@@ -2099,9 +2082,9 @@ using JuBat
     opt.dt = [1e-6, 1.0]
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=20, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-    submesh = JuBat.jellyroll_czm_submesh(case.param, case.mesh["thermal2D"]; nθ_czm=20, nθ_thermal=40)
+    submesh = mesh_data.czm_submesh
     case.czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)
     case.czm_param_cache = JuBat.compute_czm_params_per_interface(case)
 
@@ -2227,9 +2210,9 @@ using JuBat
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=20, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-    submesh = JuBat.jellyroll_czm_submesh(case.param, case.mesh["thermal2D"]; nθ_czm=20, nθ_thermal=40)
+    submesh = mesh_data.czm_submesh
     case.czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)
     param_cache = JuBat.compute_czm_params_per_interface(case)   # Chunk 2 已实现
 
@@ -2244,7 +2227,8 @@ using JuBat
     @test cache2 === cache1
 
     # 网格变化时失效
-    submesh2 = JuBat.jellyroll_czm_submesh(case.param, case.mesh["thermal2D"]; nθ_czm=30, nθ_thermal=40)
+    mesh_data2 = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=30, gsorder=2)
+    submesh2 = mesh_data2.czm_submesh
     czm_mesh2 = JuBat.create_czm_mesh(submesh2, case.mesh["thermal2D"], case.param)
     cache3 = JuBat.ensure_czm_cache(case, czm_mesh2, param_cache)
     @test cache3 !== cache1
@@ -2561,9 +2545,9 @@ using SparseArrays
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=20, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-    submesh = JuBat.jellyroll_czm_submesh(case.param, case.mesh["thermal2D"]; nθ_czm=20, nθ_thermal=40)
+    submesh = mesh_data.czm_submesh
 
     M = JuBat.build_thermal_to_czm_interp(case.mesh["thermal2D"], submesh)
 
@@ -2600,9 +2584,9 @@ end
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=20, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-    submesh = JuBat.jellyroll_czm_submesh(case.param, case.mesh["thermal2D"]; nθ_czm=20, nθ_thermal=40)
+    submesh = mesh_data.czm_submesh
     czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)
 
     @test czm_mesh.thermal_to_czm !== nothing
@@ -2802,9 +2786,9 @@ using JuBat
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=20, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-    submesh = JuBat.jellyroll_czm_submesh(case.param, case.mesh["thermal2D"]; nθ_czm=20, nθ_thermal=40)
+    submesh = mesh_data.czm_submesh
     case.czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)
     case.czm_param_cache = JuBat.compute_czm_params_per_interface(case)
 
@@ -3023,9 +3007,9 @@ using JuBat
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=20, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-    submesh = JuBat.jellyroll_czm_submesh(case.param, case.mesh["thermal2D"]; nθ_czm=20, nθ_thermal=40)
+    submesh = mesh_data.czm_submesh
     case.czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)
     ne_thermal = size(case.mesh["thermal2D"].element, 1)
 
@@ -3263,7 +3247,7 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 **v4 关键修正：**
 - `czm_cycle_example.jl` 现版本（行 48-49、88、98）已引用**已删除字段**（`σ_max_n/δ_c_n/τ_max_t/δ_c_t`）、**不存在函数**（`setup_thermal2D_mesh!`）和**旧 2-参 create_czm_mesh 签名**（`mesh_data.Jellyroll_czm` 字段也不存在）——必须先迁移才能运行
 - result 顶层键不存在 `"czm separation max"` / `"D_max"` / `"n_fractured"`（顶层仅有 cycle 级聚合）；应使用 `Variables.jl:130-144` + `PostProcessing.jl:100-111` 的实际键：`"czm D_max"`、`"czm n_fractured"`、`"czm separation normal [m]"`、`"czm separation tangent [m]"`
-- `nθ_czm` 不是 `Option` 字段（`Option.jl` 无此字段），是 `jellyroll_czm_submesh` 关键字（spec §4.1，plan Chunk 3 Task 3.1）
+- `nθ_czm` 不是 `Option` 字段（`Option.jl` 无此字段），是 `jellyroll_collector_seed_mesh` 关键字（v3 架构，spec §4.1，plan Chunk 3 Task 3.1）
 
 - [ ] **Step 1: 迁移 `example/循环验证/czm_cycle_example.jl`**
 
@@ -3293,15 +3277,15 @@ Co-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>"
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 ```
 
-**1c. 行 98 `create_czm_mesh` 旧签名**——改为 Chunk 3 Task 3.3 标准 2-步：
+**1c. 行 98 `create_czm_mesh` 旧签名**——改为 v3 一步出网 + 一步插入 cohesive：
 
 ```julia
 # 旧：czm_mesh = JuBat.create_czm_mesh(mesh_data.Jellyroll_czm, param_dim; tol=1e-8)
-# 新：
-czm_submesh = JuBat.jellyroll_czm_submesh(
-    case.param, mesh_data.thermal2D;
-    nθ_czm=n_theta, nθ_thermal=n_theta
+# 新（v3）：
+mesh_data = JuBat.jellyroll_collector_seed_mesh(
+    param_dim; nθ=n_theta, nθ_czm=n_theta, gsorder=2
 )
+czm_submesh = mesh_data.czm_submesh
 czm_mesh = JuBat.create_czm_mesh(czm_submesh, mesh_data.thermal2D, case.param)
 case.czm_param_cache = JuBat.compute_czm_params_per_interface(case)
 ```
@@ -3368,11 +3352,11 @@ for nθ_czm in [40, 80, 160]
     mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ_thermal, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 
-    # 新 2-步 CZM 网格构造（spec §4.4，Chunk 3 Task 3.3）
-    czm_submesh = JuBat.jellyroll_czm_submesh(
-        case.param, mesh_data.thermal2D;
-        nθ_czm=nθ_czm, nθ_thermal=nθ_thermal
+    # v3 一步出网（spec §4.4，Chunk 3 Task 3.3）
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(
+        param_dim; nθ=nθ_thermal, nθ_czm=nθ_czm, gsorder=2
     )
+    czm_submesh = mesh_data.czm_submesh
     case.czm_mesh = JuBat.create_czm_mesh(czm_submesh, mesh_data.thermal2D, case.param)
     case.czm_param_cache = JuBat.compute_czm_params_per_interface(case)
 
@@ -3525,7 +3509,7 @@ Expected: 无语法错误（运行结果不要求完整通过，但应能加载�
 > **CZM 重构完成 - 迁移指南**
 >
 > 1. `Cohesive` struct 字段重命名：旧 `σ_max_n / K_n / G_c_n` 等已移除，按界面类型分为 `σ_max_pe_pcc / K_n_pe_pcc / ...`（共 20 字段）
-> 2. `create_czm_mesh` 调用签名：旧 `create_czm_mesh(mesh_data.thermal2D, param_dim)` → 新两步 `jellyroll_czm_submesh(...) + create_czm_mesh(submesh, thermal_mesh, param)`（共 16 处调用）
+> 2. `create_czm_mesh` 调用签名：旧 `create_czm_mesh(mesh_data.thermal2D, param_dim)` → 新 v3 一步出网 + 一步插入：`jellyroll_collector_seed_mesh(param; nθ=..., nθ_czm=...) + create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, param)`（共 16 处调用）
 > 3. `assemble_coupled_system` 调用签名：旧 `(czm_mesh, u, E_eff, ν_eff, cohesive_params)` → 新 `(czm_mesh, u, param_cache)`（共 16 处调用）
 > 4. 自定义参数集脚本需同步更新（参考 `parameters/Jellyroll.jl`）
 > 5. CZM 单元数约 ×4（内存占用上升，预期行为）
