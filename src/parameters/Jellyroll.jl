@@ -151,31 +151,42 @@ cell.T_amb = cell.T0
 binder = Binder()
 # binder.rho = 
 
-# Cohesive zone model parameters for interlayer interface
-# 用于描述相邻卷绕圈之间的界面脱粘行为
+# === Cohesive zone model parameters ===
+# 按界面类型分组：PE-PCC（正极涂层-正极集流体）与 NE-NCC（负极涂层-负极集流体）
+# 占位值待替换：以下数值沿用旧单一参数，待用户提供实测 PE-PCC / NE-NCC 界面值后替换
 cohesive = Cohesive()
 
-# 法向参数 (Mode I - 张开模式)
-# TODO Chunk 2 Task 2.1 重写：按 PE_PCC / NE_NCC 两组分别赋值
-# cohesive.σ_max_n = 82e6 # 最大法向牵引力 [Pa]
-# cohesive.K_n = 2.4e17 # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
-# cohesive.δ_0_n = cohesive.σ_max_n / cohesive.K_n # 损伤起始分离位移 [m]
-# cohesive.G_c_n = 25.3  # 断裂能 [J/m²]
-# cohesive.δ_c_n = 2.0 * cohesive.G_c_n / cohesive.σ_max_n  # 临界分离位移 [m]
+# --- PE-PCC 界面（Mode I + Mode II）---
+# TODO 用户提供实测值（以下为占位，参考旧单一值 σ_max=82e6, G_c=25.3, K=2.4e17）
+cohesive.σ_max_pe_pcc = 82e6       # [Pa] TODO 用户提供实测值
+cohesive.K_n_pe_pcc   = 2.4e17     # [Pa/m] TODO 用户提供实测值
+cohesive.δ_0_pe_pcc   = cohesive.σ_max_pe_pcc / cohesive.K_n_pe_pcc
+cohesive.G_c_pe_pcc   = 25.3       # [J/m²] TODO 用户提供实测值
+cohesive.δ_c_pe_pcc   = 2.0 * cohesive.G_c_pe_pcc / cohesive.σ_max_pe_pcc
+# Mode II（若无独立测量，沿用 Mode I）
+cohesive.τ_max_pe_pcc     = cohesive.σ_max_pe_pcc
+cohesive.K_t_pe_pcc       = cohesive.K_n_pe_pcc
+cohesive.δ_0_pe_pcc_t     = cohesive.τ_max_pe_pcc / cohesive.K_t_pe_pcc
+cohesive.G_c_pe_pcc_t     = cohesive.G_c_pe_pcc
+cohesive.δ_c_pe_pcc_t     = 2.0 * cohesive.G_c_pe_pcc_t / cohesive.τ_max_pe_pcc
 
+# --- NE-NCC 界面（Mode I + Mode II）---
+cohesive.σ_max_ne_ncc = 82e6       # [Pa] TODO 用户提供实测值
+cohesive.K_n_ne_ncc   = 2.4e17     # [Pa/m] TODO 用户提供实测值
+cohesive.δ_0_ne_ncc   = cohesive.σ_max_ne_ncc / cohesive.K_n_ne_ncc
+cohesive.G_c_ne_ncc   = 25.3       # [J/m²] TODO 用户提供实测值
+cohesive.δ_c_ne_ncc   = 2.0 * cohesive.G_c_ne_ncc / cohesive.σ_max_ne_ncc
+cohesive.τ_max_ne_ncc     = cohesive.σ_max_ne_ncc
+cohesive.K_t_ne_ncc       = cohesive.K_n_ne_ncc
+cohesive.δ_0_ne_ncc_t     = cohesive.τ_max_ne_ncc / cohesive.K_t_ne_ncc
+cohesive.G_c_ne_ncc_t     = cohesive.G_c_ne_ncc
+cohesive.δ_c_ne_ncc_t     = 2.0 * cohesive.G_c_ne_ncc_t / cohesive.τ_max_ne_ncc
 
-# 切向参数 (Mode II - 剪切模式)
-# TODO Chunk 2 Task 2.1 重写
-# cohesive.τ_max_t = cohesive.σ_max_n      # 最大切向牵引力 [Pa] (0.15 MPa)
-# cohesive.K_t = cohesive.K_n  # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
-# cohesive.δ_0_t = cohesive.τ_max_t / cohesive.K_t         # 损伤起始切向位移 [m] (35 nm)
-# cohesive.G_c_t = cohesive.G_c_n  # [J/m²]
-# cohesive.δ_c_t = 2.0 * cohesive.G_c_t / cohesive.τ_max_t        # 临界切向位移 [m] (180 nm)
+# --- 共用参数 ---
+cohesive.czm_model = "model1"
+cohesive.eta = 1.45                 # BK 准则指数 [-]
 
-# 混合模式参数
-cohesive.eta = 1.45           # BK准则指数（Benzeggagh-Kenane）[-]
-
-# Interface thermal resistance parameters (from 界面热阻曲线.py)
+# 界面热阻（沿用旧值）
 cohesive.h_c0 = 1e7
 cohesive.k_air = 0.026
 cohesive.lambda_m = 70e-9
