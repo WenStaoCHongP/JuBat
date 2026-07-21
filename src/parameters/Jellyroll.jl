@@ -156,19 +156,21 @@ binder = Binder()
 cohesive = Cohesive()
 
 # 法向参数 (Mode I - 张开模式)
-cohesive.σ_max_n = 82e6 # 最大法向牵引力 [Pa]
-cohesive.K_n = 2.4e17 # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
-cohesive.δ_0_n = cohesive.σ_max_n / cohesive.K_n # 损伤起始分离位移 [m]
-cohesive.G_c_n = 25.3  # 断裂能 [J/m²]
-cohesive.δ_c_n = 2.0 * cohesive.G_c_n / cohesive.σ_max_n  # 临界分离位移 [m]
+# TODO Chunk 2 Task 2.1 重写：按 PE_PCC / NE_NCC 两组分别赋值
+# cohesive.σ_max_n = 82e6 # 最大法向牵引力 [Pa]
+# cohesive.K_n = 2.4e17 # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
+# cohesive.δ_0_n = cohesive.σ_max_n / cohesive.K_n # 损伤起始分离位移 [m]
+# cohesive.G_c_n = 25.3  # 断裂能 [J/m²]
+# cohesive.δ_c_n = 2.0 * cohesive.G_c_n / cohesive.σ_max_n  # 临界分离位移 [m]
 
 
 # 切向参数 (Mode II - 剪切模式)
-cohesive.τ_max_t = cohesive.σ_max_n      # 最大切向牵引力 [Pa] (0.15 MPa)
-cohesive.K_t = cohesive.K_n  # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
-cohesive.δ_0_t = cohesive.τ_max_t / cohesive.K_t         # 损伤起始切向位移 [m] (35 nm)
-cohesive.G_c_t = cohesive.G_c_n  # [J/m²]
-cohesive.δ_c_t = 2.0 * cohesive.G_c_t / cohesive.τ_max_t        # 临界切向位移 [m] (180 nm)
+# TODO Chunk 2 Task 2.1 重写
+# cohesive.τ_max_t = cohesive.σ_max_n      # 最大切向牵引力 [Pa] (0.15 MPa)
+# cohesive.K_t = cohesive.K_n  # 继续降低刚度 [Pa/m]，用于检查是否由过硬本构导致不收敛
+# cohesive.δ_0_t = cohesive.τ_max_t / cohesive.K_t         # 损伤起始切向位移 [m] (35 nm)
+# cohesive.G_c_t = cohesive.G_c_n  # [J/m²]
+# cohesive.δ_c_t = 2.0 * cohesive.G_c_t / cohesive.τ_max_t        # 临界切向位移 [m] (180 nm)
 
 # 混合模式参数
 cohesive.eta = 1.45           # BK准则指数（Benzeggagh-Kenane）[-]

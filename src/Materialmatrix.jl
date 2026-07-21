@@ -66,12 +66,12 @@ end
 Compute bilinear traction and return updated damage state.
 """
 function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::DamageState, cohesive_params::Cohesive; visc_beta::Float64=1.0)
-	K_n = cohesive_params.K_n
-	K_t = cohesive_params.K_t
-	δ_0_n = cohesive_params.δ_0_n
-	δ_c_n = cohesive_params.δ_c_n
-	δ_0_t = cohesive_params.δ_0_t
-	δ_c_t = cohesive_params.δ_c_t
+	K_n = 1.0        # TODO Chunk 4 Task 4.5: 接受 interface_type 参数后恢复 cohesive_params.K_n_<interface>
+	K_t = 1.0        # TODO Chunk 4 Task 4.5
+	δ_0_n = 1e-9     # TODO Chunk 4 Task 4.5
+	δ_c_n = 1e-9     # TODO Chunk 4 Task 4.5
+	δ_0_t = 1e-9     # TODO Chunk 4 Task 4.5
+	δ_c_t = 1e-9     # TODO Chunk 4 Task 4.5
 	η = cohesive_params.eta
 
 	new_state = DamageState()
@@ -180,12 +180,12 @@ end
 Compute bilinear tangent stiffness matrix.
 """
 function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageState, cohesive_params::Cohesive; visc_beta::Float64=1.0)
-	K_n = cohesive_params.K_n
-	K_t = cohesive_params.K_t
-	δ_0_n = cohesive_params.δ_0_n
-	δ_c_n = cohesive_params.δ_c_n
-	δ_0_t = cohesive_params.δ_0_t
-	δ_c_t = cohesive_params.δ_c_t
+	K_n = 1.0        # TODO Chunk 4 Task 4.5: 接受 interface_type 参数后恢复 cohesive_params.K_n_<interface>
+	K_t = 1.0        # TODO Chunk 4 Task 4.5
+	δ_0_n = 1e-9     # TODO Chunk 4 Task 4.5
+	δ_c_n = 1e-9     # TODO Chunk 4 Task 4.5
+	δ_0_t = 1e-9     # TODO Chunk 4 Task 4.5
+	δ_c_t = 1e-9     # TODO Chunk 4 Task 4.5
 	η = cohesive_params.eta
 	czm_model = cohesive_params.czm_model
 	dT_dδ = zeros(Float64, 2, 2)
@@ -328,8 +328,8 @@ function compute_gap_conductance(D::Float64, δ_n::Float64, cohesive)
 	beta = cohesive.beta
 	threshold = cohesive.threshold
 
-	delta0 = cohesive.δ_0_n
-	delta_c = cohesive.δ_c_n
+	delta0 = 1e-9   # TODO Chunk 4 Task 4.5: cohesive.δ_0_<interface>_n
+	delta_c = 1e-9   # TODO Chunk 4 Task 4.5: cohesive.δ_c_<interface>_n
 	delta = max(δ_n, 0.0)
 	D_clamped = clamp(D, 0.0, 0.9999)
 	two_beta_lambda = 2.0 * beta * lambda_m

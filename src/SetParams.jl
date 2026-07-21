@@ -154,33 +154,42 @@ end
 end
 
 @with_kw mutable struct Cohesive
-    # 法向 (Mode I)
-    σ_max_n::Float64 = 0.0    # 最大法向牵引力 [Pa]
-    δ_0_n::Float64 = 0.0      # 损伤起始分离位移 [m]
-    δ_c_n::Float64 = 0.0      # 临界（完全断裂）分离位移 [m]
-    G_c_n::Float64 = 0.0      # 法向断裂能 [J/m²]
-    K_n::Float64 = 0.0        # 法向初始刚度（惩罚刚度）[Pa/m]
-    
-    # 切向 (Mode II)
-    τ_max_t::Float64 = 0.0    # 最大切向牵引力 [Pa]
-    δ_0_t::Float64 = 0.0      # 损伤起始切向位移 [m]
-    δ_c_t::Float64 = 0.0      # 临界切向位移 [m]
-    G_c_t::Float64 = 0.0      # 切向断裂能 [J/m²]
-    K_t::Float64 = 0.0        # 切向初始刚度 [Pa/m]
-    
-    # 混合模式参数
-    eta::Float64 = 1.0        # BK准则指数（Benzeggagh-Kenane）[-]
-    czm_model::String = "model1"    # 模型选择:"model1"仅法向（Mode I）,"mix"混合模式（Mode I + II）
+    # === PE-PCC 界面（电极涂层-正极集流体）===
+    σ_max_pe_pcc::Float64 = 0.0    # 最大法向牵引力 [Pa]
+    K_n_pe_pcc::Float64 = 0.0      # 法向初始刚度 [Pa/m]
+    δ_0_pe_pcc::Float64 = 0.0      # 法向损伤起始位移 [m]
+    G_c_pe_pcc::Float64 = 0.0      # 法向断裂能 [J/m²]
+    δ_c_pe_pcc::Float64 = 0.0      # 法向临界位移 [m]
+    τ_max_pe_pcc::Float64 = 0.0    # Mode II 最大切向牵引 [Pa]
+    K_t_pe_pcc::Float64 = 0.0
+    δ_0_pe_pcc_t::Float64 = 0.0
+    G_c_pe_pcc_t::Float64 = 0.0
+    δ_c_pe_pcc_t::Float64 = 0.0
 
-    # Interface thermal resistance parameters (physical units)
-    h_c0::Float64 = 1e7        # 完好接触换热系数 [W/(m^2·K)]
-    k_air::Float64 = 0.026     # 空气热导率 [W/(m·K)]
-    lambda_m::Float64 = 70e-9  # 平均自由程 [m]
-    beta::Float64 = 1.0        # 参数 beta [-]
-    threshold::Float64 = 70e-9 # 阈值厚度 [m]
+    # === NE-NCC 界面（电极涂层-负极集流体）===
+    σ_max_ne_ncc::Float64 = 0.0
+    K_n_ne_ncc::Float64 = 0.0
+    δ_0_ne_ncc::Float64 = 0.0
+    G_c_ne_ncc::Float64 = 0.0
+    δ_c_ne_ncc::Float64 = 0.0
+    τ_max_ne_ncc::Float64 = 0.0
+    K_t_ne_ncc::Float64 = 0.0
+    δ_0_ne_ncc_t::Float64 = 0.0
+    G_c_ne_ncc_t::Float64 = 0.0
+    δ_c_ne_ncc_t::Float64 = 0.0
 
-    # Viscous regularization (normalized)
-    tau_visc::Float64 = 0.0     # 归一化粘性松弛时间 τ_v* = τ_v / t0 [-]
+    # === 共用 ===
+    czm_model::String = "model1"   # 模型选择（"model1" / "mix"）
+    eta::Float64 = 1.0             # BK 准则指数 [-]
+
+    # Interface thermal resistance
+    h_c0::Float64 = 1e7
+    k_air::Float64 = 0.026
+    lambda_m::Float64 = 70e-9
+    beta::Float64 = 1.0
+    threshold::Float64 = 70e-9
+
+    tau_visc::Float64 = 0.0
 end
 @with_kw mutable struct Scale
     L::Float64 = 1e-6
@@ -321,7 +330,7 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.lambda = param_dim.scale.P_ref / (param_dim.scale.L * param_dim.scale.T_ref)
     param_dim.scale.h = param_dim.cell.h * param_dim.scale.L / param_dim.cell.lambda_r  # Biot 数
     param_dim.scale.q = param_dim.scale.P_ref / param_dim.scale.L^3
-    param_dim.scale.σ_czm = param_dim.cohesive.σ_max_n
+    param_dim.scale.σ_czm = param_dim.cohesive.σ_max_pe_pcc  # TODO Chunk 2 Task 2.2 复核
     param_dim.scale.δ_czm = param_dim.scale.L
     param_dim.scale.G_czm = param_dim.scale.σ_czm * param_dim.scale.δ_czm
     param_dim.scale.K_czm = param_dim.scale.σ_czm / param_dim.scale.δ_czm
@@ -464,19 +473,19 @@ function NormaliseParam(param_dim::Params)
     param.tab.area = param_dim.tab.area / param.scale.L^2
     param.tab.h = param_dim.tab.h * param_dim.scale.L / param_dim.cell.lambda_r
     
-    # cohesive zone model 
-    # 法向参数归一化
-    param.cohesive.σ_max_n = param_dim.cohesive.σ_max_n / param_dim.scale.σ_czm
-    param.cohesive.δ_0_n = param_dim.cohesive.δ_0_n / param_dim.scale.δ_czm
-    param.cohesive.δ_c_n = param_dim.cohesive.δ_c_n / param_dim.scale.δ_czm
-    param.cohesive.G_c_n = param_dim.cohesive.G_c_n / param_dim.scale.G_czm
-    param.cohesive.K_n = param_dim.cohesive.K_n / param_dim.scale.K_czm
-    # 切向参数归一化
-    param.cohesive.τ_max_t = param_dim.cohesive.τ_max_t / param_dim.scale.σ_czm
-    param.cohesive.δ_0_t = param_dim.cohesive.δ_0_t / param_dim.scale.δ_czm
-    param.cohesive.δ_c_t = param_dim.cohesive.δ_c_t / param_dim.scale.δ_czm
-    param.cohesive.G_c_t = param_dim.cohesive.G_c_t / param_dim.scale.G_czm
-    param.cohesive.K_t = param_dim.cohesive.K_t / param_dim.scale.K_czm
+    # cohesive zone model
+    # TODO Chunk 2 Task 2.2 重写：按 PE_PCC / NE_NCC 两组分别归一化
+    # param.cohesive.σ_max_n = param_dim.cohesive.σ_max_n / param_dim.scale.σ_czm
+    # param.cohesive.δ_0_n = param_dim.cohesive.δ_0_n / param_dim.scale.δ_czm
+    # param.cohesive.δ_c_n = param_dim.cohesive.δ_c_n / param_dim.scale.δ_czm
+    # param.cohesive.G_c_n = param_dim.cohesive.G_c_n / param_dim.scale.G_czm
+    # param.cohesive.K_n = param_dim.cohesive.K_n / param_dim.scale.K_czm
+    # # 切向参数归一化
+    # param.cohesive.τ_max_t = param_dim.cohesive.τ_max_t / param_dim.scale.σ_czm
+    # param.cohesive.δ_0_t = param_dim.cohesive.δ_0_t / param_dim.scale.δ_czm
+    # param.cohesive.δ_c_t = param_dim.cohesive.δ_c_t / param_dim.scale.δ_czm
+    # param.cohesive.G_c_t = param_dim.cohesive.G_c_t / param_dim.scale.G_czm
+    # param.cohesive.K_t = param_dim.cohesive.K_t / param_dim.scale.K_czm
     # BK指数不需要归一化（无量纲）
     param.cohesive.eta = param_dim.cohesive.eta
 
