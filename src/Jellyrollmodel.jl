@@ -194,7 +194,7 @@ function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phas
 
     # v3 新增：在 thermal2D_merged 完成后构造分层 Q4 子网格
     czm_submesh = isnothing(nθ_czm) ? nothing :
-        build_czm_submesh(param, thermal2D_merged, mesh_unmerged; nθ_czm=nθ_czm, gsorder=gsorder, nθ_thermal=nθ)
+        build_czm_submesh(param, thermal2D_merged, mesh_unmerged; nθ_czm=nθ_czm, gsorder=gsorder, nθ_thermal=nθ, phase=phase)
 
     Jellyroll_Mesh = JellyrollMesh(mesh_unmerged, thermal2D_merged, merge_map, interface_pairs,czm_element_map, element_layer, is_inner_layer,inner_nodes, outer_nodes, pos_tab_nodes, neg_tab_nodes,ne, nnode, czm_submesh)
     return Jellyroll_Mesh
@@ -580,12 +580,18 @@ end
 # ========================================================================
 
 """
-    build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm, gsorder, nθ_thermal) -> CzmSubmesh
+    build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm, gsorder, nθ_thermal, phase=0.0) -> CzmSubmesh
 
 v3 内部辅助：构造径向 8 层分层 Q4 子网格 + O(1) 解析式 thermal_elem_map。
 不导出（仅由 jellyroll_collector_seed_mesh 调用）。
+
+见 spec §4.1.1。
 """
-function build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm::Int, gsorder::Int, nθ_thermal::Int)
+function build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm::Int, gsorder::Int, nθ_thermal::Int, phase::Float64=0.0)
+    # thermal2D_merged 保留在签名中以与 spec §4.1 一致；本函数仅读取 thermal2D（未合并网格），
+    # 因为 thermal_elem_map 索引到未合并的粗热单元。
+    # thermal2D_merged 参数预留给未来扩展（如周向边界裁剪）。
+
     # 螺旋几何参数（与粗热网格一致，使用归一化值）
     a = param.cell.Rin
     s_total = param.cell.layer
@@ -603,18 +609,21 @@ function build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm::Int, gso
     @assert sum(layer_thicknesses) ≈ s_total rtol=1e-6
 
     theta0 = max(0.0, (param.cell.Rin - a) / b)
+    # theta1 第二分支 (Rout - a) / b 对应 s_offset=0 的内层螺旋，对外层 (s_offset=s_total) 总是更松，
+    # 因此此处省略 min 与父函数等价。如未来扩展层序，请恢复 min 形式。
     theta1 = (param.cell.Rout - a - s_total) / b
     theta1 > theta0 || error("build_czm_submesh: 无效 theta 范围")
 
     n_thermal = size(thermal2D.element, 1)
     # Fix A：n_turns 直接从螺旋几何计算，与 thermal mesh 可分性解耦
-    n_turns = max(1, round(Int, (theta1 - theta0) / (2 * pi)))
-    dθ_thermal = (theta1 - theta0) / n_thermal
+    # 用 ceil 而非 round，确保 CZM 子网格完整覆盖 [theta0, theta1] 范围
+    n_turns = max(1, ceil(Int, (theta1 - theta0) / (2 * pi)))
+    dtheta_thermal = (theta1 - theta0) / n_thermal
 
     # nθ_czm 是每 turn 分段数
     n_segments_per_turn = max(3, nθ_czm)
     n_segments = n_turns * n_segments_per_turn
-    theta = collect(range(theta0, theta1; length=n_segments + 1))
+    theta = collect(range(theta0, theta1; length=n_segments + 1)) .+ phase
 
     # 节点：(n_layers+1) 条螺旋 × (n_segments+1) 点
     n_spirals = n_layers + 1
@@ -662,8 +671,8 @@ function build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm::Int, gso
 
             winding_turn[elem_idx] = max(1, Int(floor((r_center - a) / s_total)) + 1)
 
-            θ_spiral = (r_center - a - s_offset) / b
-            thermal_elem_map[elem_idx] = clamp(floor(Int, (θ_spiral - theta0) / dθ_thermal) + 1, 1, n_thermal)
+            theta_spiral = (r_center - a - s_offset) / b
+            thermal_elem_map[elem_idx] = clamp(floor(Int, (theta_spiral - theta0) / dtheta_thermal) + 1, 1, n_thermal)
         end
     end
 
