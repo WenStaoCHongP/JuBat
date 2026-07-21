@@ -12,9 +12,11 @@ struct JellyrollMesh
     neg_tab_nodes::Vector{Int}
     ne::Int
     nnode::Int
+    czm_submesh::Union{Nothing, CzmSubmesh}   # v3 新增
 end
 
-function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phase::Float64=0.0, tol::Float64=1e-8)
+function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phase::Float64=0.0, tol::Float64=1e-8,
+        nθ_czm::Union{Nothing,Int}=nothing)   # v3 新增
     # 参数已归一化，直接使用无量纲值
     a = param.cell.Rin
     b = param.cell.layer / (2 * pi)
@@ -189,7 +191,12 @@ function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phas
 
     gs_new = GetGS(element_new, node_new, gsorder, "Q4")
     thermal2D_merged = Mesh("Q4", 2, node_new, nnode_new, element_new, gs_new)
-    Jellyroll_Mesh = JellyrollMesh(mesh_unmerged, thermal2D_merged, merge_map, interface_pairs,czm_element_map, element_layer, is_inner_layer,inner_nodes, outer_nodes, pos_tab_nodes, neg_tab_nodes,ne, nnode)
+
+    # v3 新增：在 thermal2D_merged 完成后构造分层 Q4 子网格
+    czm_submesh = isnothing(nθ_czm) ? nothing :
+        build_czm_submesh(param, thermal2D_merged, mesh_unmerged; nθ_czm=nθ_czm, gsorder=gsorder, nθ_thermal=nθ)
+
+    Jellyroll_Mesh = JellyrollMesh(mesh_unmerged, thermal2D_merged, merge_map, interface_pairs,czm_element_map, element_layer, is_inner_layer,inner_nodes, outer_nodes, pos_tab_nodes, neg_tab_nodes,ne, nnode, czm_submesh)
     return Jellyroll_Mesh
 end
 
@@ -566,4 +573,101 @@ function setup_thermal2D_mesh(case, mesh_data; use_merged::Union{Bool,Nothing}=n
     @debug "Thermal2D mesh setup" ne=ne nnode=nnode n_interface_pairs=n_pairs use_merged=use_merged
 
     return case_new
+end
+
+# ========================================================================
+# build_czm_submesh - v3 内部辅助：构造径向 8 层分层 Q4 子网格
+# ========================================================================
+
+"""
+    build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm, gsorder, nθ_thermal) -> CzmSubmesh
+
+v3 内部辅助：构造径向 8 层分层 Q4 子网格 + O(1) 解析式 thermal_elem_map。
+不导出（仅由 jellyroll_collector_seed_mesh 调用）。
+"""
+function build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm::Int, gsorder::Int, nθ_thermal::Int)
+    # 螺旋几何参数（与粗热网格一致，使用归一化值）
+    a = param.cell.Rin
+    s_total = param.cell.layer
+    b = s_total / (2 * pi)
+
+    # 径向 8 层厚度（按层序 PE→PCC→PE→SP→NE→NCC→NE→SP）
+    layer_thicknesses = [
+        param.PE.thickness, param.PCC.thickness,
+        param.PE.thickness, param.SP.thickness,
+        param.NE.thickness, param.NCC.thickness,
+        param.NE.thickness, param.SP.thickness,
+    ]
+    material_sequence = [:PE, :PCC, :PE, :SP, :NE, :NCC, :NE, :SP]
+    n_layers = 8
+    @assert sum(layer_thicknesses) ≈ s_total rtol=1e-6
+
+    theta0 = max(0.0, (param.cell.Rin - a) / b)
+    theta1 = (param.cell.Rout - a - s_total) / b
+    theta1 > theta0 || error("build_czm_submesh: 无效 theta 范围")
+
+    n_thermal = size(thermal2D.element, 1)
+    # Fix A：n_turns 直接从螺旋几何计算，与 thermal mesh 可分性解耦
+    n_turns = max(1, round(Int, (theta1 - theta0) / (2 * pi)))
+    dθ_thermal = (theta1 - theta0) / n_thermal
+
+    # nθ_czm 是每 turn 分段数
+    n_segments_per_turn = max(3, nθ_czm)
+    n_segments = n_turns * n_segments_per_turn
+    theta = collect(range(theta0, theta1; length=n_segments + 1))
+
+    # 节点：(n_layers+1) 条螺旋 × (n_segments+1) 点
+    n_spirals = n_layers + 1
+    nnode = n_spirals * (n_segments + 1)
+    node = zeros(Float64, nnode, 2)
+
+    s_offsets = [0.0; cumsum(layer_thicknesses)]
+    for layer_idx in 0:n_layers
+        s_offset = s_offsets[layer_idx + 1]
+        r = a .+ b .* theta .+ s_offset
+        x = r .* cos.(theta)
+        y = r .* sin.(theta)
+        for k in 1:(n_segments + 1)
+            node_idx = layer_idx * (n_segments + 1) + k
+            node[node_idx, 1] = x[k]
+            node[node_idx, 2] = y[k]
+        end
+    end
+
+    # 单元
+    ne = n_layers * n_segments
+    element = zeros(Int64, ne, 4)
+    material_type = Vector{Symbol}(undef, ne)
+    winding_turn = Vector{Int}(undef, ne)
+    thermal_elem_map = Vector{Int}(undef, ne)
+
+    elem_idx = 0
+    for layer_idx in 1:n_layers
+        s_offset = s_offsets[layer_idx]
+        for seg in 1:n_segments
+            elem_idx += 1
+            inner_base = (layer_idx - 1) * (n_segments + 1)
+            outer_base = layer_idx * (n_segments + 1)
+            element[elem_idx, 1] = inner_base + seg
+            element[elem_idx, 2] = outer_base + seg
+            element[elem_idx, 3] = outer_base + seg + 1
+            element[elem_idx, 4] = inner_base + seg + 1
+
+            material_type[elem_idx] = material_sequence[layer_idx]
+
+            n1 = element[elem_idx, 1]
+            n3 = element[elem_idx, 3]
+            r_center = 0.5 * (hypot(node[n1, 1], node[n1, 2]) +
+                              hypot(node[n3, 1], node[n3, 2]))
+
+            winding_turn[elem_idx] = max(1, Int(floor((r_center - a) / s_total)) + 1)
+
+            θ_spiral = (r_center - a - s_offset) / b
+            thermal_elem_map[elem_idx] = clamp(floor(Int, (θ_spiral - theta0) / dθ_thermal) + 1, 1, n_thermal)
+        end
+    end
+
+    gs = GetGS(element, node, gsorder, "Q4")
+    mesh = Mesh("Q4", 2, node, nnode, element, gs)
+    return CzmSubmesh(mesh, material_type, winding_turn, thermal_elem_map)
 end
