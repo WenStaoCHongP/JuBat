@@ -180,8 +180,13 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     soc_p_elem = variables["thermal2D element soc_p"]
     soc_ref_n = param.NE.cs0
     soc_ref_p = param.PE.cs0
-    # 获取材料参数（全叠合厚度加权）
-    E_eff, ν_eff, α_eff = compute_effective_coating_modulus(case)
+    # 获取材料参数
+    # TODO Chunk 4 Task 4.x: compute_effective_coating_modulus 已移除；
+    # 此处 thermal_diffusion_stress_2D 是非 CZM 路径，暂用 PE_PCC 占位。
+    czm_param_cache = compute_czm_params_per_interface(case)
+    E_eff = czm_param_cache.by_interface[:PE_PCC].E_eff
+    ν_eff = czm_param_cache.by_interface[:PE_PCC].ν
+    α_eff = czm_param_cache.by_interface[:PE_PCC].α
     β_n = param.NE.Omega / 3.0
     β_p = param.PE.Omega / 3.0
 

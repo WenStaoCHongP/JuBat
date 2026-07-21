@@ -278,67 +278,79 @@ end
 # ========================================================================
 
 """
-    compute_effective_coating_modulus(case)
+    compute_czm_params_per_interface(case) -> CzmParamCache
 
-返回全叠合厚度加权有效模量 (E_eff, ν_eff, α_eff)。
+按界面类型计算 CZM 参数。E_eff 用涂层模量（PE.E_coat / NE.E_coat），
+不再做全栈均一化。
 
-返回值约定：
-- E_eff 通过 scale.E_coat 归一化
-- ν_eff 无量纲
-- α_eff 已按 T_ref 归一化
-
-极片用 E_coat/nu_coat，SP/PCC/NCC 用各自 E/nu。
-α_eff 中集流体/隔膜 alphaT 默认 0（见 spec §5.1.1 近似说明）。
+返回 `CzmParamCache`，包含 `:PE_PCC` 与 `:NE_NCC` 两个条目。
 """
-function compute_effective_coating_modulus(case)
-    p = case.param
-    t_pe, t_ne = p.PE.thickness, p.NE.thickness
-    t_sp, t_pcc, t_ncc = p.SP.thickness, p.PCC.thickness, p.NCC.thickness
-    Σt = t_pe * 2 + t_ne * 2 + t_sp * 2 + t_pcc + t_ncc
-    E_eff = (p.PE.E_coat*t_pe *2 + p.NE.E_coat*t_ne *2 +
-             p.SP.E*t_sp *2 + p.PCC.E*t_pcc + p.NCC.E*t_ncc) / Σt
-    ν_eff = (p.PE.nu_coat*t_pe*2 + p.NE.nu_coat*t_ne*2 +
-             p.SP.nu*t_sp*2 + p.PCC.nu*t_pcc + p.NCC.nu*t_ncc) / Σt
-    α_eff = (p.PE.alphaT*t_pe*2 + p.NE.alphaT*t_ne*2 +
-             p.SP.alphaT*t_sp*2 + p.PCC.alphaT*t_pcc + p.NCC.alphaT*t_ncc) / Σt
-    return E_eff, ν_eff, α_eff
-end
-
-"""
-    compute_czm_effective_params(case)
-
-计算 CZM 求解所需的有效材料参数，全部基于 `SetParams.NormaliseParam`
-后的归一化参数。
-
-实现：调用 `compute_effective_coating_modulus` 获取 scale.E_coat 归一化
-下的全叠合有效模量，再切换到 scale.σ_czm 归一化以匹配下游 CZM 公式。
-
-# 返回
-- `E_eff`: 有效弹性模量 [-]（σ_czm 归一化）
-- `ν_eff`: 有效泊松比 [-]
-- `α_eff`: 有效热膨胀系数 [-]（T_ref 归一化）
-- `β_n`: 负极扩散应变系数 [-]
-- `β_p`: 正极扩散应变系数 [-]
-"""
-function compute_czm_effective_params(case)
-    # === 入口断言：参数集必须定义 E_coat 才能启用 CZM 应变驱动 ===
-    @assert case.param_dim.PE.E_coat > 0 && case.param_dim.NE.E_coat > 0 "CZM 应变驱动需要 PE/NE.E_coat > 0；当前参数集未定义极片模量（E_coat=0）。请补全 PE.E_coat/PE.nu_coat/NE.E_coat/NE.nu_coat，或禁用 czm_enabled。"
-    # === 入口断言：scale.σ_czm 必须为正，否则下游除以 σ_czm 会产生 Inf/NaN ===
-    @assert case.param_dim.scale.σ_czm > 0 "scale.σ_czm = 0; must populate cohesive.σ_max_pe_pcc (Task 2.1) before enabling CZM"
-
+function compute_czm_params_per_interface(case)
     param = case.param
     scale = case.param_dim.scale
 
-    # 共享函数给出 scale.E_coat 归一化下的有效模量
-    E_eff_norm, ν_eff, α_eff = compute_effective_coating_modulus(case)
-    # 切换到 σ_czm 归一化以匹配下游 CZM 公式
-    E_eff = E_eff_norm * scale.E_coat / scale.σ_czm
+    # 入口断言
+    @assert case.param_dim.PE.E_coat > 0 && case.param_dim.NE.E_coat > 0 "CZM 应变驱动需要 PE/NE.E_coat > 0"
+    @assert case.param_dim.scale.σ_czm > 0 "scale.σ_czm = 0; must populate cohesive.σ_max_pe_pcc (Task 2.1) before enabling CZM"
+    @assert param.cohesive.σ_max_pe_pcc > 0 "cohesive.σ_max_pe_pcc 必须为正"
+    @assert param.cohesive.σ_max_ne_ncc > 0 "cohesive.σ_max_ne_ncc 必须为正"
+    @assert param.cohesive.G_c_pe_pcc > 0 && param.cohesive.G_c_ne_ncc > 0 "G_c_pe_pcc / G_c_ne_ncc 必须为正"
+    @assert param.cohesive.K_n_pe_pcc > 0 && param.cohesive.K_n_ne_ncc > 0 "K_n_pe_pcc / K_n_ne_ncc 必须为正"
 
-    # 扩散应变系数 β = (Ω * c_s,max) / 3 已在 SetParams 中完成归一化
-    β_n = param.NE.Omega / 3.0
-    β_p = param.PE.Omega / 3.0
+    # E_eff: 用涂层模量（非全栈均一化）
+    E_eff_pe = param.PE.E_coat * scale.E_coat / scale.σ_czm
+    E_eff_ne = param.NE.E_coat * scale.E_coat / scale.σ_czm
 
-    return E_eff, ν_eff, α_eff, β_n, β_p
+    coh = param.cohesive
+
+    pe_pcc = CzmInterfaceParams(
+        E_eff = E_eff_pe,
+        ν = param.PE.nu_coat,
+        α = param.PE.alphaT,
+        σ_max = coh.σ_max_pe_pcc,
+        K_n = coh.K_n_pe_pcc,
+        δ_0_n = coh.δ_0_pe_pcc,
+        δ_c_n = coh.δ_c_pe_pcc,
+        G_c = coh.G_c_pe_pcc,
+        τ_max = coh.τ_max_pe_pcc,
+        K_t = coh.K_t_pe_pcc,
+        δ_0_t = coh.δ_0_pe_pcc_t,
+        δ_c_t = coh.δ_c_pe_pcc_t,
+        G_c_t = coh.G_c_pe_pcc_t,
+        η = coh.eta,
+        czm_model = coh.czm_model,
+        h_c0 = coh.h_c0,
+        k_air = coh.k_air,
+        lambda_m = coh.lambda_m,
+        beta = coh.beta,
+        threshold = coh.threshold,
+    )
+
+    ne_ncc = CzmInterfaceParams(
+        E_eff = E_eff_ne,
+        ν = param.NE.nu_coat,
+        α = param.NE.alphaT,
+        σ_max = coh.σ_max_ne_ncc,
+        K_n = coh.K_n_ne_ncc,
+        δ_0_n = coh.δ_0_ne_ncc,
+        δ_c_n = coh.δ_c_ne_ncc,
+        G_c = coh.G_c_ne_ncc,
+        τ_max = coh.τ_max_ne_ncc,
+        K_t = coh.K_t_ne_ncc,
+        δ_0_t = coh.δ_0_ne_ncc_t,
+        δ_c_t = coh.δ_c_ne_ncc_t,
+        G_c_t = coh.G_c_ne_ncc_t,
+        η = coh.eta,
+        czm_model = coh.czm_model,
+        h_c0 = coh.h_c0,
+        k_air = coh.k_air,
+        lambda_m = coh.lambda_m,
+        beta = coh.beta,
+        threshold = coh.threshold,
+    )
+
+    # spec §3.5.2：含 param_ref 与 id 字段（id = objectid(param)）
+    return CzmParamCache(Dict(:PE_PCC => pe_pcc, :NE_NCC => ne_ncc), param, objectid(param))
 end
 
 """
@@ -428,7 +440,14 @@ function update_czm_damage!(case, variables, T_nodes_carry)
     czm_params.czm_model = case.opt.czm_model
 
     # 计算有效材料参数
-    E_eff, ν_eff, α_eff, β_n, β_p = compute_czm_effective_params(case)
+    # TODO Chunk 4 Task 4.x: 改为接受 CzmParamCache
+    czm_param_cache = compute_czm_params_per_interface(case)
+    # 以下代码暂用 PE_PCC 字段作占位（仅保证编译通过，逻辑在 Chunk 4 修复）
+    E_eff = czm_param_cache.by_interface[:PE_PCC].E_eff
+    ν_eff = czm_param_cache.by_interface[:PE_PCC].ν
+    α_eff = czm_param_cache.by_interface[:PE_PCC].α
+    β_n = case.param.NE.Omega / 3.0
+    β_p = case.param.PE.Omega / 3.0
 
     # 构建或复用 CZM 缓存
     cache = ensure_czm_cache(case, czm_mesh, E_eff, ν_eff; fix_inner=case.opt.czm_fix_inner)

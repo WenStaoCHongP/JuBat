@@ -33,7 +33,13 @@ function run_diagnostics()
     println("  Nodes: $(czm_mesh.nnode), DOFs: $ndof")
     println("  Bulk Elements: $ne, Cohesive Elements: $n_coh")
 
-    E_eff, ν_eff, α_eff, β_n, β_p = JuBat.compute_czm_effective_params(case)
+    # TODO Chunk 4: compute_czm_effective_params 已被 compute_czm_params_per_interface 替换
+    # czm_param_cache = JuBat.compute_czm_params_per_interface(case)
+    # pe = czm_param_cache.by_interface[:PE_PCC]
+    # E_eff, ν_eff, α_eff = pe.E_eff, pe.ν, pe.α
+    # β_n = case.param.NE.Omega / 3.0
+    # β_p = case.param.PE.Omega / 3.0
+    E_eff = ν_eff = α_eff = β_n = β_p = NaN  # placeholder
     @printf("  E_eff = %.4e, ν_eff = %.4f\n", E_eff, ν_eff)
     @printf("  α_eff = %.4e, β_n = %.4e, β_p = %.4e\n", α_eff, β_n, β_p)
 

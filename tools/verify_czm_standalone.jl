@@ -71,7 +71,13 @@ function main()
     println("  Cohesive elements: $(czm_mesh_template.n_cohesive)")
 
     # ── 2. 有效参数 ────────────────────────────────────────────────
-    E_eff, ν_eff, α_eff, β_n, β_p = JuBat.compute_czm_effective_params(case)
+    # TODO Chunk 4: compute_czm_effective_params 已被 compute_czm_params_per_interface 替换
+    # czm_param_cache = JuBat.compute_czm_params_per_interface(case)
+    # pe = czm_param_cache.by_interface[:PE_PCC]
+    # E_eff, ν_eff, α_eff = pe.E_eff, pe.ν, pe.α
+    # β_n = case.param.NE.Omega / 3.0
+    # β_p = case.param.PE.Omega / 3.0
+    E_eff = ν_eff = α_eff = β_n = β_p = NaN  # placeholder
     @printf("  E_eff = %.6e, ν_eff = %.4f\n", E_eff, ν_eff)
     @printf("  α_eff = %.6e, β_n = %.6e, β_p = %.6e\n", α_eff, β_n, β_p)
 
