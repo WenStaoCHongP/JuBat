@@ -72,6 +72,21 @@ end
     @test elem.host_outer_elem == 10
     @test elem.host_inner_elem == 7
 
+    # 第二种 interface_type 也应工作
+    elem2 = JuBat.CohesiveElement(
+        2,                          # id
+        [5, 6, 7, 8],               # nodes
+        [5, 6],                     # nodes_bottom
+        [8, 7],                     # nodes_top
+        2.0,                        # length
+        :NE_NCC,                    # interface_type
+        20,                         # host_outer_elem
+        15                          # host_inner_elem
+    )
+    @test elem2.interface_type == :NE_NCC
+    @test elem2.host_outer_elem == 20
+    @test elem2.host_inner_elem == 15
+
     # 旧 layer_idx 字段已删除
     @test !hasproperty(elem, :layer_idx)
 end

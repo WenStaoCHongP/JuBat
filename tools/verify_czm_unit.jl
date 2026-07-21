@@ -95,7 +95,9 @@ function test_2element_tension(czm_model::String)
         [3, 2],         # nodes_bottom
         [8, 5],         # nodes_top
         L_ele,          # length
-        1               # layer_idx
+        :PE_PCC,        # interface_type  # TODO Chunk 3 重写
+        0,              # host_outer_elem
+        0               # host_inner_elem
     )
     
     czm_mesh.cohesive_elements = [ce]
