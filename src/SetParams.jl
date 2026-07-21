@@ -330,6 +330,9 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.lambda = param_dim.scale.P_ref / (param_dim.scale.L * param_dim.scale.T_ref)
     param_dim.scale.h = param_dim.cell.h * param_dim.scale.L / param_dim.cell.lambda_r  # Biot 数
     param_dim.scale.q = param_dim.scale.P_ref / param_dim.scale.L^3
+    if param_dim.cohesive.σ_max_pe_pcc == 0
+        @warn "[ChooseCell] cohesive.σ_max_pe_pcc = 0; scale.σ_czm/G_czm/K_czm 将为 0，CZM 归一化会产生 Inf/NaN。请补全 cohesive 字段后再启用 czm_enabled=true。"
+    end
     param_dim.scale.σ_czm = param_dim.cohesive.σ_max_pe_pcc  # PE-PCC 界面作为归一化锚点
     param_dim.scale.δ_czm = param_dim.scale.L
     param_dim.scale.G_czm = param_dim.scale.σ_czm * param_dim.scale.δ_czm
