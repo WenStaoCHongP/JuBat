@@ -87,6 +87,37 @@ JuBat 项目当前 CZM 仿真得到的"分离位移过小"——模拟 δ_sim �
 
 C-skip-thermal 完成后若发现 δ_sim 仍偏离 δ_exp，可升级到 C'（细化热网格）。本设计的数据结构（interface_type、CzmSubmesh、按界面类型分组的参数）在升级时全部可复用。
 
+### 2.4 分阶段启用策略（v2 修订：先禁用界面热阻）
+
+**背景**：原设计在 CZM 启用时同时启用**界面热阻模型**（`compute_gap_conductance` 按损伤 D 与分离 δ_n 调整界面传热系数 `h_eff`；`setup_thermal2D_mesh` 自动选择**未合并网格**让界面热阻作为面接触热导进入二维热传导矩阵；见 `ThermalDistributed.jl:292-310`）。这会让 CZM 损伤场与温度场双向耦合，参数空间与收敛行为同时变化，难以独立验证 CZM 本构本身是否解决了 δ_sim 过小的问题。
+
+**修订（2026-07-21）**：本 plan 实施时**先禁用界面热阻**，走传统二维热传导（合并网格，径向连续导热路径）。CZM 与热模型解耦为**单向耦合**——热→CZM（温度梯度作为 CZM 应力载荷），CZM→热（**不反馈**损伤对热导的影响）。
+
+**实现方式（注释而非删除）**：保留现有界面热阻代码不动，仅在以下 3 处用注释禁用，便于后续 PR 取消注释恢复：
+
+| # | 文件:行 | 禁用方式 | 说明 |
+|---|---------|----------|------|
+| 1 | `src/Jellyrollmodel.jl:531-534` | 把 `use_merged = !getfield(case_new.opt, :czm_enabled)` 注释掉，强制 `use_merged = true` | 即使 `czm_enabled=true` 也走合并网格，径向导热路径不被界面热阻截断 |
+| 2 | `src/ThermalDistributed.jl:292-310` | 把整个 `if case.opt.czm_enabled ... end` 块（界面热阻 K 矩阵修改）注释掉 | CZM 损伤状态不再影响二维热传导矩阵 |
+| 3 | `src/ThermalDistributed.jl:519` 附近 `get_active_elements` 调用 | 检查是否仍需调用；若仅用于热阻反馈，同步注释掉 | 断裂单元剔除是热阻模型的配套逻辑，禁用热阻时一并停用 |
+
+每处注释统一格式：
+```julia
+# ============== [v2 修订 2026-07-21] 界面热阻暂禁用（先验证 CZM 本构）==============
+# 原代码：xxxx
+# =========================================================================================
+```
+
+**验收信号（解耦验证通过后可重新启用界面热阻）**：
+- CZM 本身在单向耦合下使 δ_sim 落在 δ_exp ± 20%（§8.2 主验收）
+- 全网格仿真无 NaN/Inf，D_max ∈ [0, 1]
+- 重新启用后温度场不会跳变（差异 < 5%）
+
+**非目标**：
+- 不删除 `compute_gap_conductance` / `compute_all_gap_conductances` / `get_active_elements` / `effective_area_factor` 函数定义（保留备查，且后续 PR 会启用）
+- 不删除 `CzmInterfaceParams` 中 `h_c0 / k_air / lambda_m / beta / threshold` 5 个热阻字段（保留，与 Cohesive 同名以便未来恢复）
+- 不删除 `Cohesive` struct 中热阻字段（本次重构保留迁移）
+
 ---
 
 ## 3. 数据结构变更
@@ -244,21 +275,32 @@ end
 - **不依赖坐标重合检测**（避免 `create_czm_mesh:75-80` 那种 tol=1e-8 脆弱判断）
 - 材料类型直接从构造顺序确定
 
-#### 4.1.1 `thermal_elem_map` 反查算法（O(1) 解析式）
+#### 4.1.1 `thermal_elem_map` 反查算法（O(1) 真正解析式 v3）
 
-由于 CZM 子网格与粗热网格**共享螺旋几何参数**（`param.cell.Rin`、`param.cell.layer`），反查是解析式，**禁止使用 `findmin` 空间搜索**（O(n_thermal)）：
+由于 CZM 子网格与粗热网格**共享螺旋几何参数**（`param.cell.Rin`、`param.cell.layer`），反查是真正 O(1) 解析式，**禁止使用 `findmin` 空间搜索**（O(n_thermal)，v2 审查发现旧实现仍含 `findmin`）：
 
 ```
-对每个 CZM 体单元 e_czm：
-    1. 计算中心半径 r_center 与 θ_center（用 4 节点均值）
-    2. 卷绕圈号 turn = floor((r_center - Rin) / cell.layer) + 1
-    3. 在同一 turn 的粗热单元中，按 θ_center 落在的周向区间 [θ_seg, θ_seg+dθ_thermal] 取 segment_id
-    4. thermal_elem_map[e_czm] = (turn-1) * n_thermal_segments + segment_id
+前置：螺旋方程 r = a + b·θ_spiral + s_offset
+       其中 a = Rin, b = cell.layer / (2π), s_offset 由 layer_idx 决定（构造时已知）
+
+对每个 CZM 体单元 e_czm（已知 layer_idx 与 s_offset）：
+    1. r_center = 0.5 * (r[node1] + r[node3])   # 用对角节点平均
+    2. θ_spiral = (r_center - a - s_offset) / b  # 直接解析反解（无需 atan，无需 mod 2π）
+    3. seg_global = clamp(floor(Int, (θ_spiral - theta0) / dθ_thermal) + 1, 1, n_thermal)
+    4. thermal_elem_map[e_czm] = seg_global
 ```
 
-**前置条件**：粗热网格的节点排列与 segment 划分必须在函数内部以 `thermal_mesh.element / node` 解析得到（n_thermal_segments、turn 划分方式）。`thermal_mesh` 在函数内被**只读**使用一次以建立映射，之后运行时查询是 O(1) Vector 访问。
+**关键改进（v3 相对 v2）**：
+- 不再用 `atan(y, x)` + `findmin` 在同 turn 候选中搜索——直接由 r 与 s_offset 反解全局 θ_spiral
+- 不再需要从 `thermal_mesh.element/node` 推断 `n_seg_thermal`（不可靠）——改为强制要求 `nθ_thermal` kwarg
+- 不再有"-1 映射失败"分支（clamp 保证总在 [1, n_thermal] 内）
 
-**正确性约束**：每个 CZM 体单元必须映射到**同一卷绕圈**内的粗热单元（不可跨圈）。映射失败（CZM 单元中心落在粗热网格外）时填 -1 并在 cache 构造时 @warn。
+**前置条件**：
+- 调用方必须传入 `nθ_thermal`（粗热网格的周向分段数，即 `jellyroll_collector_seed_mesh(nθ=nθ_thermal)` 的同一变量）
+- `n_thermal = size(thermal_mesh.element, 1)` 必须 `divrem(n_thermal, nθ_thermal)[2] == 0`（每圈单元数一致）
+- `dθ_thermal = (theta1 - theta0) / n_thermal`
+
+`thermal_mesh` 在函数内被**只读**使用一次以建立映射，之后运行时查询是 O(1) Vector 访问。
 
 ### 4.2 界面识别与 cohesive 单元数量预期
 
@@ -528,7 +570,7 @@ end
 | `solve_czm_basic_step` / `solve_czm_arc_length_step` / `newton_raphson_czm` | `CzmSolve.jl` | 全部 11 处 `assemble_coupled_system` 调用需适配（见 §7.1.1） |
 | `compute_czm_strain_inputs` | `CouplingState.jl:287` | 输出按 CZM 子网格粒度（不再按粗热单元）；Δsoc 数据来源见 §5.1 |
 | `bilinear_traction_state` / `bilinear_tangent` / `bilinear_traction` / `update_damage` | `Materialmatrix.jl:68, 163, 182, 293` | 签名从 `(δ, damage, cohesive_params::Cohesive)` 改为 `(δ, damage, params::CzmInterfaceParams)`，函数体读取 `params.K_n / K_t / δ_0_n / δ_c_n / δ_0_t / δ_c_t / η / czm_model` |
-| `compute_gap_conductance` / `compute_element_gap_conductance` / `compute_all_gap_conductances` | `Materialmatrix.jl:324, 352, 398` | 接受 `params::CzmInterfaceParams`（用 `params.δ_0_n / δ_c_n / h_c0 / k_air / lambda_m / beta / threshold`），不再读 `cohesive::Cohesive` |
+| `compute_gap_conductance` / `compute_element_gap_conductance` / `compute_all_gap_conductances` | `Materialmatrix.jl:324, 352, 398` | 接受 `params::CzmInterfaceParams`（用 `params.δ_0_n / δ_c_n / h_c0 / k_air / lambda_m / beta / threshold`），不再读 `cohesive::Cohesive`。**v2 §2.4**：签名重构保留，但调用点（`ThermalDistributed.jl:292-310`）已注释，本版本不实际调用 |
 | `map_czm_damage_to_thermal` | `CallModel.jl:9-19` | 重写归约规则（§5.2）：用 `cohesive_to_thermal` 显式循环 + max |
 
 #### 7.1.1 `assemble_coupled_system` 完整调用点清单（2026-07-20 grep）
@@ -590,6 +632,8 @@ end
   - 损伤峰值**位于 PE-PCC / NE-NCC 界面**（不在 SP-PE）
   - `D_max ∈ [0, 1]`，无 NaN/Inf
 
+**v2 修订（2026-07-21，§2.4）**：本阶段**界面热阻暂禁用**（走合并网格 + 传统二维热传导）。全网格回归只验证 CZM 本构 + 单向热耦合（热→CZM）能否解决 δ_sim 过小问题；不验证 CZM→热反馈。若 δ_sim 仍偏离 δ_exp > 20%，应优先排查 CZM 参数（σ_max / δ_c / E_coat），而非归因于热反馈缺失——后者留作后续 PR 的独立验证项。
+
 ### 8.3 网格收敛
 
 - 不同 `nθ_czm` ∈ [40, 80, 160] 下 δ_sim 稳定性
@@ -636,6 +680,7 @@ end
 | `assemble_coupled_system` 调用签名变更 | §7.1.1 列出的 16 处调用全部需迁移 |
 | CZM 单元数增加（约 ×4） | 内存占用上升；预期行为 |
 | 损伤峰值位置改变（从 SP-PE → PE-PCC / NE-NCC） | 后处理脚本（含 `CsvExport`）若硬编码位置需更新 |
+| **界面热阻暂禁用**（spec §2.4 v2 修订） | 本版本即使 `czm_enabled=true` 也走合并网格 + 传统二维热传导（无 CZM→热反馈）。若用户依赖损伤影响温度场的旧行为，需知此功能暂停；恢复方式：取消 `ThermalDistributed.jl:292-310` 与 `Jellyrollmodel.jl:531-534` 的注释 |
 
 ---
 
