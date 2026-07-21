@@ -49,10 +49,10 @@ using .JuBat
 
     # 节点复制 + 重写外层 bulk 正确性自检（spec §4.3）
     for coh in czm_mesh.cohesive_elements
-        n_a, n_b, n_b_copy, n_a_copy = coh.nodes
+        n_lo, n_hi, n_hi_copy, n_lo_copy = coh.nodes
         # 副本节点坐标与原节点一致
-        @test czm_mesh.node[n_a, :] ≈ czm_mesh.node[n_a_copy, :] atol=1e-12
-        @test czm_mesh.node[n_b, :] ≈ czm_mesh.node[n_b_copy, :] atol=1e-12
+        @test czm_mesh.node[n_lo, :] ≈ czm_mesh.node[n_lo_copy, :] atol=1e-12
+        @test czm_mesh.node[n_hi, :] ≈ czm_mesh.node[n_hi_copy, :] atol=1e-12
         # 4 节点不重复
         @test length(unique(coh.nodes)) == 4
     end
@@ -60,12 +60,46 @@ using .JuBat
     # 外层 bulk 单元的共边位置必须是副本节点
     for coh in czm_mesh.cohesive_elements
         outer_nodes = czm_mesh.bulk_element[coh.host_outer_elem, :]
-        n_a, n_b, n_b_copy, n_a_copy = coh.nodes
-        # 副本 n_a_copy/n_b_copy 必须在外层单元中
-        @test n_a_copy in outer_nodes
-        @test n_b_copy in outer_nodes
-        # 原节点 n_a/n_b 不应在外层单元中（已被副本替换）
-        @test !(n_a in outer_nodes)
-        @test !(n_b in outer_nodes)
+        n_lo, n_hi, n_hi_copy, n_lo_copy = coh.nodes
+        # 副本 n_lo_copy/n_hi_copy 必须在外层单元中
+        @test n_lo_copy in outer_nodes
+        @test n_hi_copy in outer_nodes
+        # 原节点 n_lo/n_hi 不应在外层单元中（已被副本替换）
+        @test !(n_lo in outer_nodes)
+        @test !(n_hi in outer_nodes)
+    end
+end
+
+@testset "create_czm_mesh cohesive normal 方向" begin
+    param_dim = JuBat.ChooseCell("Jellyroll")
+    opt = JuBat.Option()
+    opt.thermal_enabled = true
+    opt.thermalmodel = "distributed2D"
+    opt.per_element_spme = true
+    case = JuBat.SetCase(param_dim, opt)
+
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, nθ_czm=20, gsorder=2)
+    case = JuBat.setup_thermal2D_mesh(case, mesh_data)
+    czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
+
+    # 副本节点坐标与原节点一致（top 与 bottom 几何重合），
+    # 因此 cohesive 法向由拓扑（host_inner 在内、host_outer 在外）决定，而非节点几何。
+    # 用相邻 bulk 单元质心方向作为参考外向，验证 host_outer 比 host_inner 更靠外。
+    for coh in czm_mesh.cohesive_elements
+        inner_nodes = czm_mesh.bulk_element[coh.host_inner_elem, :]
+        outer_nodes = czm_mesh.bulk_element[coh.host_outer_elem, :]
+        cx_inner = sum(czm_mesh.node[n, 1] for n in inner_nodes) / 4
+        cy_inner = sum(czm_mesh.node[n, 2] for n in inner_nodes) / 4
+        cx_outer = sum(czm_mesh.node[n, 1] for n in outer_nodes) / 4
+        cy_outer = sum(czm_mesh.node[n, 2] for n in outer_nodes) / 4
+        r_inner = hypot(cx_inner, cy_inner)
+        r_outer = hypot(cx_outer, cy_outer)
+        # host_outer 质心应径向更靠外
+        @test r_outer > r_inner
+
+        # 进一步验证：lo/hi 两节点 id 相差 1（同一螺旋上的相邻 segment 节点）
+        # 这正是 C1 修复所依赖的前提——id 顺序等价于 θ 顺序。
+        n_lo, n_hi, n_hi_copy, n_lo_copy = coh.nodes
+        @test n_hi - n_lo == 1
     end
 end

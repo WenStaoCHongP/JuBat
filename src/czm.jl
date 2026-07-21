@@ -85,11 +85,13 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)
             nothing
         end
         if iface !== nothing
-            # 判断哪个是内层（径向更小）
-            n1_1 = sub_mesh.element[e1, 1]
-            n1_2 = sub_mesh.element[e2, 1]
-            r1 = hypot(sub_mesh.node[n1_1, 1], sub_mesh.node[n1_1, 2])
-            r2 = hypot(sub_mesh.node[n1_2, 1], sub_mesh.node[n1_2, 2])
+            # 判断哪个是内层（径向更小）——用单元质心判断，鲁棒于节点排列变化
+            cx1 = sum(sub_mesh.node[sub_mesh.element[e1, c], 1] for c in 1:4) / 4
+            cy1 = sum(sub_mesh.node[sub_mesh.element[e1, c], 2] for c in 1:4) / 4
+            cx2 = sum(sub_mesh.node[sub_mesh.element[e2, c], 1] for c in 1:4) / 4
+            cy2 = sum(sub_mesh.node[sub_mesh.element[e2, c], 2] for c in 1:4) / 4
+            r1 = hypot(cx1, cy1)
+            r2 = hypot(cx2, cy2)
             if r1 < r2
                 push!(interface_pairs, (e1, e2, iface))
             else
@@ -99,6 +101,8 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)
     end
 
     # Step 3: 节点复制 + 重写外层 bulk 连接
+    # 排序保证 cohesive 单元 id 跨运行一致（不依赖 Dict 哈希顺序）
+    sort!(interface_pairs, by = first)
     node_copy = Dict{Int, Int}()
 
     n_cohesive = length(interface_pairs)
@@ -120,12 +124,12 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)
         @assert length(common_set) == 2 "共边应有 2 节点，实际 $(length(common_set))"
         common = collect(common_set)
 
-        # 按 θ 确定性排序（避免 Set 哈希顺序导致法向翻转）
-        θs = atan.([sub_mesh.node[c, 2] for c in common],
-                   [sub_mesh.node[c, 1] for c in common])
-        order = sortperm(θs)
-        n_lo = common[order[1]]   # θ 较小
-        n_hi = common[order[2]]   # θ 较大
+        # build_czm_submesh 按 layer-outer / segment-inner 顺序赋 node id，
+        # 同一螺旋上相邻 segment 的 node id 单调递增（差为 1），等价于 θ 单调递增。
+        # 用 id 排序可避免 atan(y,x) 在 ±π 分支切割处的翻转 bug。
+        sort!(common)
+        n_lo = common[1]   # θ 较小（id 较小）
+        n_hi = common[2]   # θ 较大（id 较大）
 
         for n in (n_lo, n_hi)
             if !haskey(node_copy, n)
@@ -193,9 +197,9 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)
 
     # 正确性自检（spec §4.3）
     for coh in cohesive_elements
-        n_a, n_b, n_b_copy, n_a_copy = coh.nodes
-        @assert czm_mesh.node[n_a, :] ≈ czm_mesh.node[n_a_copy, :] atol=1e-12 "副本坐标不一致"
-        @assert czm_mesh.node[n_b, :] ≈ czm_mesh.node[n_b_copy, :] atol=1e-12 "副本坐标不一致"
+        n_lo, n_hi, n_hi_copy, n_lo_copy = coh.nodes
+        @assert czm_mesh.node[n_lo, :] ≈ czm_mesh.node[n_lo_copy, :] atol=1e-12 "副本坐标不一致"
+        @assert czm_mesh.node[n_hi, :] ≈ czm_mesh.node[n_hi_copy, :] atol=1e-12 "副本坐标不一致"
         @assert length(unique(coh.nodes)) == 4 "cohesive 单元 4 节点重复"
     end
 

@@ -54,7 +54,7 @@ mutable struct CohesiveMesh
     bulk_element::Matrix{Int64}               # 更新后的固体单元连接关系
     cohesive_elements::Vector{AbstractCohesiveElement} # 内聚力单元
     n_cohesive::Int64                         # 内聚力单元数
-    n_layers::Int64                           # 卷绕圈数
+    n_layers::Int64                           # 分离面类型数（PE-PCC + NE-NCC = 2），spec §3.3
     node_map::Dict{Int64, Vector{Int64}}      # 原节点 → [分层后的节点们]
     interface_nodes::Vector{Vector{Tuple{Int64,Int64}}} # 每个界面的节点对
     damage_states::Vector{AbstractDamageState} # 损伤状态
