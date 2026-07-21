@@ -411,7 +411,7 @@ function NormaliseParam(param_dim::Params)
     param.SP.lambda = param_dim.SP.lambda / param.scale.lambda
     param.SP.rho = param_dim.SP.rho / param.scale.rho
     param.SP.heat_Q = param_dim.SP.heat_Q * param.scale.rho * param.scale.L^3 * param.scale.T_ref / (param.scale.t0 * param.scale.phi * param.scale.I_typ)
-    # 力学模量归一化（统一到 scale.E_coat 供 compute_effective_coating_modulus 使用）
+    # 力学模量归一化（统一到 scale.E_coat 供 compute_czm_params_per_interface 使用）
     if param.scale.E_coat > 0
         param.SP.E = param_dim.SP.E / param.scale.E_coat
     else

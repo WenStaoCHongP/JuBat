@@ -289,9 +289,10 @@ function compute_czm_params_per_interface(case)
     param = case.param
     scale = case.param_dim.scale
 
-    # 入口断言
-    @assert case.param_dim.PE.E_coat > 0 && case.param_dim.NE.E_coat > 0 "CZM 应变驱动需要 PE/NE.E_coat > 0"
-    @assert case.param_dim.scale.σ_czm > 0 "scale.σ_czm = 0; must populate cohesive.σ_max_pe_pcc (Task 2.1) before enabling CZM"
+    # 入口断言（统一使用归一化 param；positivity 与尺度无关）
+    @assert param.PE.E_coat > 0 && param.NE.E_coat > 0 "CZM 应变驱动需要 PE/NE.E_coat > 0"
+    @assert scale.σ_czm > 0 "scale.σ_czm = 0; must populate cohesive.σ_max_pe_pcc (Task 2.1) before enabling CZM"
+    @assert scale.E_coat > 0 "scale.E_coat = 0; ChooseCell 检测到 PE/NE.E_coat 缺失，宏观力学分析不可用"
     @assert param.cohesive.σ_max_pe_pcc > 0 "cohesive.σ_max_pe_pcc 必须为正"
     @assert param.cohesive.σ_max_ne_ncc > 0 "cohesive.σ_max_ne_ncc 必须为正"
     @assert param.cohesive.G_c_pe_pcc > 0 && param.cohesive.G_c_ne_ncc > 0 "G_c_pe_pcc / G_c_ne_ncc 必须为正"
