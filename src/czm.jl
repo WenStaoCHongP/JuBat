@@ -37,104 +37,167 @@ mutable struct DamageState <: AbstractDamageState
 end
 
 """
-    create_czm_mesh(thermal_mesh, param_dim; tol=1e-8)
+    create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param) -> CohesiveMesh
 
-基于热网格创建内聚力网格。
+基于细化 CZM 子网格构造内聚力网格（spec §4.4）。
 
 # 核心算法
-通过检查节点坐标是否重合来识别层间界面：
-- 外螺旋在theta位置的点 与 内螺旋在theta+2*pi位置的点 坐标重合
-- 这些重合点就是相邻卷绕圈之间的界面
-- 在界面处复制节点并插入内聚力单元
+1. 建立 共边(2 节点) → 单元对 映射，遍历找径向相邻且材料组合为 PE-PCC / NE-NCC 的对
+2. 节点复制：对每个界面对的共边 2 节点生成副本（memoized），cohesive 单元 4 节点 = [n_a, n_b, n_b', n_a']
+3. **重写外层 bulk 单元连接**：把外层单元共边位置的原节点替换为副本节点（关键：否则分离位移恒为 0）
+4. 构造 cohesive_to_thermal[e_coh] = thermal_elem_map[e_outer]
 
 # 参数
-- `thermal_mesh`: 热分析网格（Q4单元）
-- `param_dim`: 参数对象（包含螺旋几何信息）
-- `tol`: 坐标重合判断容差（默认1e-8）
+- `czm_submesh`: 细化 CZM 子网格（含 material_type / thermal_elem_map）
+- `thermal_mesh`: 粗热网格（用于校验 thermal_elem_map 索引范围；本函数不复制其连接）
+- `param`: 参数对象（保留签名一致性，当前未使用）
 
 # 返回
-- `CohesiveMesh`: 内聚力网格对象
+- `CohesiveMesh`: 内聚力网格对象，bulk_mesh 指向 czm_submesh.mesh
 """
-function create_czm_mesh(thermal_mesh::Mesh, param_dim; tol::Float64=1e-8)
-    @assert thermal_mesh.type == "Q4" "create_czm_mesh requires Q4 mesh"
-    @assert thermal_mesh.dimension == 2 "create_czm_mesh requires 2D mesh"
-    ne = size(thermal_mesh.element, 1)
-    nnode = thermal_mesh.nlen
-    n_theta = ne
-    inner_nodes = collect(1:(n_theta + 1))
-    outer_nodes = collect((n_theta + 2):(2 * (n_theta + 1)))
+function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)
+    sub_mesh = czm_submesh.mesh
+    ne_sub = size(sub_mesh.element, 1)
+    nnode_sub = sub_mesh.nlen
+    n_thermal = size(thermal_mesh.element, 1)
 
-    # 通过坐标重合检测界面节点对
-    interface_pairs = Tuple{Int64, Int64}[]
-    for n_out in outer_nodes
-        x_out = thermal_mesh.node[n_out, 1]
-        y_out = thermal_mesh.node[n_out, 2]
+    # Step 1: 建立 共边 → 单元对 映射
+    edge_to_elems = Dict{Tuple{Int, Int}, Vector{Int}}()
+    for e in 1:ne_sub
+        n1, n2, n3, n4 = sub_mesh.element[e, :]
+        for edge in ((n1, n2), (n2, n3), (n3, n4), (n4, n1))
+            key = (min(edge[1], edge[2]), max(edge[1], edge[2]))
+            push!(get!(edge_to_elems, key, Int[]), e)
+        end
+    end
 
-        for n_in in inner_nodes
-            x_in = thermal_mesh.node[n_in, 1]
-            y_in = thermal_mesh.node[n_in, 2]
-
-            if abs(x_out - x_in) < tol && abs(y_out - y_in) < tol
-                push!(interface_pairs, (n_out, n_in))
-                break
+    # Step 2: 遍历共边，识别 PE-PCC / NE-NCC 径向界面
+    interface_pairs = Tuple{Int, Int, Symbol}[]   # (e_inner, e_outer, interface_type)
+    for (edge, elems) in edge_to_elems
+        length(elems) == 2 || continue   # 周向相邻同层（材料相同）自动过滤
+        e1, e2 = elems[1], elems[2]
+        m1, m2 = czm_submesh.material_type[e1], czm_submesh.material_type[e2]
+        iface = if (m1 == :PE && m2 == :PCC) || (m1 == :PCC && m2 == :PE)
+            :PE_PCC
+        elseif (m1 == :NE && m2 == :NCC) || (m1 == :NCC && m2 == :NE)
+            :NE_NCC
+        else
+            nothing
+        end
+        if iface !== nothing
+            # 判断哪个是内层（径向更小）
+            n1_1 = sub_mesh.element[e1, 1]
+            n1_2 = sub_mesh.element[e2, 1]
+            r1 = hypot(sub_mesh.node[n1_1, 1], sub_mesh.node[n1_1, 2])
+            r2 = hypot(sub_mesh.node[n1_2, 1], sub_mesh.node[n1_2, 2])
+            if r1 < r2
+                push!(interface_pairs, (e1, e2, iface))
+            else
+                push!(interface_pairs, (e2, e1, iface))
             end
         end
     end
 
-    sort!(interface_pairs, by = p -> atan(thermal_mesh.node[p[1], 2], thermal_mesh.node[p[1], 1]))
+    # Step 3: 节点复制 + 重写外层 bulk 连接
+    node_copy = Dict{Int, Int}()
 
-    # 创建内聚力单元（直接使用原网格节点）
+    n_cohesive = length(interface_pairs)
+    max_new_nodes = 2 * n_cohesive
+    extended_node = zeros(Float64, nnode_sub + max_new_nodes, 2)
+    extended_node[1:nnode_sub, :] = sub_mesh.node
+    new_node_count = nnode_sub
+
+    bulk_element_new = Matrix{Int}(sub_mesh.element)
+
     cohesive_elements = CohesiveElement[]
-    n_pairs = length(interface_pairs)
-    for i in 1:(n_pairs - 1)
-        n_out_1, n_in_1 = interface_pairs[i]
-        n_out_2, n_in_2 = interface_pairs[i + 1]
+    cohesive_to_thermal = Vector{Int}(undef, n_cohesive)
+    sizehint!(cohesive_elements, n_cohesive)
 
-        x_out_1, y_out_1 = thermal_mesh.node[n_out_1, 1], thermal_mesh.node[n_out_1, 2]
-        x_out_2, y_out_2 = thermal_mesh.node[n_out_2, 1], thermal_mesh.node[n_out_2, 2]
-        x_in_1, y_in_1 = thermal_mesh.node[n_in_1, 1], thermal_mesh.node[n_in_1, 2]
-        x_in_2, y_in_2 = thermal_mesh.node[n_in_2, 1], thermal_mesh.node[n_in_2, 2]
+    for (i, (e_inner, e_outer, iface)) in enumerate(interface_pairs)
+        inner_nodes = sub_mesh.element[e_inner, :]
+        outer_nodes = sub_mesh.element[e_outer, :]
+        common_set = intersect(Set(inner_nodes), Set(outer_nodes))
+        @assert length(common_set) == 2 "共边应有 2 节点，实际 $(length(common_set))"
+        common = collect(common_set)
 
-        L_out = hypot(x_out_2 - x_out_1, y_out_2 - y_out_1)
-        L_in = hypot(x_in_2 - x_in_1, y_in_2 - y_in_1)
-        elem_length = 0.5 * (L_out + L_in)
+        # 按 θ 确定性排序（避免 Set 哈希顺序导致法向翻转）
+        θs = atan.([sub_mesh.node[c, 2] for c in common],
+                   [sub_mesh.node[c, 1] for c in common])
+        order = sortperm(θs)
+        n_lo = common[order[1]]   # θ 较小
+        n_hi = common[order[2]]   # θ 较大
 
-        coh_elem = CohesiveElement(
+        for n in (n_lo, n_hi)
+            if !haskey(node_copy, n)
+                new_node_count += 1
+                extended_node[new_node_count, :] = sub_mesh.node[n, :]
+                node_copy[n] = new_node_count
+            end
+        end
+        n_lo_copy = node_copy[n_lo]
+        n_hi_copy = node_copy[n_hi]
+
+        # 重写外层 bulk 单元连接
+        for col in 1:4
+            if bulk_element_new[e_outer, col] == n_lo
+                bulk_element_new[e_outer, col] = n_lo_copy
+            elseif bulk_element_new[e_outer, col] == n_hi
+                bulk_element_new[e_outer, col] = n_hi_copy
+            end
+        end
+
+        # cohesive 单元几何长度
+        x_lo, y_lo = sub_mesh.node[n_lo, 1], sub_mesh.node[n_lo, 2]
+        x_hi, y_hi = sub_mesh.node[n_hi, 1], sub_mesh.node[n_hi, 2]
+        elem_length = hypot(x_hi - x_lo, y_hi - y_lo)
+
+        coh = CohesiveElement(
             i,
-            [n_in_1, n_in_2, n_out_2, n_out_1],
-            [n_in_1, n_in_2],
-            [n_out_1, n_out_2],
+            [n_lo, n_hi, n_hi_copy, n_lo_copy],   # 逆时针
+            [n_lo, n_hi],                          # nodes_bottom
+            [n_lo_copy, n_hi_copy],                # nodes_top
             elem_length,
-            :PE_PCC,   # TODO Chunk 3: 按实际材料类型判定
-            0,         # TODO Chunk 3: host_outer_elem
-            0          # TODO Chunk 3: host_inner_elem
+            iface,
+            e_outer,
+            e_inner,
         )
+        push!(cohesive_elements, coh)
 
-        push!(cohesive_elements, coh_elem)
+        # cohesive_to_thermal
+        thermal_elem_of_outer = czm_submesh.thermal_elem_map[e_outer]
+        @assert thermal_elem_of_outer > 0 "外层单元 $e_outer 的 thermal_elem_map 无效"
+        @assert thermal_elem_of_outer <= n_thermal "外层单元 $e_outer thermal_elem_map=$thermal_elem_of_outer 超出热网格范围 $n_thermal"
+        cohesive_to_thermal[i] = thermal_elem_of_outer
     end
 
-    n_cohesive = length(cohesive_elements)
+    # 裁剪 extended_node
+    extended_node = extended_node[1:new_node_count, :]
+
+    # Step 4: 组装 CohesiveMesh
     damage_states = [DamageState() for _ in 1:n_cohesive]
 
-    node_map = Dict{Int64, Vector{Int64}}()
-    for i in 1:nnode
-        node_map[i] = [i]
-    end
-    for (n_out, n_in) in interface_pairs
-        push!(node_map[n_out], n_in)
-    end
-
     czm_mesh = CohesiveMesh()
-    czm_mesh.bulk_mesh = thermal_mesh
-    czm_mesh.node = copy(thermal_mesh.node)
-    czm_mesh.nnode = nnode
-    czm_mesh.bulk_element = copy(thermal_mesh.element)
+    czm_mesh.bulk_mesh = sub_mesh
+    czm_mesh.node = extended_node
+    czm_mesh.nnode = new_node_count
+    czm_mesh.bulk_element = bulk_element_new
     czm_mesh.cohesive_elements = cohesive_elements
     czm_mesh.n_cohesive = n_cohesive
-    czm_mesh.n_layers = 2
-    czm_mesh.node_map = node_map
-    czm_mesh.interface_nodes = [interface_pairs]
+    czm_mesh.n_layers = 2   # spec §3.3: 分离面类型数（PE-PCC + NE-NCC）
+    czm_mesh.node_map = Dict(n => [n, c] for (n, c) in node_copy)
+    czm_mesh.interface_nodes = [[]]   # 旧字段，保留兼容
     czm_mesh.damage_states = damage_states
+    czm_mesh.czm_submesh = czm_submesh
+    czm_mesh.thermal_to_czm = nothing   # Task 5.1 填充
+    czm_mesh.cohesive_to_thermal = cohesive_to_thermal
+
+    # 正确性自检（spec §4.3）
+    for coh in cohesive_elements
+        n_a, n_b, n_b_copy, n_a_copy = coh.nodes
+        @assert czm_mesh.node[n_a, :] ≈ czm_mesh.node[n_a_copy, :] atol=1e-12 "副本坐标不一致"
+        @assert czm_mesh.node[n_b, :] ≈ czm_mesh.node[n_b_copy, :] atol=1e-12 "副本坐标不一致"
+        @assert length(unique(coh.nodes)) == 4 "cohesive 单元 4 节点重复"
+    end
 
     return czm_mesh
 end
