@@ -42,6 +42,7 @@ export SPM, Solve, SPMe, SPMe_element, ModelInitialisation
 export ModelInitialisation_MultiSPMe, extract_element_state, get_thermal_dofs
 export update_state
 export MultiSPMeLayout, MeshGeometry, CohesiveElementGeom, CZMAssemblyCache, CZMAssemblyWorkspace
+export CzmInterfaceParams, CzmParamCache
 export Arrhenius, IntV, IntQ4
 export jellyroll_collector_seed_mesh, jellyroll_element_properties
 export jellyroll_tab_node_indices, edge_boundary

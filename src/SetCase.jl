@@ -108,9 +108,10 @@ mutable struct Case
     czm_mesh::Union{Nothing, CohesiveMesh}   # CZM 网格（演化但类型明确）
     czm_cache::Union{Nothing, CZMAssemblyCache}  # CZM 装配缓存（E/ν 变化时重建）
     czm_layout::Union{Nothing, CzmLayout}      # CZM 布局+u_prev（跨时间步）
+    czm_param_cache::Union{Nothing, CzmParamCache}  # v5 新增：per-interface 参数缓存
 end
 
 # 5 参数兼容构造器
 function Case(param_dim, param, opt, mesh, index)
-    Case(param_dim, param, opt, mesh, index, nothing, nothing, nothing, nothing, nothing)
+    Case(param_dim, param, opt, mesh, index, nothing, nothing, nothing, nothing, nothing, nothing)
 end

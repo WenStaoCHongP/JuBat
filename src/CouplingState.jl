@@ -1,6 +1,71 @@
 # CouplingState.jl — 类型安全的状态布局与网格几何定义
 # 替代 Dict{String,Any} 的 multi_spme_layout
 
+using Parameters: @with_kw
+
+# ========================================================================
+# CzmInterfaceParams & CzmParamCache (spec §3.5.1 v3 / §3.5.2)
+# 按界面类型分组的 CZM 本构参数缓存，供 Chunk 2/4/6 使用。
+# ========================================================================
+
+"""
+    CzmInterfaceParams
+
+单一界面类型（如 :PE_PCC 或 :NE_NCC）的 CZM 本构参数（归一化后）。
+按 spec §3.5.1 v3 定义 20 个字段，覆盖 Materialmatrix.jl 实际读取的全部字段。
+
+所有字段都已通过 NormaliseParam 归一化：
+- E_eff, σ_max, τ_max: / scale.σ_czm
+- δ_0_n, δ_c_n, δ_0_t, δ_c_t: / scale.δ_czm
+- G_c, G_c_t: / scale.G_czm
+- K_n, K_t: / scale.K_czm
+- η, czm_model, h_c0, k_air, lambda_m, beta, threshold: 沿用原 Cohesive 归一化（无因次或已有尺度）
+"""
+@with_kw struct CzmInterfaceParams
+    # ---- 体模量与热化学载荷（assemble_bulk_stiffness、assemble_thermal_chemical_load 用）----
+    E_eff::Float64 = 0.0       # 涂层模量（PE.E_coat 或 NE.E_coat），非全栈均一化
+    ν::Float64 = 0.0           # 涂层泊松比
+    α::Float64 = 0.0           # 涂层热膨胀系数（归一化）
+
+    # ---- Mode I（法向）---- bilinear_* 与 compute_gap_conductance 用
+    σ_max::Float64 = 0.0       # 最大法向牵引
+    K_n::Float64 = 0.0         # 法向初始刚度
+    δ_0_n::Float64 = 0.0       # 法向损伤起始位移
+    δ_c_n::Float64 = 0.0       # 法向临界位移
+    G_c::Float64 = 0.0         # Mode I 断裂能
+
+    # ---- Mode II（切向）---- bilinear_* 用
+    τ_max::Float64 = 0.0       # 最大切向牵引
+    K_t::Float64 = 0.0         # 切向初始刚度
+    δ_0_t::Float64 = 0.0       # 切向损伤起始位移
+    δ_c_t::Float64 = 0.0       # 切向临界位移
+    G_c_t::Float64 = 0.0       # Mode II 断裂能
+
+    # ---- BK 混合模式 + 本构选择 ----
+    η::Float64 = 1.45          # BK 准则指数（来自 Cohesive.eta）
+    czm_model::String = "model1"   # 本构模型标识
+
+    # ---- 界面热阻（compute_gap_conductance 用）----
+    h_c0::Float64 = 1e7        # 完全接触界面传热系数
+    k_air::Float64 = 0.026     # 空气导热系数
+    lambda_m::Float64 = 70e-9  # 界面微观粗糙度尺度
+    beta::Float64 = 1.0        # 粗糙度指数
+    threshold::Float64 = 70e-9 # 间隙阈值
+end
+
+"""
+    CzmParamCache
+
+按界面类型分组的 CZM 参数缓存（spec §3.5.2）。
+- param_ref: 保留 param 引用，供 assemble_bulk_stiffness 读 PE/NE.E_coat 等
+- id: objectid(param)，用于 ensure_czm_cache 快速失效判定
+"""
+struct CzmParamCache
+    by_interface::Dict{Symbol, CzmInterfaceParams}
+    param_ref::Params
+    id::UInt64
+end
+
 """
     MultiSPMeLayout
 

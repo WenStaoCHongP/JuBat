@@ -90,3 +90,39 @@ end
     # 旧 layer_idx 字段已删除
     @test !hasproperty(elem, :layer_idx)
 end
+
+@testset "CzmInterfaceParams and CzmParamCache" begin
+    params_pe_pcc = JuBat.CzmInterfaceParams(;
+        E_eff = 1.0e3,
+        ν = 0.3,
+        α = 2.0e-6,
+        σ_max = 50e6,
+        K_n = 1.0e17,
+        δ_0_n = 1.0e-9,
+        δ_c_n = 5.0e-7,
+        G_c = 25.0,
+        τ_max = 50e6,
+        K_t = 1.0e17,
+        δ_0_t = 1.0e-9,
+        δ_c_t = 5.0e-7,
+        G_c_t = 25.0,
+        η = 1.45,
+        czm_model = "model1",
+        h_c0 = 1e7,
+        k_air = 0.026,
+        lambda_m = 70e-9,
+        beta = 1.0,
+        threshold = 70e-9,
+    )
+    @test params_pe_pcc.σ_max == 50e6
+    @test params_pe_pcc.czm_model == "model1"
+    @test params_pe_pcc.threshold == 70e-9
+
+    # CzmParamCache 含 param_ref 与 id 字段（spec §3.5.2）
+    param_dim = JuBat.ChooseCell("Jellyroll")
+    param = JuBat.NormaliseParam(param_dim)
+    cache = JuBat.CzmParamCache(Dict(:PE_PCC => params_pe_pcc), param, objectid(param))
+    @test haskey(cache.by_interface, :PE_PCC)
+    @test cache.by_interface[:PE_PCC].E_eff == 1.0e3
+    @test cache.id == objectid(param)
+end
