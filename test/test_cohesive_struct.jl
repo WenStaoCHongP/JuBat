@@ -126,3 +126,18 @@ end
     @test cache.by_interface[:PE_PCC].E_eff == 1.0e3
     @test cache.id == objectid(param)
 end
+
+@testset "CzmSubmesh struct" begin
+    # 仅验证字段存在，构造完整子网格在 Chunk 3 测试
+    @test JuBat.CzmSubmesh === JuBat.CzmSubmesh  # 类型存在性检查
+end
+
+@testset "CohesiveMesh czm_submesh field" begin
+    mesh = JuBat.CohesiveMesh()
+    @test hasproperty(mesh, :czm_submesh)
+    @test hasproperty(mesh, :thermal_to_czm)
+    @test hasproperty(mesh, :cohesive_to_thermal)   # v5 新增：反向映射
+    @test isnothing(mesh.czm_submesh)
+    @test isnothing(mesh.thermal_to_czm)
+    @test isnothing(mesh.cohesive_to_thermal)
+end

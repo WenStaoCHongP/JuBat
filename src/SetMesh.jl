@@ -1,3 +1,5 @@
+using SparseArrays: SparseMatrixCSC
+
 mutable struct GaussPoint
     x::Array{Float64}   # physical coordinates
     xi::Array{Float64}  # local coordinates
@@ -23,6 +25,28 @@ end
 abstract type AbstractCohesiveElement end
 abstract type AbstractDamageState end
 
+"""
+    CzmSubmesh
+
+独立细化的 CZM 机械子网格（径向 8 层/卷绕圈）。
+与粗热网格解耦，通过 thermal_elem_map 与 thermal_to_czm 矩阵耦合。
+
+# 字段
+- `mesh`: 细化 Q4 网格
+- `material_type`: 每个单元的材料类型（:PE / :PCC / :SP / :NE / :NCC）
+- `winding_turn`: 卷绕圈号（从内到外 1, 2, ...）
+- `thermal_elem_map`: 每个 CZM 单元 → 对应的粗热单元 id
+
+定义在 SetMesh.jl（而非 czm.jl）以避免 include 顺序问题：
+CohesiveMesh 引用 CzmSubmesh，而 SetMesh.jl 在 czm.jl 之前被 include。
+"""
+struct CzmSubmesh
+    mesh::Mesh                              # 细化 Q4 网格
+    material_type::Vector{Symbol}           # :PE / :PCC / :SP / :NE / :NCC
+    winding_turn::Vector{Int}               # 卷绕圈号（从内到外 1, 2, ...）
+    thermal_elem_map::Vector{Int}           # 每个 CZM 单元 → 对应的粗热单元 id
+end
+
 mutable struct CohesiveMesh
     bulk_mesh::Mesh                           # 原始固体网格
     node::Matrix{Float64}                     # 扩展后节点坐标
@@ -34,14 +58,18 @@ mutable struct CohesiveMesh
     node_map::Dict{Int64, Vector{Int64}}      # 原节点 → [分层后的节点们]
     interface_nodes::Vector{Vector{Tuple{Int64,Int64}}} # 每个界面的节点对
     damage_states::Vector{AbstractDamageState} # 损伤状态
-    
+    czm_submesh::Union{Nothing, CzmSubmesh}                       # v5 新增：细化 CZM 子网格
+    thermal_to_czm::Union{Nothing, SparseMatrixCSC{Float64, Int}} # v5 新增：粗热 → 细 CZM 插值矩阵
+    cohesive_to_thermal::Union{Nothing, Vector{Int}}              # v5 新增：CZM 单元 → 粗热单元 id 反向映射
+
     # 内部构造函数（空初始化）
     function CohesiveMesh()
-        new(Mesh("Q4", 2, zeros(0,2), 0, zeros(Int64,0,4), 
+        new(Mesh("Q4", 2, zeros(0,2), 0, zeros(Int64,0,4),
             GaussPoint(zeros(0,2), zeros(0,2), zeros(0), zeros(0), zeros(Int64,0), zeros(0,4), zeros(0,8), 2)),
             zeros(0, 2), 0, zeros(Int64, 0, 4),
             AbstractCohesiveElement[], 0, 0, Dict{Int64, Vector{Int64}}(),
-            Vector{Vector{Tuple{Int64,Int64}}}(), AbstractDamageState[])
+            Vector{Vector{Tuple{Int64,Int64}}}(), AbstractDamageState[],
+            nothing, nothing, nothing)  # 新字段默认 nothing
     end
 end
 

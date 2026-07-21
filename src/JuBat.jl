@@ -60,6 +60,7 @@ export thermal_diffusion_stress_2D
 export compute_effective_coating_modulus, compute_czm_effective_params
 # CZM exports
 export CohesiveElement, CohesiveMesh, DamageState, CZMResult
+export CzmSubmesh
 export create_czm_mesh, compute_separation
 export bilinear_traction, bilinear_tangent, update_damage
 export assemble_czm_system, assemble_coupled_system, assemble_bulk_stiffness
