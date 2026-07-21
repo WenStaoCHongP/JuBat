@@ -85,14 +85,14 @@ function test_bilinear_constitutive(czm_model::String)
     
     # 创建Cohesive参数
     cohesive = JuBat.Cohesive()
-    cohesive.σ_max_n = σ_max
-    cohesive.δ_0_n = δ_0
-    cohesive.δ_c_n = δ_c
-    cohesive.K_n = K
-    cohesive.τ_max_t = σ_max
-    cohesive.δ_0_t = δ_0
-    cohesive.δ_c_t = δ_c
-    cohesive.K_t = K
+    # cohesive.σ_max_n = σ_max           # TODO Chunk 2 Task 2.1
+    # cohesive.δ_0_n = δ_0                # TODO Chunk 2 Task 2.1
+    # cohesive.δ_c_n = δ_c                # TODO Chunk 2 Task 2.1
+    # cohesive.K_n = K                    # TODO Chunk 2 Task 2.1
+    # cohesive.τ_max_t = σ_max            # TODO Chunk 2 Task 2.1
+    # cohesive.δ_0_t = δ_0                # TODO Chunk 2 Task 2.1
+    # cohesive.δ_c_t = δ_c                # TODO Chunk 2 Task 2.1
+    # cohesive.K_t = K                    # TODO Chunk 2 Task 2.1
     cohesive.eta = 1.45
     cohesive.czm_model = czm_model
     
@@ -254,14 +254,14 @@ function test_loading_unloading(czm_model::String)
     K = σ_max / δ_0
     
     cohesive = JuBat.Cohesive()
-    cohesive.σ_max_n = σ_max
-    cohesive.δ_0_n = δ_0
-    cohesive.δ_c_n = δ_c
-    cohesive.K_n = K
-    cohesive.τ_max_t = σ_max
-    cohesive.δ_0_t = δ_0
-    cohesive.δ_c_t = δ_c
-    cohesive.K_t = K
+    # cohesive.σ_max_n = σ_max           # TODO Chunk 2 Task 2.1
+    # cohesive.δ_0_n = δ_0                # TODO Chunk 2 Task 2.1
+    # cohesive.δ_c_n = δ_c                # TODO Chunk 2 Task 2.1
+    # cohesive.K_n = K                    # TODO Chunk 2 Task 2.1
+    # cohesive.τ_max_t = σ_max            # TODO Chunk 2 Task 2.1
+    # cohesive.δ_0_t = δ_0                # TODO Chunk 2 Task 2.1
+    # cohesive.δ_c_t = δ_c                # TODO Chunk 2 Task 2.1
+    # cohesive.K_t = K                    # TODO Chunk 2 Task 2.1
     cohesive.eta = 1.45
     cohesive.czm_model = czm_model
     
@@ -361,14 +361,14 @@ function test_mixed_mode_bk(czm_model::String)
     eta = 1.45
     
     cohesive = JuBat.Cohesive()
-    cohesive.σ_max_n = σ_max_n
-    cohesive.δ_0_n = δ_0_n
-    cohesive.δ_c_n = δ_c_n
-    cohesive.K_n = σ_max_n / δ_0_n
-    cohesive.τ_max_t = τ_max_t
-    cohesive.δ_0_t = δ_0_t
-    cohesive.δ_c_t = δ_c_t
-    cohesive.K_t = τ_max_t / δ_0_t
+    # cohesive.σ_max_n = σ_max_n          # TODO Chunk 2 Task 2.1
+    # cohesive.δ_0_n = δ_0_n              # TODO Chunk 2 Task 2.1
+    # cohesive.δ_c_n = δ_c_n              # TODO Chunk 2 Task 2.1
+    # cohesive.K_n = σ_max_n / δ_0_n      # TODO Chunk 2 Task 2.1
+    # cohesive.τ_max_t = τ_max_t          # TODO Chunk 2 Task 2.1
+    # cohesive.δ_0_t = δ_0_t              # TODO Chunk 2 Task 2.1
+    # cohesive.δ_c_t = δ_c_t              # TODO Chunk 2 Task 2.1
+    # cohesive.K_t = τ_max_t / δ_0_t      # TODO Chunk 2 Task 2.1
     cohesive.eta = eta
     cohesive.czm_model = czm_model
     
@@ -450,14 +450,14 @@ function test_fracture_energy(czm_model::String)
     K = σ_max / δ_0
     
     cohesive = JuBat.Cohesive()
-    cohesive.σ_max_n = σ_max
-    cohesive.δ_0_n = δ_0
-    cohesive.δ_c_n = δ_c
-    cohesive.K_n = K
-    cohesive.τ_max_t = σ_max
-    cohesive.δ_0_t = δ_0
-    cohesive.δ_c_t = δ_c
-    cohesive.K_t = K
+    # cohesive.σ_max_n = σ_max           # TODO Chunk 2 Task 2.1
+    # cohesive.δ_0_n = δ_0                # TODO Chunk 2 Task 2.1
+    # cohesive.δ_c_n = δ_c                # TODO Chunk 2 Task 2.1
+    # cohesive.K_n = K                    # TODO Chunk 2 Task 2.1
+    # cohesive.τ_max_t = σ_max            # TODO Chunk 2 Task 2.1
+    # cohesive.δ_0_t = δ_0                # TODO Chunk 2 Task 2.1
+    # cohesive.δ_c_t = δ_c                # TODO Chunk 2 Task 2.1
+    # cohesive.K_t = K                    # TODO Chunk 2 Task 2.1
     cohesive.eta = 1.45
     cohesive.czm_model = czm_model
     

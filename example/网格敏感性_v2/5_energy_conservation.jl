@@ -99,7 +99,7 @@ function main()
     @printf("  ΔE_th(终)  = %.4e J  (T: %.2f → %.2f K)\n", ΔE_th[end], T0, T_mean[end])
 
     # 断裂能 E_frac
-    G_c = param_dim.cohesive.G_c_n
+    # G_c = param_dim.cohesive.G_c_n                                        # TODO Chunk 2 Task 2.1
     coh_lengths = [elem.length * scale.L for elem in czm_mesh.cohesive_elements]
 
     E_frac = zeros(Float64, nt)

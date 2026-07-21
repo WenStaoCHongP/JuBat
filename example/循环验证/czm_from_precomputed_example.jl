@@ -263,10 +263,10 @@ function main()
     
     # 打印内聚力参数
     println("  内聚力参数：")
-        @printf("    sigma_max_n = %.1f MPa, delta_c_n = %.4f um\n", 
-            param_dim.cohesive.σ_max_n / 1e6, param_dim.cohesive.δ_c_n * 1e6)
-        @printf("    tau_max_t = %.1f MPa, delta_c_t = %.4f um\n",
-            param_dim.cohesive.τ_max_t / 1e6, param_dim.cohesive.δ_c_t * 1e6)
+        # @printf("    sigma_max_n = %.1f MPa, delta_c_n = %.4f um\n",                                   # TODO Chunk 2 Task 2.1
+        #     param_dim.cohesive.σ_max_n / 1e6, param_dim.cohesive.δ_c_n * 1e6)                           # TODO Chunk 2 Task 2.1
+        # @printf("    tau_max_t = %.1f MPa, delta_c_t = %.4f um\n",                                      # TODO Chunk 2 Task 2.1
+        #     param_dim.cohesive.τ_max_t / 1e6, param_dim.cohesive.δ_c_t * 1e6)                           # TODO Chunk 2 Task 2.1
     
     # 从加载的数据重建网格
     nT = cycle_data["nT"]

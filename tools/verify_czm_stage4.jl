@@ -15,13 +15,13 @@ using .JuBat
 function cycles_to_fracture(params::JuBat.Cohesive; Δδ_per_cycle::Float64, n_max::Int=200000)
     state = JuBat.DamageState()
     n = 0
-    δ = params.δ_0_n
+    # δ = params.δ_0_n  # TODO Chunk 2 Task 2.1
     # 循环增长
-    while n < n_max && !state.fractured
-        δ += Δδ_per_cycle
-        JuBat.bilinear_traction(δ, 0.0, state, params; update=true)
-        n += 1
-    end
+    # while n < n_max && !state.fractured                                      # TODO Chunk 2 Task 2.1
+    #     δ += Δδ_per_cycle                                                     # TODO Chunk 2 Task 2.1
+    #     JuBat.bilinear_traction(δ, 0.0, state, params; update=true)           # TODO Chunk 2 Task 2.1
+    #     n += 1                                                                # TODO Chunk 2 Task 2.1
+    # end                                                                       # TODO Chunk 2 Task 2.1
     return n, state.D
 end
 
@@ -44,14 +44,14 @@ function run_stage4_verification()
 
     for δ_c in δ_c_list
         params = JuBat.Cohesive()
-        params.σ_max_n = σ_max
-        params.δ_0_n = δ_0
-        params.δ_c_n = δ_c
-        params.K_n = params.σ_max_n / params.δ_0_n
-        params.τ_max_t = params.σ_max_n
-        params.δ_0_t = params.δ_0_n
-        params.δ_c_t = params.δ_c_n
-        params.K_t = params.K_n
+        # params.σ_max_n = σ_max                          # TODO Chunk 2 Task 2.1
+        # params.δ_0_n = δ_0                              # TODO Chunk 2 Task 2.1
+        # params.δ_c_n = δ_c                              # TODO Chunk 2 Task 2.1
+        # params.K_n = params.σ_max_n / params.δ_0_n      # TODO Chunk 2 Task 2.1
+        # params.τ_max_t = params.σ_max_n                 # TODO Chunk 2 Task 2.1
+        # params.δ_0_t = params.δ_0_n                     # TODO Chunk 2 Task 2.1
+        # params.δ_c_t = params.δ_c_n                     # TODO Chunk 2 Task 2.1
+        # params.K_t = params.K_n                         # TODO Chunk 2 Task 2.1
         params.eta = 1.45
 
         Nf, D_end = cycles_to_fracture(params; Δδ_per_cycle=Δδ_per_cycle)

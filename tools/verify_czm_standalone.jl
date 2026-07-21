@@ -79,9 +79,9 @@ function main()
     czm_params = case.param.cohesive  # 归一化后的参数（不是 param_dim.cohesive）
     ndof = 2 * czm_mesh_template.nnode
 
-    @printf("  Cohesive: σ_max_n=%.2e, K_n=%.2e, δ_0_n=%.2e, G_c_n=%.2e, δ_c_n=%.2e\n",
-        czm_params.σ_max_n, czm_params.K_n, czm_params.δ_0_n,
-        czm_params.G_c_n, czm_params.δ_c_n)
+    # @printf("  Cohesive: σ_max_n=%.2e, K_n=%.2e, δ_0_n=%.2e, G_c_n=%.2e, δ_c_n=%.2e\n",  # TODO Chunk 2 Task 2.1
+    #     czm_params.σ_max_n, czm_params.K_n, czm_params.δ_0_n,                            # TODO Chunk 2 Task 2.1
+    #     czm_params.G_c_n, czm_params.δ_c_n)                                              # TODO Chunk 2 Task 2.1
 
     # ── 3. 构建缓存 ───────────────────────────────────────────────
     cache = JuBat.build_czm_cache(czm_mesh_template, E_eff, ν_eff, param)
@@ -186,9 +186,9 @@ function main()
         println(io, "Mesh: nθ=$nθ, gsorder=2")
         println(io, "Cohesive elements: $(czm_mesh_template.n_cohesive)")
         @printf(io, "E_eff=%.6e, ν_eff=%.4f, α_eff=%.6e\n", E_eff, ν_eff, α_eff)
-        @printf(io, "σ_max_n=%.2e, K_n=%.2e, δ_0_n=%.2e, G_c_n=%.2e, δ_c_n=%.2e\n",
-            czm_params.σ_max_n, czm_params.K_n, czm_params.δ_0_n,
-            czm_params.G_c_n, czm_params.δ_c_n)
+        # @printf(io, "σ_max_n=%.2e, K_n=%.2e, δ_0_n=%.2e, G_c_n=%.2e, δ_c_n=%.2e\n",  # TODO Chunk 2 Task 2.1
+        #     czm_params.σ_max_n, czm_params.K_n, czm_params.δ_0_n,                      # TODO Chunk 2 Task 2.1
+        #     czm_params.G_c_n, czm_params.δ_c_n)                                        # TODO Chunk 2 Task 2.1
         println(io, "tol=1e-4, max_iter=200, n_load_steps=50, visc_beta=1.0")
         println(io, "")
         println(io, @sprintf("%-8s | %-22s | %-22s | %-22s", "Δsoc_n", "basic", "load_substep", "arc_length"))

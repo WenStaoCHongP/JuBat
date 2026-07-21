@@ -27,8 +27,8 @@ function main()
     E_PE  = param_dim.PE.E              # Pa
     t_NE  = param_dim.NE.thickness      # m
     t_PE  = param_dim.PE.thickness      # m
-    G_c   = param_dim.cohesive.G_c_n    # J/m²
-    σ_max = param_dim.cohesive.σ_max_n  # Pa
+    # G_c   = param_dim.cohesive.G_c_n    # J/m²                              # TODO Chunk 2 Task 2.1
+    # σ_max = param_dim.cohesive.σ_max_n  # Pa                                # TODO Chunk 2 Task 2.1
     R_in  = param_dim.cell.Rin          # m
     R_out = param_dim.cell.Rout         # m
     nu_NE = param_dim.NE.nu
@@ -50,8 +50,8 @@ function main()
     println("\n[2] 内聚力参数")
     @printf("  G_c   = %.2f J/m²\n", G_c)
     @printf("  σ_max = %.2f MPa\n", σ_max*1e-6)
-    @printf("  K_n   = %.2e Pa/m\n", param_dim.cohesive.K_n)
-    @printf("  δ_c_n = %.4e m\n", param_dim.cohesive.δ_c_n)
+    # @printf("  K_n   = %.2e Pa/m\n", param_dim.cohesive.K_n)              # TODO Chunk 2 Task 2.1
+    # @printf("  δ_c_n = %.4e m\n", param_dim.cohesive.δ_c_n)               # TODO Chunk 2 Task 2.1
     @printf("  l_c   = %.2e m = %.1f μm\n", l_c, l_c*1e6)
 
     # ── nθ 区间 ──

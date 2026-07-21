@@ -176,8 +176,8 @@ function predict_fracture_cycles()
     param_dim = JuBat.ChooseCell("Jellyroll")
     coh = param_dim.cohesive
     
-    δ_0 = coh.δ_0_n
-    δ_c = coh.δ_c_n
+    # δ_0 = coh.δ_0_n  # TODO Chunk 2 Task 2.1
+    # δ_c = coh.δ_c_n  # TODO Chunk 2 Task 2.1
     δ_init = 16e-9  # 初始分离位移
     
     println("\n[当前参数]")
@@ -283,18 +283,18 @@ function generate_parameter_code()
 cohesive = Cohesive()
 
 # 法向参数 (Mode I)
-cohesive.σ_max_n = $(coh.σ_max_n)       # [Pa] ($(coh.σ_max_n/1e6) MPa)
-cohesive.δ_0_n = $(coh.δ_0_n)          # [m] ($(coh.δ_0_n*1e9) nm)
-cohesive.δ_c_n = $(coh.δ_c_n)          # [m] ($(coh.δ_c_n*1e9) nm)
-cohesive.G_c_n = 0.5 * cohesive.σ_max_n * cohesive.δ_c_n  # ≈ $(round(coh.G_c_n, digits=4)) J/m²
-cohesive.K_n = cohesive.σ_max_n / cohesive.δ_0_n          # ≈ $(round(coh.K_n, sigdigits=3)) Pa/m
+# cohesive.σ_max_n = $(coh.σ_max_n)       # [Pa] ($(coh.σ_max_n/1e6) MPa)              # TODO Chunk 2 Task 2.1
+# cohesive.δ_0_n = $(coh.δ_0_n)          # [m] ($(coh.δ_0_n*1e9) nm)                    # TODO Chunk 2 Task 2.1
+# cohesive.δ_c_n = $(coh.δ_c_n)          # [m] ($(coh.δ_c_n*1e9) nm)                    # TODO Chunk 2 Task 2.1
+# cohesive.G_c_n = 0.5 * cohesive.σ_max_n * cohesive.δ_c_n  # ≈ $(round(coh.G_c_n, digits=4)) J/m²  # TODO Chunk 2 Task 2.1
+# cohesive.K_n = cohesive.σ_max_n / cohesive.δ_0_n          # ≈ $(round(coh.K_n, sigdigits=3)) Pa/m  # TODO Chunk 2 Task 2.1
 
 # 切向参数 (Mode II)
-cohesive.τ_max_t = $(coh.τ_max_t)       # [Pa] ($(coh.τ_max_t/1e6) MPa)
-cohesive.δ_0_t = $(coh.δ_0_t)          # [m] ($(coh.δ_0_t*1e9) nm)
-cohesive.δ_c_t = $(coh.δ_c_t)          # [m] ($(coh.δ_c_t*1e9) nm)
-cohesive.G_c_t = 0.5 * cohesive.τ_max_t * cohesive.δ_c_t  # ≈ $(round(coh.G_c_t, digits=4)) J/m²
-cohesive.K_t = cohesive.τ_max_t / cohesive.δ_0_t          # ≈ $(round(coh.K_t, sigdigits=3)) Pa/m
+# cohesive.τ_max_t = $(coh.τ_max_t)       # [Pa] ($(coh.τ_max_t/1e6) MPa)              # TODO Chunk 2 Task 2.1
+# cohesive.δ_0_t = $(coh.δ_0_t)          # [m] ($(coh.δ_0_t*1e9) nm)                    # TODO Chunk 2 Task 2.1
+# cohesive.δ_c_t = $(coh.δ_c_t)          # [m] ($(coh.δ_c_t*1e9) nm)                    # TODO Chunk 2 Task 2.1
+# cohesive.G_c_t = 0.5 * cohesive.τ_max_t * cohesive.δ_c_t  # ≈ $(round(coh.G_c_t, digits=4)) J/m²  # TODO Chunk 2 Task 2.1
+# cohesive.K_t = cohesive.τ_max_t / cohesive.δ_0_t          # ≈ $(round(coh.K_t, sigdigits=3)) Pa/m  # TODO Chunk 2 Task 2.1
 
 # 混合模式参数
 cohesive.eta = $(coh.eta)

@@ -61,11 +61,11 @@ function verify_system_level()
     # 系统级验证如果是测自由膨胀，CZM 应该足够强，保持界面不分离
     # 或者如果界面是完美的，CZM 刚度应很大
     cohesive_params = JuBat.Cohesive()
-    cohesive_params.σ_max_n = 50.0e6
-    cohesive_params.δ_0_n = 1.0e-9 
-    cohesive_params.δ_c_n = 1.0e-6
-    cohesive_params.K_n = cohesive_params.σ_max_n / cohesive_params.δ_0_n # 5e16 Very Stiff
-    cohesive_params.K_t = cohesive_params.K_n
+    # cohesive_params.σ_max_n = 50.0e6                                                  # TODO Chunk 2 Task 2.1
+    # cohesive_params.δ_0_n = 1.0e-9                                                    # TODO Chunk 2 Task 2.1
+    # cohesive_params.δ_c_n = 1.0e-6                                                    # TODO Chunk 2 Task 2.1
+    # cohesive_params.K_n = cohesive_params.σ_max_n / cohesive_params.δ_0_n # 5e16 Very Stiff  # TODO Chunk 2 Task 2.1
+    # cohesive_params.K_t = cohesive_params.K_n                                         # TODO Chunk 2 Task 2.1
     
     # ----------------------------------------------------------------
     # Case 1: 纯热膨胀 (Free Thermal Expansion)
@@ -242,14 +242,14 @@ function verify_system_level()
 
     # 准备参数（与上面的法向参数一致，切向参数与法向不同以放大差异）
     czm_params_base = JuBat.Cohesive()
-    czm_params_base.σ_max_n = 50.0e6
-    czm_params_base.δ_0_n = 1.0e-6
-    czm_params_base.δ_c_n = 1.0e-5
-    czm_params_base.K_n = czm_params_base.σ_max_n / czm_params_base.δ_0_n
-    czm_params_base.τ_max_t = 30.0e6
-    czm_params_base.δ_0_t = 2.0e-6
-    czm_params_base.δ_c_t = 2.0e-5
-    czm_params_base.K_t = czm_params_base.τ_max_t / czm_params_base.δ_0_t
+    # czm_params_base.σ_max_n = 50.0e6                                              # TODO Chunk 2 Task 2.1
+    # czm_params_base.δ_0_n = 1.0e-6                                                # TODO Chunk 2 Task 2.1
+    # czm_params_base.δ_c_n = 1.0e-5                                                # TODO Chunk 2 Task 2.1
+    # czm_params_base.K_n = czm_params_base.σ_max_n / czm_params_base.δ_0_n         # TODO Chunk 2 Task 2.1
+    # czm_params_base.τ_max_t = 30.0e6                                              # TODO Chunk 2 Task 2.1
+    # czm_params_base.δ_0_t = 2.0e-6                                                # TODO Chunk 2 Task 2.1
+    # czm_params_base.δ_c_t = 2.0e-5                                                # TODO Chunk 2 Task 2.1
+    # czm_params_base.K_t = czm_params_base.τ_max_t / czm_params_base.δ_0_t         # TODO Chunk 2 Task 2.1
     czm_params_base.eta = 1.45
 
     # model1

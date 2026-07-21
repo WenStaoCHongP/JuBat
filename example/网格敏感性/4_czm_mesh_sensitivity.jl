@@ -22,8 +22,8 @@ function get_czm_nθ(param_dim)
     E_NE  = param_dim.NE.E;  t_NE = param_dim.NE.thickness
     E_PE  = param_dim.PE.E;  t_PE = param_dim.PE.thickness
     E_eff = (E_NE * t_NE + E_PE * t_PE) / (t_NE + t_PE)
-    G_c   = param_dim.cohesive.G_c_n
-    σ_max = param_dim.cohesive.σ_max_n
+    # G_c   = param_dim.cohesive.G_c_n                                      # TODO Chunk 2 Task 2.1
+    # σ_max = param_dim.cohesive.σ_max_n                                    # TODO Chunk 2 Task 2.1
     l_c   = G_c * E_eff / σ_max^2
 
     R_in  = param_dim.cell.Rin

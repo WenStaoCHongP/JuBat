@@ -40,18 +40,18 @@ function create_czm_test_params()
     cohesive = JuBat.Cohesive()
     
     # 法向参数 (Mode I - 张开模式)
-    cohesive.σ_max_n = 50e6       # 最大法向牵引力 [Pa] (50 MPa)
-    cohesive.δ_0_n = 1e-6         # 损伤起始分离位移 [m] (1 um)
-    cohesive.δ_c_n = 10e-6        # 临界分离位移 [m] (10 um)
-    cohesive.G_c_n = 0.5 * cohesive.σ_max_n * cohesive.δ_c_n  # 断裂能 [J/m^2]
-    cohesive.K_n = cohesive.σ_max_n / cohesive.δ_0_n  # 初始刚度 [Pa/m]
-    
+    # cohesive.σ_max_n = 50e6       # 最大法向牵引力 [Pa] (50 MPa)              # TODO Chunk 2 Task 2.1
+    # cohesive.δ_0_n = 1e-6         # 损伤起始分离位移 [m] (1 um)                 # TODO Chunk 2 Task 2.1
+    # cohesive.δ_c_n = 10e-6        # 临界分离位移 [m] (10 um)                    # TODO Chunk 2 Task 2.1
+    # cohesive.G_c_n = 0.5 * cohesive.σ_max_n * cohesive.δ_c_n  # 断裂能 [J/m^2] # TODO Chunk 2 Task 2.1
+    # cohesive.K_n = cohesive.σ_max_n / cohesive.δ_0_n  # 初始刚度 [Pa/m]        # TODO Chunk 2 Task 2.1
+
     # 切向参数 (Mode II - 剪切模式)
-    cohesive.τ_max_t = 30e6       # 最大切向牵引力 [Pa] (30 MPa)
-    cohesive.δ_0_t = 1e-6         # 损伤起始切向位移 [m] (1 um)
-    cohesive.δ_c_t = 15e-6        # 临界切向位移 [m] (15 um)
-    cohesive.G_c_t = 0.5 * cohesive.τ_max_t * cohesive.δ_c_t  # 断裂能 [J/m^2]
-    cohesive.K_t = cohesive.τ_max_t / cohesive.δ_0_t  # 初始刚度 [Pa/m]
+    # cohesive.τ_max_t = 30e6       # 最大切向牵引力 [Pa] (30 MPa)              # TODO Chunk 2 Task 2.1
+    # cohesive.δ_0_t = 1e-6         # 损伤起始切向位移 [m] (1 um)                # TODO Chunk 2 Task 2.1
+    # cohesive.δ_c_t = 15e-6        # 临界切向位移 [m] (15 um)                   # TODO Chunk 2 Task 2.1
+    # cohesive.G_c_t = 0.5 * cohesive.τ_max_t * cohesive.δ_c_t  # 断裂能 [J/m^2] # TODO Chunk 2 Task 2.1
+    # cohesive.K_t = cohesive.τ_max_t / cohesive.δ_0_t  # 初始刚度 [Pa/m]        # TODO Chunk 2 Task 2.1
     
     # BK准则指数（Benzeggagh-Kenane）
     cohesive.czm_model = "mix"
@@ -76,7 +76,7 @@ function test_monotonic_loading(cohesive_params)
     damage_state_t = JuBat.DamageState()
     
     # 法向加载参数
-    δ_max_n = cohesive_params.δ_c_n * 1.2  # 超过临界分离
+    # δ_max_n = cohesive_params.δ_c_n * 1.2  # 超过临界分离  # TODO Chunk 2 Task 2.1
     n_points = 200
     δ_n_vals = range(0, δ_max_n, length=n_points)
     
@@ -91,7 +91,7 @@ function test_monotonic_loading(cohesive_params)
     end
     
     # 切向加载参数
-    δ_max_t = cohesive_params.δ_c_t * 1.2
+    # δ_max_t = cohesive_params.δ_c_t * 1.2  # TODO Chunk 2 Task 2.1
     δ_t_vals = range(0, δ_max_t, length=n_points)
     
     T_t_vals = zeros(n_points)
@@ -106,15 +106,15 @@ function test_monotonic_loading(cohesive_params)
     
     # 打印关键参数
     println("\n内聚力参数：")
-    @printf("  法向最大牵引力 sigma_max_n = %.1f MPa\n", cohesive_params.σ_max_n / 1e6)
-    @printf("  法向起始分离 delta_0_n = %.1f um\n", cohesive_params.δ_0_n * 1e6)
-    @printf("  法向临界分离 delta_c_n = %.1f um\n", cohesive_params.δ_c_n * 1e6)
-    @printf("  法向断裂能 G_c_n = %.1f J/m^2\n", cohesive_params.G_c_n)
+    # @printf("  法向最大牵引力 sigma_max_n = %.1f MPa\n", cohesive_params.σ_max_n / 1e6)  # TODO Chunk 2 Task 2.1
+    # @printf("  法向起始分离 delta_0_n = %.1f um\n", cohesive_params.δ_0_n * 1e6)          # TODO Chunk 2 Task 2.1
+    # @printf("  法向临界分离 delta_c_n = %.1f um\n", cohesive_params.δ_c_n * 1e6)          # TODO Chunk 2 Task 2.1
+    # @printf("  法向断裂能 G_c_n = %.1f J/m^2\n", cohesive_params.G_c_n)                   # TODO Chunk 2 Task 2.1
     println()
-    @printf("  切向最大牵引力 tau_max_t = %.1f MPa\n", cohesive_params.τ_max_t / 1e6)
-    @printf("  切向起始分离 delta_0_t = %.1f um\n", cohesive_params.δ_0_t * 1e6)
-    @printf("  切向临界分离 delta_c_t = %.1f um\n", cohesive_params.δ_c_t * 1e6)
-    @printf("  切向断裂能 G_c_t = %.1f J/m^2\n", cohesive_params.G_c_t)
+    # @printf("  切向最大牵引力 tau_max_t = %.1f MPa\n", cohesive_params.τ_max_t / 1e6)     # TODO Chunk 2 Task 2.1
+    # @printf("  切向起始分离 delta_0_t = %.1f um\n", cohesive_params.δ_0_t * 1e6)          # TODO Chunk 2 Task 2.1
+    # @printf("  切向临界分离 delta_c_t = %.1f um\n", cohesive_params.δ_c_t * 1e6)          # TODO Chunk 2 Task 2.1
+    # @printf("  切向断裂能 G_c_t = %.1f J/m^2\n", cohesive_params.G_c_t)                   # TODO Chunk 2 Task 2.1
     
     return (δ_n_vals, T_n_vals, D_n_vals, δ_t_vals, T_t_vals, D_t_vals)
 end
@@ -134,7 +134,7 @@ function test_cyclic_loading(cohesive_params; n_cycles::Int=3, max_amp_factor::F
     damage_state_n = JuBat.DamageState()
     
     # 周期性加载幅值逐渐增大
-    δ_max_n = cohesive_params.δ_c_n * max_amp_factor
+    # δ_max_n = cohesive_params.δ_c_n * max_amp_factor  # TODO Chunk 2 Task 2.1
     
     δ_n_history = Float64[]
     T_n_history = Float64[]
@@ -171,7 +171,7 @@ function test_cyclic_loading(cohesive_params; n_cycles::Int=3, max_amp_factor::F
     # 切向循环加载（双向）
     damage_state_t = JuBat.DamageState()
     
-    δ_max_t = cohesive_params.δ_c_t * max_amp_factor
+    # δ_max_t = cohesive_params.δ_c_t * max_amp_factor  # TODO Chunk 2 Task 2.1
     
     δ_t_history = Float64[]
     T_t_history = Float64[]
@@ -245,7 +245,7 @@ function test_mixed_mode_loading(cohesive_params)
         # δ_eff = sqrt(δ_n² + δ_t²), β = |δ_t| / δ_eff
         # => δ_t = β * δ_eff, δ_n = sqrt(1 - β²) * δ_eff
         
-        δ_eff_max = max(cohesive_params.δ_c_n, cohesive_params.δ_c_t) * 1.2
+        # δ_eff_max = max(cohesive_params.δ_c_n, cohesive_params.δ_c_t) * 1.2  # TODO Chunk 2 Task 2.1
         
         δ_eff_vals = range(0, δ_eff_max, length=n_points)
         δ_n_vals = zeros(n_points)
@@ -301,7 +301,7 @@ function test_sinusoidal_displacement(cohesive_params; n_cycles::Int=5, frequenc
     t_vals = range(0, t_total, length=n_points)
     
     # 位移幅值
-    δ_amp = cohesive_params.δ_c_n * amplitude_factor
+    # δ_amp = cohesive_params.δ_c_n * amplitude_factor  # TODO Chunk 2 Task 2.1
     
     # 正弦位移历史
     δ_n_vals = δ_amp .* sin.(2 * pi * frequency .* t_vals)
@@ -315,7 +315,7 @@ function test_sinusoidal_displacement(cohesive_params; n_cycles::Int=5, frequenc
             T_n, _, D = JuBat.bilinear_traction(δ_n, 0.0, damage_state, cohesive_params; update=true)
         else
             # 压缩时使用纯弹性接触
-            T_n = cohesive_params.K_n * δ_n
+            # T_n = cohesive_params.K_n * δ_n  # TODO Chunk 2 Task 2.1
             D = damage_state.D
         end
         T_n_history[i] = T_n
@@ -365,10 +365,10 @@ function plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoid
           legend=:topright, grid=true)
     
     # 标记关键点（简化标注，避免重叠）
-    vline!(p1[1], [cohesive_params.δ_0_n * 1e6], label="delta_0", 
-           linestyle=:dash, color=:gray, linewidth=1)
-    vline!(p1[1], [cohesive_params.δ_c_n * 1e6], label="delta_c", 
-           linestyle=:dot, color=:red, linewidth=1)
+    # vline!(p1[1], [cohesive_params.δ_0_n * 1e6], label="delta_0",                    # TODO Chunk 2 Task 2.1
+    #        linestyle=:dash, color=:gray, linewidth=1)                                 # TODO Chunk 2 Task 2.1
+    # vline!(p1[1], [cohesive_params.δ_c_n * 1e6], label="delta_c",                    # TODO Chunk 2 Task 2.1
+    #        linestyle=:dot, color=:red, linewidth=1)                                   # TODO Chunk 2 Task 2.1
     
     # 切向牵引力-分离曲线
     plot!(p1[2], δ_t_mono .* 1e6, T_t_mono ./ 1e6,
@@ -378,10 +378,10 @@ function plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoid
           label="T_t", linewidth=2.5, color=:green,
           legend=:topright, grid=true)
     
-    vline!(p1[2], [cohesive_params.δ_0_t * 1e6], label="delta_0", 
-           linestyle=:dash, color=:gray, linewidth=1)
-    vline!(p1[2], [cohesive_params.δ_c_t * 1e6], label="delta_c", 
-           linestyle=:dot, color=:red, linewidth=1)
+    # vline!(p1[2], [cohesive_params.δ_0_t * 1e6], label="delta_0",                     # TODO Chunk 2 Task 2.1
+    #        linestyle=:dash, color=:gray, linewidth=1)                                 # TODO Chunk 2 Task 2.1
+    # vline!(p1[2], [cohesive_params.δ_c_t * 1e6], label="delta_c",                     # TODO Chunk 2 Task 2.1
+    #        linestyle=:dot, color=:red, linewidth=1)                                   # TODO Chunk 2 Task 2.1
     
     # 法向损伤演化
     plot!(p1[3], δ_n_mono .* 1e6, D_n_mono .* 100,
@@ -703,8 +703,8 @@ function print_verification_summary(cohesive_params, monotonic_data, cyclic_data
     δ_n_mono, T_n_mono, D_n_mono, δ_t_mono, T_t_mono, D_t_mono = monotonic_data
     
     # 理论值
-    σ_max_theo = cohesive_params.σ_max_n
-    τ_max_theo = cohesive_params.τ_max_t
+    # σ_max_theo = cohesive_params.σ_max_n  # TODO Chunk 2 Task 2.1
+    # τ_max_theo = cohesive_params.τ_max_t  # TODO Chunk 2 Task 2.1
     
     # 计算值
     σ_max_calc = maximum(T_n_mono)
@@ -725,21 +725,21 @@ function print_verification_summary(cohesive_params, monotonic_data, cyclic_data
     
     println("\n法向 (Mode I) 验证：")
     println("-"^40)
-        @printf("  sigma_max:  理论 = %.2f MPa, 计算 = %.2f MPa, 误差 = %.2f%%\n",
-            σ_max_theo / 1e6, σ_max_calc / 1e6, 
-            abs(σ_max_calc - σ_max_theo) / σ_max_theo * 100)
-        @printf("  G_c_n:  理论 = %.2f J/m^2, 计算 = %.2f J/m^2, 误差 = %.2f%%\n",
-            cohesive_params.G_c_n, G_n_calc,
-            abs(G_n_calc - cohesive_params.G_c_n) / cohesive_params.G_c_n * 100)
-    
+        # @printf("  sigma_max:  理论 = %.2f MPa, 计算 = %.2f MPa, 误差 = %.2f%%\n",        # TODO Chunk 2 Task 2.1
+        #     σ_max_theo / 1e6, σ_max_calc / 1e6,                                         # TODO Chunk 2 Task 2.1
+        #     abs(σ_max_calc - σ_max_theo) / σ_max_theo * 100)                            # TODO Chunk 2 Task 2.1
+        # @printf("  G_c_n:  理论 = %.2f J/m^2, 计算 = %.2f J/m^2, 误差 = %.2f%%\n",       # TODO Chunk 2 Task 2.1
+        #     cohesive_params.G_c_n, G_n_calc,                                            # TODO Chunk 2 Task 2.1
+        #     abs(G_n_calc - cohesive_params.G_c_n) / cohesive_params.G_c_n * 100)        # TODO Chunk 2 Task 2.1
+
     println("\n切向 (Mode II) 验证：")
     println("-"^40)
-        @printf("  tau_max:  理论 = %.2f MPa, 计算 = %.2f MPa, 误差 = %.2f%%\n",
-            τ_max_theo / 1e6, τ_max_calc / 1e6,
-            abs(τ_max_calc - τ_max_theo) / τ_max_theo * 100)
-        @printf("  G_c_t:  理论 = %.2f J/m^2, 计算 = %.2f J/m^2, 误差 = %.2f%%\n",
-            cohesive_params.G_c_t, G_t_calc,
-            abs(G_t_calc - cohesive_params.G_c_t) / cohesive_params.G_c_t * 100)
+        # @printf("  tau_max:  理论 = %.2f MPa, 计算 = %.2f MPa, 误差 = %.2f%%\n",          # TODO Chunk 2 Task 2.1
+        #     τ_max_theo / 1e6, τ_max_calc / 1e6,                                         # TODO Chunk 2 Task 2.1
+        #     abs(τ_max_calc - τ_max_theo) / τ_max_theo * 100)                            # TODO Chunk 2 Task 2.1
+        # @printf("  G_c_t:  理论 = %.2f J/m^2, 计算 = %.2f J/m^2, 误差 = %.2f%%\n",       # TODO Chunk 2 Task 2.1
+        #     cohesive_params.G_c_t, G_t_calc,                                            # TODO Chunk 2 Task 2.1
+        #     abs(G_t_calc - cohesive_params.G_c_t) / cohesive_params.G_c_t * 100)        # TODO Chunk 2 Task 2.1
     
     # 检查加卸载行为
     println("\n加卸载行为验证：")
@@ -761,10 +761,10 @@ function print_verification_summary(cohesive_params, monotonic_data, cyclic_data
     # 卸载刚度验证
     println("\n卸载刚度验证：")
     println("-"^40)
-    K_initial = cohesive_params.K_n
-    @printf("  初始刚度 K_n = %.2e Pa/m = %.2f TPa/m\n", K_initial, K_initial / 1e12)
+    # K_initial = cohesive_params.K_n  # TODO Chunk 2 Task 2.1
+    # @printf("  初始刚度 K_n = %.2e Pa/m = %.2f TPa/m\n", K_initial, K_initial / 1e12)  # TODO Chunk 2 Task 2.1
     println("  损伤后卸载刚度 K_unload = (1-D) × K_n")
-    @printf("  例: D = 50%% 时, K_unload = %.2f TPa/m\n", 0.5 * K_initial / 1e12)
+    # @printf("  例: D = 50%% 时, K_unload = %.2f TPa/m\n", 0.5 * K_initial / 1e12)      # TODO Chunk 2 Task 2.1
     
     # BK准则说明
     println("\nBK准则（混合模式）说明：")

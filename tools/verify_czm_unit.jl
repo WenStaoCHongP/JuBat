@@ -117,16 +117,16 @@ function test_2element_tension(czm_model::String)
     
     cohesive_params = JuBat.Cohesive()
     cohesive_params.czm_model = czm_model
-    cohesive_params.σ_max_n = σ_max
-    cohesive_params.δ_0_n = δ_0
-    cohesive_params.δ_c_n = δ_c
-    cohesive_params.K_n = K_init
-    
+    # cohesive_params.σ_max_n = σ_max                   # TODO Chunk 2 Task 2.1
+    # cohesive_params.δ_0_n = δ_0                        # TODO Chunk 2 Task 2.1
+    # cohesive_params.δ_c_n = δ_c                        # TODO Chunk 2 Task 2.1
+    # cohesive_params.K_n = K_init                       # TODO Chunk 2 Task 2.1
+
     # 设置切向参数（虽然Mode I下理论上不用，但防止数值噪声引其调用）
-    cohesive_params.τ_max_t = σ_max
-    cohesive_params.δ_0_t = δ_0
-    cohesive_params.δ_c_t = δ_c
-    cohesive_params.K_t = K_init
+    # cohesive_params.τ_max_t = σ_max                   # TODO Chunk 2 Task 2.1
+    # cohesive_params.δ_0_t = δ_0                        # TODO Chunk 2 Task 2.1
+    # cohesive_params.δ_c_t = δ_c                        # TODO Chunk 2 Task 2.1
+    # cohesive_params.K_t = K_init                       # TODO Chunk 2 Task 2.1
     cohesive_params.eta = 1.45 # BK准则参数
 
     println("参数:")

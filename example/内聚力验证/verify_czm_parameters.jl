@@ -35,18 +35,18 @@ function load_and_display_parameters()
     println("\n[当前内聚力参数]")
     println("-"^50)
     @printf("法向 (Mode I):\n")
-    @printf("  σ_max_n = %.2f MPa\n", coh.σ_max_n / 1e6)
-    @printf("  δ_0_n = %.1f nm\n", coh.δ_0_n * 1e9)
-    @printf("  δ_c_n = %.1f nm\n", coh.δ_c_n * 1e9)
-    @printf("  K_n = %.2e Pa/m\n", coh.K_n)
-    @printf("  G_c_n = %.4f J/m²\n", coh.G_c_n)
-    
+    # @printf("  σ_max_n = %.2f MPa\n", coh.σ_max_n / 1e6)      # TODO Chunk 2 Task 2.1
+    # @printf("  δ_0_n = %.1f nm\n", coh.δ_0_n * 1e9)            # TODO Chunk 2 Task 2.1
+    # @printf("  δ_c_n = %.1f nm\n", coh.δ_c_n * 1e9)            # TODO Chunk 2 Task 2.1
+    # @printf("  K_n = %.2e Pa/m\n", coh.K_n)                    # TODO Chunk 2 Task 2.1
+    # @printf("  G_c_n = %.4f J/m²\n", coh.G_c_n)                # TODO Chunk 2 Task 2.1
+
     @printf("\n切向 (Mode II):\n")
-    @printf("  τ_max_t = %.2f MPa\n", coh.τ_max_t / 1e6)
-    @printf("  δ_0_t = %.1f nm\n", coh.δ_0_t * 1e9)
-    @printf("  δ_c_t = %.1f nm\n", coh.δ_c_t * 1e9)
-    @printf("  K_t = %.2e Pa/m\n", coh.K_t)
-    @printf("  G_c_t = %.4f J/m²\n", coh.G_c_t)
+    # @printf("  τ_max_t = %.2f MPa\n", coh.τ_max_t / 1e6)       # TODO Chunk 2 Task 2.1
+    # @printf("  δ_0_t = %.1f nm\n", coh.δ_0_t * 1e9)            # TODO Chunk 2 Task 2.1
+    # @printf("  δ_c_t = %.1f nm\n", coh.δ_c_t * 1e9)            # TODO Chunk 2 Task 2.1
+    # @printf("  K_t = %.2e Pa/m\n", coh.K_t)                    # TODO Chunk 2 Task 2.1
+    # @printf("  G_c_t = %.4f J/m²\n", coh.G_c_t)                # TODO Chunk 2 Task 2.1
     
     @printf("\n混合模式:\n")
     @printf("  eta (BK指数) = %.2f\n", coh.eta)
@@ -103,8 +103,8 @@ function analyze_parameters()
     param_dim = JuBat.ChooseCell("Jellyroll")
     coh = param_dim.cohesive
     
-    δ_0 = coh.δ_0_n
-    δ_c = coh.δ_c_n
+    # δ_0 = coh.δ_0_n  # TODO Chunk 2 Task 2.1
+    # δ_c = coh.δ_c_n  # TODO Chunk 2 Task 2.1
     
     # 假设的初始分离位移和每循环增量
     # 基于原始问题：损伤收敛于 6.83%，反推初始分离位移
@@ -168,8 +168,8 @@ function compare_with_original()
     
     # 新参数
     param_dim = JuBat.ChooseCell("Jellyroll")
-    δ_0_new = param_dim.cohesive.δ_0_n
-    δ_c_new = param_dim.cohesive.δ_c_n
+    # δ_0_new = param_dim.cohesive.δ_0_n  # TODO Chunk 2 Task 2.1
+    # δ_c_new = param_dim.cohesive.δ_c_n  # TODO Chunk 2 Task 2.1
     
     # 典型分离位移范围
     δ_test = [15e-9, 16e-9, 18e-9, 20e-9, 25e-9, 30e-9]

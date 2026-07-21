@@ -49,22 +49,22 @@ function run_diagnostics()
 
     # 3. 检查 cohesive 参数
     coh = param_dim.cohesive
-    δ_0_n = coh.δ_0_n
-    δ_c_n = coh.δ_c_n
-    K_n = coh.K_n
+    # δ_0_n = coh.δ_0_n                                                    # TODO Chunk 2 Task 2.1
+    # δ_c_n = coh.δ_c_n                                                    # TODO Chunk 2 Task 2.1
+    # K_n = coh.K_n                                                        # TODO Chunk 2 Task 2.1
     @printf("\n--- Cohesive Parameters (physical) ---\n")
-    @printf("  δ_0_n = %.4e m  (damage initiation)\n", δ_0_n)
-    @printf("  δ_c_n = %.4e m  (complete failure)\n", δ_c_n)
-    @printf("  K_n   = %.4e Pa/m (penalty stiffness)\n", K_n)
-    @printf("  σ_max = %.4e Pa\n", coh.σ_max_n)
+    # @printf("  δ_0_n = %.4e m  (damage initiation)\n", δ_0_n)             # TODO Chunk 2 Task 2.1
+    # @printf("  δ_c_n = %.4e m  (complete failure)\n", δ_c_n)              # TODO Chunk 2 Task 2.1
+    # @printf("  K_n   = %.4e Pa/m (penalty stiffness)\n", K_n)             # TODO Chunk 2 Task 2.1
+    # @printf("  σ_max = %.4e Pa\n", coh.σ_max_n)                           # TODO Chunk 2 Task 2.1
 
     # 4. 检查归一化后参数
     coh_norm = case.param.cohesive
     @printf("\n--- Cohesive Parameters (normalized) ---\n")
-    @printf("  δ_0_n* = %.4e\n", coh_norm.δ_0_n)
-    @printf("  δ_c_n* = %.4e\n", coh_norm.δ_c_n)
-    @printf("  K_n*   = %.4e\n", coh_norm.K_n)
-    @printf("  σ_max* = %.4e\n", coh_norm.σ_max_n)
+    # @printf("  δ_0_n* = %.4e\n", coh_norm.δ_0_n)                          # TODO Chunk 2 Task 2.1
+    # @printf("  δ_c_n* = %.4e\n", coh_norm.δ_c_n)                          # TODO Chunk 2 Task 2.1
+    # @printf("  K_n*   = %.4e\n", coh_norm.K_n)                            # TODO Chunk 2 Task 2.1
+    # @printf("  σ_max* = %.4e\n", coh_norm.σ_max_n)                        # TODO Chunk 2 Task 2.1
 
     # 5. 检查 NE/PE 归一化弹性模量
     p = case.param
@@ -168,12 +168,12 @@ function run_diagnostics()
     end
     @printf("  max(|δ_n|) at cohesive = %.6e\n", max_sep_n)
     @printf("  max(|δ_t|) at cohesive = %.6e\n", max_sep_t)
-    @printf("  δ_0_n (damage initiation)  = %.6e\n", coh_norm.δ_0_n)
-    if max_sep_n > coh_norm.δ_0_n
-        @printf("  ⚠ WARNING: max(|δ_n|) > δ_0_n! Damage will be triggered!\n")
-    else
-        @printf("  ✓ max(|δ_n|) < δ_0_n, elastic regime\n")
-    end
+    # @printf("  δ_0_n (damage initiation)  = %.6e\n", coh_norm.δ_0_n)      # TODO Chunk 2 Task 2.1
+    # if max_sep_n > coh_norm.δ_0_n                                        # TODO Chunk 2 Task 2.1
+    #     @printf("  ⚠ WARNING: max(|δ_n|) > δ_0_n! Damage will be triggered!\n")  # TODO Chunk 2 Task 2.1
+    # else                                                                 # TODO Chunk 2 Task 2.1
+    #     @printf("  ✓ max(|δ_n|) < δ_0_n, elastic regime\n")              # TODO Chunk 2 Task 2.1
+    # end                                                                  # TODO Chunk 2 Task 2.1
 
     # 11. 手动执行一次 Newton 迭代跟踪
     println("\n--- Manual Newton Iteration Tracking (basic solver) ---")

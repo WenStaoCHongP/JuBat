@@ -34,9 +34,9 @@ println("  间隙导热参数:")
 println("    h_c0 = $(param_dim.cohesive.h_c0) W/(m^2 K)")
 println("    k_air = $(param_dim.cohesive.k_air) W/(m K)")
 println("  内聚力参数:")
-println("    sigma_max = $(param_dim.cohesive.σ_max_n/1e6) MPa")
-println("    delta_0 = $(param_dim.cohesive.δ_0_n*1e6) um")
-println("    delta_c = $(param_dim.cohesive.δ_c_n*1e6) um")
+# println("    sigma_max = $(param_dim.cohesive.σ_max_n/1e6) MPa")  # TODO Chunk 2 Task 2.1
+# println("    delta_0 = $(param_dim.cohesive.δ_0_n*1e6) um")      # TODO Chunk 2 Task 2.1
+# println("    delta_c = $(param_dim.cohesive.δ_c_n*1e6) um")      # TODO Chunk 2 Task 2.1
 
 # ========================================================================
 # 2. 创建仿真选项
