@@ -330,7 +330,7 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.lambda = param_dim.scale.P_ref / (param_dim.scale.L * param_dim.scale.T_ref)
     param_dim.scale.h = param_dim.cell.h * param_dim.scale.L / param_dim.cell.lambda_r  # Biot 数
     param_dim.scale.q = param_dim.scale.P_ref / param_dim.scale.L^3
-    param_dim.scale.σ_czm = param_dim.cohesive.σ_max_pe_pcc  # TODO Chunk 2 Task 2.2 复核
+    param_dim.scale.σ_czm = param_dim.cohesive.σ_max_pe_pcc  # PE-PCC 界面作为归一化锚点
     param_dim.scale.δ_czm = param_dim.scale.L
     param_dim.scale.G_czm = param_dim.scale.σ_czm * param_dim.scale.δ_czm
     param_dim.scale.K_czm = param_dim.scale.σ_czm / param_dim.scale.δ_czm
@@ -473,23 +473,34 @@ function NormaliseParam(param_dim::Params)
     param.tab.area = param_dim.tab.area / param.scale.L^2
     param.tab.h = param_dim.tab.h * param_dim.scale.L / param_dim.cell.lambda_r
     
-    # cohesive zone model
-    # TODO Chunk 2 Task 2.2 重写：按 PE_PCC / NE_NCC 两组分别归一化
-    # param.cohesive.σ_max_n = param_dim.cohesive.σ_max_n / param_dim.scale.σ_czm
-    # param.cohesive.δ_0_n = param_dim.cohesive.δ_0_n / param_dim.scale.δ_czm
-    # param.cohesive.δ_c_n = param_dim.cohesive.δ_c_n / param_dim.scale.δ_czm
-    # param.cohesive.G_c_n = param_dim.cohesive.G_c_n / param_dim.scale.G_czm
-    # param.cohesive.K_n = param_dim.cohesive.K_n / param_dim.scale.K_czm
-    # # 切向参数归一化
-    # param.cohesive.τ_max_t = param_dim.cohesive.τ_max_t / param_dim.scale.σ_czm
-    # param.cohesive.δ_0_t = param_dim.cohesive.δ_0_t / param_dim.scale.δ_czm
-    # param.cohesive.δ_c_t = param_dim.cohesive.δ_c_t / param_dim.scale.δ_czm
-    # param.cohesive.G_c_t = param_dim.cohesive.G_c_t / param_dim.scale.G_czm
-    # param.cohesive.K_t = param_dim.cohesive.K_t / param_dim.scale.K_czm
-    # BK指数不需要归一化（无量纲）
+    # cohesive zone model — per-interface 归一化
+    # PE-PCC 界面（电极涂层-正极集流体）
+    param.cohesive.σ_max_pe_pcc = param_dim.cohesive.σ_max_pe_pcc / param_dim.scale.σ_czm
+    param.cohesive.δ_0_pe_pcc = param_dim.cohesive.δ_0_pe_pcc / param_dim.scale.δ_czm
+    param.cohesive.δ_c_pe_pcc = param_dim.cohesive.δ_c_pe_pcc / param_dim.scale.δ_czm
+    param.cohesive.G_c_pe_pcc = param_dim.cohesive.G_c_pe_pcc / param_dim.scale.G_czm
+    param.cohesive.K_n_pe_pcc = param_dim.cohesive.K_n_pe_pcc / param_dim.scale.K_czm
+    param.cohesive.τ_max_pe_pcc = param_dim.cohesive.τ_max_pe_pcc / param_dim.scale.σ_czm
+    param.cohesive.δ_0_pe_pcc_t = param_dim.cohesive.δ_0_pe_pcc_t / param_dim.scale.δ_czm
+    param.cohesive.δ_c_pe_pcc_t = param_dim.cohesive.δ_c_pe_pcc_t / param_dim.scale.δ_czm
+    param.cohesive.G_c_pe_pcc_t = param_dim.cohesive.G_c_pe_pcc_t / param_dim.scale.G_czm
+    param.cohesive.K_t_pe_pcc = param_dim.cohesive.K_t_pe_pcc / param_dim.scale.K_czm
+    # NE-NCC 界面（电极涂层-负极集流体）
+    param.cohesive.σ_max_ne_ncc = param_dim.cohesive.σ_max_ne_ncc / param_dim.scale.σ_czm
+    param.cohesive.δ_0_ne_ncc = param_dim.cohesive.δ_0_ne_ncc / param_dim.scale.δ_czm
+    param.cohesive.δ_c_ne_ncc = param_dim.cohesive.δ_c_ne_ncc / param_dim.scale.δ_czm
+    param.cohesive.G_c_ne_ncc = param_dim.cohesive.G_c_ne_ncc / param_dim.scale.G_czm
+    param.cohesive.K_n_ne_ncc = param_dim.cohesive.K_n_ne_ncc / param_dim.scale.K_czm
+    param.cohesive.τ_max_ne_ncc = param_dim.cohesive.τ_max_ne_ncc / param_dim.scale.σ_czm
+    param.cohesive.δ_0_ne_ncc_t = param_dim.cohesive.δ_0_ne_ncc_t / param_dim.scale.δ_czm
+    param.cohesive.δ_c_ne_ncc_t = param_dim.cohesive.δ_c_ne_ncc_t / param_dim.scale.δ_czm
+    param.cohesive.G_c_ne_ncc_t = param_dim.cohesive.G_c_ne_ncc_t / param_dim.scale.G_czm
+    param.cohesive.K_t_ne_ncc = param_dim.cohesive.K_t_ne_ncc / param_dim.scale.K_czm
+    # 共用（无量纲 passthrough）
+    param.cohesive.czm_model = param_dim.cohesive.czm_model
     param.cohesive.eta = param_dim.cohesive.eta
 
-    # interface thermal resistance parameters (dimensionless)
+    # interface thermal resistance parameters (dimensionless，沿用旧逻辑)
     param.cohesive.h_c0 = param_dim.cohesive.h_c0 * param_dim.scale.L / param_dim.scale.lambda
     param.cohesive.k_air = param_dim.cohesive.k_air / param_dim.scale.lambda
     param.cohesive.lambda_m = param_dim.cohesive.lambda_m / param_dim.scale.L
