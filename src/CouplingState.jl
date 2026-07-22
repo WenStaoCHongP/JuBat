@@ -363,63 +363,80 @@ function compute_czm_params_per_interface(case)
 end
 
 """
-    compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)
+    compute_czm_strain_inputs(case, variables, T_nodes) -> NamedTuple
 
-计算 CZM 损伤计算所需的单元级应变输入。
+按 spec v2 §5.1 计算 CZM 体单元粒度的 dT、Δsoc_p、Δsoc_n，以及 CZM 节点粒度的 T_czm_nodes。
 
-# 返回
-- `dT_elem`: 每个单元的温度变化 [K]
-- `Δsoc_n_elem`: 每个单元的负极 SOC 变化 [-]
-- `Δsoc_p_elem`: 每个单元的正极 SOC 变化 [-]
+# 数据流（与 spec §5.1 表格一致）
+- T_czm_nodes：T_nodes (粗热节点 K) → thermal_to_czm 矩阵 → CZM 节点温度
+- dT_czm：粗热单元 dT (= avg(T_nodes[thermal_elem[e]]) - T0)
+          → thermal_elem_map 直接取值（element-to-element）
+- Δsoc_p/n：variables["thermal2D element soc_p/n"] (粗热单元 mol/m³)
+             → thermal_elem_map 直接取值 - cs0，按 material_type 分发
+
+# 单位契约
+- T_nodes, T0, dT_czm, T_czm_nodes: Kelvin
+- soc_p/n, cs0, Δsoc: mol/m³
 """
-function compute_czm_strain_inputs(case, variables::Dict, czm_mesh, T_nodes_carry)
-    ne = size(czm_mesh.bulk_element, 1)
+function compute_czm_strain_inputs(case, variables, T_nodes)
+    czm_mesh = case.czm_mesh
+    submesh = czm_mesh.czm_submesh
     param = case.param
+    ne_czm = size(submesh.mesh.element, 1)
 
-    # 参考 SOC（归一化值）
-    soc_ref_n = param.NE.cs0
-    soc_ref_p = param.PE.cs0
+    # ---- T_czm_nodes 通过 thermal_to_czm 矩阵（nodal interpolation） ----
+    M = czm_mesh.thermal_to_czm
+    M === nothing && error("compute_czm_strain_inputs: thermal_to_czm 矩阵未构造（请在 create_czm_mesh 中调用 build_thermal_to_czm_interp）")
+    T_czm_nodes = M * T_nodes
+    @assert length(T_czm_nodes) == submesh.mesh.nlen "thermal_to_czm × T_nodes 维度不匹配"
 
-    # 初始化输出数组
-    dT_elem = zeros(Float64, ne)
-    Δsoc_n_elem = zeros(Float64, ne)
-    Δsoc_p_elem = zeros(Float64, ne)
+    # ---- dT_czm 通过 thermal_elem_map（element direct lookup） ----
+    thermal_elem = case.mesh["thermal2D"].element
+    n_thermal_elem = size(thermal_elem, 1)
+    dT_thermal = zeros(n_thermal_elem)
+    for e_th in 1:n_thermal_elem
+        ns = thermal_elem[e_th, :]
+        dT_thermal[e_th] = sum(T_nodes[ns]) / 4 - param.cell.T0
+    end
 
-    # 提取温度场（无量纲温度 T* = T / T_ref）
-    if length(T_nodes_carry) >= czm_mesh.nnode
-        for e in 1:ne
-            nodes = czm_mesh.bulk_element[e, :]
-            T_elem_nd = 0.0
-            valid_nodes = 0
-            for n in nodes
-                if n <= length(T_nodes_carry)
-                    T_elem_nd += T_nodes_carry[n]
-                    valid_nodes += 1
-                end
-            end
-            if valid_nodes > 0
-                T_elem_nd /= valid_nodes
-                dT_elem[e] = T_elem_nd - param.cell.T0
-            end
+    dT_czm = zeros(ne_czm)
+    for e in 1:ne_czm
+        e_th = submesh.thermal_elem_map[e]
+        if 1 <= e_th <= n_thermal_elem
+            dT_czm[e] = dT_thermal[e_th]
         end
     end
 
-    # 提取 SOC 分布（如果 variables 中有）
-    soc_n_elem = variables["thermal2D element soc_n"]
-    soc_p_elem = variables["thermal2D element soc_p"]
+    # ---- Δsoc 通过 thermal_elem_map（element direct lookup） ----
+    soc_p_thermal = get(variables, "thermal2D element soc_p", zeros(n_thermal_elem))
+    soc_n_thermal = get(variables, "thermal2D element soc_n", zeros(n_thermal_elem))
 
-    # 处理数组维度（可能是 ne×1 或 ne×num）
-    if isa(soc_n_elem, AbstractMatrix)
-        soc_n_elem = soc_n_elem[:, end]
-        soc_p_elem = soc_p_elem[:, end]
+    # 处理数组维度（可能是 ne×1 或 ne×num，向后兼容）
+    if isa(soc_p_thermal, AbstractMatrix)
+        soc_p_thermal = soc_p_thermal[:, end]
+    end
+    if isa(soc_n_thermal, AbstractMatrix)
+        soc_n_thermal = soc_n_thermal[:, end]
     end
 
-    for e in 1:min(ne, length(soc_n_elem))
-        Δsoc_n_elem[e] = soc_n_elem[e] - soc_ref_n
-        Δsoc_p_elem[e] = soc_p_elem[e] - soc_ref_p
+    Δsoc_p_czm = zeros(ne_czm)
+    Δsoc_n_czm = zeros(ne_czm)
+
+    for e in 1:ne_czm
+        e_th = submesh.thermal_elem_map[e]
+        mt = submesh.material_type[e]
+        if 1 <= e_th <= n_thermal_elem
+            if mt == :PE
+                Δsoc_p_czm[e] = soc_p_thermal[e_th] - param.PE.cs0
+            elseif mt == :NE
+                Δsoc_n_czm[e] = soc_n_thermal[e_th] - param.NE.cs0
+            end
+            # PCC/NCC/SP：保持 0
+        end
     end
 
-    return dT_elem, Δsoc_n_elem, Δsoc_p_elem
+    return (dT_czm = dT_czm, Δsoc_p_czm = Δsoc_p_czm, Δsoc_n_czm = Δsoc_n_czm,
+            T_czm_nodes = T_czm_nodes)
 end
 
 """
@@ -460,7 +477,10 @@ function update_czm_damage!(case, variables, T_nodes_carry)
     cache = ensure_czm_cache(case, czm_mesh, czm_param_cache; fix_inner=case.opt.czm_fix_inner)
 
     # 计算应变输入
-    dT_elem, Δsoc_n_elem, Δsoc_p_elem = compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)
+    strain_in = compute_czm_strain_inputs(case, variables, T_nodes_carry)
+    dT_elem = strain_in.dT_czm
+    Δsoc_n_elem = strain_in.Δsoc_n_czm
+    Δsoc_p_elem = strain_in.Δsoc_p_czm
 
     # 外力向量（一般为零）
     ndof = 2 * czm_mesh.nnode
