@@ -289,25 +289,31 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64)
     K = copy(KT)
     F = copy(FT)
 
-    if case.opt.czm_enabled
-        czm_mesh = case.czm_mesh
-        param = case.param
-        for (elem_idx, czm_elem) in enumerate(czm_mesh.cohesive_elements)
-            state = czm_mesh.damage_states[elem_idx]
-            D = state.D
-            δ_n = state.δ_max_n
-            h_eff_nd = compute_gap_conductance(D, δ_n, param.cohesive)
-            coeff = h_eff_nd * czm_elem.length
-            n_bot = czm_elem.nodes_bottom
-            n_top = czm_elem.nodes_top
-            for (nb, nt) in zip(n_bot, n_top)
-                K[nb, nb] -= coeff
-                K[nb, nt] += coeff
-                K[nt, nb] += coeff
-                K[nt, nt] -= coeff
-            end
-        end
-    end
+    # ============== [v2 修订 2026-07-21] 界面热阻暂禁用（spec §2.4）==========================
+    # 原代码：按 CZM 损伤状态 D 与分离 δ_n 调整界面传热系数 h_eff，修改 K 矩阵。
+    # 禁用原因：CZM 损伤场与温度场双向耦合会让参数空间与收敛行为同时变化，
+    #          难以独立验证 CZM 本构是否解决 δ_sim 过小问题。
+    # 恢复方式：取消本块注释（同时恢复 setup_thermal2D_mesh 的 use_merged 自动逻辑）。
+    # =========================================================================================
+    # if case.opt.czm_enabled
+    #     czm_mesh = case.czm_mesh
+    #     param = case.param
+    #     for (elem_idx, czm_elem) in enumerate(czm_mesh.cohesive_elements)
+    #         state = czm_mesh.damage_states[elem_idx]
+    #         D = state.D
+    #         δ_n = state.δ_max_n
+    #         h_eff_nd = compute_gap_conductance(D, δ_n, param.cohesive)
+    #         coeff = h_eff_nd * czm_elem.length
+    #         n_bot = czm_elem.nodes_bottom
+    #         n_top = czm_elem.nodes_top
+    #         for (nb, nt) in zip(n_bot, n_top)
+    #             K[nb, nb] -= coeff
+    #             K[nb, nt] += coeff
+    #             K[nt, nb] += coeff
+    #             K[nt, nt] -= coeff
+    #         end
+    #     end
+    # end
 
     # 使用原位变体（不再做额外 copy）
     edge_cache = case.geometry !== nothing ? case.geometry.boundary_edges : nothing

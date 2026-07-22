@@ -534,10 +534,18 @@ case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 function setup_thermal2D_mesh(case, mesh_data; use_merged::Union{Bool,Nothing}=nothing)
     case_new = deepcopy(case)
 
-    # 根据 CZM 启用状态自动决定是否使用合并网格
+    # ============== [v2 修订 2026-07-21] 界面热阻暂禁用（spec §2.4，先验证 CZM 本构）==============
+    # 原代码：
+    #     # 根据 CZM 启用状态自动决定是否使用合并网格
+    #     if isnothing(use_merged)
+    #         use_merged = !getfield(case_new.opt, :czm_enabled)
+    #         @debug "Auto-selecting thermal mesh" czm_enabled=case_new.opt.czm_enabled use_merged=use_merged
+    #     end
+    # 替代：强制使用合并网格（径向连续导热），CZM 启用与否不影响热网格选择
+    # =========================================================================================
     if isnothing(use_merged)
-        use_merged = !getfield(case_new.opt, :czm_enabled)
-        @debug "Auto-selecting thermal mesh" czm_enabled=case_new.opt.czm_enabled use_merged=use_merged
+        use_merged = true   # v2 修订：强制合并网格
+        @debug "Auto-selecting thermal mesh (v2: forced merged)" czm_enabled=case_new.opt.czm_enabled use_merged=use_merged
     end
 
     if use_merged
