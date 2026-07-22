@@ -61,18 +61,18 @@ end
 # ========================================================================
 
 """
-	bilinear_traction_state(δ_n, δ_t, damage_state, cohesive_params)
+	bilinear_traction_state(δ_n, δ_t, damage_state, params)
 
 Compute bilinear traction and return updated damage state.
 """
-function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::DamageState, cohesive_params::Cohesive; visc_beta::Float64=1.0)
-	K_n = 1.0        # TODO Chunk 4 Task 4.5: 接受 interface_type 参数后恢复 cohesive_params.K_n_<interface>
-	K_t = 1.0        # TODO Chunk 4 Task 4.5
-	δ_0_n = 1e-9     # TODO Chunk 4 Task 4.5
-	δ_c_n = 1e-9     # TODO Chunk 4 Task 4.5
-	δ_0_t = 1e-9     # TODO Chunk 4 Task 4.5
-	δ_c_t = 1e-9     # TODO Chunk 4 Task 4.5
-	η = cohesive_params.eta
+function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::DamageState, params::CzmInterfaceParams; visc_beta::Float64=1.0)
+	K_n = params.K_n
+	K_t = params.K_t
+	δ_0_n = params.δ_0_n
+	δ_c_n = params.δ_c_n
+	δ_0_t = params.δ_0_t
+	δ_c_t = params.δ_c_t
+	η = params.η
 
 	new_state = DamageState()
 	new_state.D = damage_state.D
@@ -83,7 +83,7 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 	new_state.fractured = damage_state.fractured
 	new_state.accumulated_damage = damage_state.accumulated_damage
 
-	czm_model = cohesive_params.czm_model
+	czm_model = params.czm_model
 
 	if damage_state.fractured
 		new_state.D = 1.0
@@ -160,8 +160,8 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
     return T_n, T_t, D_eq, new_state
 end
 
-function bilinear_traction(δ_n::Float64, δ_t::Float64, damage_state::DamageState, cohesive_params::Cohesive; update::Bool=true, visc_beta::Float64=1.0)
-	T_n, T_t, D, new_state = bilinear_traction_state(δ_n, δ_t, damage_state, cohesive_params; visc_beta=visc_beta)
+function bilinear_traction(δ_n::Float64, δ_t::Float64, damage_state::DamageState, params::CzmInterfaceParams; update::Bool=true, visc_beta::Float64=1.0)
+	T_n, T_t, D, new_state = bilinear_traction_state(δ_n, δ_t, damage_state, params; visc_beta=visc_beta)
 	if update
 		damage_state.D = new_state.D
 		damage_state.D_visc = new_state.D_visc
@@ -175,19 +175,19 @@ function bilinear_traction(δ_n::Float64, δ_t::Float64, damage_state::DamageSta
 end
 
 """
-	bilinear_tangent(δ_n, δ_t, damage_state, cohesive_params)
+	bilinear_tangent(δ_n, δ_t, damage_state, params)
 
 Compute bilinear tangent stiffness matrix.
 """
-function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageState, cohesive_params::Cohesive; visc_beta::Float64=1.0)
-	K_n = 1.0        # TODO Chunk 4 Task 4.5: 接受 interface_type 参数后恢复 cohesive_params.K_n_<interface>
-	K_t = 1.0        # TODO Chunk 4 Task 4.5
-	δ_0_n = 1e-9     # TODO Chunk 4 Task 4.5
-	δ_c_n = 1e-9     # TODO Chunk 4 Task 4.5
-	δ_0_t = 1e-9     # TODO Chunk 4 Task 4.5
-	δ_c_t = 1e-9     # TODO Chunk 4 Task 4.5
-	η = cohesive_params.eta
-	czm_model = cohesive_params.czm_model
+function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageState, params::CzmInterfaceParams; visc_beta::Float64=1.0)
+	K_n = params.K_n
+	K_t = params.K_t
+	δ_0_n = params.δ_0_n
+	δ_c_n = params.δ_c_n
+	δ_0_t = params.δ_0_t
+	δ_c_t = params.δ_c_t
+	η = params.η
+	czm_model = params.czm_model
 	dT_dδ = zeros(Float64, 2, 2)
 
 	if damage_state.fractured
@@ -286,11 +286,11 @@ function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageStat
 end
 
 """
-	update_damage(damage_states, separations, cohesive_params)
+	update_damage(damage_states, separations, params)
 
 Batch update of damage states.
 """
-function update_damage(damage_states::AbstractVector{<:AbstractDamageState}, separations::Vector{Tuple{Float64, Float64}}, cohesive_params::Cohesive; visc_beta::Float64=1.0)
+function update_damage(damage_states::AbstractVector{<:AbstractDamageState}, separations::Vector{Tuple{Float64, Float64}}, params::CzmInterfaceParams; visc_beta::Float64=1.0)
 	n = length(damage_states)
 	@assert length(separations) == n "Mismatch in array lengths"
 
@@ -299,7 +299,7 @@ function update_damage(damage_states::AbstractVector{<:AbstractDamageState}, sep
 		state = damage_states[i]
 		state isa DamageState || error("update_damage: expected DamageState, got $(typeof(state))")
 		δ_n, δ_t = separations[i]
-		new_state = last(bilinear_traction_state(δ_n, δ_t, state, cohesive_params; visc_beta=visc_beta))
+		new_state = last(bilinear_traction_state(δ_n, δ_t, state, params; visc_beta=visc_beta))
 		new_states[i] = new_state
 	end
 
@@ -311,7 +311,7 @@ end
 # ========================================================================
 
 """
-	compute_gap_conductance(D, δ_n, cohesive) -> h_eff
+	compute_gap_conductance(D, δ_n, params) -> h_eff
 
 Compute effective interface conductance using a parallel thermal circuit model.
 
@@ -321,15 +321,15 @@ The heat transfer across the interface has two parallel paths:
 
 Effective conductance: h_eff = h_contact + h_gap
 """
-function compute_gap_conductance(D::Float64, δ_n::Float64, cohesive)
-	h_c0 = cohesive.h_c0
-	k_air = cohesive.k_air
-	lambda_m = cohesive.lambda_m
-	beta = cohesive.beta
-	threshold = cohesive.threshold
+function compute_gap_conductance(D::Float64, δ_n::Float64, params::CzmInterfaceParams)
+	h_c0 = params.h_c0
+	k_air = params.k_air
+	lambda_m = params.lambda_m
+	beta = params.beta
+	threshold = params.threshold
 
-	delta0 = 1e-9   # TODO Chunk 4 Task 4.5: cohesive.δ_0_<interface>_n
-	delta_c = 1e-9   # TODO Chunk 4 Task 4.5: cohesive.δ_c_<interface>_n
+	delta0 = params.δ_0_n
+	delta_c = params.δ_c_n
 	delta = max(δ_n, 0.0)
 	D_clamped = clamp(D, 0.0, 0.9999)
 	two_beta_lambda = 2.0 * beta * lambda_m
@@ -347,13 +347,13 @@ function compute_gap_conductance(D::Float64, δ_n::Float64, cohesive)
 end
 
 """
-	compute_element_gap_conductance(czm_mesh, elem_idx, cohesive) -> h_eff
+	compute_element_gap_conductance(czm_mesh, elem_idx, params) -> h_eff
 """
-function compute_element_gap_conductance(czm_mesh::CohesiveMesh, elem_idx::Int64, cohesive)
+function compute_element_gap_conductance(czm_mesh::CohesiveMesh, elem_idx::Int64, params::CzmInterfaceParams)
 	state = czm_mesh.damage_states[elem_idx]
 	D = state.D
 	δ_n = state.δ_max_n
-	return compute_gap_conductance(D, δ_n, cohesive)
+	return compute_gap_conductance(D, δ_n, params)
 end
 
 """
@@ -393,13 +393,13 @@ function get_active_elements(czm_mesh::CohesiveMesh, mesh_data::MeshGeometry)
 end
 
 """
-	compute_all_gap_conductances(czm_mesh, cohesive) -> Vector{Float64}
+	compute_all_gap_conductances(czm_mesh, params) -> Vector{Float64}
 """
-function compute_all_gap_conductances(czm_mesh::CohesiveMesh, cohesive)
+function compute_all_gap_conductances(czm_mesh::CohesiveMesh, params::CzmInterfaceParams)
 	n_czm = czm_mesh.n_cohesive
 	h_eff_all = zeros(Float64, n_czm)
 	for i in 1:n_czm
-		h_eff_all[i] = compute_element_gap_conductance(czm_mesh, i, cohesive)
+		h_eff_all[i] = compute_element_gap_conductance(czm_mesh, i, params)
 	end
 	return h_eff_all
 end
