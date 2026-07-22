@@ -22,8 +22,8 @@ function run_diagnostics()
     opt.czm_model = "model1"
 
     case = JuBat.SetCase(param_dim, opt)
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=40, gsorder=2)
-    czm_mesh = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=40, nθ_czm=80, gsorder=2)
+    czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
 
     ne = size(czm_mesh.bulk_element, 1)
     ndof = 2 * czm_mesh.nnode

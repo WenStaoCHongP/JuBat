@@ -88,7 +88,7 @@ println("\n[3] 生成统一网格...")
 
 # 先创建Case以获取归一化参数
 case_temp = JuBat.SetCase(param_dim, opt)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(case_temp.param; nθ=80, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(case_temp.param; nθ=80, nθ_czm=80, gsorder=2)
 
 println("  热网格单元数: $(mesh_data.ne)")
 println("  热网格节点数: $(mesh_data.nnode)")
@@ -101,7 +101,7 @@ println("  外圈单元数: $(sum(.!mesh_data.is_inner_layer))")
 # ========================================================================
 println("\n[4] 创建CZM网格...")
 
-czm_mesh = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
+czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case_temp.param)
 
 println("  内聚力单元数: $(czm_mesh.n_cohesive)")
 println("  层数: $(czm_mesh.n_layers)")

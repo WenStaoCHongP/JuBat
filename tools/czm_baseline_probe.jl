@@ -36,8 +36,8 @@ function run_baseline()
     opt.czm_model = "model1"          # Mode I only
 
     case = JuBat.SetCase(param_dim, opt)
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=40, gsorder=2)
-    czm_mesh = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=40, nθ_czm=40, gsorder=2)
+    czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
 
     println("  Nodes: $(czm_mesh.nnode)")
     println("  Bulk Elements: $(size(czm_mesh.bulk_element, 1))")
@@ -74,7 +74,7 @@ function run_baseline()
 
     for method in ["basic", "load_substep", "arc_length"]
         # 重建 czm_mesh 以确保每个方法从相同初始状态开始
-        czm_mesh_fresh = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
+        czm_mesh_fresh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, param_dim)
         u_prev = zeros(Float64, ndof)
 
         result, updated_mesh = JuBat.solve_czm_step(

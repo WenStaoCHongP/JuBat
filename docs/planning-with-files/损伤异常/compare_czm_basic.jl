@@ -30,9 +30,9 @@ opt.debug_coupling = false
 opt.czm_enabled = true
 
 case = JuBat.SetCase(param_dim, opt)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=16, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=16, nθ_czm=40, gsorder=2)
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-case.czm_mesh = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
+case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
 
 y0 = JuBat.ModelInitialisation_MultiSPMe(case)
 M, K, F, variables, _ = JuBat.CallModel_MultiSPMe(case, y0, 0.0; jacobi="update")

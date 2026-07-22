@@ -32,9 +32,9 @@ opt.czm_enabled = true
 opt.czm_tol = 3e-4
 
 case = JuBat.SetCase(param_dim, opt)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=16, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=16, nθ_czm=40, gsorder=2)
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-case.czm_mesh = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
+case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
 
 result = JuBat.Solve(case)
 println("solve finished")

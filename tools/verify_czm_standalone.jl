@@ -62,8 +62,8 @@ function main()
     case = JuBat.SetCase(param_dim, opt)
 
     nθ = 40
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, gsorder=2)
-    czm_mesh_template = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, nθ_czm=40, gsorder=2)
+    czm_mesh_template = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
 
     println("  Mesh: nθ=$nθ, gsorder=2")
     println("  Nodes: $(czm_mesh_template.nnode)")
@@ -132,7 +132,7 @@ function main()
 
         for method in methods
             # 每个方法使用独立的 czm_mesh（fresh damage_states）
-            czm_mesh_fresh = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
+            czm_mesh_fresh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, param_dim)
             u_prev = zeros(Float64, ndof)
 
             result, updated_mesh = JuBat.solve_czm_step(

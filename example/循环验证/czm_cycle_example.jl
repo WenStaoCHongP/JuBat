@@ -81,21 +81,21 @@ function main()
     println("\n[2/5] 创建网格...")
     
     case = JuBat.SetCase(param_dim, opt)
-    
+
     # 热网格
     n_theta = 60
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, nθ_czm=80, gsorder=2)
     JuBat.setup_thermal2D_mesh!(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
-    
+
     ne = size(mesh_th.element, 1)
     nT = mesh_th.nlen
-    
+
     println("OK: 热网格创建完成")
     @printf("  单元数: %d, 节点数: %d\n", ne, nT)
-    
+
     # CZM网格
-    czm_mesh = JuBat.create_czm_mesh(mesh_data.Jellyroll_czm, param_dim; tol=1e-8)
+    czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
     
     println("OK: CZM网格创建完成")
     @printf("  内聚力单元数: %d\n", czm_mesh.n_cohesive)

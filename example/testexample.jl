@@ -76,13 +76,13 @@ function main()
     case = JuBat.SetCase(param_dim, opt)
 
     n_theta = 360
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, nθ_czm=80, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
 
     # 创建 CZM 网格（czm_enabled = true 时必须）
     if opt.czm_enabled
-        case.czm_mesh = JuBat.create_czm_mesh(mesh_data.thermal2D, param_dim)
+        case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
     end
 
     ne = size(mesh_th.element, 1)

@@ -36,12 +36,12 @@ function verify_system_level()
     
     # 生成热网格 (2D截面)
     # nθ 控制周向划分密度
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=60, gsorder=2)
-    thermal_mesh = mesh_data.Jellyroll_czm
-    
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=60, nθ_czm=40, gsorder=2)
+    thermal_mesh = mesh_data.czm_submesh
+
     # 转换网格为 CZM 网格
     # create_czm_mesh 会自动识别重合节点并在其间建立 Cohesive Elements
-    czm_mesh = JuBat.create_czm_mesh(thermal_mesh, param_dim)
+    czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, param_dim)
     
     println("Mesh Stats:")
     println("  Total Nodes: $(czm_mesh.nnode)")

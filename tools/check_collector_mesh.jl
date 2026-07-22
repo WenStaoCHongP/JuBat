@@ -6,7 +6,7 @@ opt.thermal_enabled = true
 opt.thermalmodel = "distributed2D"
 opt.czm_enabled = true
 case = JuBat.SetCase(param, opt)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(param; nθ=180, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(param; nθ=180, nθ_czm=80, gsorder=2)
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 mesh = case.mesh["thermal2D"]
 ne=size(mesh.element,1)
@@ -62,7 +62,7 @@ begin
   println("Exported mesh_elements.csv ($ne elements)")
 
   # Cohesive element connectivity and geometry
-  czm_mesh = JuBat.create_czm_mesh(mesh, param)
+  czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh, param)
   n_coh = czm_mesh.n_cohesive
   println("\nCZM: $n_coh cohesive elements, $(czm_mesh.nnode) nodes (after duplication)")
 
