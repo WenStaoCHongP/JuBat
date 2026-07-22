@@ -150,15 +150,19 @@ create_unit_czm_strip(param; width=nothing, y0=1.0, gsorder=2)
 - `ΔT(t)`、`Δsoc_n(t)`、`Δsoc_p(t)`
 - 幅值取 Jellyroll 量级，并**强制全程弹性**（`δ < δ_0`），以便与闭式解比对。
 
-按 bulk 单元材料填充本征应变（与 `assemble_thermal_chemical_load` 一致）：
+本征应变走生产契约 `assemble_thermal_chemical_load`（**不要**在脚本里另写按材料分支的 ε₀）：
 
-| 材料 | `ε₀` |
-|------|------|
-| PE | `α_PE · ΔT + β_p · Δsoc_p` |
-| NE | `α_NE · ΔT + β_n · Δsoc_n` |
-| SP / PCC / NCC | `α_layer · ΔT`（字段缺失则 α=0，规则在实现中写死并与生产一致） |
+```
+ε₀[e] = α_eff * dT_elem[e] + β_n * Δsoc_n_elem[e] + β_p * Δsoc_p_elem[e]
+```
 
-`α`/`β` 从 `case.param` / `CzmInterfaceParams` 读取，不硬编码物理常数。
+- `α_eff`、`β_n = NE.Omega/3`、`β_p = PE.Omega/3`：与生产相同的标量入口（见 `CouplingState` / `Mechanical.jl`）。
+- 按层填充长度-8 向量（与生产 `compute_czm_strain_inputs` 粒度一致）：
+  - 全体层：`dT_elem[e] = ΔT(t)`
+  - 仅 NE 层：`Δsoc_n_elem[e] = Δsoc_n(t)`，其余 0
+  - 仅 PE 层：`Δsoc_p_elem[e] = Δsoc_p(t)`，其余 0
+- 1D 解析解使用**同一** `ε₀[e]` 定义，保证比对对象一致。
+- 不硬编码物理常数；从 `case.param` / `param_cache` 读取。
 
 ### 6.2 边界与求解
 
