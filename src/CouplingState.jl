@@ -58,7 +58,9 @@ end
 
 按界面类型分组的 CZM 参数缓存（spec §3.5.2）。
 - param_ref: 保留 param 引用，供 assemble_bulk_stiffness 读 PE/NE.E_coat 等
-- id: objectid(param)，用于 ensure_czm_cache 快速失效判定
+- id: 内容哈希 hash((hash(pe_pcc), hash(ne_ncc)))，用于 ensure_czm_cache 快速失效判定。
+  Task 4.4 fix：原为 objectid(param)，但原位修改 param 字段不改变 objectid，导致漏检。
+  改为内容哈希后，任何 CzmInterfaceParams 字段值变化都能触发失效。
 """
 struct CzmParamCache
     by_interface::Dict{Symbol, CzmInterfaceParams}
@@ -357,8 +359,12 @@ function compute_czm_params_per_interface(case)
         threshold = coh.threshold,
     )
 
-    # spec §3.5.2：含 param_ref 与 id 字段（id = objectid(param)）
-    return CzmParamCache(Dict(:PE_PCC => pe_pcc, :NE_NCC => ne_ncc), param, objectid(param))
+    # spec §3.5.2 + Task 4.4 reviewer fix：id 用内容哈希（hash(pe_pcc), hash(ne_ncc)），
+    # 而非 objectid(param)。原位修改 param 字段（mutating case.param.cohesive.σ_max_*）
+    # 不改变 objectid，会导致缓存失效漏检。CzmInterfaceParams 是 @with_kw 不可变 struct，
+    # 字段均为 Float64 / String，Julia 内置 hash 可直接处理。
+    content_hash = hash((hash(pe_pcc), hash(ne_ncc)))
+    return CzmParamCache(Dict(:PE_PCC => pe_pcc, :NE_NCC => ne_ncc), param, content_hash)
 end
 
 """

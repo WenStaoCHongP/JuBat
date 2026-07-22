@@ -36,11 +36,14 @@ using .JuBat
     @test cache3.czm_mesh_id == objectid(czm_mesh2)
 
     # v5: param_cache 变化时也应失效
-    # 注意：param_cache.id = objectid(param)，修改 param_dim.cohesive 字段不会
-    # 改变 objectid。为了让 id 真正变化，需要重新构造 param 对象。
-    # 这里通过修改字段 + NormaliseParam 重建 param 来获得新的 param_cache。
+    # Task 4.4 fix：CzmParamCache.id 现为内容哈希 hash((hash(pe_pcc), hash(ne_ncc)))，
+    # 因此只要 CzmInterfaceParams 的字段值变化，id 就会变化。
+    # 注意：compute_czm_params_per_interface 读取 case.param（已归一化），
+    # 而非 param_dim。所以修改 param_dim.cohesive.σ_max_pe_pcc 后，必须用
+    # NormaliseParam(param_dim) 把改动同步进 case.param，否则下一次
+    # compute_czm_params_per_interface 仍读旧值——这是 Case (A) 路径下必要的
+    # 同步步骤（不是 band-aid）。
     param_dim.cohesive.σ_max_pe_pcc = param_dim.cohesive.σ_max_pe_pcc * 1.1
-    # 重算 param（NormaliseParam 会创建新 Params 实例，objectid 不同）
     case.param = JuBat.NormaliseParam(param_dim)
     param_cache2 = JuBat.compute_czm_params_per_interface(case)
     @test param_cache2.id ≠ param_cache.id

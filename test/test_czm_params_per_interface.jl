@@ -52,7 +52,9 @@ using .JuBat
     @test ne.τ_max ≈ case.param.cohesive.τ_max_ne_ncc rtol=1e-6
 
     # CzmParamCache 契约：id 与 param_ref
-    @test cache.id == objectid(case.param)
+    # Task 4.4 fix：id 是基于 CzmInterfaceParams 内容的哈希，而非 objectid(param)
+    expected_id = hash((hash(pe), hash(ne)))
+    @test cache.id == expected_id
     @test cache.param_ref === case.param
 end
 

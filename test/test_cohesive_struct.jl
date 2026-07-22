@@ -119,12 +119,15 @@ end
     @test params_pe_pcc.threshold == 70e-9
 
     # CzmParamCache 含 param_ref 与 id 字段（spec §3.5.2）
+    # Task 4.4 fix：id 现为内容哈希（hash(CzmInterfaceParams)）而非 objectid(param)。
+    # 此处手工构造，仅检查字段存取；id 取 hash(params_pe_pcc) 以反映新语义。
     param_dim = JuBat.ChooseCell("Jellyroll")
     param = JuBat.NormaliseParam(param_dim)
-    cache = JuBat.CzmParamCache(Dict(:PE_PCC => params_pe_pcc), param, objectid(param))
+    content_id = hash(params_pe_pcc)
+    cache = JuBat.CzmParamCache(Dict(:PE_PCC => params_pe_pcc), param, content_id)
     @test haskey(cache.by_interface, :PE_PCC)
     @test cache.by_interface[:PE_PCC].E_eff == 1.0e3
-    @test cache.id == objectid(param)
+    @test cache.id == content_id
 end
 
 @testset "CzmSubmesh struct" begin
