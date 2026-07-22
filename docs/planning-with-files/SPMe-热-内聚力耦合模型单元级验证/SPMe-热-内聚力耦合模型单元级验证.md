@@ -29,8 +29,12 @@
 | 求解 | 脚本内增量 Newton + `apply_bc_czm(bc_dofs, bc_vals)` |
 | 不做 | 真实 SPMe/热步进、改生产本构、环几何 BC |
 
+## 实施计划
+
+[`docs/superpowers/plans/2026-07-23-unit-czm-strip-verification.md`](../../superpowers/plans/2026-07-23-unit-czm-strip-verification.md)
+
 ## 状态
 
 - [x] Brainstorming / 设计批准
-- [ ] 实施计划（writing-plans）
+- [x] 实施计划（writing-plans）
 - [ ] 实现与验证
