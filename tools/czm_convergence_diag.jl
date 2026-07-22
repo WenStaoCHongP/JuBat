@@ -33,13 +33,12 @@ function run_diagnostics()
     println("  Nodes: $(czm_mesh.nnode), DOFs: $ndof")
     println("  Bulk Elements: $ne, Cohesive Elements: $n_coh")
 
-    # TODO Chunk 4: compute_czm_effective_params 已被 compute_czm_params_per_interface 替换
-    # czm_param_cache = JuBat.compute_czm_params_per_interface(case)
-    # pe = czm_param_cache.by_interface[:PE_PCC]
-    # E_eff, ν_eff, α_eff = pe.E_eff, pe.ν, pe.α
-    # β_n = case.param.NE.Omega / 3.0
-    # β_p = case.param.PE.Omega / 3.0
-    E_eff = ν_eff = α_eff = β_n = β_p = NaN  # placeholder
+    # Chunk 4: 用 compute_czm_params_per_interface 取代 compute_czm_effective_params
+    czm_param_cache = JuBat.compute_czm_params_per_interface(case)
+    pe = czm_param_cache.by_interface[:PE_PCC]
+    E_eff, ν_eff, α_eff = pe.E_eff, pe.ν, pe.α
+    β_n = case.param.NE.Omega / 3.0
+    β_p = case.param.PE.Omega / 3.0
     @printf("  E_eff = %.4e, ν_eff = %.4f\n", E_eff, ν_eff)
     @printf("  α_eff = %.4e, β_n = %.4e, β_p = %.4e\n", α_eff, β_n, β_p)
 
@@ -99,7 +98,7 @@ function run_diagnostics()
     bc_vals = cache.bc_vals
 
     F_thermo_chem = JuBat.assemble_thermal_chemical_load(
-        czm_mesh, E_eff, ν_eff, α_eff, β_n, β_p,
+        czm_mesh, czm_param_cache, α_eff, β_n, β_p,
         dT_elem, Δsoc_n_elem, Δsoc_p_elem)
     F_ext = zeros(Float64, ndof)
 
@@ -107,7 +106,7 @@ function run_diagnostics()
     damage_states = czm_mesh.damage_states
 
     K_total, f_int_total, separations, tractions = JuBat.assemble_coupled_system(
-        czm_mesh, u0, E_eff, ν_eff, coh_norm;
+        czm_mesh, u0, czm_param_cache;
         damage_states=damage_states, K_bulk_cached=cache.K_bulk,
         geom_cache=cache.cohesive_geom, ws=cache.ws)
 
@@ -195,7 +194,7 @@ function run_diagnostics()
 
     for iter in 1:5
         K_tot, f_int, seps, tracts = JuBat.assemble_coupled_system(
-            czm_mesh, u, E_eff, ν_eff, coh_norm;
+            czm_mesh, u, czm_param_cache;
             damage_states=states, K_bulk_cached=cache.K_bulk,
             geom_cache=cache.cohesive_geom, ws=cache.ws)
 
@@ -263,7 +262,7 @@ function run_diagnostics()
 
     for iter in 1:5
         K_tot2, f_int2, seps2, tracts2 = JuBat.assemble_coupled_system(
-            czm_mesh, u2, E_eff, ν_eff, coh_norm;
+            czm_mesh, u2, czm_param_cache;
             damage_states=states2, K_bulk_cached=cache.K_bulk,
             geom_cache=cache.cohesive_geom, ws=ws2)
 
@@ -297,7 +296,7 @@ function run_diagnostics()
             JuBat.apply_czm_dirichlet!(u_trial, bc_dofs, bc_vals)
 
             _, f_int_trial, _, _ = JuBat.assemble_coupled_system(
-                czm_mesh, u_trial, E_eff, ν_eff, coh_norm;
+                czm_mesh, u_trial, czm_param_cache;
                 damage_states=states2, K_bulk_cached=cache.K_bulk,
                 geom_cache=cache.cohesive_geom, ws=ws2)
 
@@ -331,7 +330,7 @@ function run_diagnostics()
     println("\n--- Actual solve_czm_step call (method=basic) ---")
     println("  Calling JuBat.solve_czm_step with method='basic'...")
     result_basic, mesh_basic = JuBat.solve_czm_step(
-        czm_mesh, F_ext, E_eff, ν_eff, coh_norm, case.param, u0;
+        czm_mesh, F_ext, czm_param_cache, case.param, u0;
         α_eff=α_eff, β_n=β_n, β_p=β_p,
         dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
         max_iter=200, tol=1e-4, n_load_steps=50,
@@ -342,7 +341,7 @@ function run_diagnostics()
     # 15. 不使用缓存的情况下调用
     println("\n--- Actual solve_czm_step call (method=basic, NO cache) ---")
     result_basic2, mesh_basic2 = JuBat.solve_czm_step(
-        czm_mesh, F_ext, E_eff, ν_eff, coh_norm, case.param, u0;
+        czm_mesh, F_ext, czm_param_cache, case.param, u0;
         α_eff=α_eff, β_n=β_n, β_p=β_p,
         dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
         max_iter=200, tol=1e-4, n_load_steps=50,

@@ -59,14 +59,14 @@ function compute_czm_from_precomputed(cycle_data::Dict, param_dim, czm_mesh; ver
     
     # 获取CZM参数
     cohesive = param_dim.cohesive
-    
-    # 计算有效材料参数
-    E_eff = (param_dim.NE.E * param_dim.NE.thickness + param_dim.PE.E * param_dim.PE.thickness) / 
-            (param_dim.NE.thickness + param_dim.PE.thickness)
-    ν_eff = (param_dim.NE.nu * param_dim.NE.thickness + param_dim.PE.nu * param_dim.PE.thickness) / 
-            (param_dim.NE.thickness + param_dim.PE.thickness)
-    α_eff = (param_dim.NE.alphaT * param_dim.NE.thickness + param_dim.PE.alphaT * param_dim.PE.thickness) / 
-            (param_dim.NE.thickness + param_dim.PE.thickness)
+
+    # Task 4.3: 改用 CzmParamCache（按 spec v2 §7.1）
+    _case_for_cache = JuBat.SetCase(param_dim, JuBat.Option())
+    czm_param_cache = JuBat.compute_czm_params_per_interface(_case_for_cache)
+    _pe = czm_param_cache.by_interface[:PE_PCC]
+    E_eff = _pe.E_eff
+    ν_eff = _pe.ν
+    α_eff = _pe.α
     β_n = param_dim.NE.Omega / 3.0
     β_p = param_dim.PE.Omega / 3.0
     
@@ -151,7 +151,7 @@ function compute_czm_from_precomputed(cycle_data::Dict, param_dim, czm_mesh; ver
                 # CZM求解
                 try
                     result = JuBat.solve_czm_step(
-                        czm_mesh, F_ext, E_eff, ν_eff, cohesive, param_dim, u_czm;
+                        czm_mesh, F_ext, czm_param_cache, _case_for_cache.param, u_czm;
                         α_eff=α_eff, β_n=β_n, β_p=β_p,
                         dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
                         max_iter=30, tol=1e-6

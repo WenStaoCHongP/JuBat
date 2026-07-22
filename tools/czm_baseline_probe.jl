@@ -44,13 +44,12 @@ function run_baseline()
     println("  Cohesive Elements: $(czm_mesh.n_cohesive)")
 
     # 2. 计算有效参数
-    # TODO Chunk 4: compute_czm_effective_params 已被 compute_czm_params_per_interface 替换
-    # czm_param_cache = JuBat.compute_czm_params_per_interface(case)
-    # pe = czm_param_cache.by_interface[:PE_PCC]
-    # E_eff, ν_eff, α_eff = pe.E_eff, pe.ν, pe.α
-    # β_n = case.param.NE.Omega / 3.0
-    # β_p = case.param.PE.Omega / 3.0
-    E_eff = ν_eff = α_eff = β_n = β_p = NaN  # placeholder
+    # Chunk 4: compute_czm_effective_params 已被 compute_czm_params_per_interface 替换
+    czm_param_cache = JuBat.compute_czm_params_per_interface(case)
+    pe = czm_param_cache.by_interface[:PE_PCC]
+    E_eff, ν_eff, α_eff = pe.E_eff, pe.ν, pe.α
+    β_n = case.param.NE.Omega / 3.0
+    β_p = case.param.PE.Omega / 3.0
     @printf("  E_eff = %.6e, ν_eff = %.6f\n", E_eff, ν_eff)
     @printf("  α_eff = %.6e, β_n = %.6e, β_p = %.6e\n", α_eff, β_n, β_p)
 
@@ -78,7 +77,7 @@ function run_baseline()
         u_prev = zeros(Float64, ndof)
 
         result, updated_mesh = JuBat.solve_czm_step(
-            czm_mesh_fresh, F_ext, E_eff, ν_eff, czm_params, param, u_prev;
+            czm_mesh_fresh, F_ext, czm_param_cache, param, u_prev;
             α_eff=α_eff, β_n=β_n, β_p=β_p,
             dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
             max_iter=200, tol=1e-4, n_load_steps=50,

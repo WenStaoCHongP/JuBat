@@ -284,12 +284,16 @@ function verify_system_level()
     F_ext = zeros(Float64, ndof)
     u_prev = zeros(Float64, ndof)
 
+    # Task 4.3: solve_czm_step 改用 param_cache（按 spec v2 §7.1）
+    case_for_cache = JuBat.SetCase(param_dim, JuBat.Option())
+    czm_param_cache = JuBat.compute_czm_params_per_interface(case_for_cache)
+
     methods = ["basic", "arc_length", "load_substep"]
     results = Dict{String, JuBat.CZMResult}()
     for method in methods
         local_czm = deepcopy(czm_mesh)
         result = first(JuBat.solve_czm_step(
-            local_czm, F_ext, E_eff, ν_eff, cohesive_params, param_dim, u_prev;
+            local_czm, F_ext, czm_param_cache, param_dim, u_prev;
             α_eff=α_eff, β_n=β_n, β_p=β_p,
             dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n, Δsoc_p_elem=Δsoc_p,
             max_iter=50, tol=1e-6, n_load_steps=10, arc_length_alpha=1.0, iter_method=method
