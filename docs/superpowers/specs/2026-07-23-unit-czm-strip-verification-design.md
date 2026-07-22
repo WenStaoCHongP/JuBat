@@ -149,6 +149,7 @@ create_unit_czm_strip(param; width=nothing, y0=1.0, gsorder=2)
 
 - `ΔT(t)`、`Δsoc_n(t)`、`Δsoc_p(t)`
 - 幅值取 Jellyroll 量级，并**强制全程弹性**（`δ < δ_0`），以便与闭式解比对。
+- **固定端约束下必须使 `Σ h_i ε₀,i < 0`（推荐冷却 `ΔT≤0`）**，以产生拉伸张开；正膨胀仅导致压缩接触，无法验证 Mode I 分离。
 
 本征应变走生产契约 `assemble_thermal_chemical_load`（**不要**在脚本里另写按材料分支的 ε₀）：
 

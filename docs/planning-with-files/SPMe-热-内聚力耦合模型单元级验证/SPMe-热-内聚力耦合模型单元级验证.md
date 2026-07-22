@@ -37,4 +37,4 @@
 
 - [x] Brainstorming / 设计批准
 - [x] 实施计划（writing-plans）
-- [ ] 实现与验证
+- [x] 实现与验证
