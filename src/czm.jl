@@ -212,11 +212,34 @@ end
 # 2. 系统组装
 # ========================================================================
 
+"""
+    moduli_of(param, mt::Symbol) -> (E, ν, α)
+
+按材料类型从 param 读取体模量、泊松比、热膨胀系数（均已归一化）。
+供 assemble_bulk_stiffness / assemble_thermal_chemical_load 复用。
+
+材料类型对应 CzmSubmesh.material_type 中的 Symbol：
+- :PE  → 涂层模量 param.PE.E_coat / param.PE.nu_coat / param.PE.alphaT
+- :NE  → 涂层模量 param.NE.E_coat / param.NE.nu_coat / param.NE.alphaT
+- :SP  → param.SP.E / param.SP.nu / param.SP.alphaT
+- :PCC → param.PCC.E / param.PCC.nu / param.PCC.alphaT
+- :NCC → param.NCC.E / param.NCC.nu / param.NCC.alphaT
+"""
+function moduli_of(param, mt::Symbol)
+    mt === :PE  && return (param.PE.E_coat,  param.PE.nu_coat,  param.PE.alphaT)
+    mt === :NE  && return (param.NE.E_coat,  param.NE.nu_coat,  param.NE.alphaT)
+    mt === :SP  && return (param.SP.E,       param.SP.nu,       param.SP.alphaT)
+    mt === :PCC && return (param.PCC.E,      param.PCC.nu,      param.PCC.alphaT)
+    mt === :NCC && return (param.NCC.E,      param.NCC.nu,      param.NCC.alphaT)
+    error("moduli_of: unknown material_type $mt")
+end
+
 
 """
-    assemble_czm_system(czm_mesh, u, cohesive_params; damage_states=nothing)
+    assemble_czm_system(czm_mesh, u, param_cache; damage_states=nothing, ...)
 
 组装内聚力单元的全局刚度矩阵和内力向量。
+按 cohesive 单元 `interface_type` 从 `param_cache.by_interface` 取 `CzmInterfaceParams`。
 
 # 返回
 - `K_coh`: 内聚力刚度矩阵 (ndof × ndof)
@@ -224,7 +247,15 @@ end
 - `separations`: 每个单元的分离位移
 - `tractions`: 每个单元的牵引力
 """
-function assemble_czm_system(czm_mesh::CohesiveMesh, u::Vector{Float64}, cohesive_params::Cohesive; damage_states=nothing, geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing, ws::Union{Nothing, CZMAssemblyWorkspace}=nothing, visc_beta::Float64=1.0)
+function assemble_czm_system(
+    czm_mesh::CohesiveMesh,
+    u::Vector{Float64},
+    param_cache::CzmParamCache;
+    damage_states=nothing,
+    geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,
+    ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,
+    visc_beta::Float64=1.0
+)
     nnode = czm_mesh.nnode
     ndof = 2 * nnode
     n_coh = czm_mesh.n_cohesive
@@ -272,6 +303,10 @@ function assemble_czm_system(czm_mesh::CohesiveMesh, u::Vector{Float64}, cohesiv
 
     @inbounds for i in 1:n_coh
         damage_state = states[i]
+
+        # 按 interface_type 从 param_cache 取本构参数（spec §7.1）
+        iface = czm_mesh.cohesive_elements[i].interface_type
+        params = param_cache.by_interface[iface]
 
         fill!(ws.K_e, 0.0)
         fill!(ws.f_int_e, 0.0)
@@ -335,8 +370,8 @@ function assemble_czm_system(czm_mesh::CohesiveMesh, u::Vector{Float64}, cohesiv
                 δ_n = ws.δ_local[1]
                 δ_t = ws.δ_local[2]
 
-                T_n, T_t, _, _ = bilinear_traction_state(δ_n, δ_t, damage_state, cohesive_params; visc_beta=visc_beta)
-                dT_dδ = bilinear_tangent(δ_n, δ_t, damage_state, cohesive_params; visc_beta=visc_beta)
+                T_n, T_t, _, _ = bilinear_traction_state(δ_n, δ_t, damage_state, params; visc_beta=visc_beta)
+                dT_dδ = bilinear_tangent(δ_n, δ_t, damage_state, params; visc_beta=visc_beta)
 
                 J = L / 2.0
                 wJ = w * J
@@ -391,45 +426,51 @@ function assemble_czm_system(czm_mesh::CohesiveMesh, u::Vector{Float64}, cohesiv
 end
 
 """
-    assemble_bulk_stiffness(czm_mesh, E_eff, ν_eff)
+    assemble_bulk_stiffness(czm_mesh, param_cache)
 
-组装固体单元（Q4）的刚度矩阵。
-使用与 mechanical.jl 中相同的方法。
+组装固体单元（Q4）的刚度矩阵。按 `czm_submesh.material_type` 分组取
+体模量（PE/NE 用 E_coat，SP/PCC/NCC 用连续层 E），不再使用全栈均一模量。
 
 # 返回
 - `K_bulk`: 固体刚度矩阵 (ndof × ndof)
 """
-function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64)
+function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, param_cache::CzmParamCache)
     nnode = czm_mesh.nnode
     ndof = 2 * nnode
-    
+    param = param_cache.param_ref
+    submesh = czm_mesh.czm_submesh
+    submesh === nothing && error(
+        "assemble_bulk_stiffness: czm_submesh is nothing " *
+        "(must be built via jellyroll_collector_seed_mesh with nθ_czm kwarg)")
+
     # 需要重新计算高斯积分点，因为节点可能已经改变
     element = czm_mesh.bulk_element
     node = czm_mesh.node
     ne = size(element, 1)
     gsorder = 2
-    
+
     # 稀疏矩阵组装
     I_idx = Int64[]
     J_idx = Int64[]
     K_vals = Float64[]
-    
-    # 弹性矩阵（平面应力）
-    E = E_eff
-    ν = ν_eff
-    D_mat = E / (1.0 - ν^2) * [1.0 ν 0.0;
-                               ν 1.0 0.0;
-                               0.0 0.0 (1.0-ν)/2.0]
-    
+
     for e in 1:ne
+        # 按材料类型查表（PE/NE 用涂层模量，SP/PCC/NCC 用连续层模量）
+        E_e, ν_e, _ = moduli_of(param, submesh.material_type[e])
+
+        # 弹性矩阵（平面应力）
+        D_mat = E_e / (1.0 - ν_e^2) * [1.0 ν_e 0.0;
+                                       ν_e 1.0 0.0;
+                                       0.0 0.0 (1.0-ν_e)/2.0]
+
         # 单元节点
         elem_nodes = element[e, :]
         x_e = node[elem_nodes, 1]
         y_e = node[elem_nodes, 2]
-        
+
         # 单元刚度矩阵
         K_e = zeros(Float64, 8, 8)
-        
+
         IntQ4(x_e, y_e; order=gsorder) do ξ, η, w, dNdx, dNdy, detJ
             # B矩阵
             B = zeros(Float64, 3, 8)
@@ -443,14 +484,14 @@ function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff:
             # 积分
             K_e += w * detJ * (B' * D_mat * B)
         end
-        
+
         # 组装到全局
         dofs = Int64[]
         for n in elem_nodes
             push!(dofs, 2*n - 1)
             push!(dofs, 2*n)
         end
-        
+
         for a in 1:8
             for b in 1:8
                 push!(I_idx, dofs[a])
@@ -459,48 +500,65 @@ function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff:
             end
         end
     end
-    
+
     K_bulk = sparse(I_idx, J_idx, K_vals, ndof, ndof)
-    
+
     return K_bulk
 end
 
-function assemble_thermal_chemical_load(czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64,α_eff::Float64, β_n::Float64, β_p::Float64,dT_elem::Vector{Float64}, Δsoc_n_elem::Vector{Float64}, Δsoc_p_elem::Vector{Float64})
+"""
+    assemble_thermal_chemical_load(czm_mesh, param_cache, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+
+组装热-化学载荷向量。按 `czm_submesh.material_type` 分组取 (E, ν)（PE/NE 用
+涂层模量，SP/PCC/NCC 用连续层模量），保留 α_eff / β_n / β_p 为位置参数
+（电化学浓度膨胀系数，跨材料统一）。
+"""
+function assemble_thermal_chemical_load(
+    czm_mesh::CohesiveMesh,
+    param_cache::CzmParamCache,
+    α_eff::Float64, β_n::Float64, β_p::Float64,
+    dT_elem::Vector{Float64}, Δsoc_n_elem::Vector{Float64}, Δsoc_p_elem::Vector{Float64}
+)
     nnode = czm_mesh.nnode
     ndof = 2 * nnode
+    param = param_cache.param_ref
+    submesh = czm_mesh.czm_submesh
+    submesh === nothing && error(
+        "assemble_thermal_chemical_load: czm_submesh is nothing " *
+        "(must be built via jellyroll_collector_seed_mesh with nθ_czm kwarg)")
     element = czm_mesh.bulk_element
     node = czm_mesh.node
     ne = size(element, 1)
-    
-    E = E_eff
-    ν = ν_eff
-    
+
     # 计算每个单元的初始应变
     # ε_0 = α*ΔT + β_n*Δsoc_n + β_p*Δsoc_p
     epsilon_0_elem = zeros(Float64, ne)
     @inbounds for e in 1:ne
         epsilon_0_elem[e] = α_eff * dT_elem[e] + β_n * Δsoc_n_elem[e] + β_p * Δsoc_p_elem[e]
     end
-    
+
     gsorder = 2
-    
+
     # 载荷向量
     F_thermo_chem = zeros(Float64, ndof)
-    
+
     for e in 1:ne
+        # 按材料类型查表（PE/NE 用涂层模量，SP/PCC/NCC 用连续层模量）
+        E_e, ν_e, _ = moduli_of(param, submesh.material_type[e])
+
         elem_nodes = element[e, :]
         x_e = node[elem_nodes, 1]
         y_e = node[elem_nodes, 2]
         ε_0 = epsilon_0_elem[e]
-        
+
         # 单元载荷向量
         f_e = zeros(Float64, 8)
-        
+
         IntQ4(x_e, y_e; order=gsorder) do ξ, η, w, dNdx, dNdy, detJ
             # 载荷贡献
             # F = ∫ B^T D ε_0 dΩ
             # D ε_0 = E/(1-ν²) * [ε_0*(1+ν), ε_0*(1+ν), 0]^T
-            factor = E / (1.0 - ν^2) * ε_0 * (1.0 + ν) * w * detJ
+            factor = E_e / (1.0 - ν_e^2) * ε_0 * (1.0 + ν_e) * w * detJ
 
             for i in 1:4
                 # F_ux = ∫ dN/dx * σ_xx dΩ = ∫ dN/dx * D11 * ε_0 dΩ
@@ -509,7 +567,7 @@ function assemble_thermal_chemical_load(czm_mesh::CohesiveMesh, E_eff::Float64, 
                 f_e[2*i] += dNdy[i] * factor
             end
         end
-        
+
         # 组装到全局
         for i in 1:4
             n = elem_nodes[i]
@@ -517,7 +575,7 @@ function assemble_thermal_chemical_load(czm_mesh::CohesiveMesh, E_eff::Float64, 
             F_thermo_chem[2*n] += f_e[2*i]
         end
     end
-    
+
     return F_thermo_chem
 end
 
@@ -632,44 +690,84 @@ function ensure_czm_cache(case::Case, czm_mesh::CohesiveMesh, E_eff::Float64, ν
     return cache
 end
 
-function assemble_coupled_system(czm_mesh::CohesiveMesh, u::Vector{Float64},E_eff::Float64, ν_eff::Float64, cohesive_params::Cohesive;F_ext::Union{Vector{Float64}, Nothing}=nothing,F_thermo_chem::Union{Vector{Float64}, Nothing}=nothing,damage_states=nothing,K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,visc_beta::Float64=1.0)
+"""
+    assemble_coupled_system(czm_mesh, u, param_cache; F_ext=nothing, ...)
+
+组装耦合系统（体刚度 + 内聚力）。签名按 spec v2 §7.1 改为接受 `param_cache`，
+体内刚度按 `czm_submesh.material_type` 分组取模量。
+"""
+function assemble_coupled_system(
+    czm_mesh::CohesiveMesh,
+    u::Vector{Float64},
+    param_cache::CzmParamCache;
+    F_ext::Union{Vector{Float64}, Nothing}=nothing,
+    F_thermo_chem::Union{Vector{Float64}, Nothing}=nothing,
+    damage_states=nothing,
+    K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,
+    geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,
+    ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,
+    visc_beta::Float64=1.0
+)
     ndof = 2 * czm_mesh.nnode
 
     # 固体刚度（使用缓存或重新计算）
-    K_bulk = K_bulk_cached !== nothing ? K_bulk_cached : assemble_bulk_stiffness(czm_mesh, E_eff, ν_eff)
+    K_bulk = K_bulk_cached !== nothing ? K_bulk_cached : assemble_bulk_stiffness(czm_mesh, param_cache)
 
-    # 内聚力刚度和内力（使用几何缓存和工作区）
+    # 内聚力刚度和内力（使用几何缓存和工作区，透传 param_cache）
     K_coh, f_int_coh, separations, tractions = assemble_czm_system(
-        czm_mesh, u, cohesive_params; damage_states=damage_states,
+        czm_mesh, u, param_cache; damage_states=damage_states,
         geom_cache=geom_cache, ws=ws, visc_beta=visc_beta)
-    
+
     # 固体内力（线性弹性：f_int = K * u）
     f_int_bulk = K_bulk * u
-    
+
     # 总刚度矩阵
     K_total = K_bulk + K_coh
-    
+
     # 总内力 = 固体内力 + 内聚力内力
     f_int_total = f_int_bulk + f_int_coh
-    
+
     return K_total, f_int_total, separations, tractions
 end
 
-function assemble_coupled_system_full(czm_mesh::CohesiveMesh, u::Vector{Float64},E_eff::Float64, ν_eff::Float64,α_eff::Float64, β_n::Float64, β_p::Float64,cohesive_params::Cohesive,dT_elem::Vector{Float64},Δsoc_n_elem::Vector{Float64},Δsoc_p_elem::Vector{Float64};F_ext::Union{Vector{Float64}, Nothing}=nothing,damage_states=nothing,K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,visc_beta::Float64=1.0)
+"""
+    assemble_coupled_system_full(czm_mesh, u, param_cache, α_eff, β_n, β_p, dT_elem, ...; kwargs...)
+
+耦合系统组装 + 热-化学载荷 + 残差计算。按 spec v2 §7.1 改为接受 `param_cache`，
+透传给 `assemble_coupled_system` 与 `assemble_thermal_chemical_load`。
+"""
+function assemble_coupled_system_full(
+    czm_mesh::CohesiveMesh,
+    u::Vector{Float64},
+    param_cache::CzmParamCache,
+    α_eff::Float64, β_n::Float64, β_p::Float64,
+    dT_elem::Vector{Float64}, Δsoc_n_elem::Vector{Float64}, Δsoc_p_elem::Vector{Float64};
+    F_ext::Union{Vector{Float64}, Nothing}=nothing,
+    damage_states=nothing,
+    K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,
+    geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,
+    ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,
+    visc_beta::Float64=1.0
+)
     ndof = 2 * czm_mesh.nnode
 
-    # 组装基本系统
-    K_total, f_int_total, separations, tractions = assemble_coupled_system(czm_mesh, u, E_eff, ν_eff, cohesive_params; damage_states=damage_states, K_bulk_cached=K_bulk_cached, geom_cache=geom_cache, ws=ws, visc_beta=visc_beta)
-    
-    # 热-化学载荷
-    F_thermo_chem = assemble_thermal_chemical_load(czm_mesh, E_eff, ν_eff, α_eff, β_n, β_p,dT_elem, Δsoc_n_elem, Δsoc_p_elem)
-    
+    # 组装基本系统（透传 param_cache）
+    K_total, f_int_total, separations, tractions = assemble_coupled_system(
+        czm_mesh, u, param_cache;
+        damage_states=damage_states, K_bulk_cached=K_bulk_cached,
+        geom_cache=geom_cache, ws=ws, visc_beta=visc_beta)
+
+    # 热-化学载荷（透传 param_cache）
+    F_thermo_chem = assemble_thermal_chemical_load(
+        czm_mesh, param_cache, α_eff, β_n, β_p,
+        dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+
     # 外部载荷
     F_external = F_ext === nothing ? zeros(Float64, ndof) : F_ext
-    
+
     # 残差 = 外力 + 热化学力 - 内力
     R = F_external + F_thermo_chem - f_int_total
-    
+
     return K_total, R, F_thermo_chem, separations, tractions
 end
 
