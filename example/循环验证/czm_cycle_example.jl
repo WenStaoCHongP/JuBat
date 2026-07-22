@@ -25,7 +25,7 @@
 """
 
 using LinearAlgebra, SparseArrays, Statistics, Plots, Printf
-include(joinpath(@__DIR__, "../src/JuBat.jl"))
+include(joinpath(@__DIR__, "../../src/JuBat.jl"))
 using .JuBat
 
 function main()
@@ -43,10 +43,14 @@ function main()
     param_dim.cell.v_l = 2.5
     param_dim.cell.v_h = 4.2
     
-    # 打印内聚力参数
-    println("\n  内聚力参数：")
-    # @printf("    sigma_max_n = %.1f MPa, delta_c_n = %.4f um\n", param_dim.cohesive.σ_max_n / 1e6, param_dim.cohesive.δ_c_n * 1e6)  # TODO Chunk 2 Task 2.1
-    # @printf("    tau_max_t = %.1f MPa, delta_c_t = %.4f um\n", param_dim.cohesive.τ_max_t / 1e6, param_dim.cohesive.δ_c_t * 1e6)     # TODO Chunk 2 Task 2.1
+    # 打印内聚力参数（per-interface，物理单位，spec v2 §3.1）
+    println("\n  内聚力参数（per-interface，物理单位）：")
+    @printf("    [PE-PCC] σ_max = %.1f MPa, δ_c = %.4f μm\n",
+            param_dim.cohesive.σ_max_pe_pcc / 1e6,
+            param_dim.cohesive.δ_c_pe_pcc * 1e6)
+    @printf("    [NE-NCC] σ_max = %.1f MPa, δ_c = %.4f μm\n",
+            param_dim.cohesive.σ_max_ne_ncc / 1e6,
+            param_dim.cohesive.δ_c_ne_ncc * 1e6)
     
     # 仿真选项
     opt = JuBat.Option()
@@ -70,6 +74,7 @@ function main()
     opt.cool_method = "tab"
     opt.per_element_spme = true
     # 裂纹模式选择："model1" 仅法向；"mix" 混合模式
+    opt.czm_enabled = true
     opt.czm_model = "model1"
     @printf("  CZM 模式: %s\n", opt.czm_model)
     
@@ -82,10 +87,10 @@ function main()
     
     case = JuBat.SetCase(param_dim, opt)
 
-    # 热网格
+    # 热网格 + CZM 子网格（一次性生成）
     n_theta = 60
     mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, nθ_czm=80, gsorder=2)
-    JuBat.setup_thermal2D_mesh!(case, mesh_data)
+    case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
 
     ne = size(mesh_th.element, 1)
@@ -94,8 +99,9 @@ function main()
     println("OK: 热网格创建完成")
     @printf("  单元数: %d, 节点数: %d\n", ne, nT)
 
-    # CZM网格
+    # CZM网格（v3 两步式：从 czm_submesh + thermal2D 构造）
     czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
+    case.czm_param_cache = JuBat.compute_czm_params_per_interface(case)
     
     println("OK: CZM网格创建完成")
     @printf("  内聚力单元数: %d\n", czm_mesh.n_cohesive)
