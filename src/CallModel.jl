@@ -1,21 +1,22 @@
 """
-	map_czm_damage_to_thermal(czm_mesh, geometry, ne) -> Vector{Float64}
+	map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, ne_thermal::Int) -> Vector{Float64}
 
-将 CZM damage_states 映射为热单元级别的 D 数组。
-
-假设：一个内聚力单元只影响对应的内侧热单元（1-to-1）。
-仅遍历 is_inner_layer[e] = true 的内侧热单元。
+按 spec v2 §5.2 把 cohesive 单元损伤 max 归约到粗热单元粒度。
+对每个粗热单元 e_thermal，扫描所有 cohesive_to_thermal[e_coh] == e_thermal 的 cohesive 单元，
+取 damage_states[e_coh].D 的最大值；无 cohesive 覆盖则取 0。
 """
-function map_czm_damage_to_thermal(czm_mesh, geometry, ne)
-	D_elem = zeros(ne)
-	for e in 1:ne
-		czm_indices = get(geometry.czm_element_map, e, Int64[])
-		if !isempty(czm_indices) && geometry.is_inner_layer[e]
-			# 1-to-1: 内侧热单元只对应一个 CZM 单元，直接取其 D
-			D_elem[e] = czm_mesh.damage_states[czm_indices[1]].D
+function map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, ne_thermal::Int)
+	D_per_thermal = zeros(ne_thermal)
+	for e_coh in 1:czm_mesh.n_cohesive
+		e_thermal = czm_mesh.cohesive_to_thermal[e_coh]
+		if 1 <= e_thermal <= ne_thermal
+			D = czm_mesh.damage_states[e_coh].D
+			if D > D_per_thermal[e_thermal]
+				D_per_thermal[e_thermal] = D
+			end
 		end
 	end
-	return D_elem
+	return D_per_thermal
 end
 
 function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
@@ -99,15 +100,13 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
 
     # 计算渐进式面积损失的 D 映射（仅在启用时）
     D_elem_area_loss = nothing
-    if case.opt.czm_area_loss_enabled && case.czm_mesh !== nothing && case.geometry !== nothing && hasfield(typeof(case.geometry), :czm_element_map)
-        D_elem_area_loss = map_czm_damage_to_thermal(case.czm_mesh, case.geometry, ne)
+    if case.opt.czm_area_loss_enabled && case.czm_mesh !== nothing && case.czm_mesh.cohesive_to_thermal !== nothing
+        D_elem_area_loss = map_czm_damage_to_thermal(case.czm_mesh, ne)
         # 调试：输出 D 映射统计
         D_above = filter(d -> d > case.opt.czm_area_loss_threshold, D_elem_area_loss)
         if !isempty(D_above) && case.opt.debug_coupling
-            inner_count = count(case.geometry.is_inner_layer)
-            active_inner = count(e -> case.geometry.is_inner_layer[e] && D_elem_area_loss[e] > case.opt.czm_area_loss_threshold, 1:ne)
             t_phys = round(t * case.param.scale.t0, digits=1)
-            println("  [AreaLoss] t=$(t_phys)s | D_max=$(round(maximum(D_elem_area_loss), digits=4)) | 超阈值单元=$(length(D_above))/$(inner_count)内侧 | threshold=$(case.opt.czm_area_loss_threshold)")
+            println("  [AreaLoss] t=$(t_phys)s | D_max=$(round(maximum(D_elem_area_loss), digits=4)) | 超阈值单元=$(length(D_above))/$(ne) | threshold=$(case.opt.czm_area_loss_threshold)")
         end
     end
 
