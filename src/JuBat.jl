@@ -58,6 +58,7 @@ export compute_heat_sources, compute_heat_sources_with_czm, solve_branch_current
 export ThermalModel, ThermalLumpedModel, ThermalDistributed2DModel
 export thermal_diffusion_stress_2D
 export compute_czm_params_per_interface
+export build_thermal_to_czm_interp
 # CZM exports
 export CohesiveElement, CohesiveMesh, DamageState, CZMResult
 export CzmSubmesh

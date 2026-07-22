@@ -192,7 +192,7 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)
     czm_mesh.interface_nodes = [[]]   # 旧字段，保留兼容
     czm_mesh.damage_states = damage_states
     czm_mesh.czm_submesh = czm_submesh
-    czm_mesh.thermal_to_czm = nothing   # Task 5.1 填充
+    czm_mesh.thermal_to_czm = build_thermal_to_czm_interp(thermal_mesh, czm_submesh)
     czm_mesh.cohesive_to_thermal = cohesive_to_thermal
 
     # 正确性自检（spec §4.3）

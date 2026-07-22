@@ -590,3 +590,115 @@ mutable struct CZMSnapshot
     residual_norm::Float64
     method::String                      # "basic", "load_substep", or "arc_length"
 end
+
+# ========================================================================
+# build_thermal_to_czm_interp — 粗热节点 → CZM 节点双线性插值矩阵
+# (spec v2 §5.1)
+# ========================================================================
+
+"""
+    build_thermal_to_czm_interp(thermal_mesh::Mesh, czm_submesh::CzmSubmesh) -> SparseMatrixCSC
+
+构造粗热节点 → CZM 节点双线性插值矩阵（n_czm_node × n_thermal_node）。
+每行 ≤4 个非零元（粗热 Q4 单元的 4 节点），权重 = 双线性形函数值，行和 = 1。
+
+# 算法
+对每个 CZM 节点 P：
+1. 计算到所有粗热单元中心的欧氏距离，取最近 10 个作为候选
+2. 对每个候选用 Newton 迭代解等参坐标 (ξ, η) ∈ [-1, 1]²
+3. 若 |ξ| ≤ 1+ε 且 |η| ≤ 1+ε：用双线性形函数 N_i(ξ, η) 作为权重，终止搜索
+4. 否则：回退到最近粗热节点（权重 1）
+"""
+function build_thermal_to_czm_interp(thermal_mesh::Mesh, czm_submesh::CzmSubmesh)
+    czm_node = czm_submesh.mesh.node
+    n_czm_node = czm_submesh.mesh.nlen
+    n_thermal_node = thermal_mesh.nlen
+    n_thermal_elem = size(thermal_mesh.element, 1)
+
+    # 预计算每个粗热单元的中心坐标与半径
+    thermal_centers = zeros(n_thermal_elem, 2)
+    thermal_radii = zeros(n_thermal_elem)
+    for e in 1:n_thermal_elem
+        ns = thermal_mesh.element[e, :]
+        xs = thermal_mesh.node[ns, 1]
+        ys = thermal_mesh.node[ns, 2]
+        thermal_centers[e, 1] = sum(xs) / 4
+        thermal_centers[e, 2] = sum(ys) / 4
+        thermal_radii[e] = maximum(sqrt.((xs .- thermal_centers[e, 1]).^2 .+
+                                          (ys .- thermal_centers[e, 2]).^2))
+    end
+
+    # 双线性形函数 N_i(ξ, η) = 0.25 * (1 ± ξ)(1 ± η)
+    function shape_funcs(ξ::Float64, η::Float64)
+        return [
+            0.25 * (1 - ξ) * (1 - η),
+            0.25 * (1 + ξ) * (1 - η),
+            0.25 * (1 + ξ) * (1 + η),
+            0.25 * (1 - ξ) * (1 + η),
+        ]
+    end
+
+    # Newton 迭代解等参坐标
+    function solve_isoparametric(x_nodes, y_nodes, px, py; max_iter=20, tol=1e-10)
+        ξ, η = 0.0, 0.0
+        for _ in 1:max_iter
+            N = shape_funcs(ξ, η)
+            x_pred = sum(N .* x_nodes)
+            y_pred = sum(N .* y_nodes)
+            rx = px - x_pred
+            ry = py - y_pred
+            if abs(rx) < tol && abs(ry) < tol
+                return ξ, η, true
+            end
+            dN_dξ = 0.25 * [-(1-η), (1-η), (1+η), -(1+η)]
+            dN_dη = 0.25 * [-(1-ξ), -(1+ξ), (1+ξ), (1-ξ)]
+            Jxξ = sum(dN_dξ .* x_nodes)
+            Jxη = sum(dN_dη .* x_nodes)
+            Jyξ = sum(dN_dξ .* y_nodes)
+            Jyη = sum(dN_dη .* y_nodes)
+            detJ = Jxξ * Jyη - Jxη * Jyξ
+            abs(detJ) < 1e-20 && break
+            ξ += (Jyη * rx - Jxη * ry) / detJ
+            η += (-Jyξ * rx + Jxξ * ry) / detJ
+        end
+        return ξ, η, abs(ξ) <= 1.0 + 1e-6 && abs(η) <= 1.0 + 1e-6
+    end
+
+    I_rows = Int[]
+    J_cols = Int[]
+    V_vals = Float64[]
+
+    for i in 1:n_czm_node
+        px, py = czm_node[i, 1], czm_node[i, 2]
+        dists = sqrt.((thermal_centers[:, 1] .- px).^2 .+
+                      (thermal_centers[:, 2] .- py).^2)
+        candidate_order = sortperm(dists)
+        found = false
+        for e in candidate_order[1:min(10, end)]
+            ns = thermal_mesh.element[e, :]
+            x_nodes = thermal_mesh.node[ns, 1]
+            y_nodes = thermal_mesh.node[ns, 2]
+            ξ, η, ok = solve_isoparametric(x_nodes, y_nodes, px, py)
+            if ok && abs(ξ) <= 1.0 + 1e-6 && abs(η) <= 1.0 + 1e-6
+                N = shape_funcs(clamp(ξ, -1, 1), clamp(η, -1, 1))
+                for k in 1:4
+                    push!(I_rows, i)
+                    push!(J_cols, ns[k])
+                    push!(V_vals, N[k])
+                end
+                found = true
+                break
+            end
+        end
+        if !found
+            dists_node = sqrt.((thermal_mesh.node[:, 1] .- px).^2 .+
+                               (thermal_mesh.node[:, 2] .- py).^2)
+            _, nearest = findmin(dists_node)
+            push!(I_rows, i)
+            push!(J_cols, nearest)
+            push!(V_vals, 1.0)
+        end
+    end
+
+    return sparse(I_rows, J_cols, V_vals, n_czm_node, n_thermal_node)
+end
