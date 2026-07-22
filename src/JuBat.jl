@@ -7,6 +7,7 @@ include("SetParams.jl")
 include("CouplingState.jl")  # MultiSPMeLayout + MeshGeometry 类型定义
 include("SetCase.jl")
 include("czm.jl")  # 内聚力区域模型
+include("CzmUnitMesh.jl")  # 单元级条带网格（验证用）
 include("CzmSolve.jl")
 include("CzmPostProcess.jl")  # CZM 后处理/统计/损伤管理
 include("Assemble.jl") 
@@ -62,7 +63,7 @@ export build_thermal_to_czm_interp
 # CZM exports
 export CohesiveElement, CohesiveMesh, DamageState, CZMResult
 export CzmSubmesh
-export create_czm_mesh, compute_separation
+export create_czm_mesh, create_unit_czm_strip, compute_separation
 export bilinear_traction, bilinear_tangent, update_damage
 export assemble_czm_system, assemble_coupled_system, assemble_bulk_stiffness
 export assemble_thermal_chemical_load, assemble_coupled_system_full
