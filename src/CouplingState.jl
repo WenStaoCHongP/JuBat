@@ -228,9 +228,13 @@ end
 """
     CZMAssemblyCache
 
-CZM 求解器的静态/准静态缓存。当 E/ν 变化或 mesh 变更时需重建。
+CZM 求解器的静态/准静态缓存。失效判据基于 `czm_mesh_id`（=`objectid(czm_mesh)`）
+与 `param_cache_id`（=`param_cache.id`）——任一变化或 `fix_inner` 切换即重建。
 
 挂载在 `Case.czm_cache` 上，跨时间步复用。
+
+**v3 修订（Task 4.4）**：旧的 `E_eff`/`ν_eff` 字段保留用于诊断输出，不再
+参与失效判据。实际判据见 `czm_mesh_id` / `param_cache_id`。
 """
 mutable struct CZMAssemblyCache
     K_bulk::SparseMatrixCSC{Float64, Int64}     # bulk 刚度矩阵
@@ -239,15 +243,18 @@ mutable struct CZMAssemblyCache
     bc_dofs::Vector{Int64}                      # 边界条件 DOF
     bc_vals::Vector{Float64}                    # 边界条件值
     ws::CZMAssemblyWorkspace                    # 可复用工作区（跨时间步）
-    E_eff::Float64                              # 缓存对应的 E_eff
-    ν_eff::Float64                              # 缓存对应的 ν_eff
-    fix_inner::Bool                             # 是否固定内圈节点
+    E_eff::Float64                              # legacy：诊断输出用，不参与失效判据
+    ν_eff::Float64                              # legacy：同上
+    fix_inner::Bool                             # 是否固定内圈节点（影响 BC 构造）
     valid::Bool                                 # 缓存是否有效
+    czm_mesh_id::UInt64                         # objectid(czm_mesh)，mesh 失效判据
+    param_cache_id::UInt64                      # param_cache.id，参数失效判据
 
     function CZMAssemblyCache()
         empty_ws = CZMAssemblyWorkspace(0, 0)
         new(spzeros(0, 0), Vector{Vector{Int64}}(), CohesiveElementGeom[],
-            Int64[], Float64[], empty_ws, 0.0, 0.0, true, false)
+            Int64[], Float64[], empty_ws, 0.0, 0.0, true, false,
+            UInt64(0), UInt64(0))
     end
 end
 
@@ -440,18 +447,16 @@ function update_czm_damage!(case, variables, T_nodes_carry)
     # 同步CZM模型选项（model1 or mix）
     czm_params.czm_model = case.opt.czm_model
 
-    # 计算有效材料参数
-    # TODO Chunk 4 Task 4.x: 改为接受 CzmParamCache
+    # 计算有效材料参数（per-interface，见 spec §3.5.2）
     czm_param_cache = compute_czm_params_per_interface(case)
-    # 以下代码暂用 PE_PCC 字段作占位（仅保证编译通过，逻辑在 Chunk 4 修复）
-    E_eff = czm_param_cache.by_interface[:PE_PCC].E_eff
-    ν_eff = czm_param_cache.by_interface[:PE_PCC].ν
-    α_eff = czm_param_cache.by_interface[:PE_PCC].α
+    # 缓存到 case 供后续 solve_czm_basic_step 等调用点复用
+    case.czm_param_cache === nothing && (case.czm_param_cache = czm_param_cache)
+    α_eff = czm_param_cache.by_interface[:PE_PCC].α  # cross-interface uniform per spec §7.1
     β_n = case.param.NE.Omega / 3.0
     β_p = case.param.PE.Omega / 3.0
 
-    # 构建或复用 CZM 缓存
-    cache = ensure_czm_cache(case, czm_mesh, E_eff, ν_eff; fix_inner=case.opt.czm_fix_inner)
+    # 构建或复用 CZM 缓存（失效判据：objectid(czm_mesh) + param_cache.id + fix_inner）
+    cache = ensure_czm_cache(case, czm_mesh, czm_param_cache; fix_inner=case.opt.czm_fix_inner)
 
     # 计算应变输入
     dT_elem, Δsoc_n_elem, Δsoc_p_elem = compute_czm_strain_inputs(case, variables, czm_mesh, T_nodes_carry)

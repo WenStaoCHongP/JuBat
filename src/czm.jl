@@ -588,16 +588,29 @@ end
 # ========================================================================
 
 """
-    build_czm_cache(czm_mesh, E_eff, ν_eff, param)
+    build_czm_cache(czm_mesh, param_cache; fix_inner=true)
 
 构建 CZM 装配缓存，包括 K_bulk、cohesive 几何、边界条件。
-当 E/ν 不变时，整个缓存可在多次 Newton 迭代中复用。
+
+失效判据由 `czm_mesh_id = objectid(czm_mesh)` 与 `param_cache_id = param_cache.id`
+共同决定（见 `ensure_czm_cache`），整个缓存可在多次 Newton 迭代中复用，
+只要 mesh 对象与 param_cache 对象不变。
+
+# 参数
+- `czm_mesh::CohesiveMesh`: CZM 网格
+- `param_cache::CzmParamCache`: per-interface 参数缓存（提供 `param_ref` 给
+  `assemble_bulk_stiffness` 与 `identify_bc_nodes_czm`）
+- `fix_inner::Bool=true`: 是否固定内圈节点（影响 BC 构造）
+
+# 返回
+- `CZMAssemblyCache`: 填充好的缓存，挂载到 `case.czm_cache` 上跨步复用
 """
-function build_czm_cache(czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64, param; fix_inner::Bool=true)
+function build_czm_cache(czm_mesh::CohesiveMesh, param_cache::CzmParamCache; fix_inner::Bool=true)
+    param = param_cache.param_ref
     cache = CZMAssemblyCache()
 
     # 1. 缓存 K_bulk（最高 ROI：消除 ~60 次/更新 的冗余 bulk 重组）
-    cache.K_bulk = assemble_bulk_stiffness(czm_mesh, E_eff, ν_eff)
+    cache.K_bulk = assemble_bulk_stiffness(czm_mesh, param_cache)
 
     # 2. 缓存 bulk DOF 映射
     element = czm_mesh.bulk_element
@@ -663,10 +676,10 @@ function build_czm_cache(czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64
     cache.bc_dofs = bc_dofs
     cache.bc_vals = bc_vals
 
-    # 5. 记录参数用于失效判断
-    cache.E_eff = E_eff
-    cache.ν_eff = ν_eff
+    # 5. 失效判据标记
     cache.fix_inner = fix_inner
+    cache.czm_mesh_id = objectid(czm_mesh)
+    cache.param_cache_id = param_cache.id
 
     # 6. 创建可复用工作区（ndof × n_coh，跨时间步复用）
     ndof = 2 * czm_mesh.nnode
@@ -678,17 +691,24 @@ function build_czm_cache(czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64
 end
 
 """
-    ensure_czm_cache(case, czm_mesh, E_eff, ν_eff)
+    ensure_czm_cache(case, czm_mesh, param_cache; fix_inner=true)
 
-确保 `case.czm_cache` 可用且未过期。如果缓存不存在或参数不匹配则重建。
+确保 `case.czm_cache` 可用且未过期。失效条件（任一触发即重建）：
+1. `cache === nothing` 或 `!cache.valid`
+2. `cache.czm_mesh_id != objectid(czm_mesh)`：mesh 对象变了
+3. `cache.param_cache_id != param_cache.id`：param_cache 对象变了
+4. `cache.fix_inner != fix_inner`：BC 配置切换
+
+判据用 `objectid` 而非内容比对——`CzmParamCache` 一旦构造即为只读（spec §3.5.2），
+内容修改应通过重新调用 `compute_czm_params_per_interface` 拿到新对象实现。
 """
-function ensure_czm_cache(case::Case, czm_mesh::CohesiveMesh, E_eff::Float64, ν_eff::Float64; fix_inner::Bool=true)
+function ensure_czm_cache(case::Case, czm_mesh::CohesiveMesh, param_cache::CzmParamCache; fix_inner::Bool=true)
     cache = case.czm_cache
     if cache === nothing || !cache.valid ||
-       cache.E_eff != E_eff || cache.ν_eff != ν_eff ||
-       cache.fix_inner != fix_inner ||
-       length(cache.cohesive_geom) != czm_mesh.n_cohesive
-        cache = build_czm_cache(czm_mesh, E_eff, ν_eff, case.param; fix_inner=fix_inner)
+       cache.czm_mesh_id != objectid(czm_mesh) ||
+       cache.param_cache_id != param_cache.id ||
+       cache.fix_inner != fix_inner
+        cache = build_czm_cache(czm_mesh, param_cache; fix_inner=fix_inner)
         case.czm_cache = cache
     end
     return cache
