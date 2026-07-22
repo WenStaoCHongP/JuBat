@@ -213,24 +213,28 @@ end
 # ========================================================================
 
 """
-    moduli_of(param, mt::Symbol) -> (E, ν, α)
+    moduli_of(param, mt::Symbol) -> (E, ν)
 
-按材料类型从 param 读取体模量、泊松比、热膨胀系数（均已归一化）。
+按材料类型从 param 读取体模量、泊松比（均已归一化）。
 供 assemble_bulk_stiffness / assemble_thermal_chemical_load 复用。
 
 材料类型对应 CzmSubmesh.material_type 中的 Symbol：
-- :PE  → 涂层模量 param.PE.E_coat / param.PE.nu_coat / param.PE.alphaT
-- :NE  → 涂层模量 param.NE.E_coat / param.NE.nu_coat / param.NE.alphaT
-- :SP  → param.SP.E / param.SP.nu / param.SP.alphaT
-- :PCC → param.PCC.E / param.PCC.nu / param.PCC.alphaT
-- :NCC → param.NCC.E / param.NCC.nu / param.NCC.alphaT
+- :PE  → 涂层模量 param.PE.E_coat / param.PE.nu_coat
+- :NE  → 涂层模量 param.NE.E_coat / param.NE.nu_coat
+- :SP  → param.SP.E / param.SP.nu
+- :PCC → param.PCC.E / param.PCC.nu
+- :NCC → param.NCC.E / param.NCC.nu
+
+注意：α 已从此函数移除（I2-a 修复）。两个调用者均不使用 α，且
+SP/PCC/NCC.alphaT 字段在 Jellyroll.jl 中未设置，silently 取 0 易踩坑。
+如未来热-化学载荷需要 α，应显式新建 ``alpha_of(param, mt)`` helper。
 """
 function moduli_of(param, mt::Symbol)
-    mt === :PE  && return (param.PE.E_coat,  param.PE.nu_coat,  param.PE.alphaT)
-    mt === :NE  && return (param.NE.E_coat,  param.NE.nu_coat,  param.NE.alphaT)
-    mt === :SP  && return (param.SP.E,       param.SP.nu,       param.SP.alphaT)
-    mt === :PCC && return (param.PCC.E,      param.PCC.nu,      param.PCC.alphaT)
-    mt === :NCC && return (param.NCC.E,      param.NCC.nu,      param.NCC.alphaT)
+    mt === :PE  && return (param.PE.E_coat,  param.PE.nu_coat)
+    mt === :NE  && return (param.NE.E_coat,  param.NE.nu_coat)
+    mt === :SP  && return (param.SP.E,       param.SP.nu)
+    mt === :PCC && return (param.PCC.E,      param.PCC.nu)
+    mt === :NCC && return (param.NCC.E,      param.NCC.nu)
     error("moduli_of: unknown material_type $mt")
 end
 
@@ -456,7 +460,7 @@ function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, param_cache::CzmParamCa
 
     for e in 1:ne
         # 按材料类型查表（PE/NE 用涂层模量，SP/PCC/NCC 用连续层模量）
-        E_e, ν_e, _ = moduli_of(param, submesh.material_type[e])
+        E_e, ν_e = moduli_of(param, submesh.material_type[e])
 
         # 弹性矩阵（平面应力）
         D_mat = E_e / (1.0 - ν_e^2) * [1.0 ν_e 0.0;
@@ -544,7 +548,7 @@ function assemble_thermal_chemical_load(
 
     for e in 1:ne
         # 按材料类型查表（PE/NE 用涂层模量，SP/PCC/NCC 用连续层模量）
-        E_e, ν_e, _ = moduli_of(param, submesh.material_type[e])
+        E_e, ν_e = moduli_of(param, submesh.material_type[e])
 
         elem_nodes = element[e, :]
         x_e = node[elem_nodes, 1]
