@@ -699,8 +699,9 @@ end
 3. `cache.param_cache_id != param_cache.id`：param_cache 对象变了
 4. `cache.fix_inner != fix_inner`：BC 配置切换
 
-判据用 `objectid` 而非内容比对——`CzmParamCache` 一旦构造即为只读（spec §3.5.2），
-内容修改应通过重新调用 `compute_czm_params_per_interface` 拿到新对象实现。
+判据：`czm_mesh_id` 用 `objectid(czm_mesh)` 检测网格对象替换；`param_cache_id` 用
+`param_cache.id`（`compute_czm_params_per_interface` 计算的内容哈希）检测参数内容变化。
+内容修改后重新调用 `compute_czm_params_per_interface` 拿到新对象即可触发失效。
 """
 function ensure_czm_cache(case::Case, czm_mesh::CohesiveMesh, param_cache::CzmParamCache; fix_inner::Bool=true)
     cache = case.czm_cache

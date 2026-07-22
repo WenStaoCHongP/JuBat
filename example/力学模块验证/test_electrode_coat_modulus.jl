@@ -101,20 +101,6 @@ end
 println("  PASS: 归一化一致性（容差 1e-8）")
 
 println("\n" * "="^60)
-println("TEST 5: compute_effective_coating_modulus 全叠合加权")
-println("="^60)
-# TODO Chunk 4: compute_effective_coating_modulus 已移除（被 compute_czm_params_per_interface 替换）
-# E_eff, nu_eff, alpha_eff = JuBat.compute_effective_coating_modulus(case)
-println("  SKIPPED: 函数已移除，待 Chunk 4 后改用 compute_czm_params_per_interface")
-
-println("\n" * "="^60)
-println("TEST 6: compute_czm_effective_params 与共享函数尺度换算一致")
-println("="^60)
-# TODO Chunk 4: compute_czm_effective_params 已移除（被 compute_czm_params_per_interface 替换）
-# E_eff_czm, nu_eff_czm, alpha_eff_czm, beta_n, beta_p = JuBat.compute_czm_effective_params(case)
-println("  SKIPPED: 函数已移除，待 Chunk 4 后改用 compute_czm_params_per_interface")
-
-println("\n" * "="^60)
 println("TEST 7: thermal_diffusion_stress_2D 使用极片模量（@assert 防御）")
 println("="^60)
 
@@ -165,19 +151,7 @@ catch e
     println("  拦截成功（thermal_diffusion_stress_2D）：$(e.msg)")
 end
 
-# CZM 路径入口断言（compute_czm_effective_params）—— 对称防御
-# TODO Chunk 4: compute_czm_effective_params 已移除；待 Chunk 4 后用 compute_czm_params_per_interface 重写
-# try
-#     JuBat.compute_czm_effective_params(case_lgm)
-#     error("FAIL: 期望抛 AssertionError 但未抛")
-# catch e
-#     @assert e isa AssertionError "期望 AssertionError，实际抛 $(typeof(e)): $(e.msg)"
-#     @assert occursin("E_coat", e.msg) "AssertionError 消息应包含 E_coat，实际：$(e.msg)"
-#     println("  拦截成功（compute_czm_effective_params）：$(e.msg)")
-# end
-println("  SKIPPED: compute_czm_effective_params 已移除，待 Chunk 4 后重写")
-
-println("  PASS: LGM50 启用宏观力学/CZM 均被入口 @assert 拦截，未产生 NaN 污染")
+println("  PASS: LGM50 启用宏观力学被入口 @assert 拦截，未产生 NaN 污染")
 println("\n" * "="^60)
 println("ALL TESTS PASSED")
 println("="^60)

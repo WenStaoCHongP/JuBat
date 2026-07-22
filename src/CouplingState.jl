@@ -234,9 +234,6 @@ CZM 求解器的静态/准静态缓存。失效判据基于 `czm_mesh_id`（=`ob
 与 `param_cache_id`（=`param_cache.id`）——任一变化或 `fix_inner` 切换即重建。
 
 挂载在 `Case.czm_cache` 上，跨时间步复用。
-
-**v3 修订（Task 4.4）**：旧的 `E_eff`/`ν_eff` 字段保留用于诊断输出，不再
-参与失效判据。实际判据见 `czm_mesh_id` / `param_cache_id`。
 """
 mutable struct CZMAssemblyCache
     K_bulk::SparseMatrixCSC{Float64, Int64}     # bulk 刚度矩阵
@@ -245,8 +242,6 @@ mutable struct CZMAssemblyCache
     bc_dofs::Vector{Int64}                      # 边界条件 DOF
     bc_vals::Vector{Float64}                    # 边界条件值
     ws::CZMAssemblyWorkspace                    # 可复用工作区（跨时间步）
-    E_eff::Float64                              # legacy：诊断输出用，不参与失效判据
-    ν_eff::Float64                              # legacy：同上
     fix_inner::Bool                             # 是否固定内圈节点（影响 BC 构造）
     valid::Bool                                 # 缓存是否有效
     czm_mesh_id::UInt64                         # objectid(czm_mesh)，mesh 失效判据
@@ -255,7 +250,7 @@ mutable struct CZMAssemblyCache
     function CZMAssemblyCache()
         empty_ws = CZMAssemblyWorkspace(0, 0)
         new(spzeros(0, 0), Vector{Vector{Int64}}(), CohesiveElementGeom[],
-            Int64[], Float64[], empty_ws, 0.0, 0.0, true, false,
+            Int64[], Float64[], empty_ws, true, false,
             UInt64(0), UInt64(0))
     end
 end
