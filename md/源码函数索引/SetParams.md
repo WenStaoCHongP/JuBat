@@ -2,7 +2,7 @@
 
 - **源文件**: `src/SetParams.jl`
 - **行数**: 522 行
-- **函数/struct 计数**: 8 个 struct（`Electrode`、`Separator`、`CurrentCollector`、`Electrolyte`、`Cell`、`Tab`、`Binder`、`Cohesive`、`Scale`、`Params`）；2 个函数（`ChooseCell`、`NormaliseParam`）
+- **函数/struct 计数**: 10 个 struct（`Electrode`、`Separator`、`CurrentCollector`、`Electrolyte`、`Cell`、`Tab`、`Binder`、`Cohesive`、`Scale`、`Params`）；2 个函数（`ChooseCell`、`NormaliseParam`）
 - **职责**: 定义全部有量纲参数 struct，提供 `ChooseCell` 工厂与 `NormaliseParam` 无量纲化入口
 - **相关技术文档**: `md/01_参数定义与归一化.md`、`md/10_参数传递与模块架构.md`、`md/15_颗粒与极片模量区分.md`
 
