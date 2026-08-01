@@ -2,7 +2,7 @@
 
 - **源文件**: `src/SetMesh.jl`
 - **行数**: 768 行
-- **函数/struct 计数**: 4 个 struct + 2 个 abstract type + 10 个独立函数
+- **函数/struct 计数**: 4 个 struct + 2 个 abstract type + 12 个独立函数
 - **职责**: 有限元网格核心基础设施——`GaussPoint` / `Mesh` 数据结构、`CohesiveMesh` / `CzmSubmesh` CZM 网格容器、`SetMesh` / `Mesh1D` / `Mesh2D` 网格生成入口、`PickElement` / `CombineMesh` / `MultipleMesh` 网格操作、`GetGS` 高斯积分、`LagrangeBasis` / `ShapeFunction1D` / `ShapeFunction2D` 形函数、`GSweight` / `NCweight` 积分权重
 - **相关技术文档**: `md/02_几何与网格.md`
 
