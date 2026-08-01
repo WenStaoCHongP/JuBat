@@ -78,7 +78,7 @@ Newton 型迭代求解电极/电解液电势（耦合 Butler-Volmer）。返回 
 
 | 行号 | 内容 | 风险 |
 |------|------|------|
-| L92 | `flux_ne[1] += - I_app # this item is wiped and not used`；L99 `flux_pe[end] += I_app # this item is wiped and not used` | [UNCERTAIN] 该加法结果随后在 `P2D_potentials` L160/L162 被覆写为 `0.0`/`Vp0`，属已知死代码；注释自承"未使用"，可能遗留自旧版边界处理，应清理或明确语义 |
+| L92 | `flux_ne[1] += - I_app # this item is wiped and not used`；L99 `flux_pe[end] += I_app # this item is wiped and not used` | [UNCERTAIN] 该加法结果随后在 `P2D_potentials` L160/L161 被覆写为 `0.0`/`Vp0`，属已知死代码；注释自承"未使用"，可能遗留自旧版边界处理，应清理或明确语义 |
 | L121 | `iter_max = 100;`；L122 `rel_tol = 1e-9`（硬编码收敛参数） | [UNCERTAIN] 魔数无注释说明取值依据；应提升为 `case.opt` 字段或函数参数以便调参 |
 
 ### [COMPLEX-CHECK]
