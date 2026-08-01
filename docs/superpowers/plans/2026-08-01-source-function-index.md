@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED: Use superpowers:subagent-driven-development (if subagents available) or superpowers:executing-plans to implement this plan. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** 为 `src/` 下 30 个根目录源文件生成函数级注释文档（含 [DEBUG]/[PLACEHOLDER]/[COMPLEX-CHECK] 三类标注），输出到 `md/源码函数索引/`。
+**Goal:** 为 `src/` 下 35 个根目录源文件（不含 `install.jl`）生成函数级注释文档（含 [DEBUG]/[PLACEHOLDER]/[COMPLEX-CHECK] 三类标注），输出到 `md/源码函数索引/`。
 
 **Architecture:** 按物理模块 9 批次生成；每个源文件 → 一份 md；最后用 `_索引.md` 汇总 TOC 和全局三类标注统计。所有引用使用「文件名:行号」格式；不修改任何源码。
 
@@ -14,7 +14,7 @@
 
 ## 文件结构
 
-新建 `md/源码函数索引/` 目录，含 31 份文件：
+新建 `md/源码函数索引/` 目录，含 36 份文件：
 
 | 输出文件 | 对应源文件 | 批次 |
 |----------|------------|------|
@@ -78,11 +78,12 @@
 - [ ] **S3: 识别三类标注**
 
   按 spec §4 启发式规则全文扫描 `<SRC>`，记录命中行号 + 内容片段 + 推测说明：
-  - **[DEBUG]**: `println(` / `print(` / `@show` / `@info`（非结构化日志）/ 注释含 `debug/调试/临时/temp`
-  - **[PLACEHOLDER]**: `TODO/FIXME/HACK/XXX` 注释；注释含 `placeholder/fallback/hardcoded/占位/兜底/临时/防止/避免`；裸 `NaN/Inf`；try-catch 静默吞错；魔数 + 兜底注释组合
+  - **[DEBUG]**: `println(` / `print(` / `@show` / `@info`（**结构化日志除外**：结构化日志 = `@info` 出现在 `finally` 块、函数末尾、或 phase/cycle/初始化的固定位置且消息含这些语义；其余 `@info` 一律标 [DEBUG]）/ 注释含 `debug/调试/临时/temp`
+  - **[PLACEHOLDER]**: `TODO/FIXME/HACK/XXX` 注释；注释含 `placeholder/fallback/hardcoded/占位/兜底/临时/防止/避免`；裸 `NaN/Inf`；try-catch 静默吞错（catch 块只 return 默认值，**无** `@warn`/`@error`/`println`）；魔数 + 兜底注释组合（**以相邻注释为主要信号**：注释含上述关键词 → 标；无此类注释 → 默认不标）
   - **[COMPLEX-CHECK]**: `&&` 链 ≥3 条件；嵌套 `if` ≥3 层；连续 ≥2 个 `hasproperty/isdefined/!== nothing` 检查；单条件表达式 >100 字符
 
-  每条标注需独立判断是否真符合（如：物理合理的零初值不算 PLACEHOLDER；结构化 phase 收尾 `@info` 不算 DEBUG）。
+  每条标注需独立判断是否真符合（如：物理合理的零初值不算 PLACEHOLDER）。
+  **遇到歧义**：在「用途推测/风险」列写明歧义点并标 `[UNCERTAIN]` 前缀，不强行归类。
 
 - [ ] **S4: 生成 md**
 
@@ -91,9 +92,13 @@
   2. **数据结构**：每个 struct 一条目（字段、用途）
   3. **函数清单**：每个非 trivial 函数一独立条目（签名+行号、职责、关键逻辑 bullets、跨文件依赖）
   4. **省略项**：合并 trivial getter/常量为一行说明
-  5. **[DEBUG] 表**：行号 | 内容 | 用途推测
-  6. **[PLACEHOLDER] 表**：行号 | 内容 | 风险
-  7. **[COMPLEX-CHECK] 表**：行号 | 内容 | 简化建议
+  5. **[DEBUG] 表**：表头固定为 `### [DEBUG]`，列 = 行号 | 内容 | 用途推测
+  6. **[PLACEHOLDER] 表**：表头固定为 `### [PLACEHOLDER]`，列 = 行号 | 内容 | 风险
+  7. **[COMPLEX-CHECK] 表**：表头固定为 `### [COMPLEX-CHECK]`，列 = 行号 | 内容 | 简化建议
+
+  **数据行格式严格统一**：以 `| L<数字> |` 开头（如 `| L142 | println(...) | 临时检查 |`），便于 Task 8.3 awk 脚本聚合。
+
+  **边缘情况**：若文件无 function/struct 定义（纯 include/export，如 `JuBat.jl`），第 2-3 节写「本文件无独立函数/struct 定义」，第 1 节「职责」字段说明实际内容（include 顺序、export 列表）；若某标注表为空，写「无」并保留表头。
 
   写完用 Write 工具保存到 `<OUT>`。
 
@@ -278,38 +283,70 @@
 **Files:**
 - Create: `md/源码函数索引/_索引.md`
 
-- [ ] **Step 1: 汇总各 md 的三类标注数量**
+**关键约定**：所有源文件 md 的三类标注表必须使用固定表头 `### [DEBUG]`、`### [PLACEHOLDER]`、`### [COMPLEX-CHECK]`（已在 Task 模板 S4 规定），数据行以 `^| L` 开头。本任务基于此确定性结构进行聚合。
 
-  Run（在仓库根目录）：
+- [ ] **Step 1: 用脚本确定性聚合各 md 的三类标注计数**
+
+  Run（bash，在仓库根目录）：
   ```bash
   for f in "md/源码函数索引"/*.md; do
     [[ "$f" == *_索引.md ]] && continue
     name=$(basename "$f" .md)
-    debug=$(grep -c "^| L" "$f" 2>/dev/null || echo 0)  # 占位，需手动按表头区分
-    echo "$name: $debug"
+    # 抽取每个 ### 表节的数据行数：awk 进入/退出模式
+    counts=$(awk '
+      /^### \[DEBUG\]/         {sec="D"; next}
+      /^### \[PLACEHOLDER\]/   {sec="P"; next}
+      /^### \[COMPLEX-CHECK\]/ {sec="C"; next}
+      /^### /                  {sec=""; next}
+      /^---/                   {sec=""; next}
+      /^\| L/ && sec=="D" {d++}
+      /^\| L/ && sec=="P" {p++}
+      /^\| L/ && sec=="C" {c++}
+      END {printf "D=%d P=%d C=%d", d+0, p+0, c+0}
+    ' "$f")
+    echo "$name: $counts"
   done
   ```
-  注：上述 shell 仅辅助；最终统计需基于各 md 的三类标注表实际行数（由执行者人工或脚本读取），分别得到 DEBUG / PLACEHOLDER / COMPLEX-CHECK 计数。
+  预期输出（每行一份）：
+  ```
+  JuBat: D=0 P=0 C=0
+  CouplingState: D=3 P=2 C=5
+  ...
+  ```
+  将输出原样记录到下一步的统计表里。**若某 md 的 D/P/C 计数与肉眼抽查明显不符**（抽查 2 份），先回到该 md 修正表头/数据行格式，重跑脚本。
 
 - [ ] **Step 2: 按物理模块组织 TOC**
 
-  按 spec §3.2 模板，分 7 个模块组列出所有 md 链接：
-  - 电化学 / 热模型 / 力学·CZM / 网格·几何 / 参数·状态 / 求解器 / IO·工具
+  按 spec §3.2 模板，分 7 个模块组列出所有 35 个源文件 md 链接：
+  - 电化学（SPMe/SPM/P2D/Electrode×2/Electrolyte×2）
+  - 热模型（Thermal/ThermalDistributed/ThermalPolar2D）
+  - 力学·CZM（czm/CzmSolve/CzmPostProcess/CzmUnitMesh/Mechanical/Materialmatrix）
+  - 网格·几何（SetMesh/Jellyrollmodel/ring）
+  - 参数·状态（Option/SetParams/SetCase/CouplingState/Variables/Initialisation/PostProcessing）
+  - 求解器（Solve/CallModel/CycleSolver/CycleData/Parallelsolution/Assemble）
+  - 入口·IO·工具（JuBat/CsvExport/Tools）
 
-- [ ] **Step 3: 写三类标注全局统计表**
+- [ ] **Step 3: 写三类标注全局统计表 + 优先处理建议**
 
-  - 三类总数 + Top 5 热点文件表（按三类合计降序）
-  - 优先处理建议：列出所有 [PLACEHOLDER] 高风险项 + Top 5 [COMPLEX-CHECK] 简化候选
-  - 文件顶部注明「以 commit `<HASH>` 为准」（用 `git rev-parse --short HEAD` 取当前 hash）
+  **3a 总数表**：三类总数合计（基于 Step 1 脚本输出求和）。
+
+  **3b Top 5 热点文件表**：按 `(D + P + C)` 降序取前 5，列：文件名 | D | P | C | 合计。
+
+  **3c 优先处理建议**（确定性规则）：
+  - **[PLACEHOLDER] 高风险项**：列出所有 [PLACEHOLDER] 条目中，**「风险」列含以下任一关键词**的条目：`掩盖 / coupling / 耦合 bug / nothing / 未就绪 / 默认值 / NaN`。每条带「文件名:行号 + 风险描述」。
+  - **[COMPLEX-CHECK] Top 5 简化候选**：按表达式**字符长度降序**取前 5（字符长度 = md 中 `^| L<n> | <内容> |` 一行的「内容」字段长度）。每条带「文件名:行号 + 简化建议」。
+
+  文件顶部注明「以 commit `<HASH>` 为准」（运行 `git rev-parse --short HEAD` 取当前 hash）。
 
 - [ ] **Step 4: 写入文件并提交**
 
   ```bash
   git add "md/源码函数索引/_索引.md"
-  # 删除占位文件
+  # 删除 Task 1.0 创建的占位文件
   git rm "md/源码函数索引/.gitkeep"
   git commit -m "docs(src-index): add _索引.md and finalize directory"
   ```
+  注：`.gitkeep` 由 Task 1.0 创建，必须在此处删除以满足验收「无 `.gitkeep`」。
 
 ---
 
@@ -317,14 +354,12 @@
 
 执行完所有任务后：
 
-- [ ] `ls "md/源码函数索引/"` 应见 30 份 `<NAME>.md` + 1 份 `_索引.md`，无 `.gitkeep`
+- [ ] `ls "md/源码函数索引/"` 应见 35 份 `<NAME>.md` + 1 份 `_索引.md`，无 `.gitkeep`
 - [ ] `_索引.md` 含 commit hash 标注 + Top 5 表 + 优先处理建议
-- [ ] 随机抽 3 份 md 验证行号引用准确（每份抽 3 处）
+- [ ] 随机抽 5 份 md 验证行号引用准确（每份抽 3 处；其中至少 1 份必须是源码 >400 行的文件，如 SetMesh/CouplingState/czm，因长文件行号偏移风险高）
 - [ ] 随机抽 5 处三类标注核对源码（无误报重大问题）
-- [ ] 提交一个最终验收 commit：
-  ```bash
-  git commit --allow-empty -m "docs(src-index): index complete (30 files + _索引)"
-  ```
+
+Task 8.3 的最终 commit 即为完成标记，无需额外空 commit。
 
 ---
 
