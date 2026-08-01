@@ -10,7 +10,7 @@
 
 ### 1.1 背景
 
-JuBat 项目的 `src/` 目录共 38 个 `.jl` 文件、约 200 个函数/struct、超过 11,000 行代码。现有 `md/` 目录的 15 篇技术文档以**物理模型/算法**为主线组织（电化学、热、CZM、耦合等），并不按源文件/函数粒度展开。
+JuBat 项目的 `src/` 目录共 36 个 `.jl` 文件（含 `parameters/` 子目录中 5 个参数集文件）、约 203 个函数/struct、约 11,184 行代码。现有 `md/` 目录的 17 篇技术文档以**物理模型/算法**为主线组织（电化学、热、CZM、耦合等），并不按源文件/函数粒度展开。
 
 这导致两个问题：
 
@@ -52,7 +52,7 @@ md/
     ├── CouplingState.md              ← 对应 src/CouplingState.jl
     ├── czm.md                        ← 对应 src/czm.jl
     ├── CzmSolve.md
-    ├── ... (约 33 个文件)
+    ├── ... (共 35 个文件)
 ```
 
 **命名约定**：md 文件名 = 对应 src 文件去 `.jl` 后缀（如 `CouplingState.jl` → `CouplingState.md`），便于双向跳转。
@@ -61,10 +61,12 @@ md/
 
 | 路径 | 是否覆盖 | 说明 |
 |------|----------|------|
-| `src/*.jl`（33 个核心文件） | ✓ | 每个文件单独一份 md |
+| `src/*.jl`（30 个根目录核心文件） | ✓ | 每个文件单独一份 md |
 | `src/parameters/*.jl`（5 个） | ✗ | 参数集文件，函数极少，跳过 |
-| `src/install.jl` | ✗ | 仅依赖声明 |
+| `src/install.jl` | ✗ | 仅依赖声明（107 字节） |
 | `src/.DS_Store` | ✗ | 系统文件 |
+
+合计覆盖：30 个根目录源文件 + 1 个 `_索引.md` = 31 份新文档。
 
 ### 2.3 与现有文档的关系
 
@@ -213,7 +215,7 @@ JuBat 项目 `src/` 目录函数级注释与三类标注汇总。
 | 注释含关键词 | `# debug`、`# 调试`、`# 临时`、`# temp`、`# for debug` |
 | 明显临时的中间变量打印 | `@show "checkpoint 1", x` |
 
-**排除**：`@info` 配合正式日志结构（如 `@info "Cycle $(n) done"` 且出现在 `finally`/phase 收尾位置）——这算正式日志，不算调试。
+**排除**：`@info` 配合正式日志结构（如 `@info "Cycle $(n) done"` 且出现在 `finally`/phase 收尾位置）——这算正式日志，不算调试。**判定准则**：若该输出语句删除后程序逻辑不变，且非 phase/循环/初始化的固定结构化日志，则判为 [DEBUG]；否则排除。
 
 ### 4.2 [PLACEHOLDER] 运行兜底
 
@@ -223,7 +225,8 @@ JuBat 项目 `src/` 目录函数级注释与三类标注汇总。
 | 注释含 `placeholder`/`fallback`/`hardcoded`/`hardcode`/`占位`/`兜底`/`临时` | |
 | 裸 `NaN`/`Inf` 兜底赋值 | `q_e = NaN  # SPMe 未就绪` |
 | try-catch 静默吞错（catch 块只 return 默认值，无日志） | `catch; return 0.0 end` |
-| 配合魔数 0.0/1.0 的"避免崩溃"赋值（结合上下文判断） | `E_coat = 5e8  # 防止 nothing` |
+| 配合魔数 0.0/1.0 的"避免崩溃"赋值（**以相邻注释为主要信号**：注释含 `fallback/防止/避免/保证运行/兜底` → 判为 [PLACEHOLDER]；无此类注释 → 默认不标） | `E_coat = 5e8  # 防止 nothing` |
+| try-catch 静默吞错（catch 块只 return 默认值，**无** `@warn`/`@error`/`println`） | `catch; return 0.0 end` |
 
 **排除**：物理上确实合理的零初值（如 `D = zeros(n)` 初始损伤为 0）——这是物理初值，不是兜底。
 
@@ -258,7 +261,7 @@ JuBat 项目 `src/` 目录函数级注释与三类标注汇总。
 | 批次 | 文件 | 主线 |
 |------|------|------|
 | 1 | `JuBat.jl`, `Option.jl`, `SetParams.jl`, `SetCase.jl` | 入口与参数 |
-| 2 | `SPMe.jl`, `SPM.jl`, `P2D.jl`, `Electrode*.jl`, `Electrolyte*.jl` | 电化学 |
+| 2 | `SPMe.jl`, `SPM.jl`, `P2D.jl`, `ElectrodeDiffusion.jl`, `ElectrodePotential.jl`, `ElectrolyteDiffusion.jl`, `ElectrolytePotential.jl` | 电化学 |
 | 3 | `Thermal.jl`, `ThermalDistributed.jl`, `ThermalPolar2D.jl` | 热模型 |
 | 4 | `czm.jl`, `CzmSolve.jl`, `CzmPostProcess.jl`, `CzmUnitMesh.jl`, `Mechanical.jl`, `Materialmatrix.jl` | 力学 / CZM |
 | 5 | `SetMesh.jl`, `Jellyrollmodel.jl`, `ring.jl` | 网格与几何 |
@@ -317,7 +320,7 @@ JuBat 项目 `src/` 目录函数级注释与三类标注汇总。
 ## 8. 验收
 
 完成时交付：
-- [ ] `md/源码函数索引/` 目录及约 33 份 md 文件
-- [ ] `_索引.md` 含 TOC 与三类标注全局统计
+- [ ] `md/源码函数索引/` 目录及 30 份源文件 md + 1 份 `_索引.md`
+- [ ] `_索引.md` 含 TOC、三类标注全局统计、记录生成时所基于的 git commit hash
 - [ ] 抽查 3 个文件，所有行号引用准确
 - [ ] 抽查 5 处三类标注，识别合理（无误报/漏报重大问题）
