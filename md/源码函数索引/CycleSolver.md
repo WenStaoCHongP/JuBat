@@ -2,7 +2,7 @@
 
 - **源文件**: `src/CycleSolver.jl`
 - **行数**: 547 行
-- **函数/struct 计数**: 3 struct + 2 默认构造函数 + 5 函数 = 10 条目
+- **函数/struct 计数**: 3 struct + 2 默认构造函数 + 4 函数 = 9 条目
 - **职责**: 循环仿真顶层——阶段结果与循环结果容器（`PhaseResult`/`CycleResult`/`CyclingResult`）、单阶段求解（`solve_phase`）、循环主循环（`solve_cycling`）、SOC 初始化辅助（`compute_cs0_from_soc`/`apply_initial_soc!`）
 - **相关技术文档**: `md/09_分流求解器.md`、`md/10_参数传递与模块架构.md`
 
