@@ -224,20 +224,17 @@ function NormaliseParam(param_dim::Params)
 
 ### [DEBUG]
 
-| 行号 | 内容 | 用途推测 |
-|------|------|----------|
-| L313 | `@warn "[ChooseCell] PE.E_coat/NE.E_coat 未定义；scale.E_coat 将保持 0..."` | 警告，非调试输出。提示用户极片模量字段缺失，宏观力学不可用 |
-| L334 | `@warn "[ChooseCell] cohesive.σ_max_pe_pcc 或 G_c_pe_pcc = 0; ..."` | 警告，非调试输出。提示 CZM 锚点数据缺失 |
+无
 
-> 上述 `@warn` 是参数完整性校验的结构化警告，按规范不算 [DEBUG]。
+> 上述 `@warn`（L313、L334）是参数完整性校验的结构化警告，按规范不算 [DEBUG]。
 
 ### [PLACEHOLDER]
 
 | 行号 | 内容 | 风险 |
 |------|------|------|
-| L339-L344 | `# cohesive 数据缺失时回退到 scale.L（保持非 CZM 参数集的旧行为，Λ = 1）。if ... > 0 ... else scale.δ_czm = scale.L end` | 注释含「回退/旧行为」；非 CZM 参数集的兜底，CZM 启用时由前置 `@warn` 拦截，风险低 |
-| L312-L324 | `if PE.E_coat == 0 \|\| NE.E_coat == 0 ... @warn ... scale.E_coat = 0` | 缺失字段时 `scale.E_coat` 保持 0；下游 `NormaliseParam` 中用 `E_coat > 0` 守卫跳过力学归一化。属「兜底」行为，但伴随 `@warn`，风险低 |
-| L333-L335 | `if σ_max_pe_pcc == 0 \|\| G_c_pe_pcc == 0 @warn ... end` | 同上，CZM 锚点缺失的兜底（不直接吞错，伴随 `@warn`） |
+| L339 | `# cohesive 数据缺失时回退到 scale.L（保持非 CZM 参数集的旧行为，Λ = 1）。if ... > 0 ... else scale.δ_czm = scale.L end`（L339-L344） | 注释含「回退/旧行为」；非 CZM 参数集的兜底，CZM 启用时由前置 `@warn` 拦截，风险低 |
+| L312 | `if PE.E_coat == 0 \|\| NE.E_coat == 0 ... @warn ... scale.E_coat = 0`（L312-L324） | 缺失字段时 `scale.E_coat` 保持 0；下游 `NormaliseParam` 中用 `E_coat > 0` 守卫跳过力学归一化。属「兜底」行为，但伴随 `@warn`，风险低 |
+| L333 | `if σ_max_pe_pcc == 0 \|\| G_c_pe_pcc == 0 @warn ... end`（L333-L335） | 同上，CZM 锚点缺失的兜底（不直接吞错，伴随 `@warn`） |
 
 > 上述均为带 `@warn` 的显式回退，非静默吞错，按规范风险列说明但不算严重 PLACEHOLDER。
 
@@ -245,5 +242,5 @@ function NormaliseParam(param_dim::Params)
 
 | 行号 | 内容 | 简化建议 |
 |------|------|----------|
-| L273-L291 | `if abs(rho) < 1e-8 ... 厚度加权公式 ... else ... end` + `if abs(heat_Q) < 1e-8 ... 厚度加权公式 ... else ... end` | 连续两段相似守卫 + 长公式（heat_Q 表达式 > 100 字符），可抽取 `layer_weighted_average(fields, layers)` 辅助函数 |
-| L359-L411 | 正极/负极归一化块（各 ~25 行）高度对称 | 重复结构可参数化为 `_normalise_electrode!(param, param_dim, which::Symbol)` 减半代码 |
+| L273 | `if abs(rho) < 1e-8 ... 厚度加权公式 ... else ... end` + `if abs(heat_Q) < 1e-8 ... 厚度加权公式 ... else ... end`（L273-L291） | 连续两段相似守卫 + 长公式（heat_Q 表达式 > 100 字符），可抽取 `layer_weighted_average(fields, layers)` 辅助函数 |
+| L359 | 正极/负极归一化块（各 ~25 行）高度对称（L359-L411） | 重复结构可参数化为 `_normalise_electrode!(param, param_dim, which::Symbol)` 减半代码 |
