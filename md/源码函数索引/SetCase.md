@@ -87,5 +87,5 @@ end
 
 | 行号 | 内容 | 简化建议 |
 |------|------|----------|
-| L13-L94 | `if opt.model == "SPM" \|\| opt.model == "SPMe" ... elseif opt.model == "P2D" ... end` 嵌套 3 层 + 多个 `if opt.model == "SPMe"` / `if opt.thermalmodel == "lumped" elseif "distributed2D"` / `if opt.model == "P2D"` 子分支 | 嵌套层级较深，且 SPM/SPMe 与 P2D 分支共享大量重复代码（mesh_np/mesh_pp/mesh_el 构造）。建议抽取 `build_mesh_spm(opt, param)` 与 `build_mesh_p2d(opt, param)` 子函数；状态索引构建可参数化 |
-| L82-L85 | `elseif opt.thermalmodel == "distributed2D" # Use the first thermal DOF ... index["temperature"] = [v0 + 1]` | distributed2D 分支不递增 `v0`（与 lumped 不同），后续 thermal2D 装配会另算 DOF 数。控制流不直观，建议加注释说明 thermal DOF 由 thermal2D 模块接管 |
+| L13 | `if opt.model == "SPM" \|\| opt.model == "SPMe" ... elseif opt.model == "P2D" ... end` 嵌套 3 层 + 多个 `if opt.model == "SPMe"` / `if opt.thermalmodel == "lumped" elseif "distributed2D"` / `if opt.model == "P2D"` 子分支（L13-L94） | 嵌套层级较深，且 SPM/SPMe 与 P2D 分支共享大量重复代码（mesh_np/mesh_pp/mesh_el 构造）。建议抽取 `build_mesh_spm(opt, param)` 与 `build_mesh_p2d(opt, param)` 子函数；状态索引构建可参数化 |
+| L82 | `elseif opt.thermalmodel == "distributed2D" # Use the first thermal DOF ... index["temperature"] = [v0 + 1]`（L82-L85） | distributed2D 分支不递增 `v0`（与 lumped 不同），后续 thermal2D 装配会另算 DOF 数。控制流不直观，建议加注释说明 thermal DOF 由 thermal2D 模块接管 |
