@@ -127,10 +127,9 @@
 
 ### [DEBUG]
 
-| 行号 | 内容 | 用途推测 |
-|------|------|----------|
-| L69 | `debug_coupling::Bool = false # print detailed logs for electro-thermal coupling` | 字段名/注释含 debug；用户主动开启的耦合诊断日志开关，非代码内调试输出 |
-| L70 | `debug_log_path::String = "output/debug.log" # debug log file path` | 字段名/注释含 debug；同上，路径配置字段 |
+无
+
+> 注：`debug_coupling` (L69) 和 `debug_log_path` (L70) 是用户配置字段（非临时调试输出），不纳入 [DEBUG] 标注。
 
 ### [PLACEHOLDER]
 
