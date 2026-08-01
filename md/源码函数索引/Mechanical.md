@@ -76,6 +76,6 @@
 
 | 行号 | 内容 | 简化建议 |
 |------|------|------|
-| L67-L76 | P2D 分支中两层嵌套循环（电极节点 × 颗粒内部节点），含 `Int64.(collect((i-1)*meshnum_perparticle_n .+ (1:meshnum_perparticle_n)))` 索引计算 | 抽出 `extract_particle_mesh(mesh_full, i, n_per_particle) -> Mesh` helper；当前两层嵌套跨 L67-L76 |
+| L67 | P2D 分支中两层嵌套循环（电极节点 × 颗粒内部节点，L67-L76），含 `Int64.(collect((i-1)*meshnum_perparticle_n .+ (1:meshnum_perparticle_n)))` 索引计算 | 抽出 `extract_particle_mesh(mesh_full, i, n_per_particle) -> Mesh` helper |
 | L167 | `@assert case.param_dim.PE.E_coat > 0 && case.param_dim.NE.E_coat > 0 "..."`（2 个 `&&` 条件 + 长 error message） | 简单入口断言，可保留；或拆为两条独立 `@assert` 分别给出更精确的错误信息 |
 | L266 | `if is_inner[i] \|\| is_outer[i]` + 内部 `bc_nodes[i] = :fixed_xy`（嵌套 2 层，配合 2 个 `||` 谓词） | 简单循环，可保留 |
