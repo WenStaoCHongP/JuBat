@@ -1,0 +1,194 @@
+# CouplingState.jl
+
+- **源文件**: `src/CouplingState.jl`
+- **行数**: 763 行
+- **函数/struct 计数**: 19 个（10 struct + 9 函数）
+- **职责**: 类型安全的状态布局与网格几何定义——CZM 本构参数缓存（`CzmInterfaceParams`/`CzmParamCache`）、多 SPMe 状态向量布局索引（`MultiSPMeLayout`）、CZM 装配缓存与工作区（`CZMAssemblyCache`/`CZMAssemblyWorkspace`）、CZM 跨时间步损伤更新入口（`update_czm_damage!`）、粗热→CZM 节点双线性插值矩阵构造
+- **相关技术文档**: `md/10_参数传递与模块架构.md`、`md/06_内聚力模型_CZM.md`、`docs/planning-with-files/力学模块修改/宏观力学模块无量纲化重设计.md`
+
+## 数据结构
+
+### `@with_kw struct CzmInterfaceParams` — L30-L65
+
+单一界面类型（如 `:PE_PCC` 或 `:NE_NCC`）的 CZM 本构参数（归一化后）。20 个字段覆盖 `Materialmatrix.jl` 实际读取的全部字段。
+
+- 体模量与热化学载荷：`E_eff`、`ν`、`α`（L32-L34）
+- 无量纲化派生量（重设计 v2）：`Λ = scale.L/scale.δ_czm`、`E_star`（调和平均双材料模量）、`L_ch`（内禀长度）（L37-L39）
+- Mode I（法向）：`σ_max`、`K_n`、`δ_0_n`、`δ_c_n`、`G_c`（L42-L46）
+- Mode II（切向）：`τ_max`、`K_t`、`δ_0_t`、`δ_c_t`、`G_c_t`（L49-L53）
+- BK 混合模式 + 本构选择：`η`、`czm_model`（L56-L57）
+- 界面热阻：`h_c0`、`k_air`、`lambda_m`、`beta`、`threshold`（L60-L64）
+
+### `struct CzmParamCache` — L76-L80
+
+按界面类型分组的 CZM 参数缓存（spec §3.5.2）。
+
+- `by_interface::Dict{Symbol, CzmInterfaceParams}`：`:PE_PCC` 与 `:NE_NCC` 两键（L77）
+- `param_ref::Params`：保留 param 引用，供 `assemble_bulk_stiffness` 读 `PE/NE.E_coat`（L78）
+- `id::UInt64`：内容哈希 `hash((hash(pe_pcc), hash(ne_ncc)))`，Task 4.4 修正——原 `objectid(param)` 漏检原位修改（L79）
+
+### `struct MultiSPMeLayout` — L87-L95
+
+多 SPMe 状态向量的布局索引。初始化后不可变。
+
+- `ne`（热单元数）、`n_chem`（每单元电化学 DOF 数）、`nT`（热节点 DOF 数）、`n_total`（L88-L91）
+- `chem_range::UnitRange{Int}`、`thermal_range::UnitRange{Int}`（L92-L93）
+- `areas::Vector{Float64}`：预计算的单元面积（网格不变量）（L94）
+
+### `struct BoundaryEdgeCache` — L125-L128
+
+预计算的外边界边列表（网格不变量），用于对流边界条件装配。
+
+- `edges::Vector{Tuple{Int,Int}}`：`(node_a, node_b)` 对，`a < b`（L126）
+- `L_edge::Vector{Float64}`：边长（无量纲）（L127）
+
+### `struct MeshGeometry` — L163-L172
+
+Jellyroll 网格的几何拓扑信息。构建后不可变。
+
+- `element_layer::Vector{Int}`：层类型 1=NE/2=SP/3=PE/4=NCC/5=PCC（L164）
+- `is_inner_layer::Vector{Bool}`（L165）
+- `layer_weights::Matrix{Float64}`：`ne × 5` 层面积权重 `[NE, SP, PE, PCC, NCC]`（L166）
+- `interface_pairs::Vector{Tuple{Int,Int}}`：CZM 界面配对（L167）
+- `czm_element_map::Dict{Int,Vector{Int}}`：热单元号 → CZM 单元索引向量（L168）
+- `inner_nodes`、`outer_nodes`、`boundary_edges`（L169-L171）
+
+### `struct CohesiveElementGeom` — L183-L193
+
+预计算的单个 cohesive 单元几何信息。构建后不变。包含单元长度、法/切向量、旋转矩阵 `R`、全局 DOF 编号 `[8]`、底/顶面节点、Gauss 权重/坐标。
+
+### `mutable struct CZMAssemblyWorkspace` — L201-L238
+
+CZM 每轮 Newton 迭代复用的工作区，避免单元级临时分配。所有中间矩阵/向量运算使用 `mul!` 复用预分配数组。
+
+- 单元级：`u_e[8]`、`K_e[8×8]`、`f_int_e[8]`、`B_global[2×8]`、`B_local[2×8]`、`δ_local[2]`、`BL_dT[8×2]`、`BL_dT_B[8×8]`、`T_vec[2]`、`BLtT[8]`（L203-L212）
+- 全局级：`f_int_coh`、`separations`、`tractions`（L214-L216）
+- 预分配稀疏矩阵：`K_coh_buf`、`K_coh::SparseMatrixCSC`（L218-L219）
+- 构造器 `CZMAssemblyWorkspace(ndof, n_coh)` 内部预算 `nnz_est = max(n_coh * 64, 1)`（L221-L237）
+
+### `mutable struct CZMAssemblyCache` — L248-L266
+
+CZM 求解器的静态/准静态缓存。失效判据基于 `czm_mesh_id` 与 `param_cache_id`——任一变化或 `fix_inner` 切换即重建。挂在 `Case.czm_cache` 上跨时间步复用。
+
+- `K_bulk`、`bulk_dofs`、`cohesive_geom`、`bc_dofs`、`bc_vals`、`ws`、`fix_inner`、`valid`、`czm_mesh_id`、`param_cache_id`（L249-L258）
+
+### `mutable struct CzmLayout` — L273-L277
+
+CZM 求解的布局信息和跨时间步状态。对标电化学的 `MultiSPMeLayout`。
+
+- `n_coh`（cohesive 单元数）、`ndof`（总位移 DOF 数 = 2·nnode）、`u_prev`（上一步位移场，跨时间步持有）（L274-L276）
+
+### `mutable struct CZMSnapshot` — L636-L650
+
+per-step CZM solver state for CSV export。所有物理值以归一化（无量纲）形式存储，denormalization 在 CSV 写出时通过 `case.param.scale` 完成。
+
+- `time_s`（物理时间已还原）、`cycle`、`phase`（L637-L639）
+- `displacement`、`damage`、`separation_n/t`、`traction_n/t`（L640-L645）
+- `converged`、`iterations`、`residual_norm`、`method`（L646-L649）
+
+## 函数清单
+
+### `MultiSPMeLayout(ne, n_chem, nT)` — L98-L106
+
+便捷构造器：自动计算 `chem_range`、`thermal_range` 和 `n_total`，`areas` 延迟填充为零向量。
+
+### `MultiSPMeLayout(ne, n_chem, nT, mesh_th)` — L109-L118
+
+便捷构造器：接收 mesh 计算单元面积。通过累加 `mesh_th.gs.weight[g] * mesh_th.gs.detJ[g]` 得到每个单元的面积（L113-L116）。`@inbounds` 优化。
+
+### `compute_boundary_edge_cache(mesh, is_outer) -> BoundaryEdgeCache` — L136-L156
+
+从网格和外部节点标记中提取去重的外边界边列表。
+
+- 遍历每个 Q4 单元的 4 条边（L145-L146），仅当两端节点均为外边界节点时收集（L147）
+- `(a, b)` 归一为 `a < b` 后用 `Set` 去重（L148-L150）
+- 边长 `hypot(dx, dy)`（L152）
+
+### `CzmLayout(czm_mesh::CohesiveMesh)` — L280-L284
+
+便捷构造器：从 `czm_mesh` 初始化 `n_coh` 与 `ndof = 2·nnode`，`u_prev = zeros(ndof)`。
+
+### `compute_czm_params_per_interface(case) -> CzmParamCache` — L302-L401
+
+按界面类型计算 CZM 参数。E_eff 用涂层模量（`PE.E_coat` / `NE.E_coat`），不做全栈均一化。
+
+- 入口断言（L307-L313）：`PE/NE.E_coat > 0`、`scale.σ_czm > 0`、`scale.E_coat > 0`、`σ_max_* > 0`、`G_c_* > 0`、`K_n_* > 0`
+- `Λ = scale.L / scale.δ_czm`（L322），断言 `scale.δ_czm > 0`（L321）
+- `E_star`：界面双材料等效模量（调和平均）（L330-L331）
+- `L_ch`：内禀长度 `E*·G_c/σ_max²`（L332-L333）
+- K_0 下界判据（L339-L341）：`δ_0* > 0.1` 时 `@warn`（maxlog=1）
+- 分别构造 `:PE_PCC` 与 `:NE_NCC` 的 `CzmInterfaceParams`（L343-L393）
+- 内容哈希 `hash((hash(pe_pcc), hash(ne_ncc)))` 用于缓存失效检测（L399，Task 4.4 fix）
+
+### `compute_czm_strain_inputs(case, variables, T_nodes) -> NamedTuple` — L419-L478
+
+按 spec v2 §5.1 计算 CZM 体单元粒度的 `dT`、`Δsoc_p`、`Δsoc_n`，以及 CZM 节点粒度的 `T_czm_nodes`。
+
+- `T_czm_nodes = M * T_nodes`，`M = czm_mesh.thermal_to_czm`（L426-L428），断言 `M !== nothing`（L427）
+- `dT_thermal[e] = avg(T_nodes[nodes]) - T0`（L435-L438），通过 `thermal_elem_map` 直接取值到 CZM 单元（L440-L446）
+- `Δsoc_p/n` 通过 `thermal_elem_map` 直接取值，按 `material_type` 分发（L460-L474）；PCC/NCC/SP 保持 0
+
+### `update_czm_damage!(case, variables, T_nodes_carry) -> (u_czm, converged)` — L497-L606
+
+更新 CZM 网格的损伤状态。牛顿-拉弗森迭代 + 载荷子步法。
+
+- 同步 `czm_model` 选项（L504）
+- 计算 per-interface 参数（L507）；`α_eff` 跨界面均匀（L510，spec §7.1）
+- `β_n = NE.Omega/3`、`β_p = PE.Omega/3`（L511-L512）
+- 构建或复用 CZM 缓存（L515）
+- NaN 诊断（L528-L533）：T / soc_n / soc_p / dT / Δsoc 任一含 NaN 则 `@warn`
+- `u_czm_prev` 从 `czm_layout` 取；NaN 时重置（L536-L542）
+- Viscous regularization（L553-L563）：`β = Δs / (τ_v* + Δs)`，basic=1.0，arc_length/load_substep=1/n_load_steps
+- 调用 `solve_czm_step`（L565-L571）
+- debug 块（L573-L587）：打印 `max(δ_n)`、`max(δ_eff)`、`converged`、`β`、`D_max` 多个统计
+- 求解结果 NaN 诊断（L590-L594）
+- **仅在收敛时提交损伤状态**（L598-L603）：避免部分收敛/发散状态传播到下一步
+
+### `update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)` — L613-L623
+
+6 参数兼容入口：自动构建 `CzmLayout` 并同步外部传入的 `u_prev`，然后委托给 3 参数版本。
+
+### `build_thermal_to_czm_interp(thermal_mesh::Mesh, czm_submesh::CzmSubmesh) -> SparseMatrixCSC` — L670-L762
+
+构造粗热节点 → CZM 节点双线性插值矩阵（`n_czm_node × n_thermal_node`）。每行 ≤4 个非零元，行和 = 1。
+
+- 预计算每个粗热单元的中心坐标与半径（L677-L687）
+- 内嵌 `shape_funcs(ξ, η)` 返回 4 节点双线性形函数值（L690-L697）
+- 内嵌 `solve_isoparametric`：Newton 迭代解等参坐标 `(ξ, η) ∈ [-1, 1]²`，max_iter=20，tol=1e-10，退化检测 `abs(detJ) < 1e-20`（L700-L723）
+- 主循环（L729-L759）：对每个 CZM 节点取最近 10 个候选单元（L735），解等参坐标，命中则用 `shape_funcs` 填权重（L741-L746）；否则回退到最近粗热节点（权重 1）（L751-L758）
+
+## 省略项
+
+无。所有 struct 与 function 均有独立条目。
+
+### [DEBUG]
+
+| 行号 | 内容 | 用途推测 |
+|------|------|----------|
+| L532 | `@warn "CZM inputs contain NaN" has_nan_T=... has_nan_soc_n=... has_nan_soc_p=... n_nan_dT=... n_nan_soc_n=... n_nan_soc_p=...` | 输入异常诊断；结构化 `@warn` 但携带多个诊断字段，用于定位 NaN 来源 |
+| L540 | `@warn "CZM u_czm_prev contains NaN, resetting to zeros"` | 上一时间步位移含 NaN 时告警 + 重置 |
+| L586 | `println("[CZM-Debug] max(δ_n)=$(round(max_delta_n; digits=6)), max(δ_eff)=...")` | 受 `case.opt.debug_coupling` 门控的运行时调试打印；输出分离量、converged、β、D_max 等关键诊断 |
+| L593 | `@warn "CZM solve issue" converged=... iterations=... residual=... has_nan_disp=... has_nan_damage=...` | 求解结果异常诊断；结构化 `@warn`，用于追踪收敛/NaN 问题 |
+
+### [PLACEHOLDER]
+
+| 行号 | 内容 | 风险 |
+|------|------|------|
+| L341 | `@warn "CZM 初始刚度过软：δ_0* > 0.1..." maxlog=1` | 参数验证类告警（非占位）；maxlog=1 抑制重复，不计入 PLACEHOLDER |
+| L398 | 注释"原为 objectid(param)，但原位修改 param 字段不改变 objectid，导致漏检" | 说明性注释，无占位代码 |
+| L509 | `case.czm_param_cache === nothing && (case.czm_param_cache = czm_param_cache)` | 惰性缓存写入；首次调用后后续不再更新——若 case.param.cohesive 字段运行时变化且未通过 `compute_czm_params_per_interface` 重算则缓存陈旧（依赖 Task 4.4 内容哈希失效机制兜底） |
+| L586 | `[CZM-Debug] ... D_max(trrial)=...`（"trrial" 拼写错误） | 拼写笔误，输出字符串不影响逻辑；用户感知 |
+| L718 | `abs(detJ) < 1e-20 && break`（Newton 迭代退化保护） | magic number 1e-20；退化单元几何近似奇异时退出，通常合理 |
+| L722 | `return ξ, η, abs(ξ) <= 1.0 + 1e-6 && abs(η) <= 1.0 + 1e-6`（容差判定） | magic number 1e-6 容差；数值合理性 |
+| L757 | `push!(V_vals, 1.0)`（回退到最近粗热节点权重 1） | 兜底分支：Newton 迭代失败时的 nearest-node fallback，通常仅极少数节点命中 |
+
+### [COMPLEX-CHECK]
+
+| 行号 | 内容 | 简化建议 |
+|------|------|----------|
+| L307 | 连续 7 个 `@assert param.X > 0 "..."` 入口断言（参数 positivity 检查，跨 L307-L313） | 抽出 `assert_positive(params, fields...)` helper；当前虽是独立断言，但模式重复且不易维护 |
+| L531 | `if has_nan_T \|\| has_nan_soc_n \|\| has_nan_soc_p \|\| any(isnan, dT_elem) \|\| any(isnan, Δsoc_n_elem) \|\| any(isnan, Δsoc_p_elem)`（6 个 `\|\|` 条件链，单行 ~150 字符） | 抽出 `any_input_nan(...) = ...` helper 或 `reduce(\|\|, [...])` 表达式 |
+| L592 | `if has_nan_disp \|\| has_nan_damage \|\| !result.converged`（3 个 `\|\|`） | 阈值边缘（3 个条件链），可读性可接受，无需重构 |
+| L555 | `delta_s = if lowercase(iter_method) == "basic"; 1.0; elseif lowercase(iter_method) in ("arc_length", "arclength", "arc-length"); 1.0 / max(1, n_load_steps); else; 1.0 / max(1, n_load_steps); end`（嵌套 if-elseif-else + 字符串匹配多分支，跨 L555-L561） | 抽出 `compute_delta_s(iter_method, n_load_steps)` helper；arc_length 与 else 分支结果相同可合并 |
+| L143 | `for e in 1:ne; nodes = mesh.element[e, :]; for (a, b) in ((...), (...), (...), (...)); (is_outer[a] && is_outer[b]) \|\| continue; key = a < b ? (a, b) : (b, a); key in seen && continue; ...; end; end`（嵌套 2 层 + 多条件 continue，跨 L143-L153） | 抽出 `iter_boundary_edges(mesh, is_outer)` 迭代器 helper，主循环更简洁 |
+| L729 | `for i in 1:n_czm_node; ...; for e in candidate_order[1:min(10, end)]; ...; if ok && abs(ξ) <= 1.0 + 1e-6 && abs(η) <= 1.0 + 1e-6; ...; end; end; if !found; ...; end; end`（嵌套 3 层 + 多条件，跨 L729-L759） | 抽出 `find_containing_element(thermal_mesh, px, py)` 独立函数返回 `(elem_idx, ξ, η)` 或 `nothing`，主循环只处理 fallback |
