@@ -15,16 +15,18 @@
 
 | 文件 | 覆盖 md 来源 | 覆盖 src |
 |---|---|---|
-| `00_总览与索引.md` | — | — （图例、汇总、跨卷导航、验证现状索引） |
-| `01_参数与归一化对照.md` | md 01 + 14 粘性正则化 + 15 颗粒/极片模量 | `SetParams.jl`, `parameters/*.jl`, `Materialmatrix.jl` |
+| `00_总览与索引.md` | — | — （图例、汇总、跨卷导航、验证现状索引、跨卷公式编号总索引） |
+| `01_参数与归一化对照.md` | md 01 + 15 颗粒/极片模量 | `SetParams.jl`, `parameters/*.jl`, `Materialmatrix.jl` |
 | `02_几何与网格对照.md` | md 02 | `SetMesh.jl`, `Jellyrollmodel.jl`, `ring.jl`, `CzmUnitMesh.jl` |
 | `03_边界条件对照.md` | md 03 | `ThermalDistributed.jl` 中 BC 段, `Solve.jl` 电化学 BC |
 | `04_电化学SPMe对照.md` | md 04 | `SPMe.jl`, `Electrode*.jl`, `Electrolyte*.jl`, `SPM.jl`, `P2D.jl` |
 | `05_热模型对照.md` | md 05 + 07 界面热阻 | `Thermal.jl`, `ThermalDistributed.jl`, `ThermalPolar2D.jl` |
-| `06_CZM对照.md` | md 06 | `czm.jl`, `CzmSolve.jl`, `Mechanical.jl`, `CzmPostProcess.jl`, `CouplingState.jl` |
-| `07_算法与求解对照.md` | md 08 + 09 + 10 | `Solve.jl`, `CallModel.jl`, `Parallelsolution.jl`, `CycleSolver.jl`, `SetCase.jl`, `Initialisation.jl`, `Variables.jl` |
+| `06_CZM对照.md` | md 06 + 14 粘性正则化 | `czm.jl`, `CzmSolve.jl`, `Mechanical.jl`, `CzmPostProcess.jl`, `CouplingState.jl` |
+| `07_算法与求解对照.md` | md 08 + 09 + 10 | `Solve.jl`, `CallModel.jl`, `Parallelsolution.jl`, `CycleSolver.jl`, `SetCase.jl`, `Initialisation.jl`, `Variables.jl`, `Option.jl`（含 Option/CycleOption 结构）, `Assemble.jl`（矩阵组装逻辑） |
 
 **验证方案（md 11–13）不进对照卷**：在 `00_总览与索引.md` 末尾以"验证现状索引"小节列出脚本路径与执行状态。
+
+**不进对照的文件**（无公式对应或纯基础设施）：`install.jl`、`JuBat.jl`（包入口）、`Tools.jl`（工具函数）、`CycleData.jl`（数据）、`CsvExport.jl`（CSV 输出）、`PostProcessing.jl`（纯后处理输出）。
 
 **`md/对照/` 与 `md/00_文档索引与命名规范.md` 的关系**：对照卷不进 01–15 理论编号体系，不更新该索引文档。`00_总览与索引.md` 卷首自声明命名规则 `NN_主题_对照.md`。
 
@@ -62,7 +64,7 @@
 
 - **公式编号**：`{md编号}.{序号}`，如 `(4.12)`；md 无编号时按出现顺序赋 `(4.x1)、(4.x2)` 并在卷首声明"本卷自编号"。代码独有实现填 `--`。
 - **理论位置**：精确到 `md/04_电化学模型_SPMe.md §2.1`，能锚到小节就不到章。代码独有填 `【缺失】`。
-- **代码位置**：`文件名:起止行 (函数名)`，如 `src/SPMe.jl:120-145 (solve_diffraction!)`。多函数用 `;` 分隔。
+- **代码位置**：`文件名:起止行 (函数名)`，如 `src/SPMe.jl:37-93 (SPMe_element)`。多函数用 `;` 分隔。**行号必须精确到目标函数体**——从 `function` 关键字所在行到对应 `end` 行，**不得越过 `end` 进入下一个函数**（包括 docstring/空行）。如不确定可用 Grep `^function\s+\w+` 定位函数边界。
 - **实现摘要**：一句话，≤ 25 字，写"代码实际怎么算的"（离散格式/迭代法/关键变量名）。
 - **一致性**：§2 五种标记之一。
 - **备注**：依据/偏差证据/反向链接，单行。
@@ -71,17 +73,21 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (4.12) | `md/04 §2.1` | `src/SPMe.jl:120-145 (solve_diffusion!)` | 二阶 FEM + CN，自适应 dt | ✅ 一致 | t_0=3600 已统一 |
-| (5.3) | `md/05 §2` | `src/ThermalDistributed.jl:88-112 (assemble_Q)` | 分层热源叠加，体积加权 | 🟡 单位/归一化差异 | 见 `docs/thermal_verify/findings.md`，需乘 scale.L³ |
-| (6.7) | `md/06 §3` | `src/czm.jl:240 (bilin_tangent)` | 双线性切线，含粘性正则 | ⚠️ 形式差异 | md 14 粘性正则未在 (6.7) 体现 |
-| `--` | `【缺失】` | `src/CzmSolve.jl:300-330 (reg_fallback)` | 失效单元回退逻辑 | — 待核 | md 06/09 未提；CLAUDE.md §9.2 提及 |
+| (4.12) | `md/04 §2.1` | `src/SPMe.jl:37-93 (SPMe_element)` | 单元残差 + Jacobi，二阶 FEM | ✅ 一致 | t_0=3600 已统一 |
+| (5.3) | `md/05 §2` | `src/ThermalDistributed.jl:385-516 (compute_heat_sources)` | 分层热源叠加，体积加权 | 🟡 单位/归一化差异 | 见 `docs/thermal_verify/findings.md`，需乘 scale.L³ |
+| (6.7) | `md/06 §3` | `src/czm.jl:238-246 (moduli_of)` | 按层类型返回模量元组 | ⚠️ 形式差异 | md 14 粘性正则未在 (6.7) 体现 |
+| `--` | `【缺失】` | `src/CzmSolve.jl:168-263 (solve_czm_basic_step)` | Newton 主步 + 线搜索 + 弧长 | — 待核 | md 06 仅描述本构，求解细节缺 |
 
 **编号策略**：
 - 优先复用 md 自身编号
 - md 无编号时卷内自编号，卷首"编号说明"列出自编号 → md 位置映射
 - 卷末给"编号总表"便于重构时引用
 
-**跨卷引用**：用相对路径 `[对照卷 06 §3.2 / (6.5)]`(./06_CZM对照.md#32-本构)。
+**跨卷引用**：用相对路径 `[对照卷 06 §3.2 / (6.5)](./06_CZM对照.md)`，锚点 hash 以生成后的实际标题为准，不要手写。
+
+**草稿区位置**：每卷文件末尾保留 `## 草稿` 小节，存放"md 公式清单"和"src 函数清单"中间产物；定稿后保留作为附录（便于复核），不删除。
+
+**长表拆分**：若某卷公式数超过 50，按 md 小节拆成多个子表，每子表前加 `### 小节名` 三级标题。
 
 ---
 
@@ -139,6 +145,6 @@
 
 - 任务 1：建 `00_总览与索引.md` 骨架
 - 任务 2–8：分别生成 01–07 卷
-- 任务 9：回填 00 总览的统计与验证现状索引
+- 任务 9：回填 00 总览的统计、验证现状索引、**跨卷公式编号总索引**
 
 每个任务独立可验收，按 md → src → 草稿 → 表格的子步骤推进。
