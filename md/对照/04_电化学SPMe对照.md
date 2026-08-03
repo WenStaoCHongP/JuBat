@@ -130,7 +130,7 @@
 |---|---|---|---|---|---|
 | — | md/04 §6.1 函数签名（5 参数 + 关键字） | `src/SPMe.jl:37-93 (SPMe_element)` | `function SPMe_element(case, yt_e, t, e; I_e, T_e, jacobi="update", workspace=nothing)` | ✅ | md §6.1 签名表与代码逐字一致 |
 | — | md/04 §6.1 workspace 可选预分配 | `src/SPMe.jl:39-43 (SPMe_element)` | `if workspace !== nothing: variables_e = SPMe_variables!(workspace, ...)` | ✅ | md §6.1 注释；代码三分支 if |
-| — | md/04 §6.1 状态向量结构 `yt_e = [c_s_n; c_s_p; c_e]` | `src/SPMe.jl:131-135 (SPMe_variables!)` 通过 `case.index` 索引 | 索引由 `case.index[...]` 提供（详见卷 01） | ✅ | md §6.1 列 yt_e 三段结构；代码通过 case.index 分段访问 |
+| — | md/04 §6.1 状态向量结构 `yt_e = [c_s_n; c_s_p; c_e]` | `src/SPMe.jl:131-135 (SPMe_variables!)` 通过 `case.index` 索引 | 索引由 `case.index[...]` 提供（详见[卷 01](./01_参数与归一化对照.md)） | ✅ | md §6.1 列 yt_e 三段结构；代码通过 case.index 分段访问 |
 | — | md/04 §6.1 输出 4 元组 `(M_e, K_e, F_e, variables_e)` | `src/SPMe.jl:92 (SPMe_element)` | `return M_e, K_e, F_e, variables_e` | ✅ | md §6.1 表与代码一致 |
 | — | md/04 §6.1 jacobi="constant" 时跳过 M/K 重算 | `src/SPMe.jl:62-72 (SPMe_element)` | `if jacobi == "constant" && !isempty(NE.M_d) ...` | ✅ | md §6.1 注释；代码从 param.NE.M_d 复用 |
 
@@ -204,7 +204,7 @@
 | -- | 【缺失】 | `src/P2D.jl:76-118 (P2D_charge_BC)` | P2D 电荷 BC（含扩散电位项 kappa_D） | ✅ | md 04 §2.3 完整形式 (4.8)；代码 L109-115 装配 |
 | -- | 【缺失】 | `src/P2D.jl:120-207 (P2D_potentials)` | P2D 电位迭代求解（100 次迭代上限，rel_tol=1e-9） | ⚠️ | md 04 §2.4 给显式 BV；P2D 用朗道迭代（Vp0 校正）求解非线性方程组；指向 `docs/thermal_verify/findings.md` |
 | -- | 【缺失】 | `src/P2D.jl:209-287 (P2D_variables)` | P2D 变量提取（含高斯点 j0/eta/j、OCP） | ✅ | md 04 §2.4 BV 公式；P2D 在 gs 上同时计算，供 P2D_charge_BC 使用 |
-| -- | 【缺失】 | `src/SPMe.jl:73-75 (SPMe_element) 时间尺度归一化` | `M_np = M_np .* scale.ts_n / param_dim.scale.t0` | ✅ | md §0 归一化方案 t_0=3600；代码在 SPMe 出口将 M 矩阵从 ts（颗粒）尺度转为 t0；详见卷 01 |
+| -- | 【缺失】 | `src/SPMe.jl:73-75 (SPMe_element) 时间尺度归一化` | `M_np = M_np .* scale.ts_n / param_dim.scale.t0` | ✅ | md §0 归一化方案 t_0=3600；代码在 SPMe 出口将 M 矩阵从 ts（颗粒）尺度转为 t0；详见[卷 01](./01_参数与归一化对照.md) |
 | -- | 【缺失】 | `src/SPMe.jl:179 (SPMe_variables!) cell current` | `ws["cell current"] = opt.Current(t*scale.t0)/param_dim.cell.I1C` | ✅ | md 04 §6.2 表行 5 列 "cell current"；代码归一化到 I1C |
 | -- | 【缺失】 | `src/SPMe.jl:90 (SPMe_element) element index` | `variables_e["element index"] = Float64(e)` | ✅ | 调试用：md 未列；代码每个 SPMe_element 输出附单元编号 |
 
