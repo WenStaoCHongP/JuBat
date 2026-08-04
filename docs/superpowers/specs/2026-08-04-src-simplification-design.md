@@ -8,13 +8,15 @@
 - `md/00_代码风格规范.md`、`md/00_文档索引与命名规范.md`
 - `CLAUDE.md`、`AGENTS.md`
 
+**口径说明（统一）**：除非特别注明，"src/" 行数与文件数均**仅指 `src/*.jl`**（36 个文件 / 11,184 行）；`src/parameters/*.jl`（5 个文件 / 711 行）单独统计。这是为避免基线口径混乱。
+
 ---
 
 ## 0. 摘要与决策
 
 ### 0.1 目标
 
-依据 `Simplify/reducing-ai-code-bloat-plan.md` 的方法论，对 `src/` 全部 38 个 `.jl` 文件（共 11,895 行）执行一次 **Reduce 模式**：只做简化、删除、合并，不引入新功能。
+依据 `Simplify/reducing-ai-code-bloat-plan.md` 的方法论，对 `src/*.jl` 全部 36 个文件（共 11,184 行）+ `src/parameters/*.jl` 5 个文件（共 711 行）执行一次 **Reduce 模式**：只做简化、删除、合并，不引入新功能。
 
 ### 0.2 五项已对齐决策
 
@@ -28,7 +30,7 @@
 
 ### 0.3 不变量
 
-- 公共 API（`JuBat.jl` 的 `export` 表）不删减
+- **活跃公共 API 不删减**：`JuBat.jl` 的 `export` 表中，**经 grep 确认仍被外部调用者（example/、test/、用户脚本）使用的**不删减；**dead code 的 export 允许同步移除**（如 SPM/P2D/ThermalLumped 经 grep 确认无调用者时，对应 export 一并移除）。所有 export 变更必须在 PR 描述中列出，并在 CHANGELOG 标 breaking change
 - 数值核心（High-risk-leave-alone 桶，见 §4）只记录不动手
 - 所有 `example/*.jl`（minimal / SPMe_Thermal / czm_cycle / testexample / jellyroll_stress_displacement）必须跑通且结果在 1% 内一致
 
@@ -80,6 +82,7 @@
    - `dup_finder.sh`：基于正则模式（`^function\s+\w+`、`variables\[\"...\"\]`、`try.*catch`）找重复簇
    - `baseline.sh`：跑 `wc -l src/*.jl` 并写入 `Simplify/baseline.md`
 2. **行数 / 重复簇数 / dead code 数** 三项作为可量化指标，写入 `Simplify/baseline.md`，每完成一个文件更新一行
+3. **版本控制策略**：`Simplify/scripts/` 与 `Simplify/baseline.md` 纳入 git；`baseline.md` 每文件更新一行即一次 commit（保留历史轨迹，便于回看）
 
 ### 2.3 基线快照
 
@@ -87,8 +90,8 @@
 
 ```
 ## Baseline 2026-08-04
-- src/ 总行数：11,895
-- 文件数：38
+- src/*.jl：36 文件 / 11,184 行
+- src/parameters/*.jl：5 文件 / 711 行（单独统计，主线 Reduce 仅涉及验证是否 dead）
 - variables["..."] 使用数：477 跨 17 文件
 - 硬编码键表数：3 处（Variables.jl / CallModel.jl / CouplingState.jl）
 - 重复簇：D1-D10（见 spec §6）
@@ -96,24 +99,30 @@
 - 兼容入口：~9 处（见 spec §7 类别 C）
 ```
 
+**统计口径**：
+- 行数以 `wc -l` 为准，**仅 `src/*.jl`**（不含 `src/parameters/`）
+- "硬编码键表数"指 `StandardVariables`、`create_element_workspace`、`copy_element_results` 三处**显式键名字面量列表**，不含散落在代码中的 `variables["..."]` 访问点
+- "兜底 try/catch" 仅指 §7.1 类别 A 列出的；不含类别 C 中 `try/finally` 资源清理
+
 ---
 
 ## 3. 退出标准
 
 ### 3.1 量化指标
 
-- **行数**：src/ 总行数 −10% 以上（基线 11,895 → 目标 ≤ 10,700）
+- **行数**：`src/*.jl` 总行数 −10% 以上（基线 11,184 → 目标 ≤ 10,066）
 - **重复簇清零**：D1、D3、D4 必须消除；D2 收敛到 `VariableKeys.jl` 单一来源
 - **Dead code**：§9 嫌疑表经 grep 验证后，确认无调用者的全部删除
 - **兜底清零**：§7 类别 A（错误吞没 try/catch）全部删除或改 rethrow + 注释；类别 B（静默降级）全部改 fail-fast
 - **兼容入口验证**：§7 类别 C 每条 grep 验证；无外部调用者的删除
+- **止损条件**：若 executing-plans 阶段累计产出超过 12 个 PR 仍未达标，暂停并回到 brainstorming 重新评估策略
 
 ### 3.2 不变量验证
 
 - 所有 `example/*.jl` 跑通，结果与基线快照在 1% 内一致
 - `test/unit_czm_*` 全套通过
 - 新增 characterization test 覆盖 czm.jl / CzmSolve.jl / CouplingState.jl / ThermalDistributed.jl 各至少一个 happy path
-- `JuBat.jl` 的 `export` 表不删减
+- 活跃公共 API（§0.3 定义）的 export 不删减
 
 ### 3.3 节奏（来自原 §7）
 
@@ -186,7 +195,7 @@
 | # | 重复簇 | 涉及文件:行 | 性质 | 估计冗余 |
 |---|---|---|---|---|
 | **D1** | 循环求解双实现：`solve_phase_with_export` / `solve_cycle_with_export` 几乎复制 `solve_phase` / `solve_cycling` | CycleData.jl:32, 268 vs CycleSolver.jl:118, 217 | 大量拷贝 | ~400 行 |
-| **D2** | 三处硬编码变量键表：`StandardVariables` + `create_element_workspace` + `copy_element_results` 各维护一份字符串键 | Variables.jl:1, 157（164 字面量）；CallModel.jl:247（12）；CouplingState.jl（50） | 同步风险 | ~226 字面量 |
+| **D2** | 三处硬编码变量键表：`StandardVariables` + `create_element_workspace` + `copy_element_results` 各维护一份字符串键 | Variables.jl:1（`StandardVariables`）、:157（`create_element_workspace`）；CallModel.jl:247（`copy_element_results`）；CouplingState.jl 散布 | 同步风险 | 三处**显式键名列表**共 ~30 个键名重复定义（非所有字符串字面量） |
 | **D3** | ThermalDistributed 双胞胎对：`apply_convection_bc`/`!` 和 `apply_cool_method`/`!` | ThermalDistributed.jl:49 vs 178；99 vs 214 | 双胞胎函数 | ~90 行 |
 | **D4** | 热源双实现：`compute_heat_sources` 与 `compute_heat_sources_with_czm` 路径分裂 | ThermalDistributed.jl:385 vs 518 | 部分重叠 | ~70 行 |
 | **D5** | 后处理/导出五重奏：PostProcessing / CycleSolver `_postprocess_*` / CsvExport / CycleData `export_*_csv` / CzmPostProcess | PostProcessing.jl:1, 159, 219, 236, 254；CsvExport.jl 全文；CycleData.jl:425；CzmPostProcess.jl:99 | 责任分散 | 多处 |
@@ -206,10 +215,21 @@
 |---|---|---|
 | `CsvExport.jl:98-194` | 7 个 `_write_*` 各被 `try/catch e @warn ... end` 包裹 | 默认删 try/catch，让 I/O 错误抛出；如个别确需保留，注释写明恢复保证 |
 | `Mechanical.jl:294-297` | `U_M = try ... catch e @warn "using zero displacement" end` | 删除；力学失败应抛错而非静默 0 位移 |
-| `CzmSolve.jl:220, 319, 372, 381` | 4 处线性求解 `try \" catch fallback` | **High-risk**：逐处评估，能改 rethrow 则改；必要的保留并注释 |
+| `CzmSolve.jl:220, 319, 372, 381` | 4 处线性求解 `try \" catch fallback` | **逐处判定**（见 §7.1.1） |
 | `Solve.jl:273-310, 418-424` | 步进失败恢复 + 末尾清理 | diff 评估：步进失败路径是否掩盖根因 |
 
 **统一原则**：默认让错误抛出；仅在能证明"该错误可恢复且恢复策略明确"时保留，且必须注释写明恢复保证。
+
+#### 7.1.1 CzmSolve.jl 四处 try/catch 逐处判定
+
+| 行 | 当前 fallback | spec 决策 | 理由 |
+|---|---|---|---|
+| 220 | `Δu = try K\F catch zeros end` | **保留 + 加注释** | 奇异/病态矩阵时返回零位移增量，避免一步发散毁掉整个 transient；恢复策略明确（下一步重新尝试），但必须在注释中写明"返回零增量、依赖下一步恢复" |
+| 319 | `tangent = try ... catch zeros end` | **保留 + 加注释** | 切线刚度计算失败时用零矩阵，配合 `backtrack_line_search!` 收敛机制；恢复路径明确 |
+| 372 | `delta_u_R = try ... catch zeros end` | **保留 + 加注释** | 弧长法 R 分支求解失败时返回零，与 381 配对 |
+| 381 | `delta_u_F = try ... catch zeros end` | **保留 + 加注释** | 弧长法 F 分支求解失败时返回零，与 372 配对 |
+
+四处均属"数值核心中已设计好的恢复路径"，**保留但每处加注释**："本 try/catch 是 [奇异矩阵/弧长法分支] 的恢复路径，返回零让下一步重试；移除会导致 transient 一步发散即崩溃"。
 
 ### 7.2 类别 B：静默降级 @warn + 继续（改 fail-fast）
 
@@ -318,7 +338,7 @@
 - **保留**：原样
 - **风险**：极低
 
-#### `parameters/{Jellyroll, Enerttech, LGM50, Northrop, Ring}.jl`
+#### `parameters/{Jellyroll, Enertech, LGM50, Northrop, Ring}.jl`
 - **桶**：Delete 候选（除 Jellyroll）
 - **删除**：grep 验证 `ChooseCell("Enertech"|"LGM50"|"Northrop"|"Ring")` 调用者；无则删整个文件
 - **保留**：`Jellyroll.jl`（主线必保）
@@ -383,10 +403,8 @@
 
 #### `Electrode{Diffusion, Potential}.jl`（18+19 行）和 `Electrolyte{Diffusion, Potential}.jl`（30+23 行）
 - **桶**：Consolidate 候选（文件粒度）
-- **合并方案**：4 个超小文件合并为 `AssembleComponents.jl` 或并入 `Assemble.jl`（仅 40 行）
-- **保留方案**：如合并跨文件 import 复杂，保留独立
+- **倾向决策**：**保留独立**。理由：(1) 合并收益仅 ~20 行；(2) 每个文件是独立 FEM 单元算子，与 `Assemble.jl`（仅 40 行的拼装工具）语义不同；(3) 跨文件 include 已在 `JuBat.jl` 固化，迁移成本 > 收益
 - **风险**：低
-- **由 executing-plans 决定**
 
 #### `czm.jl`（873 行）
 - **桶**：High-risk-leave-alone（数值核心）
@@ -410,10 +428,15 @@
 #### `ThermalDistributed.jl`（557 行）—— **D3 + D4 核心**
 - **桶**：Consolidate
 - **删除**：验证后删 `ThermalDistributed2D_Ring` (325) 与 `ThermalRing2D_BC` (376)（若 ring.jl 也删）
-- **合并 D3**：
-  - `apply_convection_bc` (49) + `apply_convection_bc!` (178) → 单一函数 + `mutate` 标志，或全 `!` 化
-  - `apply_cool_method` (99) + `apply_cool_method!` (214) → 同上
-- **合并 D4**：`compute_heat_sources` (385) + `compute_heat_sources_with_czm` (518) → 抽 `czm_damage=nothing` 关键字
+- **合并 D3**（**统一为 `!` 后缀版本**——JuBat 风格规范 §7.2 规定修改参数的函数用 `!` 后缀；非 `!` 版本仅在不修改入参时使用）：
+  - **方案**：删 `apply_convection_bc` (49)，保留 `apply_convection_bc!` (178) 作为唯一实现；非 `!` 版本的调用点改为显式 `K2 = copy(K); apply_convection_bc!(K2, F2, ...)`（grep 验证非 `!` 版本调用点数量；如 ≤3 处，迁移成本可接受）
+  - 同理 `apply_cool_method` (99) → `apply_cool_method!` (214)
+  - **签名**（合并后）：`apply_convection_bc!(K, F, mesh, is_outer, case; edge_cache=nothing)`、`apply_cool_method!(K, F, mesh, case)`
+- **合并 D4**：
+  - **方案**：删 `compute_heat_sources_with_czm` (518)，保留 `compute_heat_sources` (385) 作为唯一实现，新增关键字 `czm_data::Union{Nothing, NamedTuple}=nothing`
+  - **签名**（合并后）：`compute_heat_sources(case, variables, variables_elems, I_e, T_e, areas; per_element_spme=false, czm_data=nothing)`
+  - `czm_data` 为 `NamedTuple`（字段 `mesh`、`damage` 等）或 `nothing`；为 `nothing` 时等价于原 `compute_heat_sources` 行为
+  - **风险点**：需 diff 验证两函数除 CZM 分支外的主体逻辑是否完全一致；如不一致则保留双实现并标注差异
 - **保留**：`ThermalDistributed2D` (1)、`ThermalDistributed2D_BC` (286)
 - **风险**：中-高（数值核心 + 结构改动）
 - **前置测试**：`md/12_热模型验证方案.md` 圆环精确解 + `example/热模块验证/thermal_verify.jl`
@@ -482,7 +505,12 @@
 - **删除**：
   - `solve_phase_with_export` (32-268, ~236 行) —— 整体删除，复制了 CycleSolver.solve_phase
   - `solve_cycle_with_export` (268-425, ~157 行) —— 整体删除
-- **合并**：将"导出钩子"作为可选 callback 注入 `CycleSolver.solve_phase` / `solve_cycling`（新增 `export_callback` 关键字参数）
+- **合并**：将"导出钩子"作为可选 callback 注入 `CycleSolver.solve_phase` / `solve_cycling`。**callback 设计**：
+  - **签名**：`export_callback(step_data::TimeStepData, cycle::Int, phase::PhaseType) -> Nothing`
+  - **关键字参数**：`solve_phase(...; export_callback::Union{Nothing,Function}=nothing)`；`solve_cycling(...; export_callback=nothing)`
+  - **调用点**：在 `solve_phase` 内每个时间步成功后（拿到 `step_data` 之后）调用；callback 为 `nothing` 时跳过
+  - **异常处理**：callback 抛异常**不捕获**——直接终止求解（与 Reduce 模式 fail-fast 原则一致）；用户应在 callback 内部 `try/catch` 自己处理 I/O 错误
+  - **行为等价性**：原 `solve_phase_with_export(case, ...; export_interval=k)` 等价于 `solve_phase(case, ...; export_callback=(sd,c,p) -> iszero(c*step_count % k) && push!(records, sd))`
 - **保留**：`TimeStepData` (7)、`CycleExportData` (23)、`export_cycle_data_to_csv` (425)、`load_cycle_data_from_csv` (514)
 - **风险**：中（~400 行删除）
 - **前置测试**：必须先跑 `solve_cycle_with_export` 的 happy path 作快照，确保 callback 化后输出一致
@@ -497,17 +525,17 @@
 
 #### `PostProcessing.jl`（350 行）—— **D5**
 - **桶**：Consolidate（边缘）
-- **合并**：`PostProcessing` (1) 与 `Mechanical.Mechanicaloutput` 职责重叠 —— 后者改名 `PostProcessing_mechanical` 或合并
+- **合并**：`PostProcessing` (1) 与 `Mechanical.Mechanicaloutput` 职责重叠 —— **倾向合并**：`Mechanicaloutput` 内联进 `PostProcessing` 作为末尾的力学分支，删除 `Mechanicaloutput` 名字；保持 `PostProcessing` 作为唯一入口（grep 验证 `Mechanicaloutput` 调用点，迁移至 `PostProcessing`）
 - **保留**：7 个 `_postprocess_*` / `_print_*` helper 短小，不合并
 - **风险**：中
 
 #### `CouplingState.jl`（762 行）—— **D2 + D9 + 类别 B**
 - **桶**：Consolidate
 - **删除（类别 B）**：`CouplingState.jl:540` NaN 重置改 fail-fast
-- **合并 D9 triage**：
-  - `MultiSPMeLayout` 双构造 (98, 109) —— method overload 保留，fork 则合并
-  - `update_czm_damage!` 双方法 (497, 613) —— 同上
-  - `assemble_coupled_system` (737) + `_full` (777) —— 同上
+- **合并 D9 triage**（**判定标准**：grep 两版的调用点；**两版都有外部调用者 = overload（保留）**；**只有一版有调用者 = fork（删未用版）**）：
+  - `MultiSPMeLayout` 双构造 (98, 109)：grep `MultiSPMeLayout(` 所有调用点；如两版签名都被调用，保留双构造并加注释说明差异；如仅一版被调用，删另一版
+  - `update_czm_damage!` 双方法 (497, 613)：同上 grep；spec 已知 613 行注释"自动构建 CzmLayout 并委托给 3 参数版本"——如 6 参数版无外部调用者，删 6 参数版
+  - `assemble_coupled_system` (737) + `_full` (777)：grep 两函数名；如仅其一被调用，删另一；如都被调用，对比内部逻辑差异 ≤5 行则合并为 `full::Bool=false` 关键字
 - **合并 D2 部分**：50 个字符串键字面量改用 `VariableKeys.jl`
 - **保留**：所有 struct
 - **风险**：高（CZM 装配核心）
@@ -599,8 +627,8 @@
 ## 附录 B：基线数据（2026-08-04 快照）
 
 ```
-src/ 总行数：11,895
-文件数：38（不含 parameters/）
+src/*.jl：36 文件 / 11,184 行
+src/parameters/*.jl：5 文件 / 711 行（单独统计）
 最长文件：czm.jl (873)
 variables["..."] 使用：477 跨 17 文件
 try/catch：~13 处
