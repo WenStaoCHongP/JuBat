@@ -57,43 +57,43 @@
 
 | Plan 文件 | 源码 | 桶 | 主要动作 |
 |---|---|---|---|
-| `SPMe.md` | `SPMe.jl` (290) | High-risk-leave-alone | 仅 diff `SPMe_variables!` vs `SPMe_variables` |
-| `SPM.md` | `SPM.jl` (85) | Delete 候选 | grep 验证 |
-| `P2D.md` | `P2D.jl` (287) | Delete 候选 | grep 验证 |
+| `SPMe.md` | `SPMe.jl` (290) | Leave alone | 主线核心电化学；仅审查 |
+| `SPM.md` | `SPM.jl` (85) | Leave alone | Option 默认模型；活跃 API |
+| `P2D.md` | `P2D.jl` (287) | Leave alone | 主线 API；minimal_example 用 |
 | `ElectrodeDiffusion.md` | `ElectrodeDiffusion.jl` (18) | Leave alone | 保留独立 |
 | `ElectrodePotential.md` | `ElectrodePotential.jl` (19) | Leave alone | 保留独立 |
 | `ElectrolyteDiffusion.md` | `ElectrolyteDiffusion.jl` (30) | Leave alone | 保留独立 |
 | `ElectrolytePotential.md` | `ElectrolytePotential.jl` (23) | Leave alone | 保留独立 |
-| `czm.md` | `czm.jl` (873) | High-risk + D9 triage | D9 triage；数值核心不动 |
-| `Mechanical.md` | `Mechanical.jl` (360) | Consolidate (D7 + A) | 删 try/catch；抽 `assert_E_coat` |
-| `Materialmatrix.md` | `Materialmatrix.jl` (427) | High-risk-leave-alone | 不动 |
-| `ThermalDistributed.md` | `ThermalDistributed.jl` (557) | Consolidate (D3 + D4) | 双胞胎合并；热源合并 |
-| `Thermal.md` | `Thermal.jl` (80) | Delete 候选 | grep 验证 |
-| `ThermalPolar2D.md` | `ThermalPolar2D.jl` (120) | 依赖 ring.jl | 联动决策 |
+| `czm.md` | `czm.jl` (873) | Mixed（Consolidate + Dead code） | 删无调用者 `assemble_coupled_system_full`；审查 cache；数值核心不动 |
+| `Mechanical.md` | `Mechanical.jl` (360) | Leave alone（category A 评估） | line 294 try/catch 决策（删或加注释） |
+| `Materialmatrix.md` | `Materialmatrix.jl` (427) | Leave alone | 仅审查 |
+| `ThermalDistributed.md` | `ThermalDistributed.jl` (557) | Consolidate (D3 + D4) | 双胞胎 non-! 改 wrapper；! 内部回退消除 |
+| `Thermal.md` | `Thermal.jl` (80) | Leave alone | Lumped 备用路径；活跃 API |
+| `ThermalPolar2D.md` | `ThermalPolar2D.jl` (120) | High-risk-leave-alone | 数值核心；不动 |
 
 ## 第 4 层：求解器（`04-solvers/`）
 
 | Plan 文件 | 源码 | 桶 | 主要动作 |
 |---|---|---|---|
-| `Solve.md` | `Solve.jl` (471) | Consolidate (A/B) | try/catch diff；回退改 assert |
-| `CzmSolve.md` | `CzmSolve.jl` (675) | High-risk + A | 4 处 try/catch 加注释；clone 函数验证 |
-| `Parallelsolution.md` | `Parallelsolution.jl` (453) | High-risk-leave-alone | 不动；需 characterization test |
-| `CycleSolver.md` | `CycleSolver.jl` (546) | Consolidate (D1 保留方) | 新增 `export_callback` 关键字 |
-| `Initialisation.md` | `Initialisation.jl` (152) | Consolidate | diff `ModelInitialisation*` 双胞胎 |
-| `Assemble.md` | `Assemble.jl` (40) | Leave alone | `Assemble1D` grep 验证 |
+| `Solve.md` | `Solve.jl` (471) | Mixed（Leave alone + category A/B 评估） | 删 line 418 silent try/catch；保留 line 273 CZM 容错 + 注释 |
+| `CzmSolve.md` | `CzmSolve.jl` (675) | High-risk + category D | 4 处 try/catch 全保留 + 标准化注释 |
+| `Parallelsolution.md` | `Parallelsolution.jl` (453) | High-risk-leave-alone | 不动 |
+| `CycleSolver.md` | `CycleSolver.jl` (546) | Leave alone（D1 keep 侧） | 与 CycleData.md 联动；本文件不动 |
+| `Initialisation.md` | `Initialisation.jl` (152) | Leave alone | 仅审查 |
+| `Assemble.md` | `Assemble.jl` (40) | High-risk-leave-alone | 数值基础设施；不动 |
 
 ## 第 5 层：后处理与导出（`05-postprocessing-export/`）
 
 | Plan 文件 | 源码 | 桶 | 主要动作 |
 |---|---|---|---|
-| `CycleData.md` | `CycleData.jl` (623) | Consolidate (D1 删除方) | 删 ~400 行；保留 CSV I/O |
-| `CsvExport.md` | `CsvExport.jl` (636) | Consolidate (D5 + A) | 删 7 处 try/catch；模板化 `_write_*` |
-| `PostProcessing.md` | `PostProcessing.jl` (350) | Consolidate (D5) | 合并 `Mechanicaloutput` |
-| `CouplingState.md` | `CouplingState.jl` (762) | Consolidate (D2 + D9 + B) | NaN 重置改 fail-fast；D9 triage；键集中化 |
-| `CzmPostProcess.md` | `CzmPostProcess.jl` (117) | Consolidate (D5) | 与 CouplingState 对比重叠 |
-| `Tools.md` | `Tools.jl` (191) | Leave alone | `q4_center_gradients` 验证 |
-| `install.md` | `install.jl` (5) | Delete 候选 | grep include 验证 |
-| `JuBat.md` | `JuBat.jl` (89) | Leave alone（同步表） | 死码删除后同步 export 表 |
+| `CycleData.md` | `CycleData.jl` (623) | Consolidate (D1) | wrapper 化（依赖 CycleSolver `export_callback`）；-400 行 |
+| `CsvExport.md` | `CsvExport.jl` (636) | Consolidate（category B） | 7 处 try/catch 抽 `safe_write_csv` helper（保留 @warn） |
+| `PostProcessing.md` | `PostProcessing.jl` (350) | Leave alone | 仅审查 |
+| `CouplingState.md` | `CouplingState.jl` (762) | Consolidate（D9 + category B） | `update_czm_damage!` 双方法 triage；4 处 @warn 加注释 |
+| `CzmPostProcess.md` | `CzmPostProcess.jl` (117) | Leave alone | 仅审查 |
+| `Tools.md` | `Tools.jl` (191) | Leave alone | 仅审查 |
+| `install.md` | `install.jl` (5) | Leave alone | 仅审查 |
+| `JuBat.md` | `JuBat.jl` (89) | Leave alone（联动 export 清理） | 死码删除后同步 export 表 |
 
 ---
 
