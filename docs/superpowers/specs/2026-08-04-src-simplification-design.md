@@ -202,7 +202,7 @@
 | **D6** | `variables["..."]` 字符串键 477 处 | 17 文件（机械 73 / 后处理 75 / P2D 59 / 变量 68 / 热 41 / SPMe 30 …） | 单点变更成本高 | 不冗余但脆弱 |
 | **D7** | `E_coat` 模量入口分散：两个独立 `@assert param.PE.E_coat > 0` | CouplingState.jl:307, 309；Mechanical.jl:165 入口 | 检查重复 | ~10 行 |
 | **D8** | CZM 损伤更新双调用路径（已部分修复） | CycleSolver.jl（docs 显示已删） | 历史问题 | 已清 |
-| **D9** | 多重 method overload：`MultiSPMeLayout` 双构造、`update_czm_damage!` 双方法（CouplingState.jl）；`assemble_coupled_system` + `_full`（czm.jl） | CouplingState.jl:98/109；497/613；**czm.jl:737/777** | 需 triage 是 overload 还是 fork | triage 标准已定（见 §10.4 czm.jl 与 §10.5 CouplingState.jl） |
+| **D9** | 多重 method overload：`MultiSPMeLayout` 双构造、`update_czm_damage!` 双方法（CouplingState.jl）；`assemble_coupled_system` + `_full`（czm.jl） | CouplingState.jl:98/109；497/613；**czm.jl:737/777** | 需 triage 是 overload 还是 fork | triage 标准已定（见 §10.3 czm.jl 与 §10.5 CouplingState.jl） |
 | **D10** | 单函数小文件 | ring.jl（1 fn）、ThermalPolar2D.jl（1 fn）、CzmUnitMesh.jl（1 fn）、install.jl（5 行） | 拆分过度 | 整合潜力 |
 
 ---
@@ -535,7 +535,7 @@
 - **合并 D9 triage**（**判定标准**：grep 两版的调用点；**两版都有外部调用者 = overload（保留）**；**只有一版有调用者 = fork（删未用版）**）：
   - `MultiSPMeLayout` 双构造 (98, 109)：grep `MultiSPMeLayout(` 所有调用点；如两版签名都被调用，保留双构造并加注释说明差异；如仅一版被调用，删另一版
   - `update_czm_damage!` 双方法 (497, 613)：同上 grep；spec 已知 613 行注释"自动构建 CzmLayout 并委托给 3 参数版本"——如 6 参数版无外部调用者，删 6 参数版
-  - **注意**：`assemble_coupled_system` (737) + `_full` (777) 在 **czm.jl** 而非本文件，其 triage 见 §10.4 czm.jl 段
+  - **注意**：`assemble_coupled_system` (737) + `_full` (777) 在 **czm.jl** 而非本文件，其 triage 见 §10.3 czm.jl 段
 - **合并 D2 部分**：CouplingState.jl 内散布的字符串键字面量（与 D2 主表对齐，约 50 处 `variables["..."]` 访问与键字面量）改用 `VariableKeys.jl` 的常量；**与 Variables.jl / CallModel.jl 的 ~30 个键名列表保持单一来源**
 - **保留**：所有 struct
 - **风险**：高（CZM 装配核心）
