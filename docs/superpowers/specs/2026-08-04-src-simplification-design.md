@@ -202,7 +202,7 @@
 | **D6** | `variables["..."]` 字符串键 477 处 | 17 文件（机械 73 / 后处理 75 / P2D 59 / 变量 68 / 热 41 / SPMe 30 …） | 单点变更成本高 | 不冗余但脆弱 |
 | **D7** | `E_coat` 模量入口分散：两个独立 `@assert param.PE.E_coat > 0` | CouplingState.jl:307, 309；Mechanical.jl:165 入口 | 检查重复 | ~10 行 |
 | **D8** | CZM 损伤更新双调用路径（已部分修复） | CycleSolver.jl（docs 显示已删） | 历史问题 | 已清 |
-| **D9** | CouplingState 多重 method overload：`MultiSPMeLayout` 双构造、`update_czm_damage!` 双方法、`assemble_coupled_system` + `_full` | CouplingState.jl:98/109；497/613；737/777 | 需 triage 是 overload 还是 fork | 待核 |
+| **D9** | 多重 method overload：`MultiSPMeLayout` 双构造、`update_czm_damage!` 双方法（CouplingState.jl）；`assemble_coupled_system` + `_full`（czm.jl） | CouplingState.jl:98/109；497/613；**czm.jl:737/777** | 需 triage 是 overload 还是 fork | triage 标准已定（见 §10.4 czm.jl 与 §10.5 CouplingState.jl） |
 | **D10** | 单函数小文件 | ring.jl（1 fn）、ThermalPolar2D.jl（1 fn）、CzmUnitMesh.jl（1 fn）、install.jl（5 行） | 拆分过度 | 整合潜力 |
 
 ---
@@ -408,11 +408,11 @@
 
 #### `czm.jl`（873 行）
 - **桶**：High-risk-leave-alone（数值核心）
-- **待 diff 确认**：
-  - `assemble_coupled_system` (737) vs `assemble_coupled_system_full` (777) —— 双胞胎嫌疑，diff 后决定合并还是保留
-  - `build_czm_cache` (621) vs `ensure_czm_cache` (719) —— 是否 wrapper 关系
+- **D9 triage**（与 CouplingState.jl 同节同标准）：
+  - `assemble_coupled_system` (737) + `assemble_coupled_system_full` (777)：grep 两函数名；**仅其一被调用 → 删另一**；**两版都被调用 → 对比内部逻辑差异**：≤5 行差异合并为 `full::Bool=false` 关键字；>5 行差异保留双实现并注释差异点
+  - `build_czm_cache` (621) vs `ensure_czm_cache` (719)：grep + diff 验证是否 wrapper 关系；如 `ensure_czm_cache` 仅是 `build_czm_cache` + memoize，合并为 `ensure_czm_cache`（保留 memoize 行为）
 - **保留**：`CohesiveElement` (1)、`DamageState` (26)、`create_czm_mesh` (58)、`assemble_czm_system` (261-454)
-- **风险**：高
+- **风险**：高（数值核心，仅在不破坏 `unit_czm_newton.jl` 快照的前提下做 triage）
 - **前置测试**：`test/unit_czm_bilinear.jl` / `unit_czm_newton.jl`
 
 #### `Mechanical.jl`（360 行）—— **D7 + 类别 A**
@@ -535,8 +535,8 @@
 - **合并 D9 triage**（**判定标准**：grep 两版的调用点；**两版都有外部调用者 = overload（保留）**；**只有一版有调用者 = fork（删未用版）**）：
   - `MultiSPMeLayout` 双构造 (98, 109)：grep `MultiSPMeLayout(` 所有调用点；如两版签名都被调用，保留双构造并加注释说明差异；如仅一版被调用，删另一版
   - `update_czm_damage!` 双方法 (497, 613)：同上 grep；spec 已知 613 行注释"自动构建 CzmLayout 并委托给 3 参数版本"——如 6 参数版无外部调用者，删 6 参数版
-  - `assemble_coupled_system` (737) + `_full` (777)：grep 两函数名；如仅其一被调用，删另一；如都被调用，对比内部逻辑差异 ≤5 行则合并为 `full::Bool=false` 关键字
-- **合并 D2 部分**：50 个字符串键字面量改用 `VariableKeys.jl`
+  - **注意**：`assemble_coupled_system` (737) + `_full` (777) 在 **czm.jl** 而非本文件，其 triage 见 §10.4 czm.jl 段
+- **合并 D2 部分**：CouplingState.jl 内散布的字符串键字面量（与 D2 主表对齐，约 50 处 `variables["..."]` 访问与键字面量）改用 `VariableKeys.jl` 的常量；**与 Variables.jl / CallModel.jl 的 ~30 个键名列表保持单一来源**
 - **保留**：所有 struct
 - **风险**：高（CZM 装配核心）
 - **前置测试**：`test/unit_czm_*`
