@@ -377,7 +377,8 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 	deactivated_mask = falses(ne)
 	if deactivated_elements !== nothing
 		for e in deactivated_elements
-			1 <= e <= ne && (deactivated_mask[e] = true)
+			1 <= e <= ne || throw(ArgumentError("deactivated element index $e is outside 1:$ne"))
+			deactivated_mask[e] = true
 		end
 	end
 
@@ -408,6 +409,7 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 	if !isempty(active_idx)
 		V, converged, last_iter = newton_iteration(I_e, V, ne, w, I_total, coeffs; active_mask=active_mask)
 	end
+	converged || error("branch-current Newton solver failed to converge after $last_iter iterations")
 
 	# 归一化：活跃单元满足总电流约束
 	sx = sum(w[e] * I_e[e] for e in active_idx)

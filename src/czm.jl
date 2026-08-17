@@ -1,13 +1,4 @@
-mutable struct CohesiveElement <: AbstractCohesiveElement
-    id::Int64
-    nodes::Vector{Int64}           # [n1, n2, n3, n4]
-    nodes_bottom::Vector{Int64}    # [n1, n2] 底面节点
-    nodes_top::Vector{Int64}       # [n4, n3] 顶面节点（顺序与底面一致）
-    length::Float64                # 单元长度
-    interface_type::Symbol         # :PE_PCC 或 :NE_NCC
-    host_outer_elem::Int           # 外层 Q4 单元 id（在 czm_submesh.mesh.element 中的行号）
-    host_inner_elem::Int           # 内层 Q4 单元 id
-end
+# CZM damage state, material lookup, and system assembly.
 
 """
     DamageState - 内聚力单元的损伤状态
@@ -36,178 +27,6 @@ mutable struct DamageState <: AbstractDamageState
     DamageState() = new(0.0, 0.0, 0.0, 0.0, 0.0, false, 0.0)
 end
 
-"""
-    create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param) -> CohesiveMesh
-
-基于细化 CZM 子网格构造内聚力网格（spec §4.4）。
-
-# 核心算法
-1. 建立 共边(2 节点) → 单元对 映射，遍历找径向相邻且材料组合为 PE-PCC / NE-NCC 的对
-2. 节点复制：对每个界面对的共边 2 节点生成副本（memoized），cohesive 单元 4 节点 = [n_a, n_b, n_b', n_a']
-3. **重写外层 bulk 单元连接**：把外层单元共边位置的原节点替换为副本节点（关键：否则分离位移恒为 0）
-4. 构造 cohesive_to_thermal[e_coh] = thermal_elem_map[e_outer]
-
-# 参数
-- `czm_submesh`: 细化 CZM 子网格（含 material_type / thermal_elem_map）
-- `thermal_mesh`: 粗热网格（用于校验 thermal_elem_map 索引范围；本函数不复制其连接）
-- `param`: 参数对象（保留签名一致性，当前未使用）
-
-# 返回
-- `CohesiveMesh`: 内聚力网格对象，bulk_mesh 指向 czm_submesh.mesh
-"""
-function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)
-    sub_mesh = czm_submesh.mesh
-    ne_sub = size(sub_mesh.element, 1)
-    nnode_sub = sub_mesh.nlen
-    n_thermal = size(thermal_mesh.element, 1)
-
-    # Step 1: 建立 共边 → 单元对 映射
-    edge_to_elems = Dict{Tuple{Int, Int}, Vector{Int}}()
-    for e in 1:ne_sub
-        n1, n2, n3, n4 = sub_mesh.element[e, :]
-        for edge in ((n1, n2), (n2, n3), (n3, n4), (n4, n1))
-            key = (min(edge[1], edge[2]), max(edge[1], edge[2]))
-            push!(get!(edge_to_elems, key, Int[]), e)
-        end
-    end
-
-    # Step 2: 遍历共边，识别 PE-PCC / NE-NCC 径向界面
-    interface_pairs = Tuple{Int, Int, Symbol}[]   # (e_inner, e_outer, interface_type)
-    for (edge, elems) in edge_to_elems
-        length(elems) == 2 || continue   # 周向相邻同层（材料相同）自动过滤
-        e1, e2 = elems[1], elems[2]
-        m1, m2 = czm_submesh.material_type[e1], czm_submesh.material_type[e2]
-        iface = if (m1 == :PE && m2 == :PCC) || (m1 == :PCC && m2 == :PE)
-            :PE_PCC
-        elseif (m1 == :NE && m2 == :NCC) || (m1 == :NCC && m2 == :NE)
-            :NE_NCC
-        else
-            nothing
-        end
-        if iface !== nothing
-            # 判断哪个是内层（径向更小）——用单元质心判断，鲁棒于节点排列变化
-            cx1 = sum(sub_mesh.node[sub_mesh.element[e1, c], 1] for c in 1:4) / 4
-            cy1 = sum(sub_mesh.node[sub_mesh.element[e1, c], 2] for c in 1:4) / 4
-            cx2 = sum(sub_mesh.node[sub_mesh.element[e2, c], 1] for c in 1:4) / 4
-            cy2 = sum(sub_mesh.node[sub_mesh.element[e2, c], 2] for c in 1:4) / 4
-            r1 = hypot(cx1, cy1)
-            r2 = hypot(cx2, cy2)
-            if r1 < r2
-                push!(interface_pairs, (e1, e2, iface))
-            else
-                push!(interface_pairs, (e2, e1, iface))
-            end
-        end
-    end
-
-    # Step 3: 节点复制 + 重写外层 bulk 连接
-    # 排序保证 cohesive 单元 id 跨运行一致（不依赖 Dict 哈希顺序）
-    sort!(interface_pairs, by = first)
-    node_copy = Dict{Int, Int}()
-
-    n_cohesive = length(interface_pairs)
-    max_new_nodes = 2 * n_cohesive
-    extended_node = zeros(Float64, nnode_sub + max_new_nodes, 2)
-    extended_node[1:nnode_sub, :] = sub_mesh.node
-    new_node_count = nnode_sub
-
-    bulk_element_new = Matrix{Int}(sub_mesh.element)
-
-    cohesive_elements = CohesiveElement[]
-    cohesive_to_thermal = Vector{Int}(undef, n_cohesive)
-    sizehint!(cohesive_elements, n_cohesive)
-
-    for (i, (e_inner, e_outer, iface)) in enumerate(interface_pairs)
-        inner_nodes = sub_mesh.element[e_inner, :]
-        outer_nodes = sub_mesh.element[e_outer, :]
-        common_set = intersect(Set(inner_nodes), Set(outer_nodes))
-        @assert length(common_set) == 2 "共边应有 2 节点，实际 $(length(common_set))"
-        common = collect(common_set)
-
-        # build_czm_submesh 按 layer-outer / segment-inner 顺序赋 node id，
-        # 同一螺旋上相邻 segment 的 node id 单调递增（差为 1），等价于 θ 单调递增。
-        # 用 id 排序可避免 atan(y,x) 在 ±π 分支切割处的翻转 bug。
-        sort!(common)
-        n_lo = common[1]   # θ 较小（id 较小）
-        n_hi = common[2]   # θ 较大（id 较大）
-
-        for n in (n_lo, n_hi)
-            if !haskey(node_copy, n)
-                new_node_count += 1
-                extended_node[new_node_count, :] = sub_mesh.node[n, :]
-                node_copy[n] = new_node_count
-            end
-        end
-        n_lo_copy = node_copy[n_lo]
-        n_hi_copy = node_copy[n_hi]
-
-        # 重写外层 bulk 单元连接
-        for col in 1:4
-            if bulk_element_new[e_outer, col] == n_lo
-                bulk_element_new[e_outer, col] = n_lo_copy
-            elseif bulk_element_new[e_outer, col] == n_hi
-                bulk_element_new[e_outer, col] = n_hi_copy
-            end
-        end
-
-        # cohesive 单元几何长度
-        x_lo, y_lo = sub_mesh.node[n_lo, 1], sub_mesh.node[n_lo, 2]
-        x_hi, y_hi = sub_mesh.node[n_hi, 1], sub_mesh.node[n_hi, 2]
-        elem_length = hypot(x_hi - x_lo, y_hi - y_lo)
-
-        coh = CohesiveElement(
-            i,
-            [n_lo, n_hi, n_hi_copy, n_lo_copy],   # 逆时针
-            [n_lo, n_hi],                          # nodes_bottom
-            [n_lo_copy, n_hi_copy],                # nodes_top
-            elem_length,
-            iface,
-            e_outer,
-            e_inner,
-        )
-        push!(cohesive_elements, coh)
-
-        # cohesive_to_thermal
-        thermal_elem_of_outer = czm_submesh.thermal_elem_map[e_outer]
-        @assert thermal_elem_of_outer > 0 "外层单元 $e_outer 的 thermal_elem_map 无效"
-        @assert thermal_elem_of_outer <= n_thermal "外层单元 $e_outer thermal_elem_map=$thermal_elem_of_outer 超出热网格范围 $n_thermal"
-        cohesive_to_thermal[i] = thermal_elem_of_outer
-    end
-
-    # 裁剪 extended_node
-    extended_node = extended_node[1:new_node_count, :]
-
-    # Step 4: 组装 CohesiveMesh
-    damage_states = [DamageState() for _ in 1:n_cohesive]
-
-    czm_mesh = CohesiveMesh()
-    czm_mesh.bulk_mesh = sub_mesh
-    czm_mesh.node = extended_node
-    czm_mesh.nnode = new_node_count
-    czm_mesh.bulk_element = bulk_element_new
-    czm_mesh.cohesive_elements = cohesive_elements
-    czm_mesh.n_cohesive = n_cohesive
-    czm_mesh.n_layers = 2   # spec §3.3: 分离面类型数（PE-PCC + NE-NCC）
-    czm_mesh.node_map = Dict(n => [n, c] for (n, c) in node_copy)
-    czm_mesh.interface_nodes = [[]]   # 旧字段，保留兼容
-    czm_mesh.damage_states = damage_states
-    czm_mesh.czm_submesh = czm_submesh
-    czm_mesh.thermal_to_czm = build_thermal_to_czm_interp(thermal_mesh, czm_submesh)
-    czm_mesh.cohesive_to_thermal = cohesive_to_thermal
-
-    # 正确性自检（spec §4.3）
-    for coh in cohesive_elements
-        n_lo, n_hi, n_hi_copy, n_lo_copy = coh.nodes
-        @assert czm_mesh.node[n_lo, :] ≈ czm_mesh.node[n_lo_copy, :] atol=1e-12 "副本坐标不一致"
-        @assert czm_mesh.node[n_hi, :] ≈ czm_mesh.node[n_hi_copy, :] atol=1e-12 "副本坐标不一致"
-        @assert length(unique(coh.nodes)) == 4 "cohesive 单元 4 节点重复"
-    end
-
-    return czm_mesh
-end
-
-
-
 # ========================================================================
 # 2. 系统组装
 # ========================================================================
@@ -215,7 +34,7 @@ end
 """
     moduli_of(param, mt::Symbol) -> (E, ν)
 
-按材料类型从 param 读取体模量、泊松比（均已归一化）。
+按材料类型从 param 读取体模量、泊松比，并**统一到 CZM 应力空间（σ_czm 参考）**。
 供 assemble_bulk_stiffness / assemble_thermal_chemical_load 复用。
 
 材料类型对应 CzmSubmesh.material_type 中的 Symbol：
@@ -225,16 +44,22 @@ end
 - :PCC → param.PCC.E / param.PCC.nu
 - :NCC → param.NCC.E / param.NCC.nu
 
+双重再缩放（重设计 v2 §3）：模量字段在 NormaliseParam 中以 scale.E_coat 归一，
+而 CZM 牵引-分离律以 scale.σ_czm 归一。体刚度与内聚力刚度装配到同一残差，
+必须共享应力参考，故此处乘 `scale.E_coat / scale.σ_czm` 转到 σ_czm 空间
+（与 CzmInterfaceParams.E_eff 的构造一致）。
+
 注意：α 已从此函数移除（I2-a 修复）。两个调用者均不使用 α，且
 SP/PCC/NCC.alphaT 字段在 Jellyroll.jl 中未设置，silently 取 0 易踩坑。
 如未来热-化学载荷需要 α，应显式新建 ``alpha_of(param, mt)`` helper。
 """
 function moduli_of(param, mt::Symbol)
-    mt === :PE  && return (param.PE.E_coat,  param.PE.nu_coat)
-    mt === :NE  && return (param.NE.E_coat,  param.NE.nu_coat)
-    mt === :SP  && return (param.SP.E,       param.SP.nu)
-    mt === :PCC && return (param.PCC.E,      param.PCC.nu)
-    mt === :NCC && return (param.NCC.E,      param.NCC.nu)
+    s = param.scale.E_coat / param.scale.σ_czm
+    mt === :PE  && return (param.PE.E_coat * s,  param.PE.nu_coat)
+    mt === :NE  && return (param.NE.E_coat * s,  param.NE.nu_coat)
+    mt === :SP  && return (param.SP.E * s,       param.SP.nu)
+    mt === :PCC && return (param.PCC.E * s,      param.PCC.nu)
+    mt === :NCC && return (param.NCC.E * s,      param.NCC.nu)
     error("moduli_of: unknown material_type $mt")
 end
 
@@ -311,6 +136,9 @@ function assemble_czm_system(
         # 按 interface_type 从 param_cache 取本构参数（spec §7.1）
         iface = czm_mesh.cohesive_elements[i].interface_type
         params = param_cache.by_interface[iface]
+        # Λ：位移空间（L 归一）→ 分离空间（δ_czm 归一）换算因子（重设计 v2 §5）。
+        # 虚功一致性：δ̃ = Λ·B·ũ；内力 f = ∫BᵀT̃ dΓ 不乘 Λ；切线刚度乘一次 Λ。
+        Λ = params.Λ
 
         fill!(ws.K_e, 0.0)
         fill!(ws.f_int_e, 0.0)
@@ -324,6 +152,7 @@ function assemble_czm_system(
         if geom_cache !== nothing
             geom = geom_cache[i]
             L = geom.length
+            L >= 1e-15 || error("degenerate cohesive element $i: tangential length is $L")
             R = geom.R
             dofs = geom.dofs
             wts = geom.gauss_wts
@@ -333,24 +162,20 @@ function assemble_czm_system(
             n1, n2 = elem.nodes_bottom
             n4, n3 = elem.nodes_top
             L = elem.length
+            L >= 1e-15 || error("degenerate cohesive element $i: tangential length is $L")
 
-            if L >= 1e-15
-                x1, y1 = czm_mesh.node[n1, 1], czm_mesh.node[n1, 2]
-                x2, y2 = czm_mesh.node[n2, 1], czm_mesh.node[n2, 2]
-                dx, dy = x2 - x1, y2 - y1
-                t_vec = [dx / L, dy / L]
-                n_vec = [-t_vec[2], t_vec[1]]
-                R = [n_vec[1] n_vec[2]; t_vec[1] t_vec[2]]
-            else
-                R = [0.0 1.0; 1.0 0.0]
-            end
+            x1, y1 = czm_mesh.node[n1, 1], czm_mesh.node[n1, 2]
+            x2, y2 = czm_mesh.node[n2, 1], czm_mesh.node[n2, 2]
+            dx, dy = x2 - x1, y2 - y1
+            t_vec = [dx / L, dy / L]
+            n_vec = [-t_vec[2], t_vec[1]]
+            R = [n_vec[1] n_vec[2]; t_vec[1] t_vec[2]]
             dofs = [2*n1-1, 2*n1, 2*n2-1, 2*n2, 2*n3-1, 2*n3, 2*n4-1, 2*n4]
             order = czm_mesh.bulk_mesh.gs.order
             wts, pts = NCweight(order)
         end
 
-        if L >= 1e-15
-            # 提取单元位移
+        # 提取单元位移
             ws.u_e[1] = u[dofs[1]]; ws.u_e[2] = u[dofs[2]]
             ws.u_e[3] = u[dofs[3]]; ws.u_e[4] = u[dofs[4]]
             ws.u_e[5] = u[dofs[5]]; ws.u_e[6] = u[dofs[6]]
@@ -371,8 +196,9 @@ function assemble_czm_system(
 
                 # δ_local = B_local * u_e  （mul! 无分配）
                 mul!(ws.δ_local, ws.B_local, ws.u_e)
-                δ_n = ws.δ_local[1]
-                δ_t = ws.δ_local[2]
+                # 换算到分离空间（δ_czm 归一），与本构参数 δ_0*/δ_c*/K* 同参考
+                δ_n = Λ * ws.δ_local[1]
+                δ_t = Λ * ws.δ_local[2]
 
                 T_n, T_t, _, _ = bilinear_traction_state(δ_n, δ_t, damage_state, params; visc_beta=visc_beta)
                 dT_dδ = bilinear_tangent(δ_n, δ_t, damage_state, params; visc_beta=visc_beta)
@@ -383,11 +209,13 @@ function assemble_czm_system(
                 # BL_dT = B_local' * dT_dδ  （mul! 无分配）
                 mul!(ws.BL_dT, transpose(ws.B_local), dT_dδ)
 
-                # K_e += wJ * BL_dT * B_local  （mul! 无分配）
+                # K_e += wJ * Λ * BL_dT * B_local  （mul! 无分配）
+                # dT̃/dũ = (dT̃/dδ̃)·Λ·B —— 切线刚度含一次 Λ（重设计 v2 §5 式(3)）
                 mul!(ws.BL_dT_B, ws.BL_dT, ws.B_local)
+                wJΛ = wJ * Λ
                 for a in 1:8
                     for b in 1:8
-                        ws.K_e[a, b] += wJ * ws.BL_dT_B[a, b]
+                        ws.K_e[a, b] += wJΛ * ws.BL_dT_B[a, b]
                     end
                 end
 
@@ -405,7 +233,6 @@ function assemble_czm_system(
                 δ_t_avg += w * δ_t
                 w_sum += w
             end
-        end
 
         if w_sum > 0.0
             T_n_avg /= w_sum
@@ -445,7 +272,7 @@ function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, param_cache::CzmParamCa
     submesh = czm_mesh.czm_submesh
     submesh === nothing && error(
         "assemble_bulk_stiffness: czm_submesh is nothing " *
-        "(must be built via jellyroll_collector_seed_mesh with nθ_czm kwarg)")
+        "(must be built via jellyroll_collector_seed_mesh with czm_enabled=true)")
 
     # 需要重新计算高斯积分点，因为节点可能已经改变
     element = czm_mesh.bulk_element
@@ -529,7 +356,7 @@ function assemble_thermal_chemical_load(
     submesh = czm_mesh.czm_submesh
     submesh === nothing && error(
         "assemble_thermal_chemical_load: czm_submesh is nothing " *
-        "(must be built via jellyroll_collector_seed_mesh with nθ_czm kwarg)")
+        "(must be built via jellyroll_collector_seed_mesh with czm_enabled=true)")
     element = czm_mesh.bulk_element
     node = czm_mesh.node
     ne = size(element, 1)
@@ -633,19 +460,14 @@ function build_czm_cache(czm_mesh::CohesiveMesh, param_cache::CzmParamCache; fix
         n1, n2 = elem.nodes_bottom
         n4, n3 = elem.nodes_top
         L = elem.length
+        L >= 1e-15 || error("degenerate cohesive element $i: tangential length is $L")
 
-        if L >= 1e-15
-            x1, y1 = czm_mesh.node[n1, 1], czm_mesh.node[n1, 2]
-            x2, y2 = czm_mesh.node[n2, 1], czm_mesh.node[n2, 2]
-            dx, dy = x2 - x1, y2 - y1
-            t_vec = [dx / L, dy / L]
-            n_vec = [-t_vec[2], t_vec[1]]
-            R = [n_vec[1] n_vec[2]; t_vec[1] t_vec[2]]
-        else
-            t_vec = [1.0, 0.0]
-            n_vec = [0.0, 1.0]
-            R = [0.0 1.0; 1.0 0.0]
-        end
+        x1, y1 = czm_mesh.node[n1, 1], czm_mesh.node[n1, 2]
+        x2, y2 = czm_mesh.node[n2, 1], czm_mesh.node[n2, 2]
+        dx, dy = x2 - x1, y2 - y1
+        t_vec = [dx / L, dy / L]
+        n_vec = [-t_vec[2], t_vec[1]]
+        R = [n_vec[1] n_vec[2]; t_vec[1] t_vec[2]]
 
         dofs = [2*n1-1, 2*n1, 2*n2-1, 2*n2, 2*n3-1, 2*n3, 2*n4-1, 2*n4]
 
@@ -794,64 +616,4 @@ function assemble_coupled_system_full(
     R = F_external + F_thermo_chem - f_int_total
 
     return K_total, R, F_thermo_chem, separations, tractions
-end
-
-
-# ========================================================================
-# 6. 边界条件
-# ========================================================================
-
-function apply_bc_czm(K::SparseMatrixCSC{Float64,Int64}, F::Vector{Float64}; bc_nodes=nothing, bc_dofs=nothing, bc_vals=nothing)
-    K_new = copy(K)
-    F_new = copy(F)
-    penalty = 1e12
-
-    if bc_nodes !== nothing
-        for (node, bc_type) in bc_nodes
-            if bc_type == :fixed_x
-                dof = 2 * node - 1
-                K_new[dof, dof] += penalty
-                F_new[dof] = 0.0
-            elseif bc_type == :fixed_y
-                dof = 2 * node
-                K_new[dof, dof] += penalty
-                F_new[dof] = 0.0
-            elseif bc_type == :fixed_xy
-                dof_x = 2 * node - 1
-                dof_y = 2 * node
-                K_new[dof_x, dof_x] += penalty
-                K_new[dof_y, dof_y] += penalty
-                F_new[dof_x] = 0.0
-                F_new[dof_y] = 0.0
-            end
-        end
-    elseif bc_dofs !== nothing && bc_vals !== nothing
-        for (dof, val) in zip(bc_dofs, bc_vals)
-            K_new[dof, dof] += penalty
-            F_new[dof] = penalty * val
-        end
-    end
-
-    return K_new, F_new
-end
-
-function identify_bc_nodes_czm(czm_mesh::CohesiveMesh, param; opt=nothing, fix_inner::Bool=true)
-    nnode = czm_mesh.nnode
-    bc_nodes = Dict{Int64, Symbol}()
-
-    is_inner, is_outer = identify_boundary_nodes(czm_mesh, param, opt)
-    inner_count = 0
-    outer_count = 0
-    for i in 1:nnode
-        if fix_inner && is_inner[i]
-            bc_nodes[i] = :fixed_xy
-            inner_count += 1
-        end
-        if is_outer[i]
-            bc_nodes[i] = :fixed_xy
-            outer_count += 1
-        end
-    end
-
-    return bc_nodes, inner_count, outer_count
 end

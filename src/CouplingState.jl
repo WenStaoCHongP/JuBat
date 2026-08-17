@@ -16,16 +16,27 @@ using Parameters: @with_kw
 
 所有字段都已通过 NormaliseParam 归一化：
 - E_eff, σ_max, τ_max: / scale.σ_czm
-- δ_0_n, δ_c_n, δ_0_t, δ_c_t: / scale.δ_czm
+- δ_0_n, δ_c_n, δ_0_t, δ_c_t: / scale.δ_czm（δ_czm = 2·G_c_pe_pcc/σ_max_pe_pcc，锚定界面 δ_c* ≡ 1）
 - G_c, G_c_t: / scale.G_czm
 - K_n, K_t: / scale.K_czm
 - η, czm_model, h_c0, k_air, lambda_m, beta, threshold: 沿用原 Cohesive 归一化（无因次或已有尺度）
+
+派生量（宏观力学无量纲化重设计 v2，见 docs/planning-with-files/力学模块修改/宏观力学模块无量纲化重设计.md）：
+- Λ = scale.L / scale.δ_czm：位移空间（L 归一）→ 分离空间（δ_czm 归一）换算因子。
+  装配时 δ̃ = Λ·B·ũ，切线刚度乘一次 Λ，内力不乘（虚功一致性，设计文档 §5）。
+- E_star：界面双材料等效模量（调和平均），/ scale.σ_czm，用于 L_ch 与数值判据
+- L_ch：界面内禀长度 E*·G_c/σ_max²，/ scale.L，用于网格分辨率判据
 """
 @with_kw struct CzmInterfaceParams
     # ---- 体模量与热化学载荷（assemble_bulk_stiffness、assemble_thermal_chemical_load 用）----
     E_eff::Float64 = 0.0       # 涂层模量（PE.E_coat 或 NE.E_coat），非全栈均一化
     ν::Float64 = 0.0           # 涂层泊松比
     α::Float64 = 0.0           # 涂层热膨胀系数（归一化）
+
+    # ---- 无量纲化派生量（重设计 v2）----
+    Λ::Float64 = 1.0           # 位移→分离换算因子 scale.L/scale.δ_czm（旧方案 δ_czm=L 时为 1）
+    E_star::Float64 = 0.0      # 双材料等效模量（调和平均，/ scale.σ_czm），诊断用
+    L_ch::Float64 = 0.0        # 内禀长度 E*·G_c/σ_max²（/ scale.L），诊断用
 
     # ---- Mode I（法向）---- bilinear_* 与 compute_gap_conductance 用
     σ_max::Float64 = 0.0       # 最大法向牵引
@@ -103,8 +114,7 @@ function MultiSPMeLayout(ne::Int, n_chem::Int, nT::Int, mesh_th)
         e = mesh_th.gs.ele[g]
         areas[e] += mesh_th.gs.weight[g] * mesh_th.gs.detJ[g]
     end
-    return MultiSPMeLayout(ne, n_chem, nT, ne * n_chem + nT,
-                           1:(ne * n_chem), thermal_range, areas)
+    return MultiSPMeLayout(ne, n_chem, nT, ne * n_chem + nT,1:(ne * n_chem), thermal_range, areas)
 end
 
 """
@@ -158,7 +168,7 @@ struct MeshGeometry
     czm_element_map::Dict{Int,Vector{Int}}          # 热单元号 → CZM 单元索引向量（一对多映射）
     inner_nodes::Vector{Int}                        # 内边界节点索引
     outer_nodes::Vector{Int}                        # 外边界节点索引
-    boundary_edges::Union{Nothing, BoundaryEdgeCache}  # 预计算的边界边
+    boundary_edges::BoundaryEdgeCache                  # 预计算的边界边
 end
 
 # ========================================================================
@@ -306,10 +316,35 @@ function compute_czm_params_per_interface(case)
     E_eff_pe = param.PE.E_coat * scale.E_coat / scale.σ_czm
     E_eff_ne = param.NE.E_coat * scale.E_coat / scale.σ_czm
 
+    # ---- 无量纲化派生量（重设计 v2 §2.2）----
+    # Λ：位移空间（L 归一）→ 分离空间（δ_czm 归一）换算因子
+    @assert scale.δ_czm > 0 "scale.δ_czm = 0; ChooseCell 未能锚定 δ_czm（检查 cohesive.σ_max_pe_pcc / G_c_pe_pcc）"
+    Λ = scale.L / scale.δ_czm
+
+    # E*：界面双材料等效模量（调和平均，量纲 Pa → / σ_czm）；L_ch：内禀长度（→ / L）
+    coh_dim = case.param_dim.cohesive
+    E_pe_dim  = case.param_dim.PE.E_coat
+    E_ne_dim  = case.param_dim.NE.E_coat
+    E_pcc_dim = case.param_dim.PCC.E
+    E_ncc_dim = case.param_dim.NCC.E
+    E_star_pe_dim = 2 * E_pe_dim * E_pcc_dim / (E_pe_dim + E_pcc_dim)
+    E_star_ne_dim = 2 * E_ne_dim * E_ncc_dim / (E_ne_dim + E_ncc_dim)
+    L_ch_pe = E_star_pe_dim * coh_dim.G_c_pe_pcc / coh_dim.σ_max_pe_pcc^2 / scale.L
+    L_ch_ne = E_star_ne_dim * coh_dim.G_c_ne_ncc / coh_dim.σ_max_ne_ncc^2 / scale.L
+
     coh = param.cohesive
+
+    # K_0 下界判据（重设计 v2 §6）：δ_0* ≤ 0.1（即 K_0* ≥ 10），否则损伤起始点
+    # 贴近临界分离，本构在归一化空间不可分辨。
+    if coh.δ_0_pe_pcc > 0.1 || coh.δ_0_ne_ncc > 0.1
+        @warn "CZM 初始刚度过软：δ_0* > 0.1（PE-PCC=$(round(coh.δ_0_pe_pcc; sigdigits=3)), NE-NCC=$(round(coh.δ_0_ne_ncc; sigdigits=3))）。建议 K_0 ≥ 10·σ_max/δ_c。" maxlog=1
+    end
 
     pe_pcc = CzmInterfaceParams(
         E_eff = E_eff_pe,
+        Λ = Λ,
+        E_star = E_star_pe_dim / scale.σ_czm,
+        L_ch = L_ch_pe,
         ν = param.PE.nu_coat,
         α = param.PE.alphaT,
         σ_max = coh.σ_max_pe_pcc,
@@ -333,6 +368,9 @@ function compute_czm_params_per_interface(case)
 
     ne_ncc = CzmInterfaceParams(
         E_eff = E_eff_ne,
+        Λ = Λ,
+        E_star = E_star_ne_dim / scale.σ_czm,
+        L_ch = L_ch_ne,
         ν = param.NE.nu_coat,
         α = param.NE.alphaT,
         σ_max = coh.σ_max_ne_ncc,
@@ -384,15 +422,68 @@ function compute_czm_strain_inputs(case, variables, T_nodes)
     param = case.param
     ne_czm = size(submesh.mesh.element, 1)
 
-    # ---- T_czm_nodes 通过 thermal_to_czm 矩阵（nodal interpolation） ----
+    thermal_mesh = case.mesh["thermal2D"]
+    thermal_elem = thermal_mesh.element
+    n_thermal_node = thermal_mesh.nlen
+    n_thermal_elem = size(thermal_elem, 1)
+
+    # ---- 在任何乘法或索引前验证粗热场 → CZM 的完整接口契约 ----
     M = czm_mesh.thermal_to_czm
     M === nothing && error("compute_czm_strain_inputs: thermal_to_czm 矩阵未构造（请在 create_czm_mesh 中调用 build_thermal_to_czm_interp）")
+    T_nodes isa AbstractVector || throw(DimensionMismatch(
+        "compute_czm_strain_inputs: T_nodes 必须是一维活动热节点向量，实际 size=$(size(T_nodes))"))
+    if length(T_nodes) != n_thermal_node || size(M, 1) != submesh.mesh.nlen || size(M, 2) != n_thermal_node
+        throw(DimensionMismatch(
+            "compute_czm_strain_inputs: 热节点接口尺寸不一致：thermal_to_czm size=$(size(M))，" *
+            "CZM 节点数=$(submesh.mesh.nlen)，活动热网格节点数=$(n_thermal_node)，T_nodes 长度=$(length(T_nodes))"))
+    end
+    all(isfinite, T_nodes) || throw(ArgumentError(
+        "compute_czm_strain_inputs: 活动热节点温度包含非有限值"))
+
+    thermal_elem_map = submesh.thermal_elem_map
+    length(thermal_elem_map) == ne_czm || throw(DimensionMismatch(
+        "compute_czm_strain_inputs: thermal_elem_map 长度=$(length(thermal_elem_map))，CZM 单元数=$ne_czm"))
+    invalid_parent = findfirst(e_th -> !(1 <= e_th <= n_thermal_elem), thermal_elem_map)
+    invalid_parent === nothing || throw(ArgumentError(
+        "compute_czm_strain_inputs: thermal_elem_map[$invalid_parent]=$(thermal_elem_map[invalid_parent]) " *
+        "超出活动热单元范围 1:$n_thermal_elem"))
+
+    length(submesh.material_type) == ne_czm || throw(DimensionMismatch(
+        "compute_czm_strain_inputs: material_type 长度=$(length(submesh.material_type))，CZM 单元数=$ne_czm"))
+    size(thermal_elem, 2) == 4 || throw(DimensionMismatch(
+        "compute_czm_strain_inputs: 活动热网格必须使用 Q4 单元，实际每单元节点数=$(size(thermal_elem, 2))"))
+    invalid_thermal_node = findfirst(node -> !(1 <= node <= n_thermal_node), thermal_elem)
+    invalid_thermal_node === nothing || throw(ArgumentError(
+        "compute_czm_strain_inputs: 活动热网格连接包含越界节点 $(thermal_elem[invalid_thermal_node])，" *
+        "有效范围为 1:$n_thermal_node"))
+
+    function current_soc_field(key::String, label::String)
+        haskey(variables, key) || throw(KeyError(key))
+        field = variables[key]
+        current = if field isa AbstractVector
+            field
+        elseif field isa AbstractMatrix
+            size(field, 2) > 0 || throw(DimensionMismatch(
+                "compute_czm_strain_inputs: $label SOC 历史矩阵没有当前列，size=$(size(field))"))
+            @view field[:, end]
+        else
+            throw(ArgumentError(
+                "compute_czm_strain_inputs: $label SOC 必须是向量或历史矩阵，实际类型=$(typeof(field))"))
+        end
+        length(current) == n_thermal_elem || throw(DimensionMismatch(
+            "compute_czm_strain_inputs: $label SOC 当前场长度=$(length(current))，活动热单元数=$n_thermal_elem"))
+        all(isfinite, current) || throw(ArgumentError(
+            "compute_czm_strain_inputs: $label SOC 当前场包含非有限值"))
+        return current
+    end
+
+    soc_p_thermal = current_soc_field("thermal2D element soc_p", "正极")
+    soc_n_thermal = current_soc_field("thermal2D element soc_n", "负极")
+
+    # ---- T_czm_nodes 通过 thermal_to_czm 矩阵（nodal interpolation） ----
     T_czm_nodes = M * T_nodes
-    @assert length(T_czm_nodes) == submesh.mesh.nlen "thermal_to_czm × T_nodes 维度不匹配"
 
     # ---- dT_czm 通过 thermal_elem_map（element direct lookup） ----
-    thermal_elem = case.mesh["thermal2D"].element
-    n_thermal_elem = size(thermal_elem, 1)
     dT_thermal = zeros(n_thermal_elem)
     for e_th in 1:n_thermal_elem
         ns = thermal_elem[e_th, :]
@@ -401,38 +492,22 @@ function compute_czm_strain_inputs(case, variables, T_nodes)
 
     dT_czm = zeros(ne_czm)
     for e in 1:ne_czm
-        e_th = submesh.thermal_elem_map[e]
-        if 1 <= e_th <= n_thermal_elem
-            dT_czm[e] = dT_thermal[e_th]
-        end
+        dT_czm[e] = dT_thermal[thermal_elem_map[e]]
     end
 
     # ---- Δsoc 通过 thermal_elem_map（element direct lookup） ----
-    soc_p_thermal = get(variables, "thermal2D element soc_p", zeros(n_thermal_elem))
-    soc_n_thermal = get(variables, "thermal2D element soc_n", zeros(n_thermal_elem))
-
-    # 处理数组维度（可能是 ne×1 或 ne×num，向后兼容）
-    if isa(soc_p_thermal, AbstractMatrix)
-        soc_p_thermal = soc_p_thermal[:, end]
-    end
-    if isa(soc_n_thermal, AbstractMatrix)
-        soc_n_thermal = soc_n_thermal[:, end]
-    end
-
     Δsoc_p_czm = zeros(ne_czm)
     Δsoc_n_czm = zeros(ne_czm)
 
     for e in 1:ne_czm
-        e_th = submesh.thermal_elem_map[e]
+        e_th = thermal_elem_map[e]
         mt = submesh.material_type[e]
-        if 1 <= e_th <= n_thermal_elem
-            if mt == :PE
-                Δsoc_p_czm[e] = soc_p_thermal[e_th] - param.PE.cs0
-            elseif mt == :NE
-                Δsoc_n_czm[e] = soc_n_thermal[e_th] - param.NE.cs0
-            end
-            # PCC/NCC/SP：保持 0
+        if mt == :PE
+            Δsoc_p_czm[e] = soc_p_thermal[e_th] - param.PE.cs0
+        elseif mt == :NE
+            Δsoc_n_czm[e] = soc_n_thermal[e_th] - param.NE.cs0
         end
+        # PCC/NCC/SP：保持 0
     end
 
     return (dT_czm = dT_czm, Δsoc_p_czm = Δsoc_p_czm, Δsoc_n_czm = Δsoc_n_czm,
@@ -453,8 +528,9 @@ end
 - `T_nodes_carry`: 当前温度场
 
 # 返回
-- `u_czm`: 更新后的 CZM 位移场
-- `converged`: 是否收敛
+- `result`: 完整的 `CZMResult`，包含位移、损伤、分离、牵引力和求解诊断
+
+输入或求解结果包含非有限值、或非线性求解未收敛时抛出异常。
 """
 function update_czm_damage!(case, variables, T_nodes_carry)
     czm_mesh = case.czm_mesh
@@ -486,22 +562,15 @@ function update_czm_damage!(case, variables, T_nodes_carry)
     ndof = 2 * czm_mesh.nnode
     F_ext = zeros(Float64, ndof)
 
-    # 诊断：检测输入异常（帮助定位 NaN 来源）
-    has_nan_T = any(isnan, T_nodes_carry)
-    has_nan_soc_n = any(isnan, variables["thermal2D element soc_n"])
-    has_nan_soc_p = any(isnan, variables["thermal2D element soc_p"])
-    if has_nan_T || has_nan_soc_n || has_nan_soc_p || any(isnan, dT_elem) || any(isnan, Δsoc_n_elem) || any(isnan, Δsoc_p_elem)
-        @warn "CZM inputs contain NaN" has_nan_T=has_nan_T has_nan_soc_n=has_nan_soc_n has_nan_soc_p=has_nan_soc_p n_nan_dT=count(isnan, dT_elem) n_nan_soc_n=count(isnan, Δsoc_n_elem) n_nan_soc_p=count(isnan, Δsoc_p_elem)
-    end
+    all(isfinite, T_nodes_carry) || throw(ArgumentError("CZM temperature input contains non-finite values"))
+    all(isfinite, variables["thermal2D element soc_n"]) || throw(ArgumentError("CZM negative-electrode SOC input contains non-finite values"))
+    all(isfinite, variables["thermal2D element soc_p"]) || throw(ArgumentError("CZM positive-electrode SOC input contains non-finite values"))
+    all(isfinite, dT_elem) || throw(ArgumentError("CZM temperature increment contains non-finite values"))
+    all(isfinite, Δsoc_n_elem) || throw(ArgumentError("CZM negative-electrode SOC increment contains non-finite values"))
+    all(isfinite, Δsoc_p_elem) || throw(ArgumentError("CZM positive-electrode SOC increment contains non-finite values"))
 
     # 初始化位移（从 czm_layout 获取上一步值）
-    u_czm_prev = case.czm_layout !== nothing ? case.czm_layout.u_prev : zeros(Float64, ndof)
-    if length(u_czm_prev) != ndof
-        u_czm_prev = zeros(Float64, ndof)
-    elseif any(isnan, u_czm_prev)
-        @warn "CZM u_czm_prev contains NaN, resetting to zeros"
-        u_czm_prev = zeros(Float64, ndof)
-    end
+    u_czm_prev = case.czm_layout.u_prev
 
     # 调用 CZM 求解器（可选迭代方式）
     iter_method = case.opt.czm_iter_method
@@ -548,40 +617,19 @@ function update_czm_damage!(case, variables, T_nodes_carry)
         println("[CZM-Debug] max(δ_n)=$(round(max_delta_n; digits=6)), max(δ_eff)=$(round(max_delta_eff; digits=6)), converged=$(result.converged), β=$(round(visc_beta; digits=4)), D_max(before)=$(round(pre_stats.max_D; digits=6)), D_max(trial)=$(round(trial_stats.max_D; digits=6)), D_visc_max(trrial)=$(round(D_visc_max_trial; digits=6)), D_max(commit)=$(result.converged ? round(trial_stats.max_D; digits=6) : round(pre_stats.max_D; digits=6))")
     end
 
-    # 诊断：检查求解结果是否异常
-    has_nan_disp = any(isnan, result.displacement)
-    has_nan_damage = any(ds -> isnan(ds.D), updated_czm_mesh.damage_states)
-    if has_nan_disp || has_nan_damage || !result.converged
-        @warn "CZM solve issue" converged=result.converged iterations=result.iterations residual=round(result.residual_norm; digits=4) has_nan_disp=has_nan_disp has_nan_damage=has_nan_damage
-    end
+    all(isfinite, result.displacement) || error("CZM solve returned non-finite displacement")
+    all(isfinite, result.damage) || error("CZM solve returned non-finite damage")
+    all(isfinite, result.separation_n) || error("CZM solve returned non-finite normal separation")
+    all(isfinite, result.separation_t) || error("CZM solve returned non-finite tangential separation")
+    all(isfinite, result.traction_n) || error("CZM solve returned non-finite normal traction")
+    all(isfinite, result.traction_t) || error("CZM solve returned non-finite tangential traction")
+    isfinite(result.residual_norm) || error("CZM solve returned a non-finite residual norm")
+    result.converged || error("CZM solve did not converge after $(result.iterations) iterations (residual=$(result.residual_norm))")
 
-    # Only commit damage states when the nonlinear solve converged.
-    # This avoids propagating a partially converged or diverged state into the next time step.
-    if result.converged
-        czm_mesh.damage_states = updated_czm_mesh.damage_states
-        if case.czm_layout !== nothing
-            case.czm_layout.u_prev = result.displacement
-        end
-    end
+    czm_mesh.damage_states = updated_czm_mesh.damage_states
+    case.czm_layout.u_prev = result.displacement
 
-    return result.displacement, result.converged
-end
-
-"""
-    update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)
-
-6 参数兼容入口：自动构建 CzmLayout 并委托给 3 参数版本。
-"""
-function update_czm_damage!(czm_mesh, czm_params, case, variables, T_nodes_carry, u_czm_prev)
-    # 确保 czm_layout 存在
-    if case.czm_layout === nothing
-        case.czm_layout = CzmLayout(czm_mesh)
-    end
-    # 同步外部传入的 u_prev
-    if u_czm_prev !== nothing && length(u_czm_prev) == 2 * czm_mesh.nnode
-        case.czm_layout.u_prev = u_czm_prev
-    end
-    return update_czm_damage!(case, variables, T_nodes_carry)
+    return result
 end
 
 # ========================================================================
@@ -623,11 +671,8 @@ end
 每行 ≤4 个非零元（粗热 Q4 单元的 4 节点），权重 = 双线性形函数值，行和 = 1。
 
 # 算法
-对每个 CZM 节点 P：
-1. 计算到所有粗热单元中心的欧氏距离，取最近 10 个作为候选
-2. 对每个候选用 Newton 迭代解等参坐标 (ξ, η) ∈ [-1, 1]²
-3. 若 |ξ| ≤ 1+ε 且 |η| ≤ 1+ε：用双线性形函数 N_i(ξ, η) 作为权重，终止搜索
-4. 否则：回退到最近粗热节点（权重 1）
+力学网格与热网格共享周向节点。按结构化节点列确定唯一父热单元，
+仅在该父单元内求等参坐标；定位失败立即报错。
 """
 function build_thermal_to_czm_interp(thermal_mesh::Mesh, czm_submesh::CzmSubmesh)
     czm_node = czm_submesh.mesh.node
@@ -635,18 +680,12 @@ function build_thermal_to_czm_interp(thermal_mesh::Mesh, czm_submesh::CzmSubmesh
     n_thermal_node = thermal_mesh.nlen
     n_thermal_elem = size(thermal_mesh.element, 1)
 
-    # 预计算每个粗热单元的中心坐标与半径
-    thermal_centers = zeros(n_thermal_elem, 2)
-    thermal_radii = zeros(n_thermal_elem)
-    for e in 1:n_thermal_elem
-        ns = thermal_mesh.element[e, :]
-        xs = thermal_mesh.node[ns, 1]
-        ys = thermal_mesh.node[ns, 2]
-        thermal_centers[e, 1] = sum(xs) / 4
-        thermal_centers[e, 2] = sum(ys) / 4
-        thermal_radii[e] = maximum(sqrt.((xs .- thermal_centers[e, 1]).^2 .+
-                                          (ys .- thermal_centers[e, 2]).^2))
-    end
+    n_theta_nodes = n_thermal_elem + 1
+    n_czm_node % n_theta_nodes == 0 || throw(DimensionMismatch(
+        "build_thermal_to_czm_interp: CZM node count $n_czm_node is not divisible by thermal angular node count $n_theta_nodes"))
+    n_spirals = div(n_czm_node, n_theta_nodes)
+    n_spirals == 9 || throw(DimensionMismatch(
+        "build_thermal_to_czm_interp: expected 9 inherited mechanical spirals, got $n_spirals"))
 
     # 双线性形函数 N_i(ξ, η) = 0.25 * (1 ± ξ)(1 ± η)
     function shape_funcs(ξ::Float64, η::Float64)
@@ -659,7 +698,7 @@ function build_thermal_to_czm_interp(thermal_mesh::Mesh, czm_submesh::CzmSubmesh
     end
 
     # Newton 迭代解等参坐标
-    function solve_isoparametric(x_nodes, y_nodes, px, py; max_iter=20, tol=1e-10)
+    function solve_isoparametric(x_nodes, y_nodes, px, py; max_iter=20, tol=1e-13)
         ξ, η = 0.0, 0.0
         for _ in 1:max_iter
             N = shape_funcs(ξ, η)
@@ -690,33 +729,20 @@ function build_thermal_to_czm_interp(thermal_mesh::Mesh, czm_submesh::CzmSubmesh
 
     for i in 1:n_czm_node
         px, py = czm_node[i, 1], czm_node[i, 2]
-        dists = sqrt.((thermal_centers[:, 1] .- px).^2 .+
-                      (thermal_centers[:, 2] .- py).^2)
-        candidate_order = sortperm(dists)
-        found = false
-        for e in candidate_order[1:min(10, end)]
-            ns = thermal_mesh.element[e, :]
-            x_nodes = thermal_mesh.node[ns, 1]
-            y_nodes = thermal_mesh.node[ns, 2]
-            ξ, η, ok = solve_isoparametric(x_nodes, y_nodes, px, py)
-            if ok && abs(ξ) <= 1.0 + 1e-6 && abs(η) <= 1.0 + 1e-6
-                N = shape_funcs(clamp(ξ, -1, 1), clamp(η, -1, 1))
-                for k in 1:4
-                    push!(I_rows, i)
-                    push!(J_cols, ns[k])
-                    push!(V_vals, N[k])
-                end
-                found = true
-                break
-            end
+        angular_node = mod(i - 1, n_theta_nodes) + 1
+        parent = min(angular_node, n_thermal_elem)
+        ns = thermal_mesh.element[parent, :]
+        x_nodes = thermal_mesh.node[ns, 1]
+        y_nodes = thermal_mesh.node[ns, 2]
+        ξ, η, ok = solve_isoparametric(x_nodes, y_nodes, px, py)
+        if !ok || abs(ξ) > 1.0 + 1e-6 || abs(η) > 1.0 + 1e-6
+            error("build_thermal_to_czm_interp: CZM node $i at ($px, $py) is outside its topological parent thermal element $parent (ξ=$ξ, η=$η)")
         end
-        if !found
-            dists_node = sqrt.((thermal_mesh.node[:, 1] .- px).^2 .+
-                               (thermal_mesh.node[:, 2] .- py).^2)
-            _, nearest = findmin(dists_node)
+        N = shape_funcs(clamp(ξ, -1, 1), clamp(η, -1, 1))
+        for k in 1:4
             push!(I_rows, i)
-            push!(J_cols, nearest)
-            push!(V_vals, 1.0)
+            push!(J_cols, ns[k])
+            push!(V_vals, N[k])
         end
     end
 

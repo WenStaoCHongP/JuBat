@@ -51,9 +51,9 @@ mutable struct CycleResult
     
     # 各阶段结果
     charge::PhaseResult
-    rest1::PhaseResult
+    rest1::Union{PhaseResult, Nothing}
     discharge::PhaseResult
-    rest2::PhaseResult
+    rest2::Union{PhaseResult, Nothing}
     
     # 循环汇总
     capacity_charge::Float64            # 充电容量 (Ah)
@@ -115,10 +115,10 @@ end
 # 2. 单阶段求解器
 # ========================================================================
 
-function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, V_limit::Float64, initial_state::Dict; czm_mesh=nothing, czm_params=nothing, dt_range::Vector{Float64}=[1.0, 10.0], czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing, czm_cycle::Int=1)
+function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, V_limit::Float64, initial_state::Union{Dict{String,Any},Nothing}; czm_mesh=nothing, czm_params=nothing, dt_range::Vector{Float64}=[1.0, 10.0], czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing, czm_cycle::Int=1)
     result = PhaseResult()
     result.phase_type = phase_type
-    result.t_start = get(initial_state, "t_global", 0.0)
+    result.t_start = initial_state === nothing ? 0.0 : initial_state["t_global"]
 
     if phase_type == PHASE_REST
         I_current = 0.0
@@ -156,20 +156,12 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_curren
                              czm_snapshots=czm_snapshots, czm_cycle=czm_cycle,
                              czm_phase=string(phase_type))
 
-        duration = begin
-            time_hist = get(solve_result, "time [s]", Float64[])
-            isempty(time_hist) ? t_max : time_hist[end]
-        end
-
-        final_state = get(solve_result, "final_state", Dict{String, Any}())
-        final_state["t_global"] = result.t_start + duration
-
         # CZM 损伤已由 Solve 主循环每步更新（Solve.jl:270-285），此处不再冗余调用。
         # 旧版在此处调用 update_czm_damage!(..., u_czm_prev=nothing) 会导致：
         #   1. 位移场从零重解，产生不一致的应力-位移解
         #   2. 每阶段额外浪费 ~12s 计算
 
-        phase_data = _postprocess_phase_result(
+        phase_data = postprocess_phase_result(
             case, phase_type, solve_result, initial_state,
             I_current, result.t_start,
             D_max_init, D_mean_init, czm_mesh
@@ -224,13 +216,11 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
 
     # 应用初始SOC设置
     soc_init = cycle_opt.SOC_init
-    if soc_init >= 0.0 && soc_init <= 1.0
-        cs0_NE, cs0_PE = apply_initial_soc!(case, case.param_dim, soc_init)
-        if verbose
-            @printf("  初始SOC: %.1f%%\n", soc_init * 100)
-            @printf("    → 负极cs0: %.1f mol/m³\n", cs0_NE)
-            @printf("    → 正极cs0: %.1f mol/m³\n", cs0_PE)
-        end
+    cs0_NE, cs0_PE = apply_initial_soc!(case, case.param_dim, soc_init)
+    if verbose
+        @printf("  初始SOC: %.1f%%\n", soc_init * 100)
+        @printf("    → 负极cs0: %.1f mol/m³\n", cs0_NE)
+        @printf("    → 正极cs0: %.1f mol/m³\n", cs0_PE)
     end
 
     # 初始化
@@ -249,12 +239,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
     end
     
     # 初始状态
-    current_state = Dict{String, Any}(
-        "y" => nothing,
-        "T_nodes" => nothing,
-        "V" => 3.7,
-        "t_global" => 0.0
-    )
+    current_state = nothing
     
     # CZM参数
     czm_params = case.param.cohesive
@@ -274,15 +259,15 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
         
         cycle_result = CycleResult(
             cycle,
-            PhaseResult(), PhaseResult(), PhaseResult(), PhaseResult(),
+            PhaseResult(), nothing, PhaseResult(), nothing,
             0.0, 0.0, 0.0,
             0.0, 0.0, 0,
             0.0
         )
         
         # 重置温度（如果需要）
-        if cycle_opt.reset_T_each_cycle && cycle > 1
-            current_state["T_nodes"] = nothing
+        if cycle_opt.reset_T_each_cycle && cycle > 1 && case.opt.thermalmodel != "none"
+            reset_cycle_temperature!(case, current_state)
             if verbose
                 println("  温度场已重置")
             end
@@ -343,11 +328,6 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
             end
         else
             # 静置时间 = 0：跳过静置阶段，直接继承上一阶段状态
-            cycle_result.rest1 = PhaseResult()
-            cycle_result.rest1.duration = 0.0
-            cycle_result.rest1.V_start = get(current_state, "V", NaN)
-            cycle_result.rest1.V_end = cycle_result.rest1.V_start
-            cycle_result.rest1.final_state = current_state
             # current_state 保持不变（无扩散过程）
             
             if verbose
@@ -357,9 +337,9 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
         
         # ============ 阶段3: 充电 ============
         # 充电前温度场重置（可选）
-        if cycle_opt.reset_T_before_charge
+        if cycle_opt.reset_T_before_charge && case.opt.thermalmodel != "none"
             # 重置温度场到初始温度，但保留电化学状态
-            current_state["T_nodes"] = nothing
+            reset_cycle_temperature!(case, current_state)
             if verbose
                 println("    (温度场已重置)")
             end
@@ -414,11 +394,6 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
             end
         else
             # 静置时间 = 0：跳过静置阶段，无扩散过程
-            cycle_result.rest2 = PhaseResult()
-            cycle_result.rest2.duration = 0.0
-            cycle_result.rest2.V_start = get(current_state, "V", NaN)
-            cycle_result.rest2.V_end = cycle_result.rest2.V_start
-            cycle_result.rest2.final_state = current_state
             # current_state 保持不变（无扩散过程）
             if verbose
                 println("  [静置2] 跳过 (t=0，无扩散)")
@@ -426,17 +401,16 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
         end
         
         # ============ 循环汇总与后处理 ============
-        rest1_result = cycle_result.rest1
-        rest2_result = cycle_result.rest2
-        _postprocess_cycle_result!(cycle_result, charge_result, discharge_result, rest1_result, rest2_result, czm_mesh)
-        _append_cycle_result!(result, cycle, cycle_result; save_detailed=save_detailed)
-        initial_capacity, current_soh = _update_soh_and_capacity!(result, cycle, cycle_result, initial_capacity)
+        postprocess_cycle_result!(cycle_result, charge_result, discharge_result,
+                                  cycle_result.rest1, cycle_result.rest2, czm_mesh)
+        append_cycle_result!(result, cycle, cycle_result; save_detailed=save_detailed)
+        initial_capacity, current_soh = update_soh_and_capacity!(result, cycle, cycle_result, initial_capacity)
 
         if verbose
-            _print_cycle_summary(cycle, cycle_result, current_soh)
+            print_cycle_summary(cycle, cycle_result, current_soh)
         end
 
-        should_stop, soh_hit = _check_cycle_termination(cycle, cycle_result, czm_mesh, current_soh, soh_threshold; verbose=verbose)
+        should_stop, soh_hit = check_cycle_termination(cycle, cycle_result, czm_mesh, current_soh, soh_threshold; verbose=verbose)
         if soh_hit
             soh_terminated = true
             result.soh_terminated = true
@@ -453,7 +427,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
 
     result.final_czm_mesh = czm_mesh
     if verbose
-        _print_cycling_summary(result, initial_capacity, soh_terminated)
+        print_cycling_summary(result, initial_capacity, soh_terminated)
     end
     
     return result
@@ -463,6 +437,25 @@ end
 # ========================================================================
 # 4. 辅助函数
 # ========================================================================
+
+function reset_cycle_temperature!(case::Case, state::Dict{String,Any})
+    case.opt.thermalmodel == "none" && return nothing
+
+    y = state["y"]
+    thermal_indices = if case.opt.per_element_spme
+        case.layout.thermal_range
+    elseif case.opt.thermalmodel == "lumped"
+        case.index["temperature"]
+    else
+        first_temperature = only(case.index["temperature"])
+        nT = case.mesh["thermal2D"].nlen
+        first_temperature:(first_temperature + nT - 1)
+    end
+
+    y[thermal_indices] .= case.param.cell.T0
+    state["T_nodes"] = copy(y[thermal_indices])
+    return nothing
+end
 
 """
 compute_cs0_from_soc(param_dim, soc::Float64) -> (cs0_NE, cs0_PE)

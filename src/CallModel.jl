@@ -63,9 +63,6 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     variables["thermal2D temperature at nodes"] = T_nodes
     variables["thermal2D element area"] = areas
     
-    # 使用缓存的 I_e 作为初值
-    I_e_prev = hasproperty(case, :I_e_cache) ? case.I_e_cache : nothing
-    
     # 分流求解需要代表性的全局状态（用于计算 prefactor）。
     # 这里使用所有单元的平均状态，并先生成与之匹配的电化学变量，确保标度一致。
     yt_representative = mean(yt_chem)
@@ -84,13 +81,11 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         fractured_czm = get_fractured_elements(case.czm_mesh)
         deactivated_elements = Int64[]
         geom = case.geometry
-        if geom !== nothing && hasfield(typeof(geom), :czm_element_map)
-            for e in 1:ne
-                for czm_idx in get(geom.czm_element_map, e, Int64[])
-                    if czm_idx in fractured_czm
-                        push!(deactivated_elements, e)
-                        break
-                    end
+        for e in 1:ne
+            for czm_idx in get(geom.czm_element_map, e, Int64[])
+                if czm_idx in fractured_czm
+                    push!(deactivated_elements, e)
+                    break
                 end
             end
         end
@@ -111,7 +106,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     end
 
     t_branch_ns = time_ns()
-    variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, I_e_prev; deactivated_elements=deactivated_elements, D_elem=D_elem_area_loss)
+    variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, nothing; deactivated_elements=deactivated_elements, D_elem=D_elem_area_loss)
     t_branch_s = (time_ns() - t_branch_ns) * 1e-9
     
     # 4) 并行求解每个单元的SPMe（使用线程本地精简工作区）

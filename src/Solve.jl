@@ -34,9 +34,11 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             elseif case.opt.thermalmodel == "ring2D"
                 MT_old, KT_old, FT_old = ThermalDistributed2D_Ring(case, vars)
                 KT_old, FT_old = ThermalRing2D_BC(KT_old, FT_old, case, vars["thermal2D outer_nodes"], t0)
-            else
+            elseif case.opt.thermalmodel == "distributed2D"
                 MT_old, KT_old, FT_old = ThermalDistributed2D(case, vars)
                 KT_old, FT_old = ThermalDistributed2D_BC(KT_old, FT_old, case, t0)
+            else
+                throw(ArgumentError("Unsupported pure thermal model: $(case.opt.thermalmodel)"))
             end
 
             for step in 1:(length(times) - 1)
@@ -48,9 +50,11 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
                 elseif case.opt.thermalmodel == "ring2D"
                     MT_new, KT_new, FT_new = ThermalDistributed2D_Ring(case, vars)
                     KT_new, FT_new = ThermalRing2D_BC(KT_new, FT_new, case, vars["thermal2D outer_nodes"], t)
-                else
+                elseif case.opt.thermalmodel == "distributed2D"
                     MT_new, KT_new, FT_new = ThermalDistributed2D(case, vars)
                     KT_new, FT_new = ThermalDistributed2D_BC(KT_new, FT_new, case, t)
+                else
+                    throw(ArgumentError("Unsupported pure thermal model: $(case.opt.thermalmodel)"))
                 end
 
                 A = MT_new - theta * dt * KT_new
@@ -90,22 +94,10 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             y0 = ModelInitialisation(case)
         end
     else
-        # initial_state 可能是向量或 Dict（来自循环求解器）
-        if isa(y0_input, Dict)
-            y_from_state = get(y0_input, "y", nothing)
-            if y_from_state !== nothing
-                y0 = vec(y_from_state)
-            else
-                # Dict 中没有 y，回退到模型初始化
-                if multi_spme_enabled
-                    y0 = ModelInitialisation_MultiSPMe(case)
-                else
-                    y0 = ModelInitialisation(case)
-                end
-            end
-        else
-            y0 = vec(y0_input)
-        end
+        haskey(y0_input, "y") || throw(ArgumentError("initial_state must contain key \"y\""))
+        y_from_state = y0_input["y"]
+        y_from_state isa AbstractArray || throw(ArgumentError("initial_state[\"y\"] must be an array"))
+        y0 = vec(y_from_state)
         if multi_spme_enabled
             ne = size(case.mesh["thermal2D"].element, 1)
             nT = case.mesh["thermal2D"].nlen
@@ -120,8 +112,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             end
 
             if length(y0) != expected_multi_len
-                @warn "外部状态长度与多SPMe布局不匹配，回退到模型初始化" got=length(y0) expected=expected_multi_len
-                y0 = ModelInitialisation_MultiSPMe(case)
+                throw(DimensionMismatch("external state length $(length(y0)) does not match multi-SPMe layout length $expected_multi_len"))
             end
         end
     end
@@ -173,7 +164,16 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     V_init = variables["cell voltage"] * case.param.scale.phi
     println("\n[Solve] 初始化完成: V=$V_init V, t_end=$(t_end * case.param.scale.t0)")
     # 持久化热场（跨 CallModel 迭代携带）
-    T_nodes_carry = get(variables, "thermal2D temperature at nodes", Float64[])
+    T_nodes_carry = if multi_spme_enabled
+        haskey(variables, "thermal2D temperature at nodes") || error("multi-SPMe variables are missing thermal node temperatures")
+        T_nodes_initial = variables["thermal2D temperature at nodes"]
+        T_nodes_initial isa AbstractArray || error("multi-SPMe thermal node temperatures must be an array")
+        T_nodes_initial = vec(T_nodes_initial)
+        length(T_nodes_initial) == case.layout.nT || throw(DimensionMismatch("initial thermal node count $(length(T_nodes_initial)) does not match layout count $(case.layout.nT)"))
+        copy(T_nodes_initial)
+    else
+        Float64[]
+    end
 
     dt_init = 1e-8
     vc = 1:size(M_old,1)
@@ -217,11 +217,10 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         # multi-SPMe：求解后提取温度自由度，用于记录/后处理
         if multi_spme_enabled
             nT = case.layout.nT
-            if length(y_c) >= nT
-                T_nodes = y_c[(end - nT + 1):end]
-                variables["thermal2D temperature at nodes"] = T_nodes
-                T_nodes_carry = T_nodes
-            end
+            length(y_c) == case.layout.n_total || throw(DimensionMismatch("time-step state length $(length(y_c)) does not match multi-SPMe layout length $(case.layout.n_total)"))
+            T_nodes = y_c[(end - nT + 1):end]
+            variables["thermal2D temperature at nodes"] = T_nodes
+            T_nodes_carry = T_nodes
         end
         error_y = ErrorEstimation(case, y_old, y_new, dt_min/dt) 
         errors[v] = error_y
@@ -269,48 +268,30 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
                 czm_step_count += 1
                 if czm_step_count % case.opt.czm_update_interval == 0
                     t_czm_ns = time_ns()
-                    czm_converged = false
                     try
-                        u_czm_new, czm_converged = update_czm_damage!(
-                            case, variables, T_nodes_carry)
-                        # u_prev 已由 update_czm_damage! 内部管理
+                        czm_result = update_czm_damage!(case, variables, T_nodes_carry)
 
                         # ── Snapshot collection for CSV export ──
                         if czm_snapshots !== nothing
-                            czm_mesh_local = case.czm_mesh
-                            n_coh = czm_mesh_local.n_cohesive
-                            snap_damage = [s.D for s in czm_mesh_local.damage_states]
-                            snap_sep_n = zeros(n_coh)
-                            snap_sep_t = zeros(n_coh)
-                            snap_trc_n = zeros(n_coh)
-                            snap_trc_t = zeros(n_coh)
-                            if czm_converged
-                                for i in 1:n_coh
-                                    snap_sep_n[i] = czm_mesh_local.damage_states[i].δ_max_n
-                                    snap_sep_t[i] = czm_mesh_local.damage_states[i].δ_max_t
-                                end
-                            end
-
                             push!(czm_snapshots, CZMSnapshot(
                                 t * case.param.scale.t0,
                                 czm_cycle,
                                 czm_phase,
-                                copy(case.czm_layout.u_prev),
-                                snap_damage,
-                                snap_sep_n,
-                                snap_sep_t,
-                                snap_trc_n,
-                                snap_trc_t,
-                                czm_converged,
-                                0,
-                                0.0,
+                                copy(czm_result.displacement),
+                                copy(czm_result.damage),
+                                copy(czm_result.separation_n),
+                                copy(czm_result.separation_t),
+                                copy(czm_result.traction_n),
+                                copy(czm_result.traction_t),
+                                czm_result.converged,
+                                czm_result.iterations,
+                                czm_result.residual_norm,
                                 case.opt.czm_iter_method
                             ))
                         end
-                    catch e
-                        @debug "CZM damage update failed at step $czm_step_count: $e"
+                    finally
+                        timing_totals["czm"] += (time_ns() - t_czm_ns) * 1e-9
                     end
-                    timing_totals["czm"] += (time_ns() - t_czm_ns) * 1e-9
                 end
             end
         end
@@ -415,14 +396,10 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     result["total_cutoff_count"] = total_cutoff_count
     
     # 附加热相关历史数据
-    try
-        if case.opt.per_element_spme && case.opt.thermalmodel == "distributed2D" && !isempty(T_nodes_carry)
-            Tref = case.param_dim.scale.T_ref
-            result["thermal2D final temperature at nodes [K]"] = T_nodes_carry .* Tref
-            result["thermal2D nodes xy [m]"] = case.mesh["thermal2D"].node
-        end
-    catch
-        # non-fatal
+    if case.opt.per_element_spme && case.opt.thermalmodel == "distributed2D"
+        Tref = case.param_dim.scale.T_ref
+        result["thermal2D final temperature at nodes [K]"] = T_nodes_carry .* Tref
+        result["thermal2D nodes xy [m]"] = case.mesh["thermal2D"].node
     end
     print("finish the simulation\n") 
     errors = errors[1:v] 

@@ -57,20 +57,23 @@ function ModelInitialisation_MultiSPMe(case::Case; initial_soc_distribution::Uni
     nT = case.mesh["thermal2D"].nlen
     
     # 3) 创建单个单元的电化学初始状态（标准SPMe初始化，不含热场）
-    # 临时修改 thermalmodel 以获取纯电化学部分
-    original_thermalmodel = case.opt.thermalmodel
-    case.opt.thermalmodel = "none"
-    y0_single_chem = ModelInitialisation(case)
-    case.opt.thermalmodel = original_thermalmodel
-    
+    Nrn = case.mesh["negative particle"].nlen
+    Nrp = case.mesh["positive particle"].nlen
+    Nel = case.mesh["electrolyte"].nlen
+    y0_single_chem = if isempty(case.opt.y0)
+        vec([
+            ones(Float64, Nrn, 1) * case.param.NE.cs0;
+            ones(Float64, Nrp, 1) * case.param.PE.cs0;
+            ones(Float64, Nel, 1) * case.param.EL.ce0
+        ])
+    else
+        vec(case.opt.y0)
+    end
+
     n_chem = length(y0_single_chem)
     
     # 4) 为每个单元创建独立的电化学初始状态
     y0_chem_all = zeros(Float64, ne * n_chem)
-    
-    Nrn = case.mesh["negative particle"].nlen
-    Nrp = case.mesh["positive particle"].nlen
-    Nel = case.mesh["electrolyte"].nlen
     
     for e in 1:ne
         offset = (e - 1) * n_chem

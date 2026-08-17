@@ -11,8 +11,8 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,<:Any})
     Vi, Vj = mesh.element[mesh.gs.ele, :], mesh.element[mesh.gs.ele, :]
     ele_of_gp = mesh.gs.ele
 
-    # 获取层权重（从预计算的 geometry struct，避免跨模块耦合）
-    fks = case.geometry !== nothing ? case.geometry.layer_weights : jellyroll_element_properties(mesh, case.param)[2]
+    # setup_thermal2D_mesh guarantees the precomputed geometry.
+    fks = case.geometry.layer_weights
 
     # ========== 质量矩阵 ==========
     rho_c_weights = thermal_capacity_weights_2d(param, fks, ele_of_gp, wJ)
@@ -46,136 +46,7 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,<:Any})
     return MT, KT, FT
 end
 
-function apply_convection_bc(KT, FT, mesh, is_outer, case; edge_cache=nothing)
-    K = copy(KT)
-    F = copy(FT)
-
-    Bi = case.param_dim.scale.h * case.param.cell.lambda_r  # Biot 数（统一能量尺度）
-    if Bi == 0
-        return K, F
-    end
-
-    param = case.param
-    T_amb = param.cell.T_amb  # 已无量纲
-
-    s_vals = (-0.577350269189626, 0.577350269189626)
-    w_vals = (1.0, 1.0)
-
-    # 使用缓存或回退到实时计算
-    if edge_cache === nothing
-        if is_outer === nothing
-            _, is_outer = identify_boundary_nodes(mesh, case.param)
-        end
-        edge_cache = compute_boundary_edge_cache(mesh, is_outer)
-    end
-
-    for (idx, (a, b)) in enumerate(edge_cache.edges)
-        J = edge_cache.L_edge[idx] / 2
-
-        ke11, ke12, ke22 = 0.0, 0.0, 0.0
-        fe1, fe2 = 0.0, 0.0
-
-        for (s, w) in zip(s_vals, w_vals)
-            N1, N2 = 0.5 * (1 - s), 0.5 * (1 + s)
-            # 无量纲边界积分：ds* = J * dξ, J 已无量纲
-            wt = Bi * w * J
-
-            ke11 += -wt * N1 * N1
-            ke12 += -wt * N1 * N2
-            ke22 += -wt * N2 * N2
-            fe1 += wt * T_amb * N1
-            fe2 += wt * T_amb * N2
-        end
-
-        K[a, a] += ke11; K[a, b] += ke12
-        K[b, a] += ke12; K[b, b] += ke22
-        F[a] += fe1; F[b] += fe2
-    end
-
-    return K, F
-end
-
-
-function apply_cool_method(KT, FT, mesh, case)
-    cool_method = case.opt.cool_method
-    if cool_method == "none"
-        return copy(KT), copy(FT)
-    elseif cool_method == "surface"
-        param = case.param
-        Bi = case.param_dim.scale.h  # Biot 数（统一能量尺度）
-        conv_factor = 2.0 * Bi / param.cell.width
-
-        ngs = length(mesh.gs.detJ)
-        Ni = mesh.gs.Ni
-        wJ = mesh.gs.weight .* mesh.gs.detJ
-        ele = mesh.gs.ele
-        nn_per_elem = size(mesh.element, 2)
-
-        K = copy(KT)
-        F = copy(FT)
-        for g in 1:ngs
-            nodes = mesh.element[ele[g], :]
-            wt = conv_factor * wJ[g]
-
-            for i in 1:nn_per_elem
-                ni = nodes[i]
-                Ni_g = Ni[g, i]
-                for j in 1:nn_per_elem
-                    nj = nodes[j]
-                    Nj_g = Ni[g, j]
-                    K[ni, nj] -= wt * Ni_g * Nj_g
-                end
-                F[ni] += wt * param.cell.T_amb * Ni_g
-            end
-        end
-        return K, F
-    elseif cool_method == "tab"
-        pos_idx, neg_idx = jellyroll_tab_node_indices(mesh, case.param)
-        tab_nodes = unique(vcat(pos_idx, neg_idx))
-        if isempty(tab_nodes)
-            return copy(KT), copy(FT)
-        end
-
-        param = case.param
-        n_nodes = length(tab_nodes)
-        arc_lengths = zeros(Float64, n_nodes)
-        if n_nodes == 1
-            arc_lengths[1] = 1.0
-        else
-            coords = [mesh.node[n, :] for n in tab_nodes]
-            for i in 1:n_nodes
-                if i == 1
-                    arc_lengths[i] = norm(coords[2] - coords[1]) / 2.0
-                elseif i == n_nodes
-                    arc_lengths[i] = norm(coords[i] - coords[i-1]) / 2.0
-                else
-                    arc_lengths[i] = (norm(coords[i] - coords[i-1]) + norm(coords[i+1] - coords[i])) / 2.0
-                end
-            end
-        end
-
-        total_arc_length = sum(arc_lengths)
-        if total_arc_length < 1e-12
-            return copy(KT), copy(FT)
-        end
-
-        K = copy(KT)
-        F = copy(FT)
-        for (i, n) in enumerate(tab_nodes)
-            weight = arc_lengths[i] / total_arc_length
-            coeff = param.tab.h * param.tab.area * weight / param.cell.width
-            K[n, n] -= coeff
-            F[n] += coeff * param.cell.T_amb
-        end
-        return K, F
-    end
-
-    return copy(KT), copy(FT)
-end
-
-# ── 原位变体（ThermalDistributed2D_BC 内部使用，消除三重 copy）──
-
-function apply_convection_bc!(K, F, case; edge_cache=nothing)
+function apply_convection_bc(K, F, mesh, is_outer, case; edge_cache=nothing)
     Bi = case.param_dim.scale.h * case.param.cell.lambda_r
     if Bi == 0
         return K, F
@@ -187,7 +58,10 @@ function apply_convection_bc!(K, F, case; edge_cache=nothing)
     w_vals = (1.0, 1.0)
 
     if edge_cache === nothing
-        return apply_convection_bc(K, F, case.mesh["thermal2D"], nothing, case)
+        if is_outer === nothing
+            _, is_outer = identify_boundary_nodes(mesh, case.param)
+        end
+        edge_cache = compute_boundary_edge_cache(mesh, is_outer)
     end
 
     for (idx, (a, b)) in enumerate(edge_cache.edges)
@@ -211,7 +85,7 @@ function apply_convection_bc!(K, F, case; edge_cache=nothing)
     return K, F
 end
 
-function apply_cool_method!(K, F, mesh, case)
+function apply_cool_method(K, F, mesh, case)
     cool_method = case.opt.cool_method
     if cool_method == "none"
         return K, F
@@ -315,10 +189,9 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64)
     #     end
     # end
 
-    # 使用原位变体（不再做额外 copy）
-    edge_cache = case.geometry !== nothing ? case.geometry.boundary_edges : nothing
-    K, F = apply_convection_bc!(K, F, case; edge_cache=edge_cache)
-    K, F = apply_cool_method!(K, F, mesh, case)
+    # 使用 setup_thermal2D_mesh 预计算的边界缓存。
+    K, F = apply_convection_bc(K, F, mesh, nothing, case; edge_cache=case.geometry.boundary_edges)
+    K, F = apply_cool_method(K, F, mesh, case)
     return K, F
 end
 
@@ -387,8 +260,7 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
     ne = size(mesh.element, 1)
     param = case.param
 
-    # 获取层权重（优先使用预计算的 geometry struct，避免跨模块耦合）
-    fks = case.geometry !== nothing ? case.geometry.layer_weights : jellyroll_element_properties(mesh, param)[2]
+    fks = case.geometry.layer_weights
 
     # 从 variables 获取预分配的数组
     q_rxn_ne = variables["thermal2D q_rxn_ne"]
@@ -408,14 +280,14 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
     as_n, as_p = param.NE.as, param.PE.as
     sig_n_eff = param.NE.sig * param.NE.eps_s
     sig_p_eff = param.PE.sig * param.PE.eps_s
-    sigma_pcc = max(param.PCC.sig, 1e-12)
-    sigma_ncc = max(param.NCC.sig, 1e-12)
+    sigma_pcc = param.PCC.sig
+    sigma_ncc = param.NCC.sig
 
     q_total = zeros(Float64, ne)
 
-    @inbounds for e in 1:ne
+    for e in 1:ne
         # 获取电化学变量（根据 per_element_spme 判断）
-        if per_element_spme && variables_elems !== nothing
+        if per_element_spme
             vars_e = variables_elems[e]
             eta_n = vars_e["negative electrode overpotential"][1]
             eta_p = vars_e["positive electrode overpotential"][end]
@@ -510,7 +382,7 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
     variables["thermal2D q_ohm_e_pe"] = q_ohm_e_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
     variables["thermal2D q_pcc"] = q_pcc * case.param_dim.scale.L^3 / case.param_dim.cell.volume
     variables["thermal2D q_ncc"] = q_ncc * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["total heat source"] = [sum(q_total .* areas) * case.param_dim.scale.L^3 / case.param_dim.cell.volume]
+    variables["total heat source"] = [dot(q_total, areas) * case.param_dim.scale.L^3 / case.param_dim.cell.volume]
 
     return variables
 end
@@ -519,23 +391,13 @@ function compute_heat_sources_with_czm(case::Case, variables::Dict,variables_ele
     # 先计算所有单元的热源
     variables = compute_heat_sources(case, variables, variables_elems, I_e, T_e, areas; per_element_spme=true)
 
-    # 从 case.geometry 获取活跃单元信息
-    geom = case.geometry
-    if geom !== nothing && hasfield(typeof(geom), :czm_element_map)
-        active_elements = get_active_elements(czm_mesh, geom)
-    else
-        # 无几何元数据时，所有单元活跃
-        ne_all = length(variables["heat_source_fields"])
-        active_elements = collect(1:ne_all)
-    end
+    active_elements = get_active_elements(czm_mesh, case.geometry)
     ne = length(variables["heat_source_fields"])
 
     # 创建活跃掩码
     is_active = falses(ne)
     for e in active_elements
-        if 1 <= e <= ne
-            is_active[e] = true
-        end
+        is_active[e] = true
     end
 
     # 将非活跃单元的热源设为零
@@ -550,8 +412,7 @@ function compute_heat_sources_with_czm(case::Case, variables::Dict,variables_ele
     variables["active_elements"] = Float64.(active_elements)
 
     # 更新总功率（仅活跃单元）
-    variables["total heat source"] = [sum(q_total .* areas)]
+    variables["total heat source"] = [dot(q_total, areas)]
 
     return variables
 end
-

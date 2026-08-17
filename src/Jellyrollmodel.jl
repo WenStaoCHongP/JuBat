@@ -15,11 +15,21 @@ struct JellyrollMesh
     czm_submesh::Union{Nothing, CzmSubmesh}   # v3 新增
 end
 
-function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phase::Float64=0.0, tol::Float64=1e-8,
-        nθ_czm::Union{Nothing,Int}=nothing)   # v3 新增
+function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phase::Float64=0.0,
+        tol::Float64=1e-8, czm_enabled::Bool=false)
+    nθ >= 3 || throw(ArgumentError("collector-seeded: nθ must be at least 3, got $nθ"))
+    isfinite(phase) || throw(ArgumentError("collector-seeded: phase must be finite, got $phase"))
+    isfinite(tol) && tol > 0.0 || throw(ArgumentError(
+        "collector-seeded: tol must be finite and positive, got $tol"))
+
     # 参数已归一化，直接使用无量纲值
     a = param.cell.Rin
     b = param.cell.layer / (2 * pi)
+    isfinite(a) || throw(ArgumentError("collector-seeded: Rin must be finite, got $a"))
+    isfinite(param.cell.Rout) || throw(ArgumentError(
+        "collector-seeded: Rout must be finite, got $(param.cell.Rout)"))
+    isfinite(b) && b > 0.0 || throw(ArgumentError(
+        "collector-seeded: cell layer thickness must be finite and positive, got $(param.cell.layer)"))
 
     # 两条螺旋偏移：完整层序 [0, param.cell.layer]
     s_in = 0.0
@@ -31,21 +41,23 @@ function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phas
     theta1 > theta0 || error("collector-seeded: no valid theta range [Rin, Rout]")
 
     # 等角度采样
-    seg_per_turn = max(3, nθ)
+    seg_per_turn = nθ
     dtheta = 2 * pi / seg_per_turn
 
     # 相位对齐
     k0 = ceil(Int, (theta0 - phase) / dtheta)
     k1 = floor(Int, (theta1 - phase) / dtheta)
+    k1 > k0 || error(
+        "collector-seeded: phase-aligned theta range contains no angular segment " *
+        "(theta0=$theta0, theta1=$theta1, phase=$phase, nθ=$nθ)")
 
-    theta = if k1 <= k0
-        n_theta_eff = max(2, round(Int, (theta1 - theta0) / dtheta))
-        collect(range(theta0, theta1; length=n_theta_eff + 1))
-    else
-        phase .+ (k0:k1) .* dtheta
-    end
+    theta = phase .+ (k0:k1) .* dtheta
 
     n_theta_actual = length(theta) - 1
+    n_phi_nodes = n_theta_actual + 1 - seg_per_turn
+    n_phi_nodes >= 2 || error(
+        "collector-seeded: winding span must exceed one full turn to form a Φ interface, " *
+        "got $n_theta_actual segments with $seg_per_turn segments per turn")
 
     # 生成节点
     r_in = a .+ b .* theta .+ s_in
@@ -80,23 +92,22 @@ function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phas
     gs = GetGS(element, node, gsorder, "Q4")
     mesh_unmerged = Mesh("Q4", 2, node, nnode, element, gs)
 
-    # 识别界面节点对（使用未合并网格）
+    # Φ 配对由均匀角网格的一圈索引偏移直接生成：outer(θ) ↔ inner(θ+2π)
     inner_nodes = collect(1:(ne + 1))
     outer_nodes = collect((ne + 2):(2 * (ne + 1)))
-    interface_pairs = Tuple{Int64, Int64}[]
-    for n_out in outer_nodes
-        x_out = mesh_unmerged.node[n_out, 1]
-        y_out = mesh_unmerged.node[n_out, 2]
-        for n_in in inner_nodes
-            x_in = mesh_unmerged.node[n_in, 1]
-            y_in = mesh_unmerged.node[n_in, 2]
-            if abs(x_out - x_in) < tol && abs(y_out - y_in) < tol
-                push!(interface_pairs, (n_out, n_in))
-                break
-            end
-        end
+    n_theta_nodes = ne + 1
+    interface_pairs = Vector{Tuple{Int64, Int64}}(undef, n_phi_nodes)
+    for outer_col in 1:n_phi_nodes
+        n_out = n_theta_nodes + outer_col
+        n_in = outer_col + seg_per_turn
+        dx = mesh_unmerged.node[n_out, 1] - mesh_unmerged.node[n_in, 1]
+        dy = mesh_unmerged.node[n_out, 2] - mesh_unmerged.node[n_in, 2]
+        dist = hypot(dx, dy)
+        dist <= tol || error(
+            "collector-seeded: Φ topology pair ($n_out, $n_in) is not coincident; " *
+            "distance=$dist exceeds tol=$tol")
+        interface_pairs[outer_col] = (n_out, n_in)
     end
-    sort!(interface_pairs, by = p -> atan(mesh_unmerged.node[p[1], 2], mesh_unmerged.node[p[1], 1]))
 
     # 计算热单元分层信息（使用未合并网格）
     element_layer = ones(Int64, ne)
@@ -107,7 +118,9 @@ function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phas
         y_c = mean(mesh_unmerged.node[nodes, 2])
         r_c = hypot(x_c, y_c)
 
-        layer = max(1, Int(floor((r_c - param.cell.Rin) / param.cell.layer) + 1))
+        layer = Int(floor((r_c - param.cell.Rin) / param.cell.layer) + 1)
+        layer >= 1 || error(
+            "collector-seeded: element $e has invalid winding layer $layer at radius $r_c")
         element_layer[e] = layer
 
         n2, n3 = mesh_unmerged.element[e, 2], mesh_unmerged.element[e, 3]
@@ -122,7 +135,6 @@ function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phas
     end
 
     n_pairs = length(interface_pairs)
-    sorted_pairs = sort(interface_pairs, by = p -> atan(mesh_unmerged.node[p[1], 2], mesh_unmerged.node[p[1], 1]))
     node_to_elem = Dict{Int64, Vector{Int64}}(n => Int64[] for n in 1:mesh_unmerged.nlen)
     for e in 1:ne
         for n in mesh_unmerged.element[e, :]
@@ -131,8 +143,8 @@ function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phas
     end
 
     for czm_idx in 1:(n_pairs - 1)
-        n_out_1, n_in_1 = sorted_pairs[czm_idx]
-        n_out_2, n_in_2 = sorted_pairs[czm_idx + 1]
+        n_out_1, n_in_1 = interface_pairs[czm_idx]
+        n_out_2, n_in_2 = interface_pairs[czm_idx + 1]
         related_elems = Int64[]
         for n in (n_out_1, n_out_2, n_in_1, n_in_2)
             append!(related_elems, node_to_elem[n])
@@ -154,22 +166,11 @@ function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phas
     nnode_orig = mesh_unmerged.nlen
 
     merge_map = collect(1:nnode_orig)
-    merged_to = zeros(Int, nnode_orig)
-    for i in 1:nnode_orig
-        merged_to[i] != 0 && continue
-        merged_to[i] = i
-        for j in (i + 1):nnode_orig
-            merged_to[j] != 0 && continue
-            dx = node_orig[i, 1] - node_orig[j, 1]
-            dy = node_orig[i, 2] - node_orig[j, 2]
-            if dx * dx + dy * dy < tol * tol
-                merged_to[j] = i
-                merge_map[j] = i
-            end
-        end
+    for (n_out, n_in) in interface_pairs
+        merge_map[n_out] = n_in
     end
 
-    unique_nodes = findall(i -> merged_to[i] == i, 1:nnode_orig)
+    unique_nodes = findall(i -> merge_map[i] == i, 1:nnode_orig)
     nnode_new = length(unique_nodes)
     old_to_new = zeros(Int, nnode_orig)
     for (new_idx, old_idx) in enumerate(unique_nodes)
@@ -192,9 +193,9 @@ function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phas
     gs_new = GetGS(element_new, node_new, gsorder, "Q4")
     thermal2D_merged = Mesh("Q4", 2, node_new, nnode_new, element_new, gs_new)
 
-    # v3 新增：在 thermal2D_merged 完成后构造分层 Q4 子网格
-    czm_submesh = isnothing(nθ_czm) ? nothing :
-        build_czm_submesh(param, thermal2D_merged, mesh_unmerged; nθ_czm=nθ_czm, gsorder=gsorder, nθ_thermal=nθ, phase=phase)
+    # 分层力学网格直接继承热网格的实际周向角节点和 Φ 配对
+    czm_submesh = czm_enabled ?
+        build_czm_submesh(param, mesh_unmerged, theta, interface_pairs; gsorder=gsorder) : nothing
 
     Jellyroll_Mesh = JellyrollMesh(mesh_unmerged, thermal2D_merged, merge_map, interface_pairs,czm_element_map, element_layer, is_inner_layer,inner_nodes, outer_nodes, pos_tab_nodes, neg_tab_nodes,ne, nnode, czm_submesh)
     return Jellyroll_Mesh
@@ -279,7 +280,6 @@ function jellyroll_element_properties(mesh, param)
         while dtheta_23 < -pi; dtheta_23 += 2 * pi; end
         
         dtheta = 0.5 * (abs(dtheta_14) + abs(dtheta_23))
-        dtheta = max(dtheta, 1e-10)
         
         # 从内边开始，依次计算各层的面积
         r_current = r_in
@@ -588,18 +588,18 @@ end
 # ========================================================================
 
 """
-    build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm, gsorder, nθ_thermal, phase=0.0) -> CzmSubmesh
+    build_czm_submesh(param, thermal2D, theta, thermal_phi_pairs; gsorder) -> CzmSubmesh
 
-v3 内部辅助：构造径向 8 层分层 Q4 子网格 + O(1) 解析式 thermal_elem_map。
+构造径向 8 层分层 Q4 子网格。周向节点直接继承热网格，
+`thermal_elem_map` 与力学 Φ 节点对均由热网格拓扑直接生成。Φ 只表示
+跨匝 outer/inner 配对，不参与 cohesive 面计数；cohesive 总数由四个真实面
+乘整条螺旋分段总数 `length(theta)-1` 决定。
 不导出（仅由 jellyroll_collector_seed_mesh 调用）。
 
 见 spec §4.1.1。
 """
-function build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm::Int, gsorder::Int, nθ_thermal::Int, phase::Float64=0.0)
-    # thermal2D_merged 保留在签名中以与 spec §4.1 一致；本函数仅读取 thermal2D（未合并网格），
-    # 因为 thermal_elem_map 索引到未合并的粗热单元。
-    # thermal2D_merged 参数预留给未来扩展（如周向边界裁剪）。
-
+function build_czm_submesh(param, thermal2D, theta::AbstractVector{<:Real},
+        thermal_phi_pairs::Vector{Tuple{Int,Int}}; gsorder::Int)
     # 螺旋几何参数（与粗热网格一致，使用归一化值）
     a = param.cell.Rin
     s_total = param.cell.layer
@@ -616,22 +616,11 @@ function build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm::Int, gso
     n_layers = 8
     @assert sum(layer_thicknesses) ≈ s_total rtol=1e-6
 
-    theta0 = max(0.0, (param.cell.Rin - a) / b)
-    # theta1 第二分支 (Rout - a) / b 对应 s_offset=0 的内层螺旋，对外层 (s_offset=s_total) 总是更松，
-    # 因此此处省略 min 与父函数等价。如未来扩展层序，请恢复 min 形式。
-    theta1 = (param.cell.Rout - a - s_total) / b
-    theta1 > theta0 || error("build_czm_submesh: 无效 theta 范围")
-
     n_thermal = size(thermal2D.element, 1)
-    # Fix A：n_turns 直接从螺旋几何计算，与 thermal mesh 可分性解耦
-    # 用 ceil 而非 round，确保 CZM 子网格完整覆盖 [theta0, theta1] 范围
-    n_turns = max(1, ceil(Int, (theta1 - theta0) / (2 * pi)))
-    dtheta_thermal = (theta1 - theta0) / n_thermal
-
-    # nθ_czm 是每 turn 分段数
-    n_segments_per_turn = max(3, nθ_czm)
-    n_segments = n_turns * n_segments_per_turn
-    theta = collect(range(theta0, theta1; length=n_segments + 1)) .+ phase
+    n_segments = length(theta) - 1
+    n_segments == n_thermal || throw(DimensionMismatch(
+        "build_czm_submesh: thermal theta segments $n_segments do not match thermal elements $n_thermal"))
+    n_segments > 0 || error("build_czm_submesh: thermal mesh has no angular segment")
 
     # 节点：(n_layers+1) 条螺旋 × (n_segments+1) 点
     n_spirals = n_layers + 1
@@ -672,19 +661,28 @@ function build_czm_submesh(param, thermal2D_merged, thermal2D; nθ_czm::Int, gso
 
             material_type[elem_idx] = material_sequence[layer_idx]
 
-            n1 = element[elem_idx, 1]
-            n3 = element[elem_idx, 3]
-            r_center = 0.5 * (hypot(node[n1, 1], node[n1, 2]) +
-                              hypot(node[n3, 1], node[n3, 2]))
-
-            winding_turn[elem_idx] = max(1, Int(floor((r_center - a) / s_total)) + 1)
-
-            theta_spiral = (r_center - a - s_offset) / b
-            thermal_elem_map[elem_idx] = clamp(floor(Int, (theta_spiral - theta0) / dtheta_thermal) + 1, 1, n_thermal)
+            theta_center = 0.5 * (theta[seg] + theta[seg + 1])
+            winding_turn[elem_idx] = floor(Int, (theta_center - theta[1]) / (2 * pi)) + 1
+            thermal_elem_map[elem_idx] = seg
         end
+    end
+
+    n_theta_nodes = n_segments + 1
+    phi_pairs = Tuple{Int,Int}[]
+    sizehint!(phi_pairs, length(thermal_phi_pairs))
+    for (thermal_outer, thermal_inner) in thermal_phi_pairs
+        outer_col = thermal_outer - n_theta_nodes
+        inner_col = thermal_inner
+        1 <= outer_col <= n_theta_nodes || error(
+            "build_czm_submesh: thermal outer Φ node $thermal_outer has invalid column $outer_col")
+        1 <= inner_col <= n_theta_nodes || error(
+            "build_czm_submesh: thermal inner Φ node $thermal_inner has invalid column $inner_col")
+        mechanical_outer = n_layers * n_theta_nodes + outer_col
+        mechanical_inner = inner_col
+        push!(phi_pairs, (mechanical_outer, mechanical_inner))
     end
 
     gs = GetGS(element, node, gsorder, "Q4")
     mesh = Mesh("Q4", 2, node, nnode, element, gs)
-    return CzmSubmesh(mesh, material_type, winding_turn, thermal_elem_map)
+    return CzmSubmesh(mesh, material_type, winding_turn, thermal_elem_map, phi_pairs)
 end

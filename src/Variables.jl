@@ -85,7 +85,7 @@ function StandardVariables(case::Case, num::Int64)
         variables["positive particle surface lithium concentration at Gauss point"] = zeros(Float64, Ne_pgs, num)
     end
 
-    variables["temperature"] = zeros(Float64, length(case.index["temperature"]), num)
+    variables["temperature"] = zeros(Float64, 1, num)
     
     if case.opt.thermalmodel == "lumped"
         variables["thermal lumped internal heat"] = zeros(Float64, 1, num)
@@ -254,24 +254,37 @@ function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Floa
         k in hist_keys || continue
         hist_val = variables_hist[k]
         if isa(hist_val, Array{Float64})
+            ndims(hist_val) == 2 || throw(DimensionMismatch("history variable \"$k\" must be a matrix"))
             nrows = size(hist_val, 1)
             if isa(val, Array{Float64})
-                col = ndims(val) == 1 ? val : val[:, 1]
-                if length(col) == nrows
-                    hist_val[:, v] = col
-                elseif nrows == 1 && !isempty(col)
-                    hist_val[1, v] = col[1]
+                if ndims(val) == 1
+                    col = val
+                elseif ndims(val) == 2
+                    size(val, 2) == 1 || throw(DimensionMismatch(
+                        "variable \"$k\" must have exactly one column, got size $(size(val))"
+                    ))
+                    col = @view val[:, 1]
+                else
+                    throw(DimensionMismatch(
+                        "variable \"$k\" must be a vector or single-column matrix, got $(ndims(val)) dimensions"
+                    ))
                 end
-            elseif isa(val, Float64) && nrows == 1
+
+                length(col) == nrows || throw(DimensionMismatch(
+                    "variable \"$k\" length $(length(col)) does not match history row count $nrows"
+                ))
+                hist_val[:, v] = col
+            elseif isa(val, Float64)
+                nrows == 1 || throw(DimensionMismatch(
+                    "scalar variable \"$k\" cannot populate history with $nrows rows"
+                ))
                 hist_val[1, v] = val
             end
         elseif isa(hist_val, Float64)
-            if isa(val, Float64)
-                variables_hist[k] = val
-            elseif isa(val, Array{Float64})
-                col = ndims(val) == 1 ? val : val[:, 1]
-                isempty(col) || (variables_hist[k] = col[1])
-            end
+            isa(val, Float64) || throw(ArgumentError(
+                "scalar history variable \"$k\" requires a Float64 value, got $(typeof(val))"
+            ))
+            variables_hist[k] = val
         end
     end
     return variables_hist

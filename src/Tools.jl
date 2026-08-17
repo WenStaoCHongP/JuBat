@@ -35,7 +35,7 @@ function IntQ4(f::Function,x_e::AbstractVector{<:Real},y_e::AbstractVector{<:Rea
         dNdxi = last(LagrangeBasis("Q4", 2, [ξ, η]))
         J = dNdxi * node_e
         detJ = det(J)
-        abs(detJ) < 1e-15 && continue
+        detJ > 1e-15 || error("invalid Q4 Jacobian determinant $detJ at (ξ=$ξ, η=$η)")
         dNdxy = transpose(inv(J) * dNdxi)
         dNdx = @view dNdxy[:, 1]
         dNdy = @view dNdxy[:, 2]
@@ -56,10 +56,9 @@ function identify_boundary_nodes(mesh, param, opt=nothing)
     t_repeat = param.PCC.thickness + 2 * (param.PE.thickness + param.SP.thickness + param.NE.thickness) + param.NCC.thickness
     a = Rin
     b = t_repeat / (2 * pi)
-    bval = max(b, 1e-12)
 
-    theta0_mesh = max(0.0, (Rin - a) / bval)
-    theta1_mesh = min((Rout - a - t_repeat) / bval, (Rout - a) / bval)
+    theta0_mesh = max(0.0, (Rin - a) / b)
+    theta1_mesh = min((Rout - a - t_repeat) / b, (Rout - a) / b)
     theta_in_range = (theta0_mesh, min(theta0_mesh + 2.0 * pi, theta1_mesh))
     theta_out_range = (max(theta1_mesh - 2.0 * pi, theta0_mesh), theta1_mesh)
     tol = 1e-4
@@ -87,9 +86,7 @@ function compute_separation(elem, node::Matrix{Float64}, u::Vector{Float64})
     dx = x2 - x1
     dy = y2 - y1
     L = sqrt(dx * dx + dy * dy)
-    if L < 1e-15
-        return 0.0, 0.0
-    end
+    L >= 1e-15 || error("degenerate cohesive element: tangential edge ($n1, $n2) has length $L")
 
     t_vec = [dx / L, dy / L]
     n_vec = [-t_vec[2], t_vec[1]]
@@ -124,10 +121,8 @@ function compute_separation(elem, node::Matrix{Float64}, u::Vector{Float64})
         total_w += w
     end
 
-    if total_w > 0.0
-        delta_n_avg /= total_w
-        delta_t_avg /= total_w
-    end
+    delta_n_avg /= total_w
+    delta_t_avg /= total_w
 
     return delta_n_avg, delta_t_avg
 end
@@ -162,7 +157,7 @@ function thermal2D_volume_average_temperature(mesh::Mesh, T_nodes::AbstractVecto
             den += wi
         end
     end
-    return den > 0.0 ? num / den : mean(T_nodes)
+    return num / den
 end
 
 """
@@ -182,9 +177,7 @@ function q4_center_gradients(node::AbstractMatrix{<:Real}, elem_nodes::AbstractV
     node_e = hcat(x_nodes, y_nodes)
     J = dNdxi * node_e
     detJ = det(J)
-    if abs(detJ) < 1e-12
-        return nothing
-    end
+    detJ > 1e-12 || error("invalid Q4 center Jacobian determinant $detJ")
     dNdxy = transpose(inv(J) * dNdxi)
     dNdx = @view dNdxy[:, 1]
     dNdy = @view dNdxy[:, 2]

@@ -320,6 +320,11 @@ The heat transfer across the interface has two parallel paths:
   - Gap medium:    h_gap    = k_air / (δ + 2βλ_m)
 
 Effective conductance: h_eff = h_contact + h_gap
+
+单位契约（重设计 v2）：δ_n / δ_0_n / δ_c_n 以 scale.δ_czm 归一（分离空间），
+而 h_c0 / k_air / lambda_m / threshold 以 scale.L 归一（热模型长度空间）。
+入口处将分离量 ÷Λ（= ×δ_czm/L）转换到 L 空间后再运算。
+旧方案 δ_czm = L（Λ = 1）时行为不变。
 """
 function compute_gap_conductance(D::Float64, δ_n::Float64, params::CzmInterfaceParams)
 	h_c0 = params.h_c0
@@ -328,9 +333,11 @@ function compute_gap_conductance(D::Float64, δ_n::Float64, params::CzmInterface
 	beta = params.beta
 	threshold = params.threshold
 
-	delta0 = params.δ_0_n
-	delta_c = params.δ_c_n
-	delta = max(δ_n, 0.0)
+	# 分离空间（δ_czm 归一）→ 热模型长度空间（L 归一）
+	inv_Λ = 1.0 / params.Λ
+	delta0 = params.δ_0_n * inv_Λ
+	delta_c = params.δ_c_n * inv_Λ
+	delta = max(δ_n, 0.0) * inv_Λ
 	D_clamped = clamp(D, 0.0, 0.9999)
 	two_beta_lambda = 2.0 * beta * lambda_m
 

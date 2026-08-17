@@ -28,14 +28,15 @@ abstract type AbstractDamageState end
 """
     CzmSubmesh
 
-独立细化的 CZM 机械子网格（径向 8 层/卷绕圈）。
-与粗热网格解耦，通过 thermal_elem_map 与 thermal_to_czm 矩阵耦合。
+径向 8 层的 CZM 机械子网格。周向节点继承粗热网格，
+通过 thermal_elem_map 与 thermal_to_czm 矩阵耦合。
 
 # 字段
 - `mesh`: 细化 Q4 网格
 - `material_type`: 每个单元的材料类型（:PE / :PCC / :SP / :NE / :NCC）
 - `winding_turn`: 卷绕圈号（从内到外 1, 2, ...）
 - `thermal_elem_map`: 每个 CZM 单元 → 对应的粗热单元 id
+- `phi_pairs`: 力学外螺旋 θ 节点 → 下一匝内螺旋 θ+2π 节点对
 
 定义在 SetMesh.jl（而非 czm.jl）以避免 include 顺序问题：
 CohesiveMesh 引用 CzmSubmesh，而 SetMesh.jl 在 czm.jl 之前被 include。
@@ -45,6 +46,7 @@ struct CzmSubmesh
     material_type::Vector{Symbol}           # :PE / :PCC / :SP / :NE / :NCC
     winding_turn::Vector{Int}               # 卷绕圈号（从内到外 1, 2, ...）
     thermal_elem_map::Vector{Int}           # 每个 CZM 单元 → 对应的粗热单元 id
+    phi_pairs::Vector{Tuple{Int,Int}}        # (outer_node_at_θ, inner_node_at_θ+2π)
 end
 
 mutable struct CohesiveMesh
@@ -54,7 +56,7 @@ mutable struct CohesiveMesh
     bulk_element::Matrix{Int64}               # 更新后的固体单元连接关系
     cohesive_elements::Vector{AbstractCohesiveElement} # 内聚力单元
     n_cohesive::Int64                         # 内聚力单元数
-    n_layers::Int64                           # 分离面类型数（PE-PCC + NE-NCC = 2），spec §3.3
+    n_layers::Int64                           # 遗留字段名：实际保存 cohesive 本构/材料类型数（2），不是物理层数、真实面数或单元数
     node_map::Dict{Int64, Vector{Int64}}      # 原节点 → [分层后的节点们]
     interface_nodes::Vector{Vector{Tuple{Int64,Int64}}} # 每个界面的节点对
     damage_states::Vector{AbstractDamageState} # 损伤状态

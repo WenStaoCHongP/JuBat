@@ -32,14 +32,14 @@ function create_unit_czm_strip(param; width=nothing, y0::Float64=1.0, gsorder::I
         end
     end
 
-    # Q4：下层左、上层左、上层右、下层右（逆时针，inner=bottom）
+    # Q4：下层左、下层右、上层右、上层左（逆时针，inner=bottom）
     element = zeros(Int64, 8, 4)
     for e in 1:8
         bl = (e - 1) * 2 + 1   # bottom-left
         br = bl + 1
         tl = e * 2 + 1         # top-left
         tr = tl + 1
-        element[e, :] = [bl, tl, tr, br]
+        element[e, :] = [bl, br, tr, tl]
     end
 
     gs = GetGS(element, node, gsorder, "Q4")
@@ -47,7 +47,7 @@ function create_unit_czm_strip(param; width=nothing, y0::Float64=1.0, gsorder::I
     material_type = copy(layer_materials)
     winding_turn = ones(Int, 8)
     thermal_elem_map = ones(Int, 8)
-    submesh = CzmSubmesh(bulk, material_type, winding_turn, thermal_elem_map)
+    submesh = CzmSubmesh(bulk, material_type, winding_turn, thermal_elem_map, Tuple{Int,Int}[])
 
     # 哑热网格：单 Q4 覆盖条带 bbox（供 build_thermal_to_czm_interp）
     pad = 1e-6 * max(W, H)
@@ -87,11 +87,17 @@ function create_unit_czm_strip(param; width=nothing, y0::Float64=1.0, gsorder::I
     ytop = maximum(ys)
     top_nodes_after = sort([Int(n) for n in e8 if abs(czm_mesh.node[n, 2] - ytop) < 1e-14])
 
+    # 集流体 bulk 节点（create_czm_mesh 后，含界面副本）
+    pcc_nodes = sort(unique(Int.(czm_mesh.bulk_element[2, :])))
+    ncc_nodes = sort(unique(Int.(czm_mesh.bulk_element[6, :])))
+
     meta = (
         y_interfaces = y_interfaces,
         bottom_nodes = bottom_nodes,
         top_nodes = top_row_orig,
         top_nodes_after_czm = top_nodes_after,
+        pcc_nodes = pcc_nodes,
+        ncc_nodes = ncc_nodes,
         cohesive_ids = collect(1:4),
         interface_types = types,
         layer_materials = layer_materials,

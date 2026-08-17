@@ -226,10 +226,10 @@ end
     q::Float64 = 0               # 热源尺度参数 P_ref/L^3 [W/m³]
     h::Float64 = 0               # Biot 数 = h_cell*L/lambda_r (边界条件)
     # --- Cohesive zone model scaling ---
-    σ_czm::Float64 = 0         # reference cohesive traction [Pa] (typically σ_max_n)
-    δ_czm::Float64 = 0         # reference separation displacement [m] (typically δ_c_n)
-    G_czm::Float64 = 0         # reference fracture energy [J/m²] (σ_czm * δ_czm)
-    K_czm::Float64 = 0         # reference cohesive stiffness [Pa/m] (σ_czm / δ_czm)
+    σ_czm::Float64 = 0         # reference cohesive traction [Pa] = σ_max_pe_pcc（自锚点）
+    δ_czm::Float64 = 0         # reference separation [m] = 2·G_c_pe_pcc/σ_max_pe_pcc（锚定界面 δ_c* ≡ 1）
+    G_czm::Float64 = 0         # reference fracture energy [J/m²] = σ_czm·δ_czm（锚定界面 G_c* ≡ 1/2）
+    K_czm::Float64 = 0         # reference cohesive stiffness [Pa/m] = σ_czm/δ_czm（锚定界面 K_n* = δ_c/δ_0）
 end
 
 @with_kw mutable struct Params
@@ -265,6 +265,10 @@ function ChooseCell(CellType::String="LG M50")
         include(joinpath(params_dir, "Jellyroll.jl"))
     elseif CellType == "Ring"
         include(joinpath(params_dir, "Ring.jl"))
+    else
+        throw(ArgumentError(
+            "Unsupported cell type $(repr(CellType)); supported cell types are \"LG M50\", \"Northrop\", \"Enertech\", \"Jellyroll\", and \"Ring\""
+        ))
     end
     param_dim.PE.eps_s = 1 - param_dim.PE.eps - param_dim.PE.eps_fi
     param_dim.NE.eps_s = 1 - param_dim.NE.eps - param_dim.NE.eps_fi
@@ -330,11 +334,18 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.lambda = param_dim.scale.P_ref / (param_dim.scale.L * param_dim.scale.T_ref)
     param_dim.scale.h = param_dim.cell.h * param_dim.scale.L / param_dim.cell.lambda_r  # Biot 数
     param_dim.scale.q = param_dim.scale.P_ref / param_dim.scale.L^3
-    if param_dim.cohesive.σ_max_pe_pcc == 0
-        @warn "[ChooseCell] cohesive.σ_max_pe_pcc = 0; scale.σ_czm/G_czm/K_czm 将为 0，CZM 归一化会产生 Inf/NaN。请补全 cohesive 字段后再启用 czm_enabled=true。"
+    if param_dim.cohesive.σ_max_pe_pcc == 0 || param_dim.cohesive.G_c_pe_pcc == 0
+        @warn "[ChooseCell] cohesive.σ_max_pe_pcc 或 G_c_pe_pcc = 0; scale.σ_czm/δ_czm/G_czm/K_czm 无法锚定，CZM 归一化会产生 Inf/NaN。请补全 cohesive 字段后再启用 czm_enabled=true。"
     end
     param_dim.scale.σ_czm = param_dim.cohesive.σ_max_pe_pcc  # PE-PCC 界面作为归一化锚点
-    param_dim.scale.δ_czm = param_dim.scale.L
+    # δ 锚点：断裂能定义的临界分离 δ_c = 2G_c/σ_max（双线性），使锚定界面 δ_c* ≡ 1。
+    # 见 docs/planning-with-files/力学模块修改/宏观力学模块无量纲化重设计.md §2。
+    # cohesive 数据缺失时回退到 scale.L（保持非 CZM 参数集的旧行为，Λ = 1）。
+    if param_dim.cohesive.σ_max_pe_pcc > 0 && param_dim.cohesive.G_c_pe_pcc > 0
+        param_dim.scale.δ_czm = 2 * param_dim.cohesive.G_c_pe_pcc / param_dim.cohesive.σ_max_pe_pcc
+    else
+        param_dim.scale.δ_czm = param_dim.scale.L
+    end
     param_dim.scale.G_czm = param_dim.scale.σ_czm * param_dim.scale.δ_czm
     param_dim.scale.K_czm = param_dim.scale.σ_czm / param_dim.scale.δ_czm
     return param_dim

@@ -268,7 +268,9 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
         end
     end
     
-    penalty = 1e12
+    # 相对罚（重设计 v2 §6）：跟随矩阵对角量级，避免固定罚值主导条件数
+    dmax_bc = maximum(abs, diag(K_mech))
+    penalty = 1e6 * dmax_bc
     for (node, bc_type) in bc_nodes
         if bc_type == :fixed_x
             dof = 2 * node - 1
@@ -289,12 +291,7 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     end
     
     # 求解位移场
-    U_M = try
-        K_mech \ F_mech
-    catch e
-        @warn "Mechanical solve failed, using zero displacement" e
-        zeros(Float64, ndof)
-    end
+    U_M = K_mech \ F_mech
     
     # 恢复应力场
     σ_xx = zeros(Float64, ne)
@@ -317,7 +314,7 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     @inbounds for e in 1:ne
         nodes = mesh.element[e, :]
         grads = q4_center_gradients(mesh.node, nodes)
-        grads === nothing && continue
+        grads === nothing && error("degenerate Q4 element $e: center Jacobian is singular")
         dNdx_local, dNdy_local, _ = grads
         ε_xx = sum(dNdx_local[i] * U_M[2 * nodes[i] - 1] for i in 1:4)
         ε_yy = sum(dNdy_local[i] * U_M[2 * nodes[i]] for i in 1:4)

@@ -213,11 +213,7 @@ function P2D_variables(case::Case, yt::Array{Float64}, t::Float64)
     for i in var_list
         variables[i] = yt[case.index[i]] # hcat converts vector to matrix
     end
-    if "temperature" in var_list
-        T = only(yt[case.index["temperature"]])
-    else
-        T = case.param.cell.T0
-    end
+    T = representative_temperature(case, yt)
     gs_ne = case.mesh["negative electrode"].gs
     gs_pe = case.mesh["positive electrode"].gs
     gs_sp = case.mesh["separator"].gs

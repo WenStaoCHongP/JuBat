@@ -1,5 +1,5 @@
 # ========================================================================
-# 5. 数据导出功能（用于预计算温度/SOC供后续CZM使用）
+# 循环数据在线采集（为 CSV 导出提供温度/SOC 等结构化快照）
 # ========================================================================
 """
     TimeStepData - 单个时间步的数据
@@ -29,7 +29,12 @@ struct CycleExportData
     nT::Int                         # 节点数
 end
 
-function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, V_limit::Float64, initial_state::Dict;czm_mesh=nothing, czm_params=nothing,dt_range::Vector{Float64}=[1.0, 10.0],export_interval::Int=1)
+function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, V_limit::Float64, initial_state::Union{Nothing, Dict};czm_mesh=nothing, czm_params=nothing,dt_range::Vector{Float64}=[1.0, 10.0],export_interval::Int=1)
+    if case.opt.czm_enabled || czm_mesh !== nothing || czm_params !== nothing
+        throw(ArgumentError(
+            "solve_phase_with_export does not implement CZM damage evolution; use solve_phase or solve_cycling for CZM simulations"
+        ))
+    end
     
     timestep_data = TimeStepData[]
     
@@ -49,20 +54,37 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
     # 检测多SPMe模式
     multi_spme = case.opt.model == "SPMe" &&case.opt.per_element_spme &&case.opt.thermalmodel == "distributed2D"
     
-    # 初始化状态向量
-    y0 = get(initial_state, "y", nothing)
-    T_nodes_init = get(initial_state, "T_nodes", nothing)
-    
-    if y0 === nothing
+    # 仅显式传入 nothing 时初始化；状态字典必须包含有效状态向量
+    if initial_state === nothing
+        T_nodes_init = nothing
         if multi_spme
             y0 = ModelInitialisation_MultiSPMe(case)
         else
             y0 = ModelInitialisation(case)
         end
     else
-        y0 = vec(y0)
+        haskey(initial_state, "y") || throw(ArgumentError("initial_state must contain key \"y\""))
+        y_from_state = initial_state["y"]
+        y_from_state isa AbstractArray || throw(ArgumentError("initial_state[\"y\"] must be an array"))
+        y0 = vec(y_from_state)
+        T_nodes_init = get(initial_state, "T_nodes", nothing)
+
         if multi_spme
-            # layout is now stored as case.layout::Union{Nothing,MultiSPMeLayout}
+            ne = size(case.mesh["thermal2D"].element, 1)
+            nT = case.mesh["thermal2D"].nlen
+            Nrn = case.mesh["negative particle"].nlen
+            Nrp = case.mesh["positive particle"].nlen
+            Nel = case.mesh["electrolyte"].nlen
+            n_chem = Nrn + Nrp + Nel
+            expected_multi_len = ne * n_chem + nT
+
+            if case.layout === nothing
+                case.layout = MultiSPMeLayout(ne, n_chem, nT, case.mesh["thermal2D"])
+            end
+
+            length(y0) == expected_multi_len || throw(DimensionMismatch(
+                "external state length $(length(y0)) does not match multi-SPMe layout length $expected_multi_len"
+            ))
         end
     end
 
@@ -81,8 +103,16 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
         T_nodes_carry = y0[(end - nT_mesh + 1):end]
     end
     
-    # Crank-Nicolson 参数
-    theta = case.opt.solveType == "Crank-Nicolson" ? 0.5 : (case.opt.solveType == "forward" ? 0.0 : 1.0)
+    # 时间离散格式必须显式受支持
+    if case.opt.solveType == "Crank-Nicolson"
+        theta = 0.5
+    elseif case.opt.solveType == "forward"
+        theta = 0.0
+    elseif case.opt.solveType == "backward"
+        theta = 1.0
+    else
+        throw(ArgumentError("unsupported solveType: $(repr(case.opt.solveType))"))
+    end
     
     # 设置电流
     case.opt.Current = x -> I_current
@@ -105,7 +135,15 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
     terminated_by = :time
     t_actual = 0.0
     step_count = 0
-    global_time = get(initial_state, "t_global", 0.0)
+    if initial_state === nothing
+        global_time = 0.0
+    else
+        haskey(initial_state, "t_global") || throw(ArgumentError("initial_state must contain key \"t_global\""))
+        t_global = initial_state["t_global"]
+        t_global isa Real || throw(ArgumentError("initial_state[\"t_global\"] must be a real number"))
+        isfinite(t_global) || throw(ArgumentError("initial_state[\"t_global\"] must be finite"))
+        global_time = Float64(t_global)
+    end
     T_nodes_prev_export = copy(T_nodes_carry)
     
     # 获取热网格信息
@@ -114,11 +152,9 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
 
     # Precompute per-element areas for physically meaningful temperature averaging.
     elem_area = zeros(Float64, ne)
-    if ne > 0
-        for g in eachindex(mesh_th.gs.weight)
-            e = mesh_th.gs.ele[g]
-            elem_area[e] += mesh_th.gs.weight[g] * mesh_th.gs.detJ[g]
-        end
+    for g in eachindex(mesh_th.gs.weight)
+        e = mesh_th.gs.ele[g]
+        elem_area[e] += mesh_th.gs.weight[g] * mesh_th.gs.detJ[g]
     end
     area_sum = sum(elem_area)
     
@@ -175,12 +211,8 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
             # 转换温度为有量纲值
             T_nodes_K = T_nodes_out .* T_ref
             T_max_K = maximum(T_nodes_K)
-            if ne > 0 && area_sum > 0.0
-                T_elem_K = [mean(@view T_nodes_K[mesh_th.element[e, :]]) for e in 1:ne]
-                T_mean_K = dot(T_elem_K, elem_area) / area_sum
-            else
-                T_mean_K = mean(T_nodes_K)
-            end
+            T_elem_K = [mean(@view T_nodes_K[mesh_th.element[e, :]]) for e in 1:ne]
+            T_mean_K = dot(T_elem_K, elem_area) / area_sum
             
             # 创建时间步数据
             ts_data = TimeStepData(
@@ -193,7 +225,7 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
                 T_mean_K,
                 soc_n,
                 soc_p,
-                ne > 0 ? mean(soc_n) : 0.0
+                mean(soc_n)
             )
             push!(timestep_data, ts_data)
         end
@@ -280,20 +312,13 @@ function solve_cycle_with_export(case::Case, cycle_opt::CycleOption;verbose::Boo
     
     # 应用初始SOC
     soc_init = cycle_opt.SOC_init
-    if soc_init >= 0.0 && soc_init <= 1.0
-        apply_initial_soc!(case, case.param_dim, soc_init)
-        if verbose
-            @printf("  初始SOC: %.1f%%\n", soc_init * 100)
-        end
+    apply_initial_soc!(case, case.param_dim, soc_init)
+    if verbose
+        @printf("  初始SOC: %.1f%%\n", soc_init * 100)
     end
     
     # 初始状态
-    current_state = Dict{String, Any}(
-        "y" => nothing,
-        "T_nodes" => nothing,
-        "V" => 3.7,
-        "t_global" => 0.0
-    )
+    current_state = nothing
     
     all_timestep_data = TimeStepData[]
     
@@ -408,216 +433,3 @@ function solve_cycle_with_export(case::Case, cycle_opt::CycleOption;verbose::Boo
     
     return export_data
 end
-
-"""
-    export_cycle_data_to_csv(export_data, output_dir; prefix="cycle")
-
-将循环数据导出为CSV文件。
-
-# 输出文件
-- `{prefix}_timesteps.csv`: 时间步汇总数据
-- `{prefix}_T_nodes.csv`: 节点温度场（每行一个时间步，每列一个节点）
-- `{prefix}_soc_n.csv`: 负极SOC场（每行一个时间步，每列一个单元）
-- `{prefix}_soc_p.csv`: 正极SOC场（每行一个时间步，每列一个单元）
-- `{prefix}_mesh_nodes.csv`: 网格节点坐标
-- `{prefix}_mesh_elements.csv`: 网格单元连接
-"""
-function export_cycle_data_to_csv(export_data::CycleExportData, output_dir::String;
-                                   prefix::String="cycle")
-    isdir(output_dir) || mkpath(output_dir)
-    
-    n_steps = length(export_data.timesteps)
-    nT = export_data.nT
-    ne = export_data.ne
-    
-    # 1. 时间步汇总数据
-    timesteps_file = joinpath(output_dir, "$(prefix)_timesteps.csv")
-    open(timesteps_file, "w") do io
-        println(io, "step,time_s,phase,V,I_A,T_max_K,T_mean_K,soc_mean")
-        for (i, ts) in enumerate(export_data.timesteps)
-            phase_str = ts.phase == PHASE_DISCHARGE ? "discharge" :
-                        ts.phase == PHASE_CHARGE ? "charge" : "rest"
-            @printf(io, "%d,%.6f,%s,%.6f,%.6f,%.4f,%.4f,%.6f\n",
-                    i, ts.time, phase_str, ts.V, ts.I, ts.T_max, ts.T_mean, ts.soc_mean)
-        end
-    end
-    println("  ✓ 保存: $timesteps_file")
-    
-    # 2. 节点温度场
-    T_nodes_file = joinpath(output_dir, "$(prefix)_T_nodes.csv")
-    open(T_nodes_file, "w") do io
-        header = join(["node_$(i)" for i in 1:nT], ",")
-        println(io, "step,time_s,$header")
-        for (i, ts) in enumerate(export_data.timesteps)
-            T_str = join([@sprintf("%.4f", T) for T in ts.T_nodes], ",")
-            @printf(io, "%d,%.6f,%s\n", i, ts.time, T_str)
-        end
-    end
-    println("  ✓ 保存: $T_nodes_file")
-    
-    # 3. 负极SOC场
-    soc_n_file = joinpath(output_dir, "$(prefix)_soc_n.csv")
-    open(soc_n_file, "w") do io
-        header = join(["elem_$(i)" for i in 1:ne], ",")
-        println(io, "step,time_s,$header")
-        for (i, ts) in enumerate(export_data.timesteps)
-            soc_str = join([@sprintf("%.6f", s) for s in ts.soc_n], ",")
-            @printf(io, "%d,%.6f,%s\n", i, ts.time, soc_str)
-        end
-    end
-    println("  ✓ 保存: $soc_n_file")
-    
-    # 4. 正极SOC场
-    soc_p_file = joinpath(output_dir, "$(prefix)_soc_p.csv")
-    open(soc_p_file, "w") do io
-        header = join(["elem_$(i)" for i in 1:ne], ",")
-        println(io, "step,time_s,$header")
-        for (i, ts) in enumerate(export_data.timesteps)
-            soc_str = join([@sprintf("%.6f", s) for s in ts.soc_p], ",")
-            @printf(io, "%d,%.6f,%s\n", i, ts.time, soc_str)
-        end
-    end
-    println("  ✓ 保存: $soc_p_file")
-    
-    # 5. 网格节点坐标
-    nodes_file = joinpath(output_dir, "$(prefix)_mesh_nodes.csv")
-    open(nodes_file, "w") do io
-        println(io, "node_id,x,y")
-        for i in 1:nT
-            @printf(io, "%d,%.8f,%.8f\n", i, export_data.node_coords[i, 1], export_data.node_coords[i, 2])
-        end
-    end
-    println("  ✓ 保存: $nodes_file")
-    
-    # 6. 网格单元连接
-    elements_file = joinpath(output_dir, "$(prefix)_mesh_elements.csv")
-    open(elements_file, "w") do io
-        println(io, "elem_id,n1,n2,n3,n4")
-        for e in 1:ne
-            nodes = export_data.element_connectivity[e, :]
-            println(io, "$e,$(nodes[1]),$(nodes[2]),$(nodes[3]),$(nodes[4])")
-        end
-    end
-    println("  ✓ 保存: $elements_file")
-    
-    return (timesteps_file, T_nodes_file, soc_n_file, soc_p_file, nodes_file, elements_file)
-end
-
-"""
-    load_cycle_data_from_csv(input_dir; prefix="cycle")
-
-从CSV文件加载循环数据。
-
-# 返回
-- `Dict`: 包含时间步数据、温度场、SOC场、网格信息的字典
-"""
-function load_cycle_data_from_csv(input_dir::String; prefix::String="cycle")
-    result = Dict{String, Any}()
-    
-    # 1. 加载时间步汇总数据
-    timesteps_file = joinpath(input_dir, "$(prefix)_timesteps.csv")
-    if isfile(timesteps_file)
-        lines = readlines(timesteps_file)
-        n_steps = length(lines) - 1
-        
-        times = zeros(Float64, n_steps)
-        phases = String[]
-        voltages = zeros(Float64, n_steps)
-        currents = zeros(Float64, n_steps)
-        T_max = zeros(Float64, n_steps)
-        T_mean = zeros(Float64, n_steps)
-        soc_mean = zeros(Float64, n_steps)
-        
-        for (i, line) in enumerate(lines[2:end])
-            parts = split(line, ",")
-            times[i] = parse(Float64, parts[2])
-            push!(phases, String(parts[3]))
-            voltages[i] = parse(Float64, parts[4])
-            currents[i] = parse(Float64, parts[5])
-            T_max[i] = parse(Float64, parts[6])
-            T_mean[i] = parse(Float64, parts[7])
-            soc_mean[i] = parse(Float64, parts[8])
-        end
-        
-        result["n_steps"] = n_steps
-        result["times"] = times
-        result["phases"] = phases
-        result["voltages"] = voltages
-        result["currents"] = currents
-        result["T_max"] = T_max
-        result["T_mean"] = T_mean
-        result["soc_mean"] = soc_mean
-    end
-    
-    # 2. 加载温度场
-    T_nodes_file = joinpath(input_dir, "$(prefix)_T_nodes.csv")
-    if isfile(T_nodes_file)
-        lines = readlines(T_nodes_file)
-        header = split(lines[1], ",")
-        nT = length(header) - 2  # 减去 step 和 time_s
-        n_steps = length(lines) - 1
-        
-        T_nodes = zeros(Float64, n_steps, nT)
-        for (i, line) in enumerate(lines[2:end])
-            parts = split(line, ",")
-            for j in 1:nT
-                T_nodes[i, j] = parse(Float64, parts[j + 2])
-            end
-        end
-        result["T_nodes"] = T_nodes
-        result["nT"] = nT
-    end
-    
-    # 3. 加载SOC场
-    for (name, key) in [("soc_n", "soc_n"), ("soc_p", "soc_p")]
-        soc_file = joinpath(input_dir, "$(prefix)_$(name).csv")
-        if isfile(soc_file)
-            lines = readlines(soc_file)
-            header = split(lines[1], ",")
-            ne = length(header) - 2
-            n_steps = length(lines) - 1
-            
-            soc = zeros(Float64, n_steps, ne)
-            for (i, line) in enumerate(lines[2:end])
-                parts = split(line, ",")
-                for j in 1:ne
-                    soc[i, j] = parse(Float64, parts[j + 2])
-                end
-            end
-            result[key] = soc
-            result["ne"] = ne
-        end
-    end
-    
-    # 4. 加载网格节点
-    nodes_file = joinpath(input_dir, "$(prefix)_mesh_nodes.csv")
-    if isfile(nodes_file)
-        lines = readlines(nodes_file)
-        nT = length(lines) - 1
-        node_coords = zeros(Float64, nT, 2)
-        for (i, line) in enumerate(lines[2:end])
-            parts = split(line, ",")
-            node_coords[i, 1] = parse(Float64, parts[2])
-            node_coords[i, 2] = parse(Float64, parts[3])
-        end
-        result["node_coords"] = node_coords
-    end
-    
-    # 5. 加载网格单元
-    elements_file = joinpath(input_dir, "$(prefix)_mesh_elements.csv")
-    if isfile(elements_file)
-        lines = readlines(elements_file)
-        ne = length(lines) - 1
-        element_connectivity = zeros(Int, ne, 4)
-        for (i, line) in enumerate(lines[2:end])
-            parts = split(line, ",")
-            for j in 1:4
-                element_connectivity[i, j] = parse(Int, parts[j + 1])
-            end
-        end
-        result["element_connectivity"] = element_connectivity
-    end
-    
-    return result
-end
-

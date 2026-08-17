@@ -6,7 +6,10 @@ include("SetMesh.jl")
 include("SetParams.jl")
 include("CouplingState.jl")  # MultiSPMeLayout + MeshGeometry 类型定义
 include("SetCase.jl")
-include("czm.jl")  # 内聚力区域模型
+include("StateAccess.jl")
+include("CzmBC.jl")  # CZM 边界条件
+include("Czm.jl")  # CZM 本构与系统装配
+include("CzmMesh.jl")  # CZM 网格拓扑与构造
 include("CzmUnitMesh.jl")  # 单元级条带网格（验证用）
 include("CzmSolve.jl")
 include("CzmPostProcess.jl")  # CZM 后处理/统计/损伤管理
@@ -33,6 +36,7 @@ include("mechanical.jl")
 include("Jellyrollmodel.jl")
 include("ring.jl")
 include("CycleSolver.jl")  # 充放电循环求解器
+include("CyclePostProcess.jl")  # 循环结果汇总、终止判据与绘图
 include("CycleData.jl")
 include("CsvExport.jl")  # CZM CSV export (after CycleSolver for type availability)
 
@@ -81,10 +85,10 @@ export CycleOption, PhaseType, PHASE_CHARGE, PHASE_REST, PHASE_DISCHARGE
 export PhaseResult, CycleResult, CyclingResult
 export solve_phase, solve_cycling, plot_cycling_results
 export compute_cs0_from_soc, apply_initial_soc!
-# Cycle data export/import
+# Cycle data export
 export TimeStepData, CycleExportData
 export solve_phase_with_export, solve_cycle_with_export
-export export_cycle_data_to_csv, load_cycle_data_from_csv
+export export_cycle_data_to_csv
 # CSV export for cycling results
 export CZMSnapshot, export_cycling_csv, CsvExportOptions
 end
