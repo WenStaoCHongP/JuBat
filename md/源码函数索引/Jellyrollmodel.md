@@ -12,7 +12,7 @@
 
 Jellyroll 几何与拓扑的容器，聚合粗热网格（未合并 / 合并）、界面节点对、单元分层信息、极耳节点、CZM 子网格。
 
-- 字段：`thermal2D`（未合并 Mesh）、`thermal2D_merged`（合并重合节点后的 Mesh）、`merge_map`（原节点 → 新节点编号）、`interface_pairs`（界面节点对 `(n_out, n_in)`）、`czm_element_map`（热单元 → CZM 单元 id 列表）、`element_layer`（每单元卷绕层号）、`is_inner_layer`（是否非最外层）、`inner_nodes` / `outer_nodes`（螺旋边界节点）、`pos_tab_nodes` / `neg_tab_nodes`（极耳节点）、`ne` / `nnode`、`czm_submesh`（v3 新增，可为 `nothing`）
+- 字段：`thermal2D`（未合并 Mesh）、`thermal2D_merged`（合并重合节点后的 Mesh）、`merge_map`（原节点 → 新节点编号）、`interface_pairs`（Φ 跨匝外/内边界节点对 `(n_out,n_in)`，不表示 cohesive 数量）、`czm_element_map`、`element_layer`、`is_inner_layer`、`inner_nodes` / `outer_nodes`、`pos_tab_nodes` / `neg_tab_nodes`、`ne` / `nnode`、`czm_submesh`
 
 ## 函数清单
 
@@ -24,7 +24,7 @@ Jellyroll 几何与拓扑的容器，聚合粗热网格（未合并 / 合并）�
 - L33-L48：等角度采样——优先用相位对齐的网格点 `phase .+ (k0:k1).*dtheta`，若对齐失败则退化为 `range(theta0, theta1; length=n_theta_eff+1)`
 - L50-L67：节点坐标 `r = a + b·θ + s_offset`，x/y 由极坐标转换；前 `n_theta_actual+1` 个为内螺旋，后 `n_theta_actual+1` 个为外螺旋
 - L69-L77：单元连接（每段 4 节点 Q4，跨内外螺旋）
-- L83-L98：界面节点对识别——双层循环对比坐标 `abs(Δx) < tol && abs(Δy) < tol`，按 `atan(y, x)` 排序
+- L83-L98：Φ 跨匝节点对识别——双层循环对比坐标 `abs(Δx) < tol && abs(Δy) < tol`，按 `atan(y, x)` 排序；与圈内 cohesive 面识别相互独立
 - L101-L116：单元分层 `layer = floor((r_c - Rin)/layer) + 1`；`is_inner_layer` 用外边半径 `< Rout - 0.1·layer` 判定
 - L118-L146：构造 `czm_element_map`——建立 `node_to_elem` 反向映射，遍历相邻界面节点对的关联单元
 - L148-L149：调 `jellyroll_tab_node_indices` 识别极耳节点

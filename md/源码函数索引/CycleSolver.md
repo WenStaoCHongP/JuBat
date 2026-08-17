@@ -46,7 +46,7 @@
 - 调 `Solve(case; initial_state, return_final_state=true, czm_snapshots, czm_cycle, czm_phase=string(phase_type))`（L155-L157）
 - 提取 `duration`、`final_state`，`final_state["t_global"]` 设为 `t_start + duration`（L159-L165）
 - **CZM 损伤不再此处理**（L167-L170 注释）：旧版在此调用 `update_czm_damage!(..., u_czm_prev=nothing)` 会导致位移场从零重解，每阶段额外浪费约 12 s；现由 Solve.jl 主循环每步更新
-- 调 `_postprocess_phase_result(...)`（L172-L176）计算 phase_data，写回 `result`（L178-L190）
+- 调 `postprocess_phase_result(...)`（L172-L176）计算 phase_data，写回 `result`（L178-L190）
 
 ### `solve_cycling(case, cycle_opt, czm_mesh=nothing; verbose, save_detailed) -> CyclingResult` — L217-L460
 
@@ -65,10 +65,10 @@
   5. 充电前可选 `reset_T_before_charge`（L360-L366）
   6. 充电：`solve_phase(..., PHASE_CHARGE, I=-I_charge, ...)`（L371-L390）
   7. 静置2：同静置1（L393-L426）
-  8. 后处理：调 `_postprocess_cycle_result!` / `_append_cycle_result!` / `_update_soh_and_capacity!`（L429-L433）
-  9. verbose 时 `_print_cycle_summary`（L435-L437）
-  10. 终止检查 `_check_cycle_termination` → `should_stop / soh_hit`（L439-L446）
-- 附加 `czm_snapshots`、`final_czm_mesh`，verbose 时 `_print_cycling_summary`（L449-L457）
+  8. 后处理：调 `postprocess_cycle_result!` / `append_cycle_result!` / `update_soh_and_capacity!`（L429-L433）
+  9. verbose 时 `print_cycle_summary`（L435-L437）
+  10. 终止检查 `check_cycle_termination` → `should_stop / soh_hit`（L439-L446）
+- 附加 `czm_snapshots`、`final_czm_mesh`，verbose 时 `print_cycling_summary`（L449-L457）
 
 ### `compute_cs0_from_soc(param_dim, soc::Float64) -> (cs0_NE, cs0_PE)` — L495-L512
 
@@ -89,7 +89,7 @@
 ## 省略项
 
 以下 helper 函数定义在其他文件，本文件内仅引用，不单列：
-- `_postprocess_phase_result` / `_postprocess_cycle_result!` / `_append_cycle_result!` / `_update_soh_and_capacity!` / `_print_cycle_summary` / `_check_cycle_termination` / `_print_cycling_summary`：循环求解器辅助函数（应在 CsvExport 或 PostProcessing 相关文件定义）
+- `postprocess_phase_result` / `postprocess_cycle_result!` / `append_cycle_result!` / `update_soh_and_capacity!` / `print_cycle_summary` / `check_cycle_termination` / `print_cycling_summary`：循环结果后处理函数（定义于 `CyclePostProcess.jl`）
 
 ### [DEBUG]
 
@@ -117,7 +117,7 @@
 | L148 | `case.param.cell.v_l = -1.0e6` / `v_h = 1.0e6`（充电/静置时放开电压限制） | magic number 占位：用 ±1e6 表示"无限制"；若真实电压意外接近 1e6 V（不可能但语义不清），更好的方式是用 `Inf` 或显式 `nothing` 标记 |
 | L167 | `# CZM 损伤已由 Solve 主循环每步更新（Solve.jl:270-285），此处不再冗余调用。` 注释说明旧版逻辑已废弃（跨 L167-L170） | 历史代码注释：注释提到旧版每阶段调用 `update_czm_damage!(..., u_czm_prev=nothing)` 会浪费 12s/阶段，但未删除注释；维护时需注意跨文件依赖 |
 | L256 | `"V" => 3.7`（initial_state 默认电压占位） | 占位初值：3.7V 是典型开路电压但并非来自参数；第一次 CallModel 调用会被实际计算值覆盖 |
-| L264 | `initial_capacity = 0.0`（初始容量占位，第一个循环后由 `_update_soh_and_capacity!` 设置） | 占位初值：SOH 计算依赖 `initial_capacity`，若第一个循环失败会导致除零或 NaN SOH |
+| L264 | `initial_capacity = 0.0`（初始容量占位，第一个循环后由 `update_soh_and_capacity!` 设置） | 占位初值：SOH 计算依赖 `initial_capacity`，若第一个循环失败会导致除零或 NaN SOH |
 | L348 | `cycle_result.rest1.V_start = get(current_state, "V", NaN); cycle_result.rest1.V_end = cycle_result.rest1.V_start`（跨 L348-L349，跳过静置时用 NaN 兜底） | 占位 NaN：若 current_state 缺 "V" 键则记 NaN；下游 CSV / 分析可能未处理 NaN |
 | L419 | 同上，rest2 跳过时的 NaN 兜底（跨 L419-L420） | 同上 |
 

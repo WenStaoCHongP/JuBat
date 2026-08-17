@@ -21,6 +21,18 @@
 - 损伤是渐进的，从完好到完全断裂
 - 损伤状态影响界面的力学和热学性能
 
+### 1.3 界面类型、真实面与离散单元
+
+三种计数层级严格分开：
+
+| 层级 | 数量/定义 | 含义 |
+|---|---|---|
+| 本构/材料类型 | `N_type_coh = 2` | `:PE_PCC`、`:NE_NCC` |
+| 真实 cohesive 面 | `N_face_coh_per_repeat = 4` | PE(A)–PCC、PCC–PE(B)、NE(A)–NCC、NCC–NE(B) |
+| 离散单元 | `N_elem_coh = 4 * N_seg` | `N_seg = length(theta) - 1`，按整条螺旋周向分段计数 |
+
+`Φ` / `phi_pairs` 只表示跨匝 outer/inner 节点配对，不表示 cohesive 面或单元数。SP–涂层接触面属于独立接触模型，也不计入上述 cohesive 数量。
+
 ---
 
 ## 2. 本构模型
@@ -98,7 +110,8 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64,
 **CohesiveElement**：
 - `nodes`：节点编号 (4节点界面单元)
 - `length`：界面长度
-- `normal`：法向量
+- `interface_type`：`:PE_PCC` 或 `:NE_NCC`，表示参数类型而非真实面编号
+- `host_outer_elem` / `host_inner_elem`：真实面两侧的 Q4 单元编号
 
 **DamageState**：
 - `D`：损伤变量 (0-1)
@@ -364,6 +377,37 @@ $$
 
 **参数来源约束**：若 `PE.E_coat == 0` 或 `NE.E_coat == 0`，`ChooseCell` 会发出 `@warn`，并在后续调用处被 `@assert` 拦截（防止 `NaN` 通过厚度加权公式传播）。
 
+### 4.8 无量纲化重设计 v2（2026-07-22）
+
+CZM 分离位移的归一化锚点由 `scale.L` 改为**断裂能定义的临界分离**：
+
+$$
+\delta_{czm} = \frac{2\,G_c^{PE\text{-}PCC}}{\sigma_{\max}^{PE\text{-}PCC}}
+\quad\Rightarrow\quad
+\tilde{\sigma}_{\max} \equiv 1,\;\; \tilde{\delta}_c \equiv 1,\;\; \tilde{G}_c \equiv \tfrac{1}{2},\;\; \tilde{K}_n = \delta_c/\delta_0
+$$
+
+整条牵引-分离曲线落在归一化空间的单位区间，损伤演化和硬编码阈值（`1e-15` 等）不再与病态小量竞争。
+
+**装配层换算因子 Λ**（`CzmInterfaceParams.Λ = scale.L / scale.δ_czm`）：位移以 `L` 归一、分离以 `δ_czm` 归一，由虚功一致性导出：
+
+1. 分离计算：$\tilde{\delta} = \Lambda \cdot B\,\tilde{u}$（`assemble_czm_system`）
+2. 内力：$\tilde{f} = \int B^T \tilde{T}\, d\bar{\Gamma}$（**不乘** Λ）
+3. 切线刚度：乘**一次** Λ
+
+**体/界面应力空间统一**：`moduli_of`（`src/Czm.jl`）返回的体模量做双重再缩放
+（× `scale.E_coat / scale.σ_czm`），与 `CzmInterfaceParams.E_eff` 同参考，
+保证 `K_bulk`、`F_thermo_chem` 与内聚力项装配在同一 σ_czm 应力空间。
+
+**单位契约**：`compute_gap_conductance` 输入的分离量（δ_czm 归一）在函数内 ÷Λ 转到
+L 空间，再与 `lambda_m`/`threshold`/`k_air`（L/λ 归一）运算。
+
+**输出还原**：分离位移 × `scale.δ_czm`；牵引力 × `scale.σ_czm`（`PostProcessing.jl`、`CsvExport.jl`）。
+
+派生诊断量：`Λ`、`E_star`（界面双材料调和模量 / σ_czm）、`L_ch`（内禀长度 E*·G_c/σ_max² / L）
+存于 `CzmInterfaceParams`。设计依据与 Jellyroll 数值示例见
+`docs/planning-with-files/力学模块修改/宏观力学模块无量纲化重设计.md`。
+
 ---
 
 ## 5. 与热的耦合
@@ -496,13 +540,14 @@ function czm_output_to_variables(
 | 弧长增广矩阵 | src/CzmSolve.jl | `build_arc_length_augmented_matrix` (142) |
 | CZM 调度入口 | src/CouplingState.jl | `update_czm_damage!` |
 | 本构模型 | src/Materialmatrix.jl | `bilinear_traction_state`, `update_damage` |
-| 单元矩阵 | src/czm.jl | `cohesive_element_matrices` |
-| 系统组装 | src/czm.jl | `assemble_coupled_system` |
-| 热-化学载荷 | src/czm.jl | `assemble_thermal_chemical_load` |
-| CZM 网格创建 | src/czm.jl | `create_czm_mesh` |
+| 内聚力单元装配 | src/Czm.jl | `assemble_czm_system` |
+| 系统组装 | src/Czm.jl | `assemble_coupled_system` |
+| 热-化学载荷 | src/Czm.jl | `assemble_thermal_chemical_load` |
+| CZM 网格创建 | src/CzmMesh.jl | `create_czm_mesh` |
+| CZM 边界条件 | src/CzmBC.jl | `apply_bc_czm`, `identify_bc_nodes_czm` |
 | 间隙导热 | src/Materialmatrix.jl | `compute_gap_conductance`, `compute_element_gap_conductance` |
 | 损伤统计 | src/CzmPostProcess.jl | `get_damage_statistics`, `check_fracture_criterion` |
 | CZM 后处理 | src/CzmPostProcess.jl | `czm_output_to_variables` |
 | 损伤更新（循环） | src/CouplingState.jl | `update_czm_damage!` |
-| SOH 计算 | src/CycleSolver.jl | `_update_soh_and_capacity!` |
+| SOH 计算 | src/CyclePostProcess.jl | `update_soh_and_capacity!` |
 | 循环求解 | src/CycleSolver.jl | `solve_cycling` |

@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-本文档为 Claude Code 提供 JuBat 项目中 **Jellyroll 果冻卷电池 SPMe-二维分布式热-CZM 耦合模型**的开发指导。
+本文档为 Codex 提供 JuBat 项目中 **Jellyroll 果冻卷电池 SPMe-二维分布式热-CZM 耦合模型**的开发指导。
 
 ---
 
@@ -360,7 +360,10 @@ opt.debug_sample_elems = [1, 40, 80]  # 跟踪特定单元
 
 ### 9.3 网格分辨率
 
-- `nθ` 控制热网格周向分辨率 (典型值 80-200)
+- `nθ` 同时控制热网格与分层力学/CZM 网格的周向分辨率 (典型值 80-200)；力学网格必须直接继承热网格的实际角节点，不得另设 `nθ_czm` 或独立角度数组
+- CZM 子网格用 `czm_enabled=true` 启用；`thermal_elem_map` 必须由共享角段的父子拓扑直接构造
+- `CzmSubmesh.phi_pairs` 保存 `(outer_node_at_θ, inner_node_at_θ+2π)` 力学匝间配对，供后续接触/约束装配使用
+- cohesive 计数统一为：2 种本构/材料类型（`:PE_PCC`、`:NE_NCC`），每个 8 层卷绕重复单元 4 个真实箔–涂层面，完整离散单元数 `4 * (length(theta)-1)`；`phi_pairs` 不参与该计数
 - `gsorder` 控制积分精度 (2-3)
 - 平衡精度与计算成本
 
@@ -381,6 +384,34 @@ JuBat 区分两个尺度的弹性模量，**不可混用**：
 **防御**：缺失 `E_coat` 时 `ChooseCell` 触发 `@warn`，`compute_czm_effective_params` 与 `thermal_diffusion_stress_2D` 入口处 `@assert` 拦截。
 
 详见 `md/15_颗粒与极片模量区分.md`。
+
+### 9.5 planning-with-files 文件存放约定
+
+- 使用 `planning-with-files` 技能生成的 `task_plan.md`、`findings.md`、`progress.md`，统一保存到 `docs/planning-with-files/<中文任务名>/`。
+- `<中文任务名>` 采用与 `docs/planning-with-files/` 现有子目录一致的简短中文主题命名，例如 `代码简化计划评审`。
+- 不得将这三个文件直接创建在项目根目录；若误建，应迁移到对应任务子目录，并避免覆盖已有任务记录。
+- `docs/planning-with-files/index.md` 是规划文件总索引；新增、迁移或删除任务目录/文件后，须同步更新任务说明、时间、Git 修改次数与跟踪状态。
+
+### 9.6 代码简化基线约定
+
+- `example/testexample.jl` 是 `src/` 代码简化的强制行为基线，基线档案位于 `Simplify/baseline/testexample/`，总入口为 `Simplify/baseline.md`。
+- 每个简化批次前后均须以 Julia 1.11.2、单线程、`GKSwstype=100` 和 `--startup-file=no` 运行同一入口与参数。
+- 退出码、网格/步数、`metrics.toml` 中的科学结果（按记录精度）以及结果 PNG SHA-256 必须与基线一致；运行耗时仅供参考，不作严格判定。
+- 任一强制指标不一致时，停止后续简化并定位或回退该批次，不得以“数值接近”代替基线一致。
+
+### 9.7 严格契约判断的后续简化计划
+
+- 当前为暴露静默回退而加入的类型、维度、有限性和收敛判断应先保留，例如 `Variable_update!` 对历史矩阵与当前变量形状的显式检查。
+- 待完整正常路径测试与强制行为基线全部通过，并确认实际工程流程不会触发这些错误判断后，可在独立的代码简化批次中删除已证明冗余的显式分支，以保持库实现简洁。
+- 删除判断时必须依赖直接赋值、索引或求解操作的原生失败语义；不得重新引入补零、保留旧值、截断数组、取首元素或继续计算等静默回退。
+- 简化前后仍须遵守第 9.6 节基线约定；科学结果、网格/步数和 PNG SHA-256 任一变化都表示该判断不可删除。
+
+### 9.8 SP–涂层接触与摩擦后续开发建议
+
+- 当前力学网格只建立 Φ 匝间节点配对，尚未装配 SP–PE、SP–NE 的单边法向接触、相对滑移与 Coulomb 摩擦；不得把共享节点的完美粘结结果解释为已实现接触。
+- 后续实现应复用 `CzmSubmesh.phi_pairs` 及内部 SP–涂层界面双侧节点，单独建立接触状态、间隙、法向罚/增广 Lagrange 与切向 stick-slip 方程，不得并入 COH2D4 牵引–分离本构。
+- SP–涂层没有可靠 $G_c$、$T_{\max}$ 时不得伪造 CZM 参数；基准摩擦系数及敏感性范围应由实验或明确文献给出。
+- 接触扩展必须新增：零穿透、零抗拉、摩擦锥、stick/slip 切换、Φ 配对完整性及 `example/testexample.jl` 强制基线测试。
 
 ---
 

@@ -39,7 +39,7 @@ CZM 损伤状态抽象基类，同上 include 顺序考虑。
 
 CZM 装配网格容器，聚合 bulk 网格 + 内聚力单元 + 节点分层映射 + 损伤状态 + 子网格耦合矩阵。
 
-- 字段：`bulk_mesh`、`node`（扩展后节点）、`nnode`、`bulk_element`（更新后的固体连接）、`cohesive_elements::Vector{AbstractCohesiveElement}`、`n_cohesive`、`n_layers`（分离面类型数，PE-PCC + NE-NCC = 2）、`node_map`（原节点 → 分层后的节点们）、`interface_nodes`（每界面的节点对）、`damage_states::Vector{AbstractDamageState}`、`czm_submesh`（v5 细化子网格，可为 nothing）、`thermal_to_czm`（v5 粗热 → 细 CZM 插值矩阵）、`cohesive_to_thermal`（v5 反向映射）
+- 字段：`bulk_mesh`、`node`（扩展后节点）、`nnode`、`bulk_element`（更新后的固体连接）、`cohesive_elements::Vector{AbstractCohesiveElement}`、`n_cohesive`、`n_layers`（遗留字段名，实际为本构/材料类型数 2，不是 4 个真实面或 `4N_seg` 个单元）、`node_map`、`interface_nodes`、`damage_states::Vector{AbstractDamageState}`、`czm_submesh`、`thermal_to_czm`、`cohesive_to_thermal`
 - 内部构造函数 `CohesiveMesh()`（L66-L73）：空初始化，所有数组为 0 维，新字段（v5）默认 `nothing`
 
 ## 函数清单

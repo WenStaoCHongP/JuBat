@@ -5,7 +5,9 @@
 > - `md/14_粘性正则化.md`（125 行）— 卷末追加：粘性正则化 visc_beta、前向欧拉离散、一致性切线
 >
 > 代码来源（5 个 src 文件 + 2 辅助）：
-> - `src/czm.jl`（873 行）— CohesiveElement / DamageState / create_czm_mesh / moduli_of / assemble_czm_system / assemble_bulk_stiffness / assemble_thermal_chemical_load / assemble_coupled_system(_full) / apply_bc_czm / identify_bc_nodes_czm
+> - `src/CzmMesh.jl`（182 行）— CohesiveElement / create_czm_mesh
+> - `src/Czm.jl`（629 行）— DamageState / moduli_of / assemble_czm_system / assemble_bulk_stiffness / assemble_thermal_chemical_load / assemble_coupled_system(_full) / cache
+> - `src/CzmBC.jl`（63 行）— apply_bc_czm / identify_bc_nodes_czm
 > - `src/CzmSolve.jl`（675 行）— CZMResult / solve_czm_basic_step / newton_raphson_czm / solve_czm_arc_length_step / solve_czm_step / backtrack_line_search! / build_arc_length_augmented_matrix
 > - `src/Mechanical.jl`（360 行）— Calstressdisp（颗粒扩散应力）/ thermal_diffusion_stress_2D（2D 宏观热-扩散应力）
 > - `src/CzmPostProcess.jl`（117 行）— get_damage_statistics / check_fracture_criterion / czm_output_to_variables
@@ -24,9 +26,11 @@
 
 ## md 06 §1 模型概述
 
+> **术语基线**：四个真实箔–涂层面复用 `:PE_PCC`、`:NE_NCC` 两种 `interface_type`；`CohesiveMesh.n_layers=2` 是遗留类型计数字段。完整模型 `n_cohesive=4*N_seg`，而 `phi_pairs` 只保存跨匝配对。
+
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| — | md/06 §1.1-1.2 物理背景 + 3 条假设（界面单元预设 / 渐进损伤 / 影响力学&热学） | `src/czm.jl:1-37 (CohesiveElement, DamageState)` | CohesiveElement 4 节点界面单元；DamageState 含 D/D_visc/δ_max/fractured | ✅ | md §1 为概念陈述，非公式；代码组织对应：预设 cohesive 单元 + 渐进 D ∈ [0,1] + D 影响导热（见 §5） |
+| — | md/06 §1.1-1.2 物理背景 + 3 条假设（界面单元预设 / 渐进损伤 / 影响力学&热学） | `src/CzmMesh.jl:3-12 (CohesiveElement)` + `src/Czm.jl:17-28 (DamageState)` | CohesiveElement 4 节点界面单元；DamageState 含 D/D_visc/δ_max/fractured | ✅ | md §1 为概念陈述，非公式；代码组织对应：预设 cohesive 单元 + 渐进 D ∈ [0,1] + D 影响导热（见 §5） |
 
 ---
 
@@ -72,8 +76,8 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (6.8) | md/06 §3.1 CohesiveElement：nodes / length / normal | `src/czm.jl:1-10 (CohesiveElement)` | `id/nodes/nodes_bottom/nodes_top/length/interface_type/host_outer_elem/host_inner_elem` | ✅ | md L99-102；代码比 md 多 host_outer_elem/host_inner_elem（cohesive_to_thermal 映射用） |
-| (6.9) | md/06 §3.1 DamageState：D/δ_max_n/δ_max_t/D_visc/δ_max_eff/accumulated_damage/fractured | `src/czm.jl:26-37 (DamageState)` | 7 字段全部对应 + 默认构造函数 `DamageState() = new(0,0,0,0,0,false,0)` | ✅ | md L103-110；代码字段顺序：D/D_visc/δ_max_n/δ_max_t/δ_max_eff/fractured/accumulated_damage |
+| (6.8) | md/06 §3.1 CohesiveElement：nodes / length / normal | `src/CzmMesh.jl:3-12 (CohesiveElement)` | `id/nodes/nodes_bottom/nodes_top/length/interface_type/host_outer_elem/host_inner_elem` | ✅ | md L99-102；代码比 md 多 host_outer_elem/host_inner_elem（cohesive_to_thermal 映射用） |
+| (6.9) | md/06 §3.1 DamageState：D/δ_max_n/δ_max_t/D_visc/δ_max_eff/accumulated_damage/fractured | `src/Czm.jl:17-28 (DamageState)` | 7 字段全部对应 + 默认构造函数 `DamageState() = new(0,0,0,0,0,false,0)` | ✅ | md L103-110；代码字段顺序：D/D_visc/δ_max_n/δ_max_t/δ_max_eff/fractured/accumulated_damage |
 
 ### §3.2 CZMResult 结构体
 
@@ -86,16 +90,16 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (6.12) | md/06 §3.3 分离计算 `δ = B·u_element` | `src/czm.jl:382-386 (assemble_czm_system)` | `B_local = R·B_global`；`δ_local = B_local·u_e`；`δ_n = Λ·δ_local[1]` | ✅ | md L144；代码含 Λ 换算因子（重设计 v2，见 (6.22)），与 md §4.8 一致 |
-| (6.13) | md/06 §3.3 切线刚度 `K_coh = ∫_L B^T·D_tan·B dL` | `src/czm.jl:394-405 (assemble_czm_system)` | `BL_dT = B_local'·dT_dδ`；`K_e += wJΛ·BL_dT·B_local`（乘一次 Λ） | ✅ | md L151；dT_dδ 由 bilinear_tangent 返回 2×2 矩阵；wJ=w·J=w·(L/2) |
-| (6.14) | md/06 §3.3 内力向量 `f_int = ∫_L B^T·T dL` | `src/czm.jl:407-413 (assemble_czm_system)` | `T_vec=[T_n,T_t]`；`BLtT = B_local'·T_vec`；`f_int_e += wJ·BLtT`（**不乘** Λ） | ✅ | md L159；重设计 v2 §5 虚功一致性：δ̃=Λ·B·ũ；f=∫BᵀT̃ dΓ 不乘 Λ；切线乘一次 Λ |
+| (6.12) | md/06 §3.3 分离计算 `δ = B·u_element` | `src/Czm.jl:201-205 (assemble_czm_system)` | `B_local = R·B_global`；`δ_local = B_local·u_e`；`δ_n = Λ·δ_local[1]` | ✅ | md L144；代码含 Λ 换算因子（重设计 v2，见 (6.22)），与 md §4.8 一致 |
+| (6.13) | md/06 §3.3 切线刚度 `K_coh = ∫_L B^T·D_tan·B dL` | `src/Czm.jl:213-224 (assemble_czm_system)` | `BL_dT = B_local'·dT_dδ`；`K_e += wJΛ·BL_dT·B_local`（乘一次 Λ） | ✅ | md L151；dT_dδ 由 bilinear_tangent 返回 2×2 矩阵；wJ=w·J=w·(L/2) |
+| (6.14) | md/06 §3.3 内力向量 `f_int = ∫_L B^T·T dL` | `src/Czm.jl:226-232 (assemble_czm_system)` | `T_vec=[T_n,T_t]`；`BLtT = B_local'·T_vec`；`f_int_e += wJ·BLtT`（**不乘** Λ） | ✅ | md L159；重设计 v2 §5 虚功一致性：δ̃=Λ·B·ũ；f=∫BᵀT̃ dΓ 不乘 Λ；切线乘一次 Λ |
 
 ### §3.4 系统组装
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (6.15) | md/06 §3.4 全局刚度 `K_global = Σ_e K_coh,e` | `src/czm.jl:433-439 (assemble_czm_system)` + `:762-763 (assemble_coupled_system)` | `K_coh[dofs[a],dofs[b]] += K_e[a,b]`；`K_total = K_bulk + K_coh` | ✅ | md L167；K_bulk 由 assemble_bulk_stiffness 提供（见 (6.18)） |
-| (6.16) | md/06 §3.4 全局内力 `f_global = Σ_e f_int,e` | `src/czm.jl:434-435 (assemble_czm_system)` + `:765-766 (assemble_coupled_system)` | `f_int_coh[dofs[a]] += f_int_e[a]`；`f_int_total = K_bulk·u + f_int_coh` | ✅ | md L173；体单元线性弹性：f_int_bulk = K_bulk·u |
+| (6.15) | md/06 §3.4 全局刚度 `K_global = Σ_e K_coh,e` | `src/Czm.jl:252-258 (assemble_czm_system)` + `:581-582 (assemble_coupled_system)` | `K_coh[dofs[a],dofs[b]] += K_e[a,b]`；`K_total = K_bulk + K_coh` | ✅ | md L167；K_bulk 由 assemble_bulk_stiffness 提供（见 (6.18)） |
+| (6.16) | md/06 §3.4 全局内力 `f_global = Σ_e f_int,e` | `src/Czm.jl:253-254 (assemble_czm_system)` + `:584-585 (assemble_coupled_system)` | `f_int_coh[dofs[a]] += f_int_e[a]`；`f_int_total = K_bulk·u + f_int_coh` | ✅ | md L173；体单元线性弹性：f_int_bulk = K_bulk·u |
 
 ---
 
@@ -135,15 +139,15 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (6.18) | md/06 §4.5 初始应变 `ε_0 = α·ΔT + β_n·Δsoc_n + β_p·Δsoc_p` | `src/czm.jl:554 (assemble_thermal_chemical_load)` | `epsilon_0_elem[e] = α_eff·dT_elem[e] + β_n·Δsoc_n_elem[e] + β_p·Δsoc_p_elem[e]` | ✅ | md L313；α_eff 跨材料统一（spec §7.1）；β_n/β_p 由 `update_czm_damage!` 传 `param.Omega/3` |
-| (6.19) | md/06 §4.5 等效节点力 `F_thermo_chem = ∫ B^T·D·ε_0 dΩ` | `src/czm.jl:574-585 (assemble_thermal_chemical_load)` | `factor = E/(1−ν²)·ε_0·(1+ν)·w·detJ`；`f_e[2i−1] += dNdx[i]·factor`；`f_e[2i] += dNdy[i]·factor` | ✅ | md L319；平面应力 D 矩阵 + 各向同性 ε_0；代码用 dNdx/dNdy 高斯积分 |
+| (6.18) | md/06 §4.5 初始应变 `ε_0 = α·ΔT + β_n·Δsoc_n + β_p·Δsoc_p` | `src/Czm.jl:373 (assemble_thermal_chemical_load)` | `epsilon_0_elem[e] = α_eff·dT_elem[e] + β_n·Δsoc_n_elem[e] + β_p·Δsoc_p_elem[e]` | ✅ | md L313；α_eff 跨材料统一（spec §7.1）；β_n/β_p 由 `update_czm_damage!` 传 `param.Omega/3` |
+| (6.19) | md/06 §4.5 等效节点力 `F_thermo_chem = ∫ B^T·D·ε_0 dΩ` | `src/Czm.jl:393-404 (assemble_thermal_chemical_load)` | `factor = E/(1−ν²)·ε_0·(1+ν)·w·detJ`；`f_e[2i−1] += dNdx[i]·factor`；`f_e[2i] += dNdy[i]·factor` | ✅ | md L319；平面应力 D 矩阵 + 各向同性 ε_0；代码用 dNdx/dNdy 高斯积分 |
 
 ### §4.6 完整耦合系统组装
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (6.x13) | md/06 §4.6 `assemble_coupled_system(...)` 返回 K_total / f_int / sep / trac | `src/czm.jl:737-769 (assemble_coupled_system)` | `K_total = K_bulk + K_coh`；`f_int_total = K_bulk·u + f_int_coh`；返回四元组 | ✅ | md L339-343；含 K_bulk_cached/geom_cache/ws 缓存入参（spec v2） |
-| (6.x14) | md/06 §4.6 完整残差版 `assemble_coupled_system_full(...)` | `src/czm.jl:777-810 (assemble_coupled_system_full)` | 调 `assemble_coupled_system` + `assemble_thermal_chemical_load`；`R = F_external + F_thermo_chem − f_int_total` | ✅ | md 未列函数体；代码组合两个子函数 + 残差 |
+| (6.x13) | md/06 §4.6 `assemble_coupled_system(...)` 返回 K_total / f_int / sep / trac | `src/Czm.jl:556-588 (assemble_coupled_system)` | `K_total = K_bulk + K_coh`；`f_int_total = K_bulk·u + f_int_coh`；返回四元组 | ✅ | md L339-343；含 K_bulk_cached/geom_cache/ws 缓存入参（spec v2） |
+| (6.x14) | md/06 §4.6 完整残差版 `assemble_coupled_system_full(...)` | `src/Czm.jl:596-629 (assemble_coupled_system_full)` | 调 `assemble_coupled_system` + `assemble_thermal_chemical_load`；`R = F_external + F_thermo_chem − f_int_total` | ✅ | md 未列函数体；代码组合两个子函数 + 残差 |
 
 ### §4.7 应变驱动的有效模量（极片层级）
 
@@ -161,9 +165,9 @@
 |---|---|---|---|---|---|
 | (6.21) | md/06 §4.8 锚点 `δ_czm = 2·G_c/σ_max` → σ_max*=1, δ_c*=1, G_c*=1/2 | `src/CouplingState.jl:308-313,321-322 (compute_czm_params_per_interface)` | 入口断言 `σ_max_pe_pcc>0`；`Λ = scale.L/scale.δ_czm`；CzmInterfaceParams.σ_max/K_n/δ_c_n/G_c 直接用归一化值 | ✅ | md L372；scale.σ_czm/scale.δ_czm 在 NormaliseParam 中由 cohesive 参数锚定 |
 | (6.22) | md/06 §4.8 装配换算因子 Λ = scale.L/scale.δ_czm | `src/CouplingState.jl:322 (compute_czm_params_per_interface)` | `Λ = scale.L / scale.δ_czm`；存于 `CzmInterfaceParams.Λ` | ✅ | md L379；spec v2 §3.5.2 |
-| (6.x19) | md/06 §4.8 分离计算含 Λ：`δ̃ = Λ·B·ũ` | `src/czm.jl:385-386 (assemble_czm_system)` | `δ_n = Λ·ws.δ_local[1]`；`δ_t = Λ·ws.δ_local[2]` | ✅ | md L381；B·u 出位移空间（L 归一），Λ 转 δ_czm 空间 |
-| (6.x20) | md/06 §4.8 内力不乘 Λ，切线乘一次 | `src/czm.jl:400-405 (assemble_czm_system)` | `wJΛ = wJ·Λ`；`K_e += wJΛ·BL_dT·B_local`（切线）；`f_int_e += wJ·BLtT`（内力不乘 Λ） | ✅ | md L382-383；虚功一致性：f=∫BᵀT̃ dΓ；dT/dũ=(dT/dδ̃)·Λ·B |
-| (6.x21) | md/06 §4.8 体/界面应力空间统一 `moduli_of` 双重再缩放 | `src/czm.jl:238-246 (moduli_of)` | `s = scale.σ_czm>0 ? scale.E_coat/scale.σ_czm : 1.0`；`E_e = param.PE.E_coat·s` | ✅ | md L385-387；moduli_of 对 PE/NE/PCC/NCC/SP 都乘 s，统一到 σ_czm 应力空间 |
+| (6.x19) | md/06 §4.8 分离计算含 Λ：`δ̃ = Λ·B·ũ` | `src/Czm.jl:204-205 (assemble_czm_system)` | `δ_n = Λ·ws.δ_local[1]`；`δ_t = Λ·ws.δ_local[2]` | ✅ | md L381；B·u 出位移空间（L 归一），Λ 转 δ_czm 空间 |
+| (6.x20) | md/06 §4.8 内力不乘 Λ，切线乘一次 | `src/Czm.jl:219-224 (assemble_czm_system)` | `wJΛ = wJ·Λ`；`K_e += wJΛ·BL_dT·B_local`（切线）；`f_int_e += wJ·BLtT`（内力不乘 Λ） | ✅ | md L382-383；虚功一致性：f=∫BᵀT̃ dΓ；dT/dũ=(dT/dδ̃)·Λ·B |
+| (6.x21) | md/06 §4.8 体/界面应力空间统一 `moduli_of` 双重再缩放 | `src/Czm.jl:57-65 (moduli_of)` | `s = scale.σ_czm>0 ? scale.E_coat/scale.σ_czm : 1.0`；`E_e = param.PE.E_coat·s` | ✅ | md L385-387；moduli_of 对 PE/NE/PCC/NCC/SP 都乘 s，统一到 σ_czm 应力空间 |
 | (6.x22) | md/06 §4.8 单位契约 `compute_gap_conductance` 输入 δ÷Λ | `src/Materialmatrix.jl:337-340 (compute_gap_conductance)` | `inv_Λ = 1.0/params.Λ`；`delta = max(δ_n,0)·inv_Λ`；`delta0 = params.δ_0_n·inv_Λ` | ✅ | md L389；分离空间（δ_czm 归一）→ 长度空间（L 归一），再与 h_c0/k_air（L/λ 归一）运算 |
 | (6.x23) | md/06 §4.8 输出还原：分离×δ_czm，牵引×σ_czm | `src/CzmPostProcess.jl:99-117 (czm_output_to_variables)` + `src/CsvExport.jl` | czm_output_to_variables 直接写 `separation_n`（未乘 δ_czm）；还原由 CsvExport/PostProcessing 外层 | 🟡 | md L392；代码内 czm_output_to_variables **未做单位还原**；CSV 导出层才乘 δ_czm/σ_czm；指向 `docs/planning-with-files/CZM瓶颈/findings.md` |
 | (6.x24) | md/06 §4.8 派生诊断量 Λ / E* / L_ch | `src/CouplingState.jl:322,330-333,345-347 (compute_czm_params_per_interface)` | `Λ = scale.L/scale.δ_czm`；`E_star_pe_dim = 2·E_pe·E_pcc/(E_pe+E_pcc)`；`L_ch_pe = E_star·G_c/σ_max²/L` | ✅ | md L394；E* 用双材料调和平均，L_ch 用内禀长度公式 |
@@ -267,7 +271,7 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (14.x4) | md/14 §6.3 代码位置表 6 行 | `src/Materialmatrix.jl:68-160,182-286` + `src/CouplingState.jl:553-562` + `src/czm.jl:26-37` + `src/Option.jl:83-84` + `src/SetCase.jl:11` | 全部 6 项存在 | 🟡 | md L99-106 行号已过时：bilinear_traction_state 实际 68-161；bilinear_tangent 实际 182-286；CouplingState β 计算 553-562 |
+| (14.x4) | md/14 §6.3 代码位置表 6 行 | `src/Materialmatrix.jl:68-160,182-286` + `src/CouplingState.jl:553-562` + `src/Czm.jl:17-28` + `src/Option.jl:83-84` + `src/SetCase.jl:11` | 全部 6 项存在 | 🟡 | md L99-106 行号已过时：bilinear_traction_state 实际 68-161；bilinear_tangent 实际 182-286；CouplingState β 计算 553-562 |
 | (14.x5) | md/14 §6.4 参数选择原则 τ_v=1e-5 s 起步 | `src/Option.jl:84 (注释写 "推荐 10~100 s")` | Option 默认 0.0；md 推荐 1e-5；代码注释推荐 10~100 | ⚠️ | **md 与代码注释数量级差 6 个数量级**；推测代码注释为误；指向 `docs/代码优化/16_CZM单位修复与切线正则化.md` |
 
 ---
@@ -294,8 +298,8 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (6.x37) | 【缺失】 | `src/czm.jl:238-246 (moduli_of)` | 按 material_type 分组：PE/NE → E_coat；SP/PCC/NCC → 连续层 E；统一乘 scale.E_coat/scale.σ_czm | -- | 代码独有；md §4.7 描述"全栈加权"未实现；moduli_of 实际 per-layer；α 已从此函数移除（I2-a 修复，docstring 自述） |
-| (6.x38) | 【缺失】 | `src/czm.jl:454-524 (assemble_bulk_stiffness)` | Q4 平面应力：`D = E/(1−ν²)·[1 ν 0;ν 1 0;0 0 (1−ν)/2]`；`K_e = ∫Bᵀ·D·B·w·detJ` | -- | 代码独有；md §3.3 只列 cohesive 单元，体单元装配未描述；按材料类型查 moduli_of |
+| (6.x37) | 【缺失】 | `src/Czm.jl:57-65 (moduli_of)` | 按 material_type 分组：PE/NE → E_coat；SP/PCC/NCC → 连续层 E；统一乘 scale.E_coat/scale.σ_czm | -- | 代码独有；md §4.7 描述"全栈加权"未实现；moduli_of 实际 per-layer；α 已从此函数移除（I2-a 修复，docstring 自述） |
+| (6.x38) | 【缺失】 | `src/Czm.jl:273-343 (assemble_bulk_stiffness)` | Q4 平面应力：`D = E/(1−ν²)·[1 ν 0;ν 1 0;0 0 (1−ν)/2]`；`K_e = ∫Bᵀ·D·B·w·detJ` | -- | 代码独有；md §3.3 只列 cohesive 单元，体单元装配未描述；按材料类型查 moduli_of |
 
 ---
 
@@ -303,8 +307,8 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (6.x39) | md 06 §3.4 + 重设计 v2 §6 相对罚 | `src/czm.jl:817-853 (apply_bc_czm)` | `penalty = dmax>0 ? 1e6·dmax : 1e12`；`K_new[dof,dof] += penalty`；`F_new[dof] = penalty·val` | ✅ | md 未列函数体；重设计 v2 §6 改为相对罚（跟随矩阵对角量级）；Mechanical.jl:271-291 也用相对罚 |
-| (6.x40) | 【缺失】 | `src/czm.jl:854-873 (identify_bc_nodes_czm)` | `is_inner/is_outer → :fixed_xy`；`fix_inner=true` 时内圈也固定 | -- | 代码独有；md 未列 BC 识别逻辑 |
+| (6.x39) | md 06 §3.4 + 重设计 v2 §6 相对罚 | `src/CzmBC.jl:7-42 (apply_bc_czm)` | `penalty = dmax>0 ? 1e6·dmax : 1e12`；`K_new[dof,dof] += penalty`；`F_new[dof] = penalty·val` | ✅ | md 未列函数体；重设计 v2 §6 改为相对罚（跟随矩阵对角量级）；Mechanical.jl:271-291 也用相对罚 |
+| (6.x40) | 【缺失】 | `src/CzmBC.jl:44-63 (identify_bc_nodes_czm)` | `is_inner/is_outer → :fixed_xy`；`fix_inner=true` 时内圈也固定 | -- | 代码独有；md 未列 BC 识别逻辑 |
 | (6.x41) | 【缺失】 | `src/CzmSolve.jl:130-142 (apply_czm_dirichlet!, zero_czm_bc_entries!)` | 强制 `u[dof]=val`；残差向量 bc 位置置 0 | -- | 代码独有；basic/load_sub/arc_length 三种方法共用 |
 
 ---
@@ -313,8 +317,8 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (6.x42) | 【缺失】 | `src/czm.jl:621-704 (build_czm_cache)` | 缓存 K_bulk / bulk_dofs / cohesive_geom / bc_dofs / ws / fix_inner | -- | 代码独有；spec v2 §3.5.2 引入；多次 NR 迭代复用 |
-| (6.x43) | 【缺失】 | `src/czm.jl:719-729 (ensure_czm_cache)` | 失效判据：`objectid(czm_mesh)` + `param_cache.id`（内容哈希）+ `fix_inner` | -- | 代码独有；Task 4.4 fix：原用 objectid(param)，原位修改漏检，改内容哈希 |
+| (6.x42) | 【缺失】 | `src/Czm.jl:440-523 (build_czm_cache)` | 缓存 K_bulk / bulk_dofs / cohesive_geom / bc_dofs / ws / fix_inner | -- | 代码独有；spec v2 §3.5.2 引入；多次 NR 迭代复用 |
+| (6.x43) | 【缺失】 | `src/Czm.jl:538-548 (ensure_czm_cache)` | 失效判据：`objectid(czm_mesh)` + `param_cache.id`（内容哈希）+ `fix_inner` | -- | 代码独有；Task 4.4 fix：原用 objectid(param)，原位修改漏检，改内容哈希 |
 | (6.x44) | 【缺失】 | `src/CouplingState.jl:201-247 (CZMAssemblyWorkspace)` + `:248-272 (CZMAssemblyCache)` | 预分配工作区（K_coh/f_int_coh/K_e/f_int_e/B_global 等） | -- | 代码独有；消除 NR 内重复分配 |
 
 ---
@@ -399,20 +403,24 @@
 
 ### src 函数清单
 
-**src/czm.jl（873 行）函数边界**：
-- `CohesiveElement`: 1-10
-- `DamageState`: 26-37
-- `create_czm_mesh`: 58-207
-- `moduli_of`: 238-246
-- `assemble_czm_system`: 261-443
-- `assemble_bulk_stiffness`: 454-524
-- `assemble_thermal_chemical_load`: 533-597
-- `build_czm_cache`: 621-704
-- `ensure_czm_cache`: 719-729
-- `assemble_coupled_system`: 737-769
-- `assemble_coupled_system_full`: 777-810
-- `apply_bc_czm`: 817-852
-- `identify_bc_nodes_czm`: 854-873
+**src/CzmMesh.jl（182 行）函数边界**：
+- `CohesiveElement`: 3-12
+- `create_czm_mesh`: 33-182
+
+**src/Czm.jl（629 行）函数边界**：
+- `DamageState`: 17-28
+- `moduli_of`: 57-65
+- `assemble_czm_system`: 80-262
+- `assemble_bulk_stiffness`: 273-343
+- `assemble_thermal_chemical_load`: 352-416
+- `build_czm_cache`: 440-523
+- `ensure_czm_cache`: 538-548
+- `assemble_coupled_system`: 556-588
+- `assemble_coupled_system_full`: 596-629
+
+**src/CzmBC.jl（63 行）函数边界**：
+- `apply_bc_czm`: 7-42
+- `identify_bc_nodes_czm`: 44-63
 
 **src/CzmSolve.jl（675 行）函数边界**：
 - `CZMResult`: 1-15
