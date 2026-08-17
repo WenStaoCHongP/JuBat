@@ -2,6 +2,7 @@ include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
 using Test
 using LinearAlgebra
+using Printf
 include(joinpath(@__DIR__, "unit_czm_newton.jl"))
 
 function _setup_strip()
@@ -72,7 +73,11 @@ end
             @test czm_mesh.damage_states[i].D > 0.99
         end
     end
-    @test maximum(δ_hist) > pe.δ_0_n
+    δ_max = maximum(δ_hist)
+    @printf("[Mode I mono] δ_n: min=%.6e  max=%.6e  (δ_0=%.6e  δ_c=%.6e)  D_max=%.4f\n",
+            minimum(δ_hist), δ_max, pe.δ_0_n, pe.δ_c_n, maximum(D_hist))
+    @test δ_max > pe.δ_0_n
+    @test δ_max > 0.5 * pe.δ_c_n   # 必须进入软化/近断裂，避免近零误通过
     @test maximum(D_hist) > 0.99
 end
 
@@ -93,6 +98,10 @@ end
         @test ok
     end
     D_peak = czm_mesh.damage_states[i].D
+    δ_peak = seps[i][1]
+    @printf("[Mode I unload] at peak: δ_n=%.6e  D=%.4f  (δ_0=%.6e)\n",
+            δ_peak, D_peak, pe.δ_0_n)
+    @test δ_peak > pe.δ_0_n          # 峰值必须越过损伤起始
     @test 0.05 < D_peak < 0.99
     for s in 1:20
         u_n = u_peak * (1 - s / 20)
@@ -103,6 +112,7 @@ end
         @test czm_mesh.damage_states[i].D >= D_peak - 1e-12
     end
     D_unload = czm_mesh.damage_states[i].D
+    @printf("[Mode I unload] after unload/reload: D=%.4f  (unchanged from peak)\n", D_unload)
     @test D_unload ≈ D_peak rtol=1e-8
     for s in 1:10
         u_n = 0.5 * u_peak * s / 10
@@ -122,6 +132,8 @@ end
     Λ = pe.Λ
     u = zeros(2 * czm_mesh.nnode)
     u_max = 1.2 * pe.δ_c_t / Λ
+    δt_hist = Float64[]
+    D_hist = Float64[]
     for s in 1:30
         u_t = u_max * s / 30
         bc_dofs, bc_vals, _, _ = _bc_drive_cohesive(czm_mesh, i; u_n=0.0, u_t=u_t)
@@ -129,11 +141,17 @@ end
             czm_mesh, u, cache; bc_dofs=bc_dofs, bc_vals=bc_vals)
         @test ok
         δn, δt = seps[i]; Tn, Tt = tracts[i]
+        push!(δt_hist, abs(δt))
+        push!(D_hist, czm_mesh.damage_states[i].D)
         @test abs(δn) < 0.2 * max(abs(δt), pe.δ_0_t)
         if abs(δt) < pe.δ_0_t * 0.98
             @test Tt ≈ pe.K_t * δt rtol=5e-2 atol=1e-8
         end
     end
+    δt_max = maximum(δt_hist)
+    @printf("[Mode II] |δ_t|: max=%.6e  (δ_0_t=%.6e  δ_c_t=%.6e)  D_max=%.4f\n",
+            δt_max, pe.δ_0_t, pe.δ_c_t, maximum(D_hist))
+    @test δt_max > pe.δ_0_t          # 必须越过切向损伤起始
 end
 
 println("unit_czm_bilinear: ALL PASS")

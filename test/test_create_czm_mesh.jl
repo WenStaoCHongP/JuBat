@@ -12,7 +12,7 @@ using .JuBat
     opt.czm_enabled = true                   # 选择未合并热网格
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, nθ_czm=20, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 
     submesh = mesh_data.czm_submesh
@@ -29,12 +29,9 @@ using .JuBat
         @test elem.host_inner_elem >= 1
     end
 
-    # 数量预期（v3）：每卷绕圈 4 个界面（PE-PCC / PCC-PE / NE-NCC / NCC-NE），每界面 n_segments 个 cohesive 单元
-    n_segments_per_turn = size(submesh.mesh.element, 1) ÷ 8 ÷ maximum(submesh.winding_turn)
-    n_turns_active = length(unique(submesh.winding_turn))
-    n_expected = 4 * n_segments_per_turn * n_turns_active
-    # 容差：边界裁剪允许 ±n_segments_per_turn
-    @test abs(czm_mesh.n_cohesive - n_expected) <= n_segments_per_turn
+    # 2 种 interface_type；每个 8 层重复单元有 4 个真实面；整条螺旋每个周向分段各生成 4 个 cohesive 单元
+    n_segments = size(submesh.mesh.element, 1) ÷ 8
+    @test czm_mesh.n_cohesive == 4 * n_segments
 
     # czm_submesh 字段已设置
     @test czm_mesh.czm_submesh === submesh
@@ -78,7 +75,7 @@ end
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, nθ_czm=20, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
 

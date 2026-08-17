@@ -4,12 +4,15 @@ using LinearAlgebra
 单元条带增量 Newton。对位移 BC 使用正确的罚形式：
   K[dof,dof] += P,  R[dof] = P * (val - u[dof])
 （生产 apply_bc_czm 对非零 val 写成 P*val，不适配残差 Newton。）
+
+损伤仅在收敛后 commit（与生产 solve_czm_basic_step 一致）；装配内用 trial D_visc。
 """
 function unit_czm_newton_step!(czm_mesh, u::Vector{Float64}, param_cache;
         bc_dofs::Vector{Int}, bc_vals::Vector{Float64},
         F_ext::Union{Nothing,Vector{Float64}}=nothing,
         F_thermo_chem::Union{Nothing,Vector{Float64}}=nothing,
-        max_iter::Int=80, tol::Float64=1e-8)
+        max_iter::Int=80, tol::Float64=1e-8,
+        visc_beta::Float64=1.0)
 
     ndof = length(u)
     F_e = F_ext === nothing ? zeros(ndof) : F_ext
@@ -26,7 +29,8 @@ function unit_czm_newton_step!(czm_mesh, u::Vector{Float64}, param_cache;
 
     for iter in 1:max_iter
         K, f_int, separations, tractions = JuBat.assemble_coupled_system(
-            czm_mesh, u, param_cache; damage_states=damage_states)
+            czm_mesh, u, param_cache; damage_states=damage_states,
+            visc_beta=visc_beta)
         R = F_e + F_tc - f_int
 
         dmax = size(K, 1) > 0 ? maximum(abs, diag(K)) : 0.0
@@ -38,7 +42,6 @@ function unit_czm_newton_step!(czm_mesh, u::Vector{Float64}, param_cache;
             R_bc[dof] = penalty * (val - u[dof])
         end
 
-        # 收敛判据：自由 DOF 残差 + BC 违反
         R_check = copy(R)
         for (dof, val) in zip(bc_dofs, bc_vals)
             R_check[dof] = val - u[dof]
@@ -47,7 +50,8 @@ function unit_czm_newton_step!(czm_mesh, u::Vector{Float64}, param_cache;
         if R_norm < tol
             converged = true
             damage_states = JuBat.update_damage_per_interface(
-                czm_mesh, damage_states, separations, param_cache)
+                czm_mesh, damage_states, separations, param_cache;
+                visc_beta=visc_beta)
             czm_mesh.damage_states = damage_states
             break
         end
@@ -58,10 +62,31 @@ function unit_czm_newton_step!(czm_mesh, u::Vector{Float64}, param_cache;
             break
         end
         any(!isfinite, Δu) && break
-        u .+= Δu
-        for (dof, val) in zip(bc_dofs, bc_vals)
-            u[dof] = val
+
+        α = 1.0
+        accepted = false
+        for _ in 1:10
+            u_trial = u .+ α .* Δu
+            for (dof, val) in zip(bc_dofs, bc_vals)
+                u_trial[dof] = val
+            end
+            _, f_try, sep_try, tr_try = JuBat.assemble_coupled_system(
+                czm_mesh, u_trial, param_cache; damage_states=damage_states,
+                visc_beta=visc_beta)
+            R_try = F_e + F_tc - f_try
+            for (dof, val) in zip(bc_dofs, bc_vals)
+                R_try[dof] = val - u_trial[dof]
+            end
+            if norm(R_try) <= (1.0 + 1e-8) * R_norm || α < 1e-4
+                u .= u_trial
+                separations = sep_try
+                tractions = tr_try
+                accepted = true
+                break
+            end
+            α *= 0.5
         end
+        !accepted && break
     end
     return u, separations, tractions, converged, R_norm
 end

@@ -20,6 +20,10 @@ using Test
     @test meta.layer_materials == [:PE, :PCC, :PE, :SP, :NE, :NCC, :NE, :SP]
     @test length(meta.bottom_nodes) == 2
     @test length(meta.top_nodes_after_czm) == 2
+    @test length(meta.pcc_nodes) == 4
+    @test length(meta.ncc_nodes) == 4
+    @test Set(meta.pcc_nodes) == Set(Int.(czm_mesh.bulk_element[2, :]))
+    @test Set(meta.ncc_nodes) == Set(Int.(czm_mesh.bulk_element[6, :]))
     # 底边 y 最小、顶边 y 最大
     @test all(czm_mesh.node[n, 2] ≈ meta.y_interfaces[1] for n in meta.bottom_nodes)
     @test maximum(czm_mesh.node[meta.top_nodes_after_czm, 2]) ≈ meta.y_interfaces[end] atol=1e-12

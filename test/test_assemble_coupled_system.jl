@@ -13,7 +13,7 @@ using .JuBat
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=20, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     submesh = mesh_data.czm_submesh
     case.czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)

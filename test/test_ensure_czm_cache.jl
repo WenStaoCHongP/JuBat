@@ -11,7 +11,7 @@ using .JuBat
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=20, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     submesh = mesh_data.czm_submesh
     case.czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)
@@ -28,7 +28,7 @@ using .JuBat
     @test cache2 === cache1
 
     # 网格变化时失效
-    mesh_data2 = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=30, gsorder=2)
+    mesh_data2 = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, czm_enabled=true, gsorder=2)
     submesh2 = mesh_data2.czm_submesh
     czm_mesh2 = JuBat.create_czm_mesh(submesh2, case.mesh["thermal2D"], case.param)
     cache3 = JuBat.ensure_czm_cache(case, czm_mesh2, param_cache)

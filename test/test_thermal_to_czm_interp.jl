@@ -12,7 +12,7 @@ using SparseArrays
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=20, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     submesh = mesh_data.czm_submesh
 
@@ -39,6 +39,11 @@ using SparseArrays
     # 边界节点插值约束
     @test minimum(T_czm) >= minimum(T_thermal) - 1e-10
     @test maximum(T_czm) <= maximum(T_thermal) + 1e-10
+
+    # 拓扑父热单元不包含节点时必须报错，不得回退到最近热节点
+    bad_submesh = deepcopy(submesh)
+    bad_submesh.mesh.node[1, :] .= 10 .* maximum(abs, case.mesh["thermal2D"].node)
+    @test_throws ErrorException JuBat.build_thermal_to_czm_interp(case.mesh["thermal2D"], bad_submesh)
 end
 
 @testset "create_czm_mesh 填充 thermal_to_czm" begin
@@ -49,7 +54,7 @@ end
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=20, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     submesh = mesh_data.czm_submesh
     czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)

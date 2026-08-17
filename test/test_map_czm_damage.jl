@@ -11,7 +11,7 @@ using .JuBat
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, nθ_czm=20, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     submesh = mesh_data.czm_submesh
     case.czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)
@@ -31,6 +31,11 @@ using .JuBat
     czm_mesh_synthetic = case.czm_mesh
     # 把前 3 个 cohesive 单元强制映射到粗热单元 1
     czm_mesh_synthetic.cohesive_to_thermal[1:3] .= 1
+    for i in eachindex(czm_mesh_synthetic.damage_states)
+        if czm_mesh_synthetic.cohesive_to_thermal[i] == 1
+            czm_mesh_synthetic.damage_states[i].D = 0.0
+        end
+    end
     czm_mesh_synthetic.damage_states[1].D = 0.3
     czm_mesh_synthetic.damage_states[2].D = 0.7
     czm_mesh_synthetic.damage_states[3].D = 0.1
