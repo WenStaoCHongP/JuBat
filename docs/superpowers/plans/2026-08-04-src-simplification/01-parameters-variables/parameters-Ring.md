@@ -1,6 +1,6 @@
 # parameters/Ring.jl Dead Code Verification Plan
 
-**Status:** ⬜ Pending
+**Status:** ✅ Completed（保留）
 **Layer:** 1 - 参数与变量
 **桶:** Delete 候选
 
@@ -42,3 +42,8 @@ echo "$(date +%F): parameters/Ring.jl 决策=[删除/保留]" >> Simplify/baseli
 ## Risk
 
 低；先 grep 再删。
+
+## Execution Result (2026-08-05)
+
+- 多个热验证脚本及 `tools/verify_jellyroll_radial_conduction_path.jl` 调用公开 `ring_mesh`；Ring 参数/几何验证路径仍然活跃。
+- 与 `ring.jl` 联动保留。

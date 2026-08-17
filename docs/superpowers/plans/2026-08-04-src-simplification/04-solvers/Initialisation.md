@@ -1,6 +1,6 @@
 # Initialisation.jl Audit Plan
 
-**Status:** ⬜ Pending | **Layer:** 4 求解器 | **桶:** Leave alone
+**Status:** ✅ Completed（审计保留） | **Layer:** 4 求解器 | **桶:** Leave alone
 
 **Goal:** 仅审查。模型初始化分支（SPM/SPMe/P2D/y0 注入）。
 

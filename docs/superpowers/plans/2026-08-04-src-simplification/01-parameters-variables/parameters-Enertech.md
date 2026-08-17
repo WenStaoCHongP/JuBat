@@ -1,6 +1,6 @@
 # parameters/Enertech.jl Dead Code Verification Plan
 
-**Status:** ⬜ Pending
+**Status:** ✅ Completed（保留）
 **Layer:** 1 - 参数与变量
 **桶:** Delete 候选
 
@@ -80,3 +80,8 @@ echo "$(date +%F): parameters/Enertech.jl 决策=[删除/保留]" >> Simplify/ba
 
 - 低；参数集删除影响范围仅限 `ChooseCell` 调用者
 - **必须先 grep 再删**，不能凭直觉
+
+## Execution Result (2026-08-05)
+
+- 仓库示例未直接调用，但 `ChooseCell` 文档明确将 `Enertech` 列为支持参数集，属于公开字符串 API。
+- 仅凭仓库内 grep 不足以证明外部用户不存在；按评审后的公共 API 规则保留。

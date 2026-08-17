@@ -1,0 +1,16 @@
+﻿┌ Warning: [ChooseCell] PE.E_coat/NE.E_coat 未定义；scale.E_coat 将保持 0，宏观力学分析不可用。请补全 E_coat 字段后再启用 mechanicalmodel="full"。
+└ @ Main.JuBat D:\OneDrive\Desktop\Jubat For Cursor\JuBat\src\SetParams.jl:313
+┌ Warning: [ChooseCell] cohesive.σ_max_pe_pcc 或 G_c_pe_pcc = 0; scale.σ_czm/δ_czm/G_czm/K_czm 无法锚定，CZM 归一化会产生 Inf/NaN。请补全 cohesive 字段后再启用 czm_enabled=true。
+└ @ Main.JuBat D:\OneDrive\Desktop\Jubat For Cursor\JuBat\src\SetParams.jl:334
+
+[Solve] 初始化完成: V=4.063455707041965 V, t_end=3540.0
+start to solve the problem 
+finish the simulation
+
+[Solve] 初始化完成: V=4.036392972358604 V, t_end=3540.0
+start to solve the problem 
+finish the simulation
+
+[Solve] 初始化完成: V=4.034167426950418 V, t_end=3540.0
+start to solve the problem 
+finish the simulation

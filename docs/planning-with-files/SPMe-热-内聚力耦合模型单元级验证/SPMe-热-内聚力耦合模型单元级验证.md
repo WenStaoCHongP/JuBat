@@ -37,4 +37,9 @@
 
 - [x] Brainstorming / 设计批准
 - [x] 实施计划（writing-plans）
-- [x] 实现与验证
+- [x] 实现（网格 + 双线性脚本通过）
+- [ ] 本征应变工况在**实际量级参数**下自然进入损伤（见 findings）
+
+**Findings（2026-07-27）**：
+[`docs/superpowers/findings/2026-07-27-unit-czm-eigenstrain-verification-gap.md`](../../superpowers/findings/2026-07-27-unit-czm-eigenstrain-verification-gap.md)
+根因：\(E_{\mathrm{coat}}=500\,\mathrm{MPa}\) 时 \(E|\varepsilon_0|\ll\sigma_{\max}\)，仅改 BC 无法起裂；后续需文献标定模量/CZM 参数。

@@ -1,6 +1,6 @@
 # CzmPostProcess.jl Audit Plan
 
-**Status:** ⬜ Pending | **Layer:** 5 后处理/导出 | **桶:** Leave alone
+**Status:** ✅ Completed（审计保留） | **Layer:** 5 后处理/导出 | **桶:** Leave alone
 
 **Goal:** 仅审查。CZM 后处理（损伤统计、变形可视化数据）。
 

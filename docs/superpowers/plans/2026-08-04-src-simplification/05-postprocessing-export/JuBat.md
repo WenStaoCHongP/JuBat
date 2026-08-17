@@ -1,6 +1,6 @@
 # JuBat.jl Module Entry Audit Plan
 
-**Status:** ⬜ Pending | **Layer:** 5 后处理/导出 | **桶:** Leave alone + export 清理
+**Status:** ✅ Completed（审计保留） | **Layer:** 5 后处理/导出 | **桶:** Leave alone + export 清理
 
 **Goal:** 审查 36 个 include + ~50 个 export。export 清理在相关文件被删/合并时同步更新。
 

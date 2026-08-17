@@ -1,6 +1,6 @@
 # ThermalPolar2D.jl Audit Plan
 
-**Status:** ⬜ Pending | **Layer:** 3 物理模型 | **桶:** High-risk-leave-alone
+**Status:** ✅ Completed（审计保留） | **Layer:** 3 物理模型 | **桶:** High-risk-leave-alone
 
 **Goal:** 仅审查。极坐标 FVM 数值核心，不动。
 

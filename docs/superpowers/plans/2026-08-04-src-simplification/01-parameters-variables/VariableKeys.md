@@ -1,6 +1,6 @@
 # VariableKeys.jl Implementation Plan
 
-**Status:** ⬜ Pending
+**Status:** ⚠️ Blocked（评审后待重写）
 **Layer:** 1 - 参数与变量
 **桶:** 新建文件（D2 重复簇根因修复）
 **依赖:** 无（其他文件依赖此文件）

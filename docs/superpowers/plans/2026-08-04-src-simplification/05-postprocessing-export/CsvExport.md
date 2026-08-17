@@ -1,6 +1,6 @@
 # CsvExport.jl Defensive Code Audit Plan
 
-**Status:** ⬜ Pending | **Layer:** 5 后处理/导出 | **桶:** Mixed（Leave alone + category A 评估）
+**Status:** ✅ Completed | **Layer:** 5 后处理/导出 | **桶:** Mixed（Leave alone + category A 评估）
 
 **Goal:** 7 处 try/catch 评估（CSV 写入失败容错）。CSV 写入失败应保留 @warn（用户磁盘/权限问题），但模式可统一为 helper。
 
@@ -79,3 +79,9 @@ echo "$(date +%F): CsvExport.jl 决策=[Consolidate: safe_write_csv helper]" >> 
 - 不删 try/catch（CSV 写入失败需要保留 @warn）
 - 不动 CSV 文件格式
 - 不合并多个 CSV 文件
+
+## Execution Result (2026-08-05)
+
+- 新增私有 `_write_csv_guarded!`，七处同构 try/catch 收敛为七个闭包调用；skip 判据与 CSV 格式未变。
+- 定向 helper/最小公开导出路径测试 10/10，全套 22 个测试文件通过，强制 `testexample` 基线完全一致。
+- 生产源码 `+22/-37`，净删 15 行。

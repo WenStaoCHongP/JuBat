@@ -1,6 +1,6 @@
 # ring.jl Dead Code Verification Plan
 
-**Status:** ⬜ Pending | **Layer:** 2 几何/网格 | **桶:** Delete 候选
+**Status:** ✅ Completed（审计保留） | **Layer:** 2 几何/网格 | **桶:** Delete 候选
 
 **Goal:** grep 验证 `ring_mesh` 调用者；无则删除整个文件。联动 `parameters/Ring.jl`、`ThermalPolar2D.jl`。
 

@@ -1,6 +1,6 @@
 # CouplingState.jl Consolidation Plan
 
-**Status:** ⬜ Pending | **Layer:** 5 后处理/导出 | **桶:** Consolidate + Leave alone（D2 + category B）
+**Status:** ✅ Completed（按评审修订） | **Layer:** 5 后处理/导出 | **桶:** Consolidate + Leave alone（D2 + category B）
 
 **Goal:** D2 部分整合（`MultiSPMeLayout` double ctor、`update_czm_damage!` double method）+ category B `@warn` 标注。
 
@@ -120,3 +120,10 @@ git commit -m "docs(coupling): 标注 4 处 @warn 为数值检查（spec §7 类
 - 不动 `compute_czm_params_per_interface`（CZM 参数核心）
 - 不删任何 @warn（都是数值健康检查）
 - 不动 `MultiSPMeLayout` struct 定义
+
+## Execution Result (2026-08-05)
+
+- 保留活跃三参数 `update_czm_damage!`；删除零调用且未导出的六参数兼容方法（−17 行）。
+- 两个 `MultiSPMeLayout` 构造器保留：mesh-aware 版本为活跃路径，类型已导出，不收窄外部构造方式。
+- D2 键集中化仍按评审结论阻塞；未添加 spec taxonomy 注释，避免以注释制造新 bloat。
+- CZM 定向测试与强制 `testexample` 基线均通过。

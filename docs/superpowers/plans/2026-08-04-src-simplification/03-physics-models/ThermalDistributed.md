@@ -1,8 +1,8 @@
 # ThermalDistributed.jl Twin Elimination Plan
 
-**Status:** ⬜ Pending | **Layer:** 3 物理模型 | **桶:** Consolidate
+**Status:** ✅ Completed | **Layer:** 3 物理模型 | **桶:** Consolidate
 
-**Goal:** D3/D4 双胞胎消除：`apply_convection_bc`/`!` 与 `apply_cool_method`/`!` 各 ~45 行重复，将 non-! 版改为 thin wrapper 委托给 ! 版。
+**Goal:** D3/D4 双胞胎消除：保留 `apply_convection_bc` 与 `apply_cool_method` 名称，直接采用原位变体实现，删除两个 `!` 变体。
 
 ## 现状（557 行）
 
@@ -33,7 +33,7 @@
 
 **Files:** Create `test/smoke_thermal_bc.jl`
 
-- [ ] **Step 1: 写测试**
+- [x] **Step 1: 写测试**
 
 ```julia
 include("../src/JuBat.jl")
@@ -70,12 +70,12 @@ JuBat.apply_cool_method!(K4, F4, mesh, case)
 println("PASS: twin behavior equivalent")
 ```
 
-- [ ] **Step 2: 跑测试，验证当前等价**
+- [x] **Step 2: 跑测试，验证当前等价**
 
 Run: `julia test/smoke_thermal_bc.jl`
 Expected: PASS（若 FAIL，说明两版已有偏差，先记录差异，本 plan 暂停）
 
-- [ ] **Step 3: Commit baseline test**
+- [ ] **Step 3: Commit baseline test**（工作树已有用户修改，未擅自提交）
 
 ```bash
 git add test/smoke_thermal_bc.jl
@@ -88,7 +88,7 @@ git commit -m "test(thermal): 添加 convection/cool 双胞胎行为 baseline"
 
 **Files:** Modify `src/ThermalDistributed.jl:49-96`
 
-- [ ] **Step 1: 替换函数体**
+- [x] **Step 1: 替换函数体**
 
 将 line 49-96 整段替换为：
 
@@ -110,7 +110,7 @@ end
 
 **注意**：当前 `apply_convection_bc!` 在 `edge_cache===nothing` 时（line 189-191）会回退调用 `apply_convection_bc`；wrapper 必须避免无限递归，所以 wrapper 内部主动构造 `edge_cache`。
 
-- [ ] **Step 2: 修改 `apply_convection_bc!` line 189-191**
+- [x] **Step 2: 修改 `apply_convection_bc!` line 189-191**
 
 将：
 ```julia
@@ -126,12 +126,12 @@ end
     end
 ```
 
-- [ ] **Step 3: 跑 smoke test**
+- [x] **Step 3: 跑 smoke test**
 
 Run: `julia test/smoke_thermal_bc.jl`
 Expected: PASS
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 4: Commit**（工作树已有用户修改，未擅自提交）
 
 ```bash
 git add src/ThermalDistributed.jl
@@ -144,7 +144,7 @@ git commit -m "refactor(thermal): apply_convection_bc non-! 改为 wrapper（消
 
 **Files:** Modify `src/ThermalDistributed.jl:99-174`
 
-- [ ] **Step 1: 替换函数体**
+- [x] **Step 1: 替换函数体**
 
 将 line 99-174 替换为：
 
@@ -158,17 +158,17 @@ end
 
 （`apply_cool_method!` 已处理 `cool_method="none"/"surface"/"tab"` 全分支，且 non-! 版原行为也是 copy 后逐分支相同，无递归风险。）
 
-- [ ] **Step 2: 跑 smoke test**
+- [x] **Step 2: 跑 smoke test**
 
 Run: `julia test/smoke_thermal_bc.jl`
 Expected: PASS
 
-- [ ] **Step 3: 跑主线 example**
+- [x] **Step 3: 跑主线 example**（以更强的 `example/testexample.jl` 全耦合基线替代并通过）
 
 Run: `julia example/SPMe_Thermal_example.jl`
 Expected: PASS
 
-- [ ] **Step 4: Commit + baseline**
+- [x] **Step 4: baseline**（已更新；commit 因用户工作树已有修改而跳过）
 
 ```bash
 git add src/ThermalDistributed.jl
@@ -182,8 +182,8 @@ echo "$(date +%F): ThermalDistributed.jl 决策=[Consolidate: twin wrapper 化]"
 
 **Files:** 仅审查 `src/ThermalDistributed.jl:518-557`
 
-- [ ] 通读，确认 `_with_czm` 是「调用 `_` + 追加 CZM 热源」的扩展，不是字面重复。
-- [ ] 若追加部分 < 10 行且无独立价值 → 单独开 plan 评估合并；本简化轮不动。
+- [x] 通读，确认 `_with_czm` 是「调用 `_` + 追加 CZM 热源」的扩展，不是字面重复。
+- [x] 追加部分具有独立 CZM 热源职责；本简化轮不动。
 
 ---
 
@@ -200,3 +200,10 @@ echo "$(date +%F): ThermalDistributed.jl 决策=[Consolidate: twin wrapper 化]"
 - 不合并 `compute_heat_sources` / `_with_czm`（不是字面重复）
 - 不动 `ThermalDistributed2D_BC`（line 320-321 的调用点，行为不变）
 - 不删 `edge_cache` 缓存机制
+
+## Final Execution Result (2026-08-05)
+
+- 按用户修订，不保留 wrapper/variant 双层：两个非 `!` 函数直接原位修改传入的 K/F，两个 `!` 定义已删除。
+- `ThermalDistributed2D_BC` 已改为调用保留的函数名；`edge_cache` 机制保持不变。
+- `smoke_thermal_bc.jl` 18/18，通过强制 `testexample` 基线且 PNG SHA-256 完全一致。
+- 最终源码 diff：`+6/-133`，净删 127 行。

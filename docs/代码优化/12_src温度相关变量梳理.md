@@ -61,7 +61,7 @@
 | `dT_elem` | `src/Mechanical.jl` 第 190 行；`src/CycleSolver.jl` 第 581 行 | 单元温升（相对参考温度） | K（或等效温差标度） | 计算热应变、驱动 CZM 热-化学载荷 |
 | `thermal2D element thermal strain` | `src/Variables.jl` 第 127 行 | 单元热应变 | 无量纲应变 | 热-扩散耦合力学后处理 |
 | `thermal2D element thermal stress` | `src/Variables.jl` 第 123 行 | 单元热应力 | 归一化应力量 | 力学场诊断与损伤分析 |
-| `epsilon_0_elem = α_eff*dT + ...` | `src/Mechanical.jl` 第 242 行；`src/czm.jl` 第 363 行 | 热膨胀+浓度膨胀本征应变 | 应变 | 构造热-扩散耦合等效载荷 |
+| `epsilon_0_elem = α_eff*dT + ...` | `src/Mechanical.jl` 第 242 行；`src/Czm.jl` 第 373 行 | 热膨胀+浓度膨胀本征应变 | 应变 | 构造热-扩散耦合等效载荷 |
 
 ## 6. 输出与数据导出中的温度字段
 

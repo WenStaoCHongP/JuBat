@@ -56,9 +56,9 @@
 
 | Dict Key | 维度 | 单位域 | 写入位置 | 读取位置 | 含义 |
 |----------|------|--------|----------|----------|------|
-| `"thermal2D temperature at nodes"` | (nT, num) | 无量纲 (T/T_ref) | CallModel.jl:47,62,149, Solve.jl:184,237 | Solve.jl:412-413,421, PostProcessing.jl:63 | 当前时刻节点温度场 |
+| `"thermal2D temperature at nodes"` | (nT, num) | 无量纲 (T/T_ref) | CallModel.jl:47,62,149, Solve.jl:184,237 | Solve.jl:412-413,421, PostProcessing.jl:66 | 当前时刻节点温度场 |
 | `"thermal2D temperature  at nodes history"` | (nT, num) | 无量纲 | Variables.jl:100 | — | 节点温度历史（注意双空格拼写） |
-| `"thermal2D temperature"` | (ne, num) | 无量纲 | Variables.jl:97 | PostProcessing.jl:128 | 单元均温历史 |
+| `"thermal2D temperature"` | (ne, num) | 无量纲 | Variables.jl:97 | PostProcessing.jl:78 | 单元均温历史 |
 | `"thermal2D temperature history"` | (ne, num) | 无量纲 | Variables.jl:99 | — | 单元温度历史 |
 | `"T_nodes"` | — | 无量纲 | Solve.jl:25,60, CallModel间接 | Solve.jl:25,187, Mechanical.jl:174, CycleData.jl:54 | 当前节点温度的即时引用（非历史记录） |
 
@@ -80,8 +80,8 @@
 | `"thermal2D temperature at nodes [K]"` | (nT, v) | K | PostProcessing.jl:63, Solve.jl:413 | 节点温度场时间序列 |
 | `"thermal2D temperature [K]"` | (ne, v) | K | Solve.jl:424 | 单元均温时间序列 |
 | `"thermal2D final temperature at nodes [K]"` | (nT,) | K | Solve.jl:429 | 最终节点温度 |
-| `"T_max"` | Float64 | K | PostProcessing.jl:168, CycleData.jl:547 | 最高温度 |
-| `"T_mean"` | Float64 | K | CycleData.jl:548 | 平均温度 |
+| `"T_max"` | Float64 | K | CyclePostProcess.jl:54-61, CycleData.jl:174-190 | 最高温度 |
+| `"T_mean"` | Float64 | K | CycleData.jl:174-199 | 平均温度 |
 
 ### 4.2 循环状态传递
 

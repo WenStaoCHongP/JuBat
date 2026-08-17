@@ -1,6 +1,6 @@
 # Solve.jl Defensive Code Audit Plan
 
-**Status:** ⬜ Pending | **Layer:** 4 求解器 | **桶:** Mixed（Leave alone + category A/B 评估）
+**Status:** ✅ Completed（按评审修订） | **Layer:** 4 求解器 | **桶:** Mixed（Leave alone + category A/B 评估）
 
 **Goal:** 主求解器入口。评估 2 处 try/catch（line 273, 418）+ 2 处 @warn（line 123, 148）；数值主循环不动。
 
@@ -120,3 +120,10 @@ git commit -m "docs(solve): 标注 CZM try/catch 为设计内回退（spec §7 �
 - 不动主循环时间步进
 - 不动 `CallModel_MultiSPMe` 数值路径
 - 不重命名任何变量
+
+## Execution Result (2026-08-05)
+
+- 删除附加最终热节点结果时的 silent try/catch（−4 行）；现有条件守卫保持不变。
+- 保留 CZM 损伤更新的可观察恢复路径，以及外部状态长度不匹配时的显式告警/重初始化。
+- 未添加 spec taxonomy 注释，避免无行为价值的生产注释。
+- 热边界 smoke 与强制 `testexample` 基线均通过，PNG SHA-256 完全一致。

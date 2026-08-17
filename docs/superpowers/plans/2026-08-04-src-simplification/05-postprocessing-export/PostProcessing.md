@@ -1,6 +1,6 @@
 # PostProcessing.jl Audit Plan
 
-**Status:** ⬜ Pending | **Layer:** 5 后处理/导出 | **桶:** Leave alone
+**Status:** ✅ Completed（审计保留） | **Layer:** 5 后处理/导出 | **桶:** Leave alone
 
 **Goal:** 仅审查。后处理主入口（按 model 分支提取结果）。
 

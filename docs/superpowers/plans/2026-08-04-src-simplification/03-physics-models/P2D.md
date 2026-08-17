@@ -1,6 +1,6 @@
 # P2D.jl Audit Plan
 
-**Status:** ⬜ Pending | **Layer:** 3 物理模型 | **桶:** Leave alone
+**Status:** ✅ Completed（审计保留） | **Layer:** 3 物理模型 | **桶:** Leave alone
 
 **Goal:** 仅审查。Pseudo-two-dimensional 模型，主线 API。
 

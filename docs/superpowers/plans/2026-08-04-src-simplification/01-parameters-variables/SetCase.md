@@ -1,6 +1,6 @@
 # SetCase.jl Compatibility Ctor Removal Plan
 
-**Status:** ⬜ Pending
+**Status:** ✅ Completed（保留）
 **Layer:** 1 - 参数与变量
 **桶:** Leave alone + 兼容入口验证（spec §7.3）
 
@@ -47,3 +47,8 @@ echo "$(date +%F): SetCase.jl 决策=[删除/保留 5 参数构造器]" >> Simpl
 ## Risk
 
 低；grep 是可靠判据。
+
+## Execution Result (2026-08-05)
+
+- `src/SetCase.jl:95` 直接调用五参数 `Case(param_dim, param, opt, mesh, index)`，因此不是 dead compatibility entry。
+- 保留构造器；未修改源码，无需重复运行行为基线。

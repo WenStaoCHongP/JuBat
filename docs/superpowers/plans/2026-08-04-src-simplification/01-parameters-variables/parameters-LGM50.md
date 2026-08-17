@@ -1,6 +1,6 @@
 # parameters/LGM50.jl Dead Code Verification Plan
 
-**Status:** ⬜ Pending
+**Status:** ✅ Completed（保留）
 **Layer:** 1 - 参数与变量
 **桶:** Delete 候选
 
@@ -38,3 +38,8 @@ echo "$(date +%F): parameters/LGM50.jl 决策=[删除/保留]" >> Simplify/basel
 ## Risk
 
 低；先 grep 再删。
+
+## Execution Result (2026-08-05)
+
+- `example/minimal_example.jl`、`thermal_example.jl`、`mechanical_example.jl` 等多个活跃示例调用 `ChooseCell("LG M50")`。
+- 明确为活跃参数集，保留。

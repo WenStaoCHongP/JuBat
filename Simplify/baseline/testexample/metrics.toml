@@ -1,0 +1,52 @@
+baseline_id = "testexample-20260815T011730-0600"
+supersedes = "testexample-20260806T031217-0600"
+baseline_reason = "Adopt shared thermal/mechanical circumferential topology and strict cycle-state contracts as the current behavior baseline"
+status = "pass"
+exit_code = 0
+command = "D:/Julia-1.11.2/bin/julia.exe --startup-file=no example/testexample.jl"
+git_head = "df8aab3e278243fa9efe0759b666f4e386628276"
+script_sha256 = "8c19e11619444bac6954f01845eed676d281ec22b7aa40e2a88b7e367f06b9e9"
+source_manifest_sha256 = "1cf823c5c77e23f85a8353b0af0e34a3ecdb2d6c21866f2334266a287bd867de"
+source_manifest_tsv_sha256 = "77cc5df31b1d1ce21c6329052546db8b12bb9f2cc3b6e74df7e1d76e36b9a0df"
+source_file_count = 46
+julia_version = "1.11.2"
+plots_version = "1.40.9"
+julia_threads = 1
+gkswstype = "100"
+run_started = "2026-08-15T01:17:30.2179465-06:00"
+run_ended = "2026-08-15T01:19:40.4830495-06:00"
+outer_wall_seconds = 130.265
+solver_wall_seconds = 114.422
+
+[mesh]
+theta_elements = 80
+thermal_elements = 1682
+thermal_nodes = 1763
+
+[result]
+time_steps = 19
+solver_initial_voltage_exact_v = 4.036735800619771
+initial_voltage_v = 4.0367
+final_voltage_v = 3.9438
+voltage_drop_v = 0.0929
+final_capacity_ah = 0.0833
+temperature_min_k = 298.15
+temperature_max_k = 299.00
+czm_d_max_percent = 0.0
+czm_d_mean_percent = 0.0
+czm_max_normal_separation_m = 1.2557e-14
+czm_fractured_elements = 0
+czm_updates = 19
+czm_converged_updates = 19
+
+[artifact]
+result_png_path = "output/testexample_results.png"
+result_png_bytes = 96438
+result_png_sha256 = "4ba6207c3ccf92da5e37349ee335cf21a10a50b46a14cda13de95eefa6cae932"
+debug_log_produced = false
+
+[comparison]
+scientific_metrics_exact_at_printed_precision = true
+mesh_and_step_counts_exact = true
+result_png_sha256_exact = true
+timing_exact = false

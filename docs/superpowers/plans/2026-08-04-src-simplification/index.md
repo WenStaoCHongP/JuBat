@@ -8,6 +8,8 @@
 
 **Tech Stack:** Julia 1.x；项目内部测试框架（`test/unit_czm_*.jl`）；grep 脚本（`Simplify/scripts/`）。
 
+**执行状态（2026-08-05）**：37 个 plan 已完成或审计保留；5 个 D1/D2 plan 因评审确认的行为/API 风险标记为 Blocked，待重写；详情见 `Simplify/execution-status.md`。
+
 ---
 
 ## 执行顺序（推荐）

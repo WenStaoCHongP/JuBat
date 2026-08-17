@@ -1,6 +1,6 @@
 # CycleData.jl D1 Refactor Plan
 
-**Status:** ⬜ Pending | **Layer:** 5 后处理/导出 | **桶:** Consolidate
+**Status:** ⚠️ Blocked（评审后待重写） | **Layer:** 5 后处理/导出 | **桶:** Consolidate
 
 **Goal:** D1 重复消除。`solve_phase_with_export` / `solve_cycle_with_export` 重复 CycleSolver ~400 行。两版都有外部 example 调用者 → **不能直接删 CycleData**。改为：CycleSolver 增加 `export_callback` 关键字，CycleData 改为 thin wrapper。
 

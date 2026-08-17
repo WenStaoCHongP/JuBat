@@ -1,6 +1,6 @@
 # CycleSolver.jl Audit Plan
 
-**Status:** ⬜ Pending | **Layer:** 4 求解器 | **桶:** Leave alone（D1 keep 侧）
+**Status:** ⚠️ Blocked（评审后待重写） | **Layer:** 4 求解器 | **桶:** Leave alone（D1 keep 侧）
 
 **Goal:** 仅审查。循环求解器主入口，与 CycleData.jl 的重复（D1）在 CycleData.md 处理（删 D1 那侧）。
 

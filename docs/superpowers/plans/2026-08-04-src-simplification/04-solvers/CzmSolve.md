@@ -1,6 +1,6 @@
 # CzmSolve.jl Newton Recovery Path Annotation Plan
 
-**Status:** ⬜ Pending | **Layer:** 4 求解器 | **桶:** High-risk-leave-alone + category D 标注
+**Status:** ✅ Completed（审计保留） | **Layer:** 4 求解器 | **桶:** High-risk-leave-alone + category D 标注
 
 **Goal:** 4 处 try/catch 全部保留（数值核心恢复路径），加注释说明为何不是 silent swallow。不动 Newton 迭代。
 

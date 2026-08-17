@@ -1,6 +1,6 @@
 # Mechanical.jl Stress Solve Hardening Plan
 
-**Status:** ⬜ Pending | **Layer:** 3 物理模型 | **桶:** Leave alone（category A 防御代码评估）
+**Status:** ✅ Completed（审计保留） | **Layer:** 3 物理模型 | **桶:** Leave alone（category A 防御代码评估）
 
 **Goal:** 评估 `try/catch` 兜底（line 294-299）是否属于 spec §7 类目 A「吞异常」；如果是，改为显式错误或保留并加注释。
 
@@ -117,3 +117,8 @@ git commit -m "docs(mechanical): 标注 try/catch 为设计内回退（spec §7 
 - 不动 `Calstressdisp`（颗粒扩散应力核心）
 - 不动 `thermal_diffusion_stress_2D` 公式
 - 不动 `compute_effective_coating_modulus`（CLAUDE.md §9.4 入口）
+
+## Execution Result (2026-08-05)
+
+- 保留带 `@warn` 的零位移回退；当前强制基线未覆盖奇异矩阵失败分支，计划指定的 3600 s / nθ=360 示例不适合作为每批快速 characterization。
+- 未添加 taxonomy 注释；待建立聚焦失败路径测试后再评估 fail-fast。

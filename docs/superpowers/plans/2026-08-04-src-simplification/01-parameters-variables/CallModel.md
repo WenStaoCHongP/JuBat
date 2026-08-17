@@ -1,6 +1,6 @@
 # CallModel.jl Simplification Plan
 
-**Status:** ⬜ Pending
+**Status:** ⚠️ Blocked（评审后待重写）
 **Layer:** 1 - 参数与变量
 **桶:** Consolidate（D2 成员）
 **依赖:** `VariableKeys.md`、`Variables.md` 必须先完成
