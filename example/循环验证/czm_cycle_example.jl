@@ -89,7 +89,7 @@ function main()
 
     # 热网格 + CZM 子网格（一次性生成）
     n_theta = 60
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, nθ_czm=80, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
 
@@ -100,7 +100,7 @@ function main()
     @printf("  单元数: %d, 节点数: %d\n", ne, nT)
 
     # CZM网格（v3 两步式：从 czm_submesh + thermal2D 构造）
-    czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
+    czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th, case.param)
     case.czm_param_cache = JuBat.compute_czm_params_per_interface(case)
     
     println("OK: CZM网格创建完成")

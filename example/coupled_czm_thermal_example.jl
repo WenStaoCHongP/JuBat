@@ -88,7 +88,7 @@ println("\n[3] 生成统一网格...")
 
 # 先创建Case以获取归一化参数
 case_temp = JuBat.SetCase(param_dim, opt)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(case_temp.param; nθ=80, nθ_czm=80, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(case_temp.param; nθ=80, czm_enabled=true, gsorder=2)
 
 println("  热网格单元数: $(mesh_data.ne)")
 println("  热网格节点数: $(mesh_data.nnode)")
@@ -97,28 +97,26 @@ println("  内圈单元数: $(sum(mesh_data.is_inner_layer))")
 println("  外圈单元数: $(sum(.!mesh_data.is_inner_layer))")
 
 # ========================================================================
-# 4. 创建CZM网格
+# 4. 初始化Case
 # ========================================================================
-println("\n[4] 创建CZM网格...")
+println("\n[4] 初始化Case...")
 
-czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case_temp.param)
-
-println("  内聚力单元数: $(czm_mesh.n_cohesive)")
-println("  层数: $(czm_mesh.n_layers)")
-
-# ========================================================================
-# 5. 初始化Case
-# ========================================================================
-println("\n[5] 初始化Case...")
-
-# 创建Case
+# 创建Case并安装活动热网格
 case = JuBat.SetCase(param_dim, opt)
-
-# 获取热网格
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 mesh_th = case.mesh["thermal2D"]
 
 # mesh_data 保持为局部变量用于后续处理
+
+# ========================================================================
+# 5. 创建CZM网格
+# ========================================================================
+println("\n[5] 创建CZM网格...")
+
+czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th, case.param)
+
+println("  内聚力单元数: $(czm_mesh.n_cohesive)")
+println("  层数: $(czm_mesh.n_layers)")
 
 # ========================================================================
 # 6. 设置循环参数

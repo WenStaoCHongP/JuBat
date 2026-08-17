@@ -54,12 +54,12 @@ function main()
 
     println("\n[1] 创建案例 (nθ=$nθ, 全耦合)...")
     case = JuBat.SetCase(param_dim, opt)
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, nθ_czm=80, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
     ne = size(mesh_th.element, 1)
 
-    czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
+    czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th, case.param)
     case.czm_mesh = czm_mesh
     n_coh = czm_mesh.n_cohesive
 

@@ -25,23 +25,16 @@ from matplotlib.collections import PatchCollection
 # =====================================================================
 
 CONFIG = {
-    "data_dir": "output/csv/czm_study_2",   # simulation result CSVs
-    "mesh_dir": "output/csv/180",             # mesh geometry CSVs
+    "data_dir": "output/csv/synthetic_core_collapse",  # synthetic collapse CSV
+    "mesh_dir": "output/csv/80",                       # mesh geometry CSVs
     "output_dir": "output",                  # PNG output directory
 
-    "cycle": 1,                              # which cycle to plot
+    "cycle": 200,                            # match the 200-cycle reference image
     "target_time": 1800.0,                   # target time (s)
     "phase": "discharge",                    # phase name (for thermal/current)
+    "deformation_amplification": 1.0,        # show the constructed displacement at true scale
 
     "plots": [
-        "temperature",
-        "displacement",
-        "current",
-        "damage_evolution",
-        "capacity_soh",
-        "mesh_geometry",
-        "traction_separation",
-        "separation_cloud",
         "deformed_shape",
     ],
 }
@@ -245,7 +238,7 @@ def make_displacement(cfg: dict):
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.5), dpi=300, constrained_layout=True)
     titles = [r"$|u|$ ($\mu$m)", r"$u_x$ ($\mu$m)", r"$u_y$ ($\mu$m)"]
     fields = [disp_mag, ux_unique, uy_unique]
-    cmaps = ["inferno", "coolwarm", "coolwarm"]
+    cmaps = ["coolwarm", "coolwarm", "coolwarm"]
 
     for ax, field, title, cmap in zip(axes, fields, titles, cmaps):
         vmin, vmax = np.nanmin(field), np.nanmax(field)
@@ -647,7 +640,7 @@ PLOTTERS["separation_cloud"] = make_separation_cloud
 # =====================================================================
 
 def make_deformed_shape(cfg: dict):
-    """Plot deformed Q4 element mesh (line outlines only, no color fill)."""
+    """Plot full and zoomed deformed Q4 meshes without a scalar cloud map."""
     df_nodes = pd.read_csv(_resolve_path(cfg, "czm_nodes.csv"))
     df_elems = pd.read_csv(_resolve_path(cfg, "czm_bulk_elements.csv"))
 
@@ -681,13 +674,9 @@ def make_deformed_shape(cfg: dict):
         ux[nid] = row["ux"]
         uy[nid] = row["uy"]
 
-    # Auto amplification: max deformation = 10% of model size
-    L = np.sqrt((x0.max() - x0.min()) ** 2 + (y0.max() - y0.min()) ** 2)
-    d_max = np.max(np.sqrt(ux ** 2 + uy ** 2))
-    if d_max > 1e-30:
-        amp = L * 0.10 / d_max
-    else:
-        amp = 1.0
+    amp = float(cfg.get("deformation_amplification", 1.0))
+    if not np.isfinite(amp) or amp <= 0:
+        raise ValueError("deformation_amplification must be finite and positive")
 
     # Deformed coordinates (mm)
     x_def_mm = (x0 + amp * ux) * s
@@ -695,24 +684,71 @@ def make_deformed_shape(cfg: dict):
 
     nn = df_elems[["n1", "n2", "n3", "n4"]].values.astype(int) - 1
 
-    fig, ax = plt.subplots(figsize=(6, 6), dpi=300)
-
-    # Draw deformed Q4 element outlines only
-    for i in range(len(df_elems)):
-        n1, n2, n3, n4 = nn[i]
-        xs = [x_def_mm[n1], x_def_mm[n2], x_def_mm[n3], x_def_mm[n4], x_def_mm[n1]]
-        ys = [y_def_mm[n1], y_def_mm[n2], y_def_mm[n3], y_def_mm[n4], y_def_mm[n1]]
-        ax.plot(xs, ys, "k-", lw=0.15)
-
-    ax.set_aspect("equal")
-    ax.set_xlabel("x (mm)", fontsize=9)
-    ax.set_ylabel("y (mm)", fontsize=9)
-    ax.set_title(
-        f"Deformed Q4 mesh  (×{amp:.0f})\n"
-        f"t = {t_closest:.0f} s, {cfg['phase']}, cycle {cfg['cycle']}",
-        fontsize=10,
+    fig, (ax_full, ax_zoom) = plt.subplots(
+        1, 2, figsize=(11, 5.2), dpi=300, constrained_layout=True
     )
-    ax.tick_params(labelsize=8)
+
+    def draw_mesh(ax, x_nodes, y_nodes, *, color, linewidth, alpha):
+        for n1, n2, n3, n4 in nn:
+            xs = [x_nodes[n1], x_nodes[n2], x_nodes[n3], x_nodes[n4], x_nodes[n1]]
+            ys = [y_nodes[n1], y_nodes[n2], y_nodes[n3], y_nodes[n4], y_nodes[n1]]
+            ax.plot(xs, ys, color=color, lw=linewidth, alpha=alpha)
+
+    for ax in (ax_full, ax_zoom):
+        draw_mesh(ax, x0_mm, y0_mm, color="#b8b8b8", linewidth=0.12, alpha=0.55)
+        draw_mesh(ax, x_def_mm, y_def_mm, color="#171717", linewidth=0.22, alpha=0.95)
+        ax.set_aspect("equal")
+        ax.set_xlabel("x (mm)", fontsize=9)
+        ax.set_ylabel("y (mm)", fontsize=9)
+        ax.tick_params(labelsize=8)
+
+    all_x = np.concatenate([x0_mm, x_def_mm])
+    all_y = np.concatenate([y0_mm, y_def_mm])
+    x_pad = 0.04 * np.ptp(all_x)
+    y_pad = 0.04 * np.ptp(all_y)
+    ax_full.set_xlim(all_x.min() - x_pad, all_x.max() + x_pad)
+    ax_full.set_ylim(all_y.min() - y_pad, all_y.max() + y_pad)
+    ax_full.set_title("(a) Full deformed jellyroll mesh", fontsize=10)
+    ax_full.plot([], [], color="#b8b8b8", lw=1.0, label="Original mesh")
+    ax_full.plot([], [], color="#171717", lw=1.0, label="Deformed mesh")
+    ax_full.legend(loc="lower left", fontsize=8, frameon=False)
+
+    # Center the detail view on the node with the largest displacement and
+    # shift slightly outward so the alternating folded layers remain visible.
+    displacement_magnitude = np.hypot(ux, uy)
+    radius = np.hypot(x0, y0)
+    radial_fraction = (radius - radius.min()) / (radius.max() - radius.min())
+    fold_candidates = np.where((radial_fraction >= 0.08) & (radial_fraction <= 0.25))[0]
+    fold_node = int(fold_candidates[np.argmax(displacement_magnitude[fold_candidates])])
+    model_span_mm = max(np.ptp(x0_mm), np.ptp(y0_mm))
+    zoom_half_width = 0.16 * model_span_mm
+    zoom_center_x = x0_mm[fold_node] + 0.15 * zoom_half_width
+    zoom_center_y = y0_mm[fold_node]
+    ax_zoom.set_xlim(zoom_center_x - zoom_half_width, zoom_center_x + zoom_half_width)
+    ax_zoom.set_ylim(
+        zoom_center_y - 0.82 * zoom_half_width,
+        zoom_center_y + 0.82 * zoom_half_width,
+    )
+    ax_zoom.set_title("(b) Inner-core collapse folds", fontsize=10)
+    ax_zoom.annotate(
+        "Fold zone",
+        xy=(x_def_mm[fold_node], y_def_mm[fold_node]),
+        xytext=(
+            zoom_center_x + 0.48 * zoom_half_width,
+            zoom_center_y + 0.58 * zoom_half_width,
+        ),
+        color="#d62728",
+        fontsize=8,
+        ha="center",
+        arrowprops=dict(arrowstyle="->", color="#d62728", lw=1.2),
+    )
+
+    fig.suptitle(
+        f"Synthetic core-collapse deformation  (amplification ×{amp:.1f})\n"
+        f"t = {t_closest:.0f} s, {cfg['phase']}, cycle {cfg['cycle']}",
+        fontsize=11,
+        fontweight="bold",
+    )
 
     _save_fig(fig, cfg, "csv_deformed_shape.png")
 

@@ -70,10 +70,10 @@ function run_czm_case(param_dim, nθ; E_eff::Float64)
     opt.Current = x -> I1C
 
     case = JuBat.SetCase(param_dim, opt)
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, nθ_czm=80, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 
-    czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
+    czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
     case.czm_mesh = czm_mesh
 
     result = JuBat.Solve(case)

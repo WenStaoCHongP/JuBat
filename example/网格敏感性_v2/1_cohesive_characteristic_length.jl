@@ -67,11 +67,11 @@ function main()
 
     # ── 4 等分 ──
     step = max(1, round(Int, (nθ_outer - nθ_inner) / 3))
-    nθ_czm = [nθ_inner + i * step for i in 0:3]
-    nθ_czm[4] = nθ_outer  # 确保覆盖上界
+    nθ_shared = [nθ_inner + i * step for i in 0:3]
+    nθ_shared[4] = nθ_outer  # 确保覆盖上界
 
-    println("\n[4] CZM nθ 候选值 (每周)")
-    for nθ in nθ_czm
+    println("\n[4] 热—力共享 nθ 候选值 (每周)")
+    for nθ in nθ_shared
         arc_out = R_out * 2π / nθ
         arc_in  = R_in  * 2π / nθ
         @printf("  nθ = %4d:  外弧 %.4f mm,  内弧 %.4f mm\n", nθ, arc_out*1e3, arc_in*1e3)
@@ -88,7 +88,7 @@ function main()
     println("完成")
     println("=" ^ 70)
 
-    return (E_eff=E_eff, l_c=l_c, nθ_czm=nθ_czm, nθ_thermal=nθ_thermal)
+    return (E_eff=E_eff, l_c=l_c, nθ_shared=nθ_shared, nθ_thermal_reference=nθ_thermal)
 end
 
 main()

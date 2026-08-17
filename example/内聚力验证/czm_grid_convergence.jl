@@ -3,14 +3,14 @@ using .JuBat
 using Printf
 
 """
-网格收敛：nθ_czm ∈ [40, 80, 160] 下 δ_max 稳定性
+热—力共同周向网格收敛：nθ ∈ [40, 80, 160] 下 δ_max 稳定性
 按 spec v2 §8.3
 """
 param_dim = JuBat.ChooseCell("Jellyroll")
 
 results = []
-for nθ_czm in [40, 80, 160]
-    @printf("Running nθ_czm=%d...\n", nθ_czm)
+for nθ in [40, 80, 160]
+    @printf("Running shared nθ=%d...\n", nθ)
     opt = JuBat.Option()
     opt.model = "SPMe"
     opt.Nn = 10
@@ -30,11 +30,10 @@ for nθ_czm in [40, 80, 160]
     opt.dt = [1e-6, 1.0]
 
     case = JuBat.SetCase(param_dim, opt)
-    nθ_thermal = 80
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ_thermal, nθ_czm=nθ_czm, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     czm_submesh = mesh_data.czm_submesh
-    case.czm_mesh = JuBat.create_czm_mesh(czm_submesh, mesh_data.thermal2D, case.param)
+    case.czm_mesh = JuBat.create_czm_mesh(czm_submesh, case.mesh["thermal2D"], case.param)
     case.czm_param_cache = JuBat.compute_czm_params_per_interface(case)
 
     t_elapsed = @elapsed result = JuBat.Solve(case)
@@ -44,14 +43,14 @@ for nθ_czm in [40, 80, 160]
     D_max = maximum(get(result, "czm D_max", [0.0]))
     n_fractured = maximum(get(result, "czm n_fractured", [0]))
 
-    push!(results, (nθ_czm, δ_max, D_max, n_fractured, t_elapsed))
-    @printf("  nθ_czm=%d  δ_max=%.4e  D_max=%.4f  n_fractured=%d  time=%.2fs\n",
-            nθ_czm, δ_max, D_max, n_fractured, t_elapsed)
+    push!(results, (nθ, δ_max, D_max, n_fractured, t_elapsed))
+    @printf("  nθ=%d  δ_max=%.4e  D_max=%.4f  n_fractured=%d  time=%.2fs\n",
+            nθ, δ_max, D_max, n_fractured, t_elapsed)
 end
 
 println("\n=== 网格收敛摘要 ===")
 for r in results
-    @printf("nθ_czm=%d: δ_max=%.4e, D_max=%.4f, time=%.2fs\n", r...)
+    @printf("nθ=%d: δ_max=%.4e, D_max=%.4f, time=%.2fs\n", r...)
 end
 
 δ_40 = results[1][2]
@@ -66,5 +65,5 @@ end
 
 println("\n=== 绝对计时（仅参考，不与旧版本对比）===")
 for r in results
-    @printf("nθ_czm=%d: %.2fs\n", r[1], r[5])
+    @printf("nθ=%d: %.2fs\n", r[1], r[5])
 end

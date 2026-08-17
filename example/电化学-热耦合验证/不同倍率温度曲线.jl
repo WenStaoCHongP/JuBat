@@ -128,7 +128,7 @@ function run_case(param_dim, crate, t_end; ntheta=80)
 	case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 	mesh_th = case.mesh["thermal2D"]
 
-	initial_state = Dict{String, Any}()
+	initial_state = nothing
 	_, timestep_data = JuBat.solve_phase_with_export(
 		case, JuBat.PHASE_DISCHARGE, t_end, I, param_dim.cell.v_l, initial_state;
 		dt_range=opt.dt,

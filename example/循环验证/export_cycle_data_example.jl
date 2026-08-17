@@ -192,10 +192,8 @@ function main()
     println("\n" * "="^70)
     println("使用说明")
     println("="^70)
-    println("\n  导出的数据可用于后续CZM仿真，运行:")
-    println("    julia czm_from_precomputed_example.jl")
-    println("\n  这样可以跳过电化学-热仿真，直接进行CZM计算，")
-    println("  大大加快多循环仿真的速度。")
+    println("\n  导出的 CSV 用于外部可视化、统计分析和结果归档。")
+    println("  JuBat 不再读取这些 CSV 来驱动后续求解。")
     
     return export_data
 end
