@@ -232,10 +232,12 @@ CZM (内聚力模型)
 
 | 键 | 说明 |
 |----|------|
-| `D_max` | 最大损伤值 |
-| `D_mean` | 平均损伤值 |
-| `n_fractured` | 完全断裂数量 |
-| `soh` | 健康状态 |
+| `czm D_max` | 最大损伤值 |
+| `czm D_mean` | 平均损伤值 |
+| `czm n_fractured` | 完全断裂数量 |
+| `czm δ_max_n [m]` / `czm δ_mean_n [m]` | 最大/平均法向分离 |
+
+注意：`soh` 不是单次求解 result 字典的键，而是 `CyclingResult.soh::Vector{Float64}` 字段（`cycle_summary.csv` 中同名列）。
 
 ---
 
@@ -245,7 +247,8 @@ CZM (内聚力模型)
 
 | 文件 | 功能 |
 |------|------|
-| `src/Solve.jl` | 主求解器、CallModel_MultiSPMe |
+| `src/Solve.jl` | 主求解器（时间推进、纯热分支） |
+| `src/CallModel.jl` | 模型调度：CallModel、CallModel_MultiSPMe |
 | `src/SPMe.jl` | SPMe 模型、SPMe_element |
 | `src/CycleSolver.jl` | 循环求解器、PhaseResult/CycleResult |
 
@@ -261,10 +264,10 @@ CZM (内聚力模型)
 | 文件 | 功能 |
 |------|------|
 | `src/CzmMesh.jl` | CZM 界面单元拓扑与 `create_czm_mesh` |
-| `src/Czm.jl` | CZM 损伤状态、材料映射与系统装配 |
+| `src/czm.jl` | CZM 损伤状态、材料映射与系统装配 |
 | `src/CzmBC.jl` | CZM 边界节点识别与边界条件施加 |
 | `src/CzmSolve.jl` | Newton-Raphson CZM 求解 |
-| `src/mechanical.jl` | 应力计算 |
+| `src/Mechanical.jl` | 应力计算 |
 
 ### 7.4 Jellyroll
 
@@ -288,7 +291,6 @@ CZM (内聚力模型)
 ```julia
 opt.debug_coupling = true
 opt.debug_log_path = "output/debug.log"
-opt.debug_sample_elems = [1, 40, 80]  # 跟踪特定单元
 ```
 
 ### 8.2 验证脚本
@@ -376,9 +378,9 @@ JuBat 区分两个尺度的弹性模量，**不可混用**：
 | `scale.E_p` / `scale.E_n` | 颗粒扩散应力归一化尺度 | cs_max·R·T_ref | 颗粒应力无量纲化 |
 | `scale.E_coat` | 极片宏观模量参考（全叠合厚度加权） | — | CZM/宏观应力无量纲化 |
 
-**CZM/二维宏观应力统一入口**：`compute_effective_coating_modulus(case)` → 返回 `(E_eff, ν_eff, α_eff)`。
+**CZM/二维宏观应力统一入口**：`compute_czm_params_per_interface(case)`（`src/CouplingState.jl:302`）→ 返回 `CzmParamCache`，按界面（`:PE_PCC` / `:NE_NCC`）提供 `CzmInterfaceParams`。**E_eff 按界面直接取涂层模量（PE-PCC 用 `PE.E_coat`、NE-NCC 用 `NE.E_coat`），不做全叠合厚度加权**；全叠合厚度加权仅保留在参考尺度 `scale.E_coat` 的定义中。
 
-**防御**：缺失 `E_coat` 时 `ChooseCell` 触发 `@warn`，`compute_czm_effective_params` 与 `thermal_diffusion_stress_2D` 入口处 `@assert` 拦截。
+**防御**：缺失 `E_coat` 时 `ChooseCell` 触发 `@warn`，`compute_czm_params_per_interface`（`src/CouplingState.jl:307-313`）与 `thermal_diffusion_stress_2D` 入口（`src/Mechanical.jl:166-167`）处 `@assert` 拦截。
 
 详见 `md/15_颗粒与极片模量区分.md`。
 
