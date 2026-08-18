@@ -8,7 +8,7 @@ include("CouplingState.jl")  # MultiSPMeLayout + MeshGeometry 类型定义
 include("SetCase.jl")
 include("StateAccess.jl")
 include("CzmBC.jl")  # CZM 边界条件
-include("Czm.jl")  # CZM 本构与系统装配
+include("czm.jl")  # CZM 本构与系统装配
 include("CzmMesh.jl")  # CZM 网格拓扑与构造
 include("CzmUnitMesh.jl")  # 单元级条带网格（验证用）
 include("CzmSolve.jl")
@@ -32,7 +32,7 @@ include("ThermalDistributed.jl")
 include("ThermalPolar2D.jl")
 include("Variables.jl")
 include("Initialisation.jl")
-include("mechanical.jl")
+include("Mechanical.jl")
 include("Jellyrollmodel.jl")
 include("ring.jl")
 include("CycleSolver.jl")  # 充放电循环求解器
@@ -41,7 +41,7 @@ include("CycleData.jl")
 include("CsvExport.jl")  # CZM CSV export (after CycleSolver for type availability)
 
 
-export Assemble, ElectrodeDiffusion, ElectrolyteDiffusion, Postprocessing, SetCase, SetMesh, ChooseCell
+export Assemble, ElectrodeDiffusion, ElectrolyteDiffusion, PostProcessing, SetCase, SetMesh, ChooseCell
 export Mesh1D, Mesh2D, GetGS, LagrangeBasis, GSweight, ShapeFunction1D, NormaliseParam, StandardVariables
 export SPM, Solve, SPMe, SPMe_element, ModelInitialisation
 export ModelInitialisation_MultiSPMe, extract_element_state, get_thermal_dofs
@@ -60,7 +60,6 @@ export ThermalDistributed2D_Ring, ThermalRing2D_BC
 export ThermalPolar2D_Ring
 export identify_boundary_nodes, apply_convection_bc, apply_cool_method
 export compute_heat_sources, compute_heat_sources_with_czm, solve_branch_currents
-export ThermalModel, ThermalLumpedModel, ThermalDistributed2DModel
 export thermal_diffusion_stress_2D
 export compute_czm_params_per_interface
 export build_thermal_to_czm_interp
