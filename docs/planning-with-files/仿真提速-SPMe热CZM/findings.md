@@ -73,4 +73,31 @@ PNG SHA 本机稳定：**是**（两次运行逐位一致）；后续批次采�
 
 ## §批次记录
 
-（各优化批次追加）
+### Task 7（CZM 装配优化，commit 2f7d129，2026-08-19）
+
+- 改动：`CZMAssemblyWorkspace` +6 缓冲字段；`assemble_czm_system` nzval 直索引（`_nz_index` + `cohesive_nzidx` 首建）；`assemble_coupled_system` f_int/K_total 预装配 + `assemble_K` 开关；线搜索 `assemble_K=false`
+- 四判据：**全部通过**（退出码 0、19 步、科学结果一致、PNG SHA `e879c50b...` 与锚点逐位一致）
+- timing：CZM 201.382s → 197.982s（**-1.7%**），总墙钟 249.4s → 244.0s——**收益不及预期**（预期 ×0.5）
+
+### 根因再定位（profile 证据链）
+
+1. `probe_czm_profile.jl`：预热后单次 `update_czm_damage!` 仅 **0.24s**（缓存命中、t=0 零载荷 → 1 次 Newton 迭代收敛）；czm ndof=43758、n_coh=6728
+2. `probe_gc_attribution.jl`（20s 短仿真）：CZM avg 10.08s/次 × 15 次真实存在；**GC 仅 1.25%**（排除 GC 归因）；全程序 123.65M 分配 / 20.97 GiB
+3. 缓存失效排除：`update_czm_damage!` 不替换 `case.czm_mesh`（CouplingState.jl:637 只写回 damage_states），`param_cache.id` 为稳定内容哈希，无人置 `cache.valid=false`
+4. `probe_solve_profile.jl`（@profile 全仿真采样）：**84% 采样（25723/30538）落在 `src/CzmSolve.jl:222` 的 `K_bc \ R_bc`**——Newton 迭代内（:195 for 循环）每次迭代对 43,758 DOF 稀疏矩阵做完整 UMFPACK 分解
+5. 机制解释：t=0 零载荷 1 次迭代即收敛（探针快）；仿真中 dT/Δsoc 载荷非零 → Newton 多轮迭代 × 每轮 LU ≈ 10s/次。本场景 D=0、δ≈0，bilinear tangent 固定 → **K_total/K_bc 数值跨迭代跨步几乎不变，却在每次迭代被重新分解**
+
+### 增补批次建议（回 spec 补充后另立，不在本计划实施）
+
+**K_bc 分解因子按内容判据复用**：
+- 位置：`solve_czm_basic_step`（CzmSolve.jl:219-225）及 arc_length/load_substep 同型调用点
+- 改法：缓存上一次分解的 `(K_bc_nzval_copy, factorization)`；每次 Newton 迭代装配出 K_total 后，若 `nonzeros(K_bc_new) == K_bc_nzval_copy`（O(nnz) 比较，远便宜于 LU）则 `ldiv!(F, R_bc)` 复用因子，否则重新分解并更新缓存
+- bit 一致论证：同矩阵同 rhs 下，`K_bc \ R_bc`（每次新分解，确定性）与复用因子的 `F \ R_bc` 解逐位一致（等价性 1 `lu(A)\b == A\b` 已验证；数值不等时走原路径不变）
+- 预期收益：本场景每次更新 ~10 迭代仅 1 次真分解 + 9 次回代 → CZM 198s → 约 20-40s，总墙钟 244s → **约 90-130s**（达到 spec 预期 ×0.5 目标）
+- 附带候选（次要）：`apply_bc_czm` 每迭代 copy K_total（43758² copy）可改为修改-恢复式或复用判据的一部分
+
+### Task 8（收尾，2026-08-19）
+
+- 汇总：批次 0（锚点+裁决）→ Task 7（-1.7%，四判据通过）→ 根因再定位（84% 在每迭代 LU 分解）→ 增补建议如上
+- 关门任务（Task 3/4/5/6）未实施，理由见 §批次裁决
+- 目标达成情况：本计划内未达 ×0.5 预期（-2%）；瓶颈根因已定位并有 bit 一致可行的增补方案，待用户批准后另立批次

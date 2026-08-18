@@ -1,7 +1,7 @@
 # SPMe-分布式热-CZM 支线仿真提速优化设计规格
 
 > 日期: 2026-08-19
-> 状态: 待用户审阅
+> 状态: 已实施（2026-08-19）。结论：批次 0 裁剪后仅 Task 7 开门并已合并（四判据 bit 级一致，CZM -1.7%）；profile 再定位真正瓶颈为 CzmSolve.jl:222 每迭代稀疏 LU 分解，增补方案（K_bc 因子内容判据复用）见 docs/planning-with-files/仿真提速-SPMe热CZM/findings.md
 > 范围: 仅 SPMe (`per_element_spme=true`) - 分布式热 (`distributed2D`) - CZM 耦合支线
 > 关联既有工作: `2026-04-20-czm-vectorized-solver-design.md`（实施中，本计划 D 组为其延续）、`2026-04-02-initialisation-optimization-design.md`（已落地，`MultiSPMeLayout`/`MeshGeometry` 为本计划缓存挂载点）
 
