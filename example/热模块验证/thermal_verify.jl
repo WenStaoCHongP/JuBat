@@ -345,7 +345,7 @@ function solve_for_ntheta(param_dim, ntheta, dr, model)
     q_func = (r, theta, t) -> q0
 
     variables = Dict{String,Any}()
-    variables["T_nodes"] = fill(param_dim.cell.T0 / T_ref, mesh.nlen)
+    variables["thermal2D temperature at nodes"] = fill(param_dim.cell.T0 / T_ref, mesh.nlen)
     variables["thermal2D outer_nodes"] = mesh_data.outer_nodes
     if model == "ring2D_polar"
         ne = size(mesh.element, 1)
@@ -408,7 +408,7 @@ function run_case(param_dim, ntheta, dr, model, label)
     q_func = (r, theta, t) -> q0
 
     variables = Dict{String,Any}()
-    variables["T_nodes"] = fill(param_dim.cell.T0 / T_ref, mesh.nlen)
+    variables["thermal2D temperature at nodes"] = fill(param_dim.cell.T0 / T_ref, mesh.nlen)
     variables["thermal2D outer_nodes"] = mesh_data.outer_nodes
     if model == "ring2D_polar"
         ne = size(mesh.element, 1)
@@ -511,7 +511,7 @@ function run_case_data(param_dim, ntheta, dr, model)
     q_func = (r, theta, t) -> q0
 
     variables = Dict{String,Any}()
-    variables["T_nodes"] = fill(param_dim.cell.T0 / T_ref, mesh.nlen)
+    variables["thermal2D temperature at nodes"] = fill(param_dim.cell.T0 / T_ref, mesh.nlen)
     variables["thermal2D outer_nodes"] = mesh_data.outer_nodes
     if model == "ring2D_polar"
         ne = size(mesh.element, 1)

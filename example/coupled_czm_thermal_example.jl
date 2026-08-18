@@ -237,8 +237,12 @@ println("  结果图已保存到: $(joinpath(output_dir, "coupled_czm_thermal_re
 # ========================================================================
 println("\n[9] 间隙导热分析...")
 
-# 计算所有内聚力单元的有效换热系数
-h_eff_all = JuBat.compute_all_gap_conductances(czm_mesh, param_dim.cohesive)
+# 计算所有内聚力单元的有效换热系数（按界面类型取 per-interface 参数）
+czm_param_cache = case.czm_param_cache !== nothing ? case.czm_param_cache :
+    JuBat.compute_czm_params_per_interface(case)
+h_eff_all = [JuBat.compute_element_gap_conductance(czm_mesh, i,
+    czm_param_cache.by_interface[czm_mesh.cohesive_elements[i].interface_type])
+    for i in 1:czm_mesh.n_cohesive]
 
 println("  有效换热系数统计:")
 println("    最小值: $(minimum(h_eff_all)) W/(m^2 K)")
