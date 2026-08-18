@@ -125,7 +125,14 @@ function SPMe_variables!(ws::Dict{String, Union{Array{Float64},Float64}},case::C
         end
     end
 
-    T = representative_temperature(case, yt; supplied=T_e)
+    # 温度：单元温度注入优先；未注入时热模型关闭取环境初温、启用取状态平均温度
+    if T_e !== nothing
+        T = T_e
+    elseif case.opt.thermalmodel == "none"
+        T = case.param.cell.T0
+    else
+        T = only(yt[case.index["temperature"]])
+    end
 
     # ── 以下计算逻辑与 SPMe_variables 逐行一致 ──
     cn_surf = ws["negative particle surface lithium concentration"]
@@ -228,7 +235,14 @@ function SPMe_variables(case::Case, yt::AbstractVector{Float64}, t::Float64; I_a
     for i in var_list
         variables[i] = yt[case.index[i]]
     end
-    T = representative_temperature(case, yt; supplied=T_e)
+    # 温度：单元温度注入优先；未注入时热模型关闭取环境初温、启用取状态平均温度
+    if T_e !== nothing
+        T = T_e
+    elseif case.opt.thermalmodel == "none"
+        T = case.param.cell.T0
+    else
+        T = only(yt[case.index["temperature"]])
+    end
     cn_surf = variables["negative particle surface lithium concentration"]
     cp_surf = variables["positive particle surface lithium concentration"]
     ce_n = variables["electrolyte lithium concentration in negative electrode"]

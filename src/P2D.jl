@@ -213,7 +213,12 @@ function P2D_variables(case::Case, yt::Array{Float64}, t::Float64)
     for i in var_list
         variables[i] = yt[case.index[i]] # hcat converts vector to matrix
     end
-    T = representative_temperature(case, yt)
+    # 温度：热模型关闭时取环境初温，启用时取状态中的平均温度
+    if case.opt.thermalmodel == "none"
+        T = case.param.cell.T0
+    else
+        T = only(yt[case.index["temperature"]])
+    end
     gs_ne = case.mesh["negative electrode"].gs
     gs_pe = case.mesh["positive electrode"].gs
     gs_sp = case.mesh["separator"].gs

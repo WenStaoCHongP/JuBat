@@ -310,15 +310,16 @@ arrhenius_D = exp(-Eac_D * (1.0/T_e - 1.0))
 arrhenius_k = exp(-Eac_k * (1.0/T_e - 1.0))
 ```
 
-**统一取温入口**：电化学模型读取温度的规则由
-`representative_temperature(case, state; supplied=nothing)`（`src/StateAccess.jl:8`）
-统一决定，而非检查字典键是否存在：
+**取温规则（各模型变量函数内联实现）**：电化学模型读取温度时不检查字典键是否存在，
+而是由 `opt.thermalmodel` 直接以 if 分支决定：
 - `opt.thermalmodel == "none"` → 取 `param.cell.T0`（恒温）
-- `"lumped"` / `"distributed2D"` → 取状态中的温度（`state[case.index["temperature"]]`）
-- 其他值 → 抛 `ArgumentError`
+- `"lumped"` / `"distributed2D"` → 取状态中的温度（`only(yt[case.index["temperature"]])`）
 
-`SPM`/`SPMe`/`P2D` 的全局变量函数都经此入口取温；`SPMe_element`（`:128,231`）另经
-`supplied=T_e` 注入单元温度，实现逐单元温度反馈。
+`SPM`/`P2D` 的变量函数按上述规则取温；`SPMe_variables(_!)` 优先使用注入的单元温度
+`T_e`（`T_e !== nothing` 时直接取 `T_e`），未注入时同上，实现逐单元温度反馈。
+
+> 历史：早期版本曾将该规则抽为 `src/StateAccess.jl` 的
+> `representative_temperature` 函数，2026-08-19 按简化决策内联回各调用点并删除该文件。
 
 ---
 

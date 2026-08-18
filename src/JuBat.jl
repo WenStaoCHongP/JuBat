@@ -6,7 +6,6 @@ include("SetMesh.jl")
 include("SetParams.jl")
 include("CouplingState.jl")  # MultiSPMeLayout + MeshGeometry 类型定义
 include("SetCase.jl")
-include("StateAccess.jl")
 include("CzmBC.jl")  # CZM 边界条件
 include("czm.jl")  # CZM 本构与系统装配
 include("CzmMesh.jl")  # CZM 网格拓扑与构造

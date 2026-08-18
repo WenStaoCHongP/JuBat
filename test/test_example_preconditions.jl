@@ -22,8 +22,8 @@ end
     opt.thermalmodel = "none"
     case = JuBat.SetCase(param_dim, opt)
     state = JuBat.ModelInitialisation(case)
-    @test JuBat.representative_temperature(case, state) == case.param.cell.T0
-    @test JuBat.representative_temperature(case, state; supplied=case.param.cell.T0 + 0.25) == case.param.cell.T0 + 0.25
+    variables_none = JuBat.SPMe_variables(case, state, 0.0)
+    @test variables_none["temperature"] == case.param.cell.T0
 
     opt_lumped = JuBat.Option()
     opt_lumped.model = "SPMe"
@@ -32,7 +32,12 @@ end
     state_lumped = JuBat.ModelInitialisation(case_lumped)
     expected = case_lumped.param.cell.T0 + 0.5
     state_lumped[case_lumped.index["temperature"]] .= expected
-    @test JuBat.representative_temperature(case_lumped, state_lumped) == expected
+    variables_lumped = JuBat.SPMe_variables(case_lumped, state_lumped, 0.0)
+    @test variables_lumped["temperature"] == expected
+
+    # 单元温度注入优先于状态温度
+    variables_supplied = JuBat.SPMe_variables(case_lumped, state_lumped, 0.0; T_e=expected + 0.25)
+    @test variables_supplied["temperature"] == expected + 0.25
 end
 
 @testset "models without thermal state" begin

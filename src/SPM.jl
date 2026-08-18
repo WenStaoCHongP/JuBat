@@ -56,7 +56,12 @@ function SPM_variables(case::Case, yt::Array{Float64}, t::Float64)
     for i in var_list
         variables[i] = yt[case.index[i]] # hcat converts vector to matrix
     end
-    T = representative_temperature(case, yt)
+    # 温度：热模型关闭时取环境初温，启用时取状态中的平均温度
+    if case.opt.thermalmodel == "none"
+        T = case.param.cell.T0
+    else
+        T = only(yt[case.index["temperature"]])
+    end
     cn_surf = variables["negative particle surface lithium concentration"]
     cp_surf = variables["positive particle surface lithium concentration"]
     u_n = param.NE.U(cn_surf) .+ (T .- case.param.cell.T0) * param.NE.dUdT(cn_surf)
