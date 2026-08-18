@@ -310,6 +310,16 @@ arrhenius_D = exp(-Eac_D * (1.0/T_e - 1.0))
 arrhenius_k = exp(-Eac_k * (1.0/T_e - 1.0))
 ```
 
+**统一取温入口**：电化学模型读取温度的规则由
+`representative_temperature(case, state; supplied=nothing)`（`src/StateAccess.jl:8`）
+统一决定，而非检查字典键是否存在：
+- `opt.thermalmodel == "none"` → 取 `param.cell.T0`（恒温）
+- `"lumped"` / `"distributed2D"` → 取状态中的温度（`state[case.index["temperature"]]`）
+- 其他值 → 抛 `ArgumentError`
+
+`SPM`/`SPMe`/`P2D` 的全局变量函数都经此入口取温；`SPMe_element`（`:128,231`）另经
+`supplied=T_e` 注入单元温度，实现逐单元温度反馈。
+
 ---
 
 ## 7. 力学耦合
