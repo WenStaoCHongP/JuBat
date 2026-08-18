@@ -2,13 +2,13 @@
 
 > 理论来源：`md/04_电化学模型_SPMe.md`（377 行）
 > 代码来源（7 个文件）：
-> - `src/SPMe.jl`（291 行）— 主要：SPMe / SPMe_element / SPMe_variables! / SPMe_variables / SPMe_BC
+> - `src/SPMe.jl`（287 行）— 主要：SPMe / SPMe_element / SPMe_variables! / SPMe_variables / SPMe_BC
 > - `src/ElectrodeDiffusion.jl`（19 行）— 颗粒扩散矩阵装配
 > - `src/ElectrodePotential.jl`（20 行）— 固相电位矩阵装配（P2D 用）
 > - `src/ElectrolyteDiffusion.jl`（31 行）— 电解液扩散矩阵装配
 > - `src/ElectrolytePotential.jl`（24 行）— 液相电位矩阵装配（P2D 用）
-> - `src/SPM.jl`（86 行）— 简化版 SPM
-> - `src/P2D.jl`（288 行）— 伪二维 P2D 模型（md 04 标注 "P2D 在 SPMe 框架内可选用"，作扩展对照）
+> - `src/SPM.jl`（82 行）— 简化版 SPM
+> - `src/P2D.jl`（283 行）— 伪二维 P2D 模型（md 04 标注 "P2D 在 SPMe 框架内可选用"，作扩展对照）
 > 生成日期：2026-08-02
 
 ---
@@ -23,7 +23,7 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| — | md/04 §1 三条主要假设（电解液 1D 平均 / 代表性球形颗粒 / 包含电解液动力学） | `src/SPMe.jl:209-291 (SPMe_variables)` | 单点颗粒 + 1D ce_n/ce_sp/ce_p | ✅ | md §1 列出概念假设，非公式；代码通过变量结构体现（cn/cp 单点表面浓度 + 电解液分段） |
+| — | md/04 §1 三条主要假设（电解液 1D 平均 / 代表性球形颗粒 / 包含电解液动力学） | `src/SPMe.jl:209-287 (SPMe_variables)` | 单点颗粒 + 1D ce_n/ce_sp/ce_p | ✅ | md §1 列出概念假设，非公式；代码通过变量结构体现（cn/cp 单点表面浓度 + 电解液分段） |
 
 ---
 
@@ -36,7 +36,7 @@
 | (4.1) | md/04 §2.1 Fick 扩散 `∂c_s/∂t = (1/r²)·∂(D_s·r²·∂c_s/∂r)/∂r` | `src/ElectrodeDiffusion.jl:1-19 (ElectrodeDiffusion)` | 弱形式装配：M = ∫Ni·Nj·r²·w·J；K = -∫dNi·dNj·Ds·r²·w·J | ✅ | md 给强形式；代码直接装配 FE 弱形式，等价 |
 | (4.2) | md/04 §2.1 球心 BC `∂c_s/∂r|_{r=0} = 0` | — | 自然 BC，无需额外装配 | ✅ | md §2.1 明示；代码颗粒网格起点 r=0 不施加 Neumann 项 |
 | (4.3) | md/04 §2.1 表面 BC `-D_s·∂c_s/∂r|_{r=Rs} = j/F` | `src/SPMe.jl:184-207 (SPMe_BC)` L189-191 | `flux_np[end] = -j_n*rs^2`（含 r² 因子来自 weak form） | ✅ | md 写通量 -j/F；代码已无量纲化（j 已含 1/F），并乘 r² 因子进入载荷 |
-| (4.4) | md/04 §2.1 表面浓度 `c_s^surf(t) = c_s(r=Rs, t)` | `src/SPMe.jl:236-237 (SPMe_variables)` L131-132 (`SPMe_variables!`) | `cn_surf = ws["negative particle surface lithium concentration"]` | ✅ | 直接从状态向量提取末节点 |
+| (4.4) | md/04 §2.1 表面浓度 `c_s^surf(t) = c_s(r=Rs, t)` | `src/SPMe.jl:232-233 (SPMe_variables)` L131-132 (`SPMe_variables!`) | `cn_surf = ws["negative particle surface lithium concentration"]` | ✅ | 直接从状态向量提取末节点 |
 
 ### §2.2 电解液物质守恒
 
@@ -61,7 +61,7 @@
 |---|---|---|---|---|---|
 | (4.10) | md/04 §2.4 过电位 `η = φ_s - φ_e - U(c_s^surf, T)` | `src/SPMe.jl:145-146 (SPMe_variables!)` | `eta_n = 2.0*T*asinh.(j_n/2.0/j0_n_av)`（反解形式） | ⚠️ | md §2.4 给定义式；SPMe 不显式计算 φ_s/φ_e，而是从已知 j 通过 asinh 反推 η；P2D (`src/P2D.jl:175-176, 257-258`) 才用定义式；指向 `docs/thermal_verify/findings.md` |
 | (4.11) | md/04 §2.4 交换电流密度 `j_0 = k·c_e^α·(c_s^surf)^α·(c_s,max-c_s^surf)^α` | `src/SPMe.jl:141-142 (SPMe_variables!)` L246-247 (`SPMe_variables`) | `j0_n_gs = NE.k*Arrhenius(Eac_k,T).*abs.(cn_surf.*(1.0 .- cn_surf).*ce_n_gs).^0.5` | ✅ | 对称 α=0.5；c_s,max 已归一化为 1（cs -> cs/cs_max） |
-| (4.12) | md/04 §2.4 反应通量 `j = 2·j_0·sinh(F·η/(2·R·T))` | `src/P2D.jl:253-254, 259-260 (P2D_variables)` | `j_n = j0_n.*sinh.(0.5.*eta_n./T)*2.0` | ✅ | md 公式无量纲化后 F/R=1，T*=T；代码直接用 sinh(η/(2T)) |
+| (4.12) | md/04 §2.4 反应通量 `j = 2·j_0·sinh(F·η/(2·R·T))` | `src/P2D.jl:249-250, 259-260 (P2D_variables)` | `j_n = j0_n.*sinh.(0.5.*eta_n./T)*2.0` | ✅ | md 公式无量纲化后 F/R=1，T*=T；代码直接用 sinh(η/(2T)) |
 | — | md/04 §2.4 SPMe 反解 `η = 2·T·asinh(j/(2·j_0))` | `src/SPMe.jl:145-146 (SPMe_variables!)` L250-251 (`SPMe_variables`) | `eta_n = 2.0*T*asinh.(j_n/2.0/j0_n_av)` | ✅ | (4.12) 的解析反函数；j 已知（由 I_app 平均分配），反解 η |
 
 ---
@@ -114,7 +114,7 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (4.23) | md/04 §5 端电压定义 `V_cell = (φ_s-φ_e)|_{x=L} - (φ_s-φ_e)|_{x=0}` | `src/P2D.jl:284 (P2D_variables)` | `variables["cell voltage"] = phis_p[end] - phis_n[1]` | ✅ | md §5 公式；P2D 直接计算；SPMe 用 (4.24) |
+| (4.23) | md/04 §5 端电压定义 `V_cell = (φ_s-φ_e)|_{x=L} - (φ_s-φ_e)|_{x=0}` | `src/P2D.jl:280 (P2D_variables)` | `variables["cell voltage"] = phis_p[end] - phis_n[1]` | ✅ | md §5 公式；P2D 直接计算；SPMe 用 (4.24) |
 | (4.24) | md/04 §5 各分量组成 `V_cell = U_p - U_n + η_p - η_n + Δφ_ohm + Δφ_conc` | `src/SPMe.jl:162 (SPMe_variables!)` L268 (`SPMe_variables`) | `V_cell = u_p - u_n + eta_p - eta_n + dphi_e` | ✅ | md §5 公式；dphi_e 包含 Ohmic + 浓差（见 4.25-4.26） |
 | (4.25) | md/04 §5 浓差电位 `Δφ_conc = 2·T·(1-t_+^0)·(c_sp - c_sn)/c_e0` | `src/SPMe.jl:158 (SPMe_variables!)` L264 (`SPMe_variables`) | `dphi_e = 2.0*T*(1-tplus)*(csp_av - csn_av)/ce0 - I_app*R_EL - dphi_S` | ✅ | md §5 公式前半部分；csp_av/csn_av 为电极区域 ce 平均 |
 | (4.26) | md/04 §5 欧姆电压降 `Δφ_ohm = I_app·(t_n/(3·σ_n^eff) + t_p/(3·σ_p^eff) + t_n/(3·κ_n^eff) + t_sp/(κ_sp^eff) + t_p/(3·κ_p^eff))` | `src/SPMe.jl:148,155,158 (SPMe_variables!)` L254,261,264 | `dphi_S = I_app/3*(L_n/σ_n + L_p/σ_p)`；`R_EL = L_n/(3·κ_n_av) + L_sp/κ_sp_av + L_p/(3·κ_p_av)`；`dphi_e = ... - I_app*R_EL - dphi_S` | ✅ | md §5 公式拆为 dphi_S（固相）+ R_EL（液相）两部分，代码完全对应 |
@@ -179,7 +179,7 @@
 |---|---|---|---|---|---|
 | — | md/04 §8 表行 1 SPMe 主求解 | `src/SPMe.jl:1-35 (SPMe)` | 35 行函数 | ✅ | md §8 表与代码一致 |
 | — | md/04 §8 表行 2 单元级 SPMe | `src/SPMe.jl:37-93 (SPMe_element)` | 57 行函数 | ✅ | md §8 表与代码一致 |
-| — | md/04 §8 表行 3 变量提取 | `src/SPMe.jl:209-291 (SPMe_variables)` | 83 行函数 | ✅ | md §8 表与代码一致 |
+| — | md/04 §8 表行 3 变量提取 | `src/SPMe.jl:209-287 (SPMe_variables)` | 83 行函数 | ✅ | md §8 表与代码一致 |
 | — | md/04 §8 表行 4 变量提取（原位） | `src/SPMe.jl:101-182 (SPMe_variables!)` | 82 行函数 | ✅ | md §8 表与代码一致 |
 | — | md/04 §8 表行 5 边界条件 | `src/SPMe.jl:184-207 (SPMe_BC)` | 24 行函数 | ✅ | md §8 表与代码一致 |
 | — | md/04 §8 表行 6 颗粒扩散 | `src/ElectrodeDiffusion.jl:1-19 (ElectrodeDiffusion)` | 19 行函数 | ✅ | md §8 表与代码一致 |
@@ -198,12 +198,12 @@
 |---|---|---|---|---|---|
 | -- | 【缺失】 | `src/SPM.jl:1-31 (SPM)` | 简化版 SPM（无电解液动力学） | ✅ | md 04 主题为 SPMe；SPM 为退化版；md §1 注 "SPM 是 SPMe 的子集" |
 | -- | 【缺失】 | `src/SPM.jl:34-47 (SPM_BC)` | SPM 边界条件（仅颗粒通量，无电解液源项） | ✅ | md 04 未单独描述 SPM BC；与 SPMe_BC 颗粒部分相同 |
-| -- | 【缺失】 | `src/SPM.jl:49-86 (SPM_variables)` | SPM 变量提取（无电解液相关项） | ✅ | md 04 未单独描述 SPM variables；与 SPMe_variables 共用核心逻辑（j_n/j_p/eta/V_cell）但不含 dphi_e |
+| -- | 【缺失】 | `src/SPM.jl:49-82 (SPM_variables)` | SPM 变量提取（无电解液相关项） | ✅ | md 04 未单独描述 SPM variables；与 SPMe_variables 共用核心逻辑（j_n/j_p/eta/V_cell）但不含 dphi_e |
 | -- | 【缺失】 | `src/P2D.jl:1-47 (P2D)` | P2D 主求解（求解 4 个 PDE：颗粒扩散 ×2 + 电解液扩散 + 电荷守恒） | ✅ | md 04 §1 注"SPMe 是 P2D 的简化"；P2D 完整形式见 (4.7)-(4.8) |
 | -- | 【缺失】 | `src/P2D.jl:49-74 (P2D_mass_BC)` | P2D 质量 BC（含电解液源项 a_s·j_gs） | ✅ | md 04 §2.2 公式 (4.5) 源项；P2D 用高斯点 j_gs 而非平均 j |
 | -- | 【缺失】 | `src/P2D.jl:76-118 (P2D_charge_BC)` | P2D 电荷 BC（含扩散电位项 kappa_D） | ✅ | md 04 §2.3 完整形式 (4.8)；代码 L109-115 装配 |
 | -- | 【缺失】 | `src/P2D.jl:120-207 (P2D_potentials)` | P2D 电位迭代求解（100 次迭代上限，rel_tol=1e-9） | ⚠️ | md 04 §2.4 给显式 BV；P2D 用朗道迭代（Vp0 校正）求解非线性方程组；指向 `docs/thermal_verify/findings.md` |
-| -- | 【缺失】 | `src/P2D.jl:209-287 (P2D_variables)` | P2D 变量提取（含高斯点 j0/eta/j、OCP） | ✅ | md 04 §2.4 BV 公式；P2D 在 gs 上同时计算，供 P2D_charge_BC 使用 |
+| -- | 【缺失】 | `src/P2D.jl:209-283 (P2D_variables)` | P2D 变量提取（含高斯点 j0/eta/j、OCP） | ✅ | md 04 §2.4 BV 公式；P2D 在 gs 上同时计算，供 P2D_charge_BC 使用 |
 | -- | 【缺失】 | `src/SPMe.jl:73-75 (SPMe_element) 时间尺度归一化` | `M_np = M_np .* scale.ts_n / param_dim.scale.t0` | ✅ | md §0 归一化方案 t_0=3600；代码在 SPMe 出口将 M 矩阵从 ts（颗粒）尺度转为 t0；详见[卷 01](./01_参数与归一化对照.md) |
 | -- | 【缺失】 | `src/SPMe.jl:179 (SPMe_variables!) cell current` | `ws["cell current"] = opt.Current(t*scale.t0)/param_dim.cell.I1C` | ✅ | md 04 §6.2 表行 5 列 "cell current"；代码归一化到 I1C |
 | -- | 【缺失】 | `src/SPMe.jl:90 (SPMe_element) element index` | `variables_e["element index"] = Float64(e)` | ✅ | 调试用：md 未列；代码每个 SPMe_element 输出附单元编号 |
