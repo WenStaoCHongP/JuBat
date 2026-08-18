@@ -110,7 +110,8 @@ function backtrack_line_search!(u::Vector{Float64}, Δu::Vector{Float64},czm_mes
         u_trial = u + α * Δu
         apply_czm_dirichlet!(u_trial, bc_dofs, bc_vals)
 
-        _, f_int_trial, _, _ = assemble_coupled_system(czm_mesh, u_trial, param_cache;damage_states=damage_states, K_bulk_cached=K_bulk_cached,geom_cache=geom_cache, ws=ws, visc_beta=visc_beta)
+        # assemble_K=false：线搜索只消费 f_int_trial，跳过 K_total 组装（不影响任何被使用的数值）
+        _, f_int_trial, _, _ = assemble_coupled_system(czm_mesh, u_trial, param_cache;damage_states=damage_states, K_bulk_cached=K_bulk_cached,geom_cache=geom_cache, ws=ws, visc_beta=visc_beta, assemble_K=false)
 
         R_trial = F_ext + F_thermo_chem - f_int_trial
         for (dof, val) in zip(bc_dofs, bc_vals)
