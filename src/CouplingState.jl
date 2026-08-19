@@ -217,13 +217,6 @@ mutable struct CZMAssemblyWorkspace
     # 预分配稀疏矩阵（避免每轮 sparse() 重建）
     K_coh_buf::Vector{Float64}        # nonzero 值缓冲区
     K_coh::SparseMatrixCSC{Float64, Int64}  # 预分配结构的稀疏矩阵
-    # perf 缓冲（2026-08-19 提速批次：跨迭代复用，首次使用时惰性构建）
-    cohesive_nzidx::Union{Nothing, Matrix{Int}}   # 每单元 64 项的 K_coh nzval 下标（pattern 首建时同步）
-    f_int_bulk_buf::Union{Nothing, Vector{Float64}}
-    f_int_total_buf::Union{Nothing, Vector{Float64}}
-    K_total_buf::Union{Nothing, SparseMatrixCSC{Float64, Int64}}
-    K_total_mapK::Union{Nothing, Vector{Int}}     # K_total 每存储位置 → K_bulk nzval 下标（0=无）
-    K_total_mapC::Union{Nothing, Vector{Int}}     # K_total 每存储位置 → K_coh nzval 下标（0=无）
 
     function CZMAssemblyWorkspace(ndof::Int, n_coh::Int)
         nnz_est = max(n_coh * 64, 1)
@@ -240,8 +233,7 @@ mutable struct CZMAssemblyWorkspace
             Vector{Tuple{Float64, Float64}}(undef, max(n_coh, 1)),
             Vector{Tuple{Float64, Float64}}(undef, max(n_coh, 1)),
             zeros(nnz_est),
-            K_coh_sp,
-            nothing, nothing, nothing, nothing, nothing, nothing)
+            K_coh_sp)
     end
 end
 

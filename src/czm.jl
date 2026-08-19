@@ -64,18 +64,6 @@ function moduli_of(param, mt::Symbol)
 end
 
 
-# 列内二分查找稀疏矩阵 (i,j) 的 nzval 下标；不存在返回 0（仅 pattern 初始化时使用）
-function _nz_index(K::SparseMatrixCSC, i::Int, j::Int)
-    lo, hi = K.colptr[j], K.colptr[j+1] - 1
-    while lo <= hi
-        mid = (lo + hi) >>> 1
-        if K.rowval[mid] == i; return mid
-        elseif K.rowval[mid] < i; lo = mid + 1
-        else; hi = mid - 1; end
-    end
-    return 0
-end
-
 """
     assemble_czm_system(czm_mesh, u, param_cache; damage_states=nothing, ...)
 
@@ -137,25 +125,6 @@ function assemble_czm_system(
         V_pat = zeros(Float64, length(I_pat))
         K_coh = sparse(I_pat, J_pat, V_pat, ndof, ndof)
         ws.K_coh = K_coh
-        # pattern 固定，同步缓存每单元 64 项的 nzval 下标（与组装循环 a/b 顺序一一对应），
-        # 之后组装用 K_coh.nzval[idx] += 直加，替代标量稀疏索引的查找开销（数值路径不变）
-        nzidx = zeros(Int, n_coh, 64)
-        for i in 1:n_coh
-            if geom_cache !== nothing
-                dofs_ = geom_cache[i].dofs
-            else
-                elem = czm_mesh.cohesive_elements[i]
-                n1, n2 = elem.nodes_bottom
-                n4, n3 = elem.nodes_top
-                dofs_ = [2*n1-1, 2*n1, 2*n2-1, 2*n2, 2*n3-1, 2*n3, 2*n4-1, 2*n4]
-            end
-            c = 0
-            for a in 1:8, b in 1:8
-                c += 1
-                nzidx[i, c] = _nz_index(K_coh, dofs_[a], dofs_[b])
-            end
-        end
-        ws.cohesive_nzidx = nzidx
     end
 
     # 清零 nonzero 值（O(nnz)，无分配）
@@ -275,23 +244,11 @@ function assemble_czm_system(
         ws.separations[i] = (δ_n_avg, δ_t_avg)
         ws.tractions[i] = (T_n_avg, T_t_avg)
 
-        # 组装到预分配稀疏矩阵（nzval 直索引：getindex/setindex 语义 = 读存储值→加→写回，
-        # 与原 K_coh[dofs[a], dofs[b]] += 逐位一致；无 nzidx 时回退原写法）
-        if ws.cohesive_nzidx !== nothing
-            c = 0
-            for a in 1:8
-                ws.f_int_coh[dofs[a]] += ws.f_int_e[a]
-                for b in 1:8
-                    c += 1
-                    K_coh.nzval[ws.cohesive_nzidx[i, c]] += ws.K_e[a, b]
-                end
-            end
-        else
-            for a in 1:8
-                ws.f_int_coh[dofs[a]] += ws.f_int_e[a]
-                for b in 1:8
-                    K_coh[dofs[a], dofs[b]] += ws.K_e[a, b]
-                end
+        # 组装到预分配稀疏矩阵（直接索引，无 sparse() 重建）
+        for a in 1:8
+            ws.f_int_coh[dofs[a]] += ws.f_int_e[a]
+            for b in 1:8
+                K_coh[dofs[a], dofs[b]] += ws.K_e[a, b]
             end
         end
     end
@@ -596,8 +553,7 @@ function assemble_coupled_system(
     K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,
     geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,
     ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,
-    visc_beta::Float64=1.0,
-    assemble_K::Bool=true
+    visc_beta::Float64=1.0
 )
     ndof = 2 * czm_mesh.nnode
 
@@ -609,62 +565,14 @@ function assemble_coupled_system(
         czm_mesh, u, param_cache; damage_states=damage_states,
         geom_cache=geom_cache, ws=ws, visc_beta=visc_beta)
 
-    # 固体内力（预分配 mul!：稀疏 matvec 与 K_bulk * u 同一实现路径）
-    if ws !== nothing
-        if ws.f_int_bulk_buf === nothing || length(ws.f_int_bulk_buf) != ndof
-            ws.f_int_bulk_buf = zeros(Float64, ndof)
-        end
-        mul!(ws.f_int_bulk_buf, K_bulk, u)
-        f_int_bulk = ws.f_int_bulk_buf
-    else
-        f_int_bulk = K_bulk * u
-    end
+    # 固体内力（线性弹性：f_int = K * u）
+    f_int_bulk = K_bulk * u
 
-    # 总内力 = 固体内力 + 内聚力内力（copyto! + .+= 与向量 + 的逐元素加同序，逐位一致）
-    if ws !== nothing
-        if ws.f_int_total_buf === nothing || length(ws.f_int_total_buf) != ndof
-            ws.f_int_total_buf = zeros(Float64, ndof)
-        end
-        copyto!(ws.f_int_total_buf, f_int_bulk)
-        ws.f_int_total_buf .+= f_int_coh
-        f_int_total = ws.f_int_total_buf
-    else
-        f_int_total = f_int_bulk + f_int_coh
-    end
+    # 总刚度矩阵
+    K_total = K_bulk + K_coh
 
-    # 总刚度矩阵（assemble_K=false 时跳过——线搜索等只消费 f_int 的调用点专用）
-    if assemble_K
-        if ws !== nothing && ws.K_total_buf !== nothing
-            # 预分配同序加法：K_total 每存储位置恰一次 K_bulk 值 + K_coh 值（等价性实验已验证
-            # 与 SparseArrays + 的合并语义逐位一致）
-            nzT = nonzeros(ws.K_total_buf)
-            mapK = ws.K_total_mapK
-            mapC = ws.K_total_mapC
-            for k in 1:length(nzT)
-                nzT[k] = (mapK[k] > 0 ? K_bulk.nzval[mapK[k]] : 0.0) +
-                         (mapC[k] > 0 ? K_coh.nzval[mapC[k]] : 0.0)
-            end
-            K_total = ws.K_total_buf
-        else
-            K_total = K_bulk + K_coh
-            if ws !== nothing
-                # 首次：缓存 K_total pattern 与 K_bulk/K_coh nzval 下标映射
-                ws.K_total_buf = copy(K_total)
-                mapK = zeros(Int, nnz(K_total))
-                mapC = zeros(Int, nnz(K_total))
-                for col in 1:size(K_total, 2)
-                    for k in K_total.colptr[col]:(K_total.colptr[col+1]-1)
-                        mapK[k] = _nz_index(K_bulk, K_total.rowval[k], col)
-                        mapC[k] = _nz_index(K_coh, K_total.rowval[k], col)
-                    end
-                end
-                ws.K_total_mapK = mapK
-                ws.K_total_mapC = mapC
-            end
-        end
-    else
-        K_total = nothing
-    end
+    # 总内力 = 固体内力 + 内聚力内力
+    f_int_total = f_int_bulk + f_int_coh
 
     return K_total, f_int_total, separations, tractions
 end
