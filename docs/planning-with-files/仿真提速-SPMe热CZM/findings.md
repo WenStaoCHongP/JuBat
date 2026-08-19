@@ -73,7 +73,7 @@ PNG SHA 本机稳定：**是**（两次运行逐位一致）；后续批次采�
 
 ## §批次记录
 
-### Task 7（CZM 装配优化，commit 2f7d129，2026-08-19）
+### Task 7（CZM 装配优化，commit 2f7d129，2026-08-19；**src 改动已于同日 revert（commit 5812c79，用户决定）**）
 
 - 改动：`CZMAssemblyWorkspace` +6 缓冲字段；`assemble_czm_system` nzval 直索引（`_nz_index` + `cohesive_nzidx` 首建）；`assemble_coupled_system` f_int/K_total 预装配 + `assemble_K` 开关；线搜索 `assemble_K=false`
 - 四判据：**全部通过**（退出码 0、19 步、科学结果一致、PNG SHA `e879c50b...` 与锚点逐位一致）
@@ -95,6 +95,12 @@ PNG SHA 本机稳定：**是**（两次运行逐位一致）；后续批次采�
 - bit 一致论证：同矩阵同 rhs 下，`K_bc \ R_bc`（每次新分解，确定性）与复用因子的 `F \ R_bc` 解逐位一致（等价性 1 `lu(A)\b == A\b` 已验证；数值不等时走原路径不变）
 - 预期收益：本场景每次更新 ~10 迭代仅 1 次真分解 + 9 次回代 → CZM 198s → 约 20-40s，总墙钟 244s → **约 90-130s**（达到 spec 预期 ×0.5 目标）
 - 附带候选（次要）：`apply_bc_czm` 每迭代 copy K_total（43758² copy）可改为修改-恢复式或复用判据的一部分
+
+### 回滚记录（2026-08-19，用户决定）
+
+- commit 2f7d129（src/czm.jl、src/CzmSolve.jl、src/CouplingState.jl 三文件）已 revert（5812c79），src 完全还原到批次 0 锚点状态
+- **保留**：批次 0 锚点与占比数据、矩阵常量性/等价性结论、profile 根因定位（84% 在 CzmSolve.jl:222 每迭代 LU 分解）、增补批次建议——这些是纯文档与探针脚本，不含 src 改动
+- 增补批次（K_bc 因子内容判据复用）若获批，将在还原后的干净基线上实施
 
 ### Task 8（收尾，2026-08-19）
 
