@@ -29,7 +29,7 @@ Batch 0' Complete — Batch 1 Pending（等待规格文档评审）
 - **状态：** complete
 
 ### Batch 1：规格文档 + 基线冻结 + 非线性机械核边界
-- [ ] 写规格文档（`docs/superpowers/specs/2026-08-17-core-collapse-mechanics-design.md`），含 Δ_core 离散定义（初定：内圈节点半径对最优拟合圆的最大偏差）；**须经用户评审后才开始实现**
+- [ ] 规格文档已写入 `docs/superpowers/specs/2026-08-20-core-collapse-mechanics-design.md`（含 Δ_core 离散定义：最内螺旋边界节点对最小二乘拟合圆的归一化最大径向偏差）；**等待用户评审后才开始实现**
 - [ ] 开工前登记 `test/` 现状，把 `unit_czm_eigenstrain.jl` 既有失败标记为前置状态
 - [ ] 按 AGENTS 9.6 核对 `example/testexample.jl` 对 `Simplify/baseline/testexample/`（退出码/网格步数/metrics.toml/PNG SHA-256）
 - [ ] `src/Option.jl` 新增默认关子选项；`src/Czm.jl` 新增 `assemble_bulk_residual_tangent`：bulk/cohesive/contact 三槽位分列（contact 槽位留空）；位移/塑性/接触依赖切线不再沿用常量 `K_bulk` 缓存；弹性层材料切线可按单元缓存
