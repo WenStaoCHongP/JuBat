@@ -96,8 +96,13 @@ PCC.lambda = 237.   # 热导率 (W/m/K)
 PCC.rho = 2702.    # 密度 (kg/m³)
 PCC.heat_Q = 8.76e2      # 比热容 (J/kg/K)
 PCC.sig =3.55e7
-PCC.E = 500e6         # Pa 正极集流体的弹性模量
+PCC.E = 500e6         # Pa 正极集流体的弹性模量（软等效层，默认路径）
 PCC.nu = 0.3          # 正极集流体的泊松比
+# Batch 3（D-B3-0）：Al 箔物理本构（文献整理 §10.7；仅 czm_j2_plasticity=true 消费）
+PCC.E_foil = 70e9     # Pa
+PCC.nu_foil = 0.33
+PCC.sigma_y = 60e6    # Pa（Shi 2026 屈服起始）
+PCC.H = 0.0           # Pa 理想塑性（敏感性扫描 0–2 GPa）
 
 # Negative Current Collector
 NCC = CurrentCollector()
@@ -106,8 +111,13 @@ NCC.lambda = 401.   # 热导率 (W/m/K)
 NCC.rho = 8933.    # 密度 (kg/m³)
 NCC.heat_Q = 3.83e2      # 比热容 (J/kg/K)
 NCC.sig = 5.96e7
-NCC.E = 500e6         # Pa 负极集流体的弹性模量
+NCC.E = 500e6         # Pa 负极集流体的弹性模量（软等效层，默认路径）
 NCC.nu = 0.3          # 负极集流体的泊松比
+# Batch 3（D-B3-0）：Cu 箔物理本构（文献整理 §10.7；仅 czm_j2_plasticity=true 消费）
+NCC.E_foil = 110e9    # Pa
+NCC.nu_foil = 0.34
+NCC.sigma_y = 200e6   # Pa（ED Cu 文献区间 108–441 MPa 中值）
+NCC.H = 0.0           # Pa 理想塑性
 
 # Tab
 tab = Tab()
