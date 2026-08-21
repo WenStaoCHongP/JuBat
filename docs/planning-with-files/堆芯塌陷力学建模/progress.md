@@ -99,12 +99,23 @@
 - **A/B 复核**：冻结表"CZM converged updates 19/19"不对应脚本打印行（日志实为 18 条 `converged=true` debug 行）；经 stash A/B 确认**接线前后同为 18 行、同一 PNG SHA**，属登记口径而非本批漂移；已在本节记录，不改冻结表（该行非脚本打印指标）。
 - `Simplify/baseline.md` 批次表已追加 Batch 1 行（PASS）。
 
+### 会话：2026-08-21（续二）：Batch 2（K_G/C1）执行
+
+- **状态：** complete
+- 计划评审通过（用户批准 D-B2-1/D-B2-2，计划 `2026-08-21-core-collapse-batch2-plan.md`，提交 `a4b58a4`）。
+- Task 1（`7cc8b0d`）：`gl_element_residual_tangent`（完全 GL、SVK、标准初应力 K_G）+ `geo_nl` 槽位启用 + `eigenstrain` 关键字；5/5 testset（FD 切线、30° 刚体转动机器零内力、u=0 切线≡线性刚度 rtol 1e-12、自由膨胀零应力、K_G 压缩方向性）。
+- Task 2（`aea1e85`）：mech_core 夹具改传 `case.param`（归一化网格对齐生产）；Batch 1 的"geo_nl 未实现须报错"断言随槽位实现演进为"缓存冲突契约"断言。
+- Task 3（`b551dac`）：`geo_nl`/`eigenstrain` 贯穿 `assemble_coupled_system` → basic/load_substep（含 backtrack 与 newton 线搜索）→ `update_czm_damage!` 生产调用点；`arc_length+geo_nl` 显式 error（Batch 5）；C1 2/2（K_G→0 极限 geo≈线性 rtol 1e-4；geo off 与 Batch 1 逐位一致）。
+- **门禁执行中发现并修复**：`b551dac` 的 4 空格缩进 replace_all 以子串方式误伤嵌套 arc 函数内同文本行（`eig_kwargs` 未定义 → 探针 arc 方法 exit 1）——**Gate B 门禁捕获**，回滚 `1bb0026`，重跑探针与冻结基线逐位一致。教训：对"缩进即作用域"的嵌套函数禁用短前缀 replace_all。
+- **三道门禁全绿**：全套 **26/26**（4m21s）；`verify_czm_standalone` 快照逐位一致；testexample 全部冻结指标与 PNG SHA `4ba6207c…e932` 一致（geo_nl 默认关零漂移）。
+- 执行偏差（计划小瑕疵，现场修正）：① FD 测试 dof=5000 超出 nθ=8 网格自由度 → 改动态取；② isapprox 自定义 norm 单参调用 MethodError → 改稠密比较；③ Batch 1 geo_nl 报错断言过期（上文 Task 2）。
+
 ## 5 问重启检查
 
 | 问题 | 回答 |
 |---|---|
-| 当前在哪里？ | Batch 0''+1 全部完成（Task 1–7，7 个提交），三道门禁全绿 |
-| 下一步去哪里？ | Batch 2（K_G/C1：完全 GL TL + 初应力几何刚度）单独立项出计划，经用户评审后执行 |
+| 当前在哪里？ | Batch 2（K_G/C1）完成：geo_nl 全链路（单元→装配→求解器→生产），三道门禁全绿 |
+| 下一步去哪里？ | Batch 2'（卷绕预应力 opt-in，需先定 σ₀(r) 参数来源）或 Batch 3（J2 塑性）立项出计划，经用户评审后执行 |
 | 目标是什么？ | 补齐工况 C 力学非线性核心，最终实现堆芯塌陷模拟（L4/C4） |
 | 已学到什么？ | 见 `findings.md` |
 | 已做什么？ | 见本文件上述记录 |
