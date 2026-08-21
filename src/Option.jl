@@ -85,4 +85,11 @@ end
     # CZM progressive area loss (渐进式有效面积损失)
     czm_area_loss_enabled::Bool = false      # 启用渐进式面积损失（D > threshold 时缩减有效面积）
     czm_area_loss_threshold::Float64 = 0.83  # 面积开始缩减的损伤阈值
+    # 堆芯塌陷力学建模（spec 2026-08-20 §5）：全部 opt-in，默认关时行为零漂移
+    czm_geo_nonlinear::Bool = false        # 完全 Green-Lagrange TL 残差 + 标准初应力 K_G（Batch 2）
+    czm_winding_prestress::Bool = false    # 卷绕预应力初始应力场 σ₀(r)，缺参即 error（Batch 2'）
+    czm_j2_plasticity::Bool = false        # PCC/NCC 平面应力一致 J2 返回映射，缺 sigma_y 即 error（Batch 3）
+    czm_phi_bond::Bool = false             # Φ 跨匝完美粘结（phi_pairs 节点合并）（Batch 4'）
+    czm_continuous_feedback::Bool = false  # 连续损伤–电–热反馈 + 界面热阻（Batch 6）
+    czm_friction_mu::Float64 = 0.10        # SP Coulomb 摩擦系数（Batch 8 预留，当前无消费者）
 end
