@@ -31,7 +31,7 @@
 
 ### §3.0a CZM 子网格几何（C-skip-thermal 细网格离散化）
 
-**动机**：粗热网格采用 1 个 Q4 单元/匝（径向分辨率 = $t_{\mathrm{repeat}}\approx 284\;\mu\mathrm{m}$），无法分辨 8 层 CLT 内部的材料界面。CZM 需要在 PE-PCC 与 NE-NCC 界面处求解位移跳跃和损伤演化，因此必须引入更细的力学子网格。
+**动机**：粗热网格采用 1 个 Q4 单元/匝（径向分辨率 = $t_{\mathrm{repeat}}=373.6\;\mu\mathrm{m}$），无法分辨 8 层 CLT 内部的材料界面。CZM 需要在 PE-PCC 与 NE-NCC 界面处求解位移跳跃和损伤演化，因此必须引入更细的力学子网格。
 
 **子网格离散化**：每个卷绕圈（$n\in[0, t_{\mathrm{repeat}}]$）沿径向分为 $N_{\mathrm{lay}}=8$ 个 Q4 单元，分别对应 8 层 CLT 材料层：
 
@@ -46,7 +46,7 @@ $$\boxed{\;\text{CZM 子网格：每匝 } N_{\mathrm{lay}}=8 \text{ 径向 Q4 �
 | 粗热网格 | 1 个重复单元厚度 | $N_{\mathrm{seg}}$ 段 | $T, \Delta\mathrm{soc}_p, \Delta\mathrm{soc}_n$ | 1 |
 | CZM 子网格 | 8 个材料层 | $N_{\mathrm{seg}}$ 段 | $u_s, u_n, D$（CZM 界面） | 8 |
 
-**物理论证**：温度 $T$ 在径向的变化由热扩散方程控制，特征长度 $\ell_T = \sqrt{k_r/(\rho C_p \omega)}$。对于典型充放电频率 $\omega\sim 10^{-3}$–$10^{-2}$ Hz，$\ell_T\sim 1$–$10$ mm $\gg t_{\mathrm{repeat}}\approx 284\;\mu\mathrm{m}$，故温度在一个卷绕周期内接近线性，1 单元/匝足以分辨。力学场（应力、应变）在材料界面处不连续（模量跳变），需要 8 单元/匝才能正确捕捉界面 traction。C-skip-thermal 利用这一尺度分离：**CZM 子网格跳过热场求解**（因此得名"skip-thermal"），温度从粗热网格插值获取（§3.6.0a）。
+**物理论证**：温度 $T$ 在径向的变化由热扩散方程控制，特征长度 $\ell_T = \sqrt{k_r/(\rho C_p \omega)}$。对于典型充放电频率 $\omega\sim 10^{-3}$–$10^{-2}$ Hz，$\ell_T\sim 1$–$10$ mm $\gg t_{\mathrm{repeat}}=373.6\;\mu\mathrm{m}$，故温度在一个卷绕周期内接近线性，1 单元/匝足以分辨。力学场（应力、应变）在材料界面处不连续（模量跳变），需要 8 单元/匝才能正确捕捉界面 traction。C-skip-thermal 利用这一尺度分离：**CZM 子网格跳过热场求解**（因此得名"skip-thermal"），温度从粗热网格插值获取（§3.6.0a）。
 
 **材料类型标记**：CZM 子网格中每个 Q4 单元 $e$ 携带材料类型标记：
 
