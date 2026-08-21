@@ -114,3 +114,62 @@ end
     @test_throws DimensionMismatch JuBat.assemble_bulk_residual_tangent(
         czm_mesh, u_long, param_cache)
 end
+
+@testset "assemble_coupled_system 接线后逐位等价（Batch 1 零漂移）" begin
+    case, param_cache = build_mech_core_fixture()
+    czm_mesh = case.czm_mesh
+    u = make_test_u(czm_mesh.nnode)
+
+    cache = JuBat.ensure_czm_cache(case, czm_mesh, param_cache)
+
+    # 参照解：显式按"bulk 刚度 + cohesive"两路各自装配后相加
+    K_bulk_ref = JuBat.assemble_bulk_stiffness(czm_mesh, param_cache)
+    K_coh_ref, f_coh_ref, _, _ = JuBat.assemble_czm_system(
+        czm_mesh, u, param_cache;
+        damage_states=czm_mesh.damage_states,
+        geom_cache=cache.cohesive_geom, ws=cache.ws)
+
+    K_tot, f_tot, seps, tracts = JuBat.assemble_coupled_system(
+        czm_mesh, u, param_cache;
+        damage_states=czm_mesh.damage_states,
+        K_bulk_cached=cache.K_bulk,
+        geom_cache=cache.cohesive_geom, ws=cache.ws)
+
+    @test K_tot == K_bulk_ref + K_coh_ref
+    @test f_tot == K_bulk_ref * u + f_coh_ref
+    @test length(seps) == czm_mesh.n_cohesive
+    @test length(tracts) == czm_mesh.n_cohesive
+end
+
+@testset "assemble_coupled_system_full 残差构成不变" begin
+    case, param_cache = build_mech_core_fixture()
+    czm_mesh = case.czm_mesh
+    u = make_test_u(czm_mesh.nnode)
+    ne = size(czm_mesh.bulk_element, 1)
+
+    cache = JuBat.ensure_czm_cache(case, czm_mesh, param_cache)
+    pe = param_cache.by_interface[:PE_PCC]
+    α_eff = pe.α
+    β_n = case.param.NE.Omega / 3.0
+    β_p = case.param.PE.Omega / 3.0
+    dT_elem = fill(1e-4, ne)
+    Δsoc_n = fill(1e-4, ne)
+    Δsoc_p = fill(1e-4, ne)
+
+    K_tot, R, F_tc, _, _ = JuBat.assemble_coupled_system_full(
+        czm_mesh, u, param_cache, α_eff, β_n, β_p, dT_elem, Δsoc_n, Δsoc_p;
+        damage_states=czm_mesh.damage_states,
+        K_bulk_cached=cache.K_bulk,
+        geom_cache=cache.cohesive_geom, ws=cache.ws)
+
+    _, f_int = JuBat.assemble_coupled_system(
+        czm_mesh, u, param_cache;
+        damage_states=czm_mesh.damage_states,
+        K_bulk_cached=cache.K_bulk,
+        geom_cache=cache.cohesive_geom, ws=cache.ws)
+
+    # R = F_ext + F_thermo_chem - f_int，F_ext 缺省为零；加 0.0 不改变浮点值
+    @test R == F_tc - f_int
+    @test !any(isnan, K_tot)
+    @test !any(isnan, R)
+end

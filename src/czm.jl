@@ -608,16 +608,15 @@ function assemble_coupled_system(
 )
     ndof = 2 * czm_mesh.nnode
 
-    # 固体刚度（使用缓存或重新计算）
-    K_bulk = K_bulk_cached !== nothing ? K_bulk_cached : assemble_bulk_stiffness(czm_mesh, param_cache)
+    # 固体残差与切线（统一入口，spec §4.2）。Batch 1 只有线弹性槽位，
+    # 与原 K_bulk*u 逐位等价；Batch 2/3 的 K_G 与塑性从此处接入。
+    f_int_bulk, K_bulk = assemble_bulk_residual_tangent(
+        czm_mesh, u, param_cache; K_bulk_cached=K_bulk_cached)
 
     # 内聚力刚度和内力（使用几何缓存和工作区，透传 param_cache）
     K_coh, f_int_coh, separations, tractions = assemble_czm_system(
         czm_mesh, u, param_cache; damage_states=damage_states,
         geom_cache=geom_cache, ws=ws, visc_beta=visc_beta)
-
-    # 固体内力（线性弹性：f_int = K * u）
-    f_int_bulk = K_bulk * u
 
     # 总刚度矩阵
     K_total = K_bulk + K_coh

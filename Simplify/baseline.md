@@ -31,6 +31,7 @@ $env:JULIA_NUM_THREADS = '1'
 | 2026-08-05 | CouplingState 六参数 CZM 兼容入口清理 | `-17` 行 | CZM 定向测试通过（4+9 assertions，1 项既有 broken；smoke OK） | 所有科学指标及 PNG SHA-256 完全一致 | PASS |
 | 2026-08-05 | Solve 最终热数据 silent catch 清理 | `-4` 行 | 热边界 smoke 18/18（最终结构） | 所有科学指标及 PNG SHA-256 完全一致 | PASS |
 | 2026-08-05 | CsvExport 七处写入容错统一 | `+22/-37`，净删 15 行 | CSV guard/public path 10/10 | 所有科学指标及 PNG SHA-256 完全一致 | PASS |
+| 2026-08-21 | 堆芯塌陷 Batch 1：bulk 残差/切线统一入口 `assemble_bulk_residual_tangent` + Option 六默认关子选项 | `+62/-5`（Option +7，czm +55/-5） | `test_czm_mech_core.jl` 8/8 testset（含接线前后逐位等价）、`test_czm_option_defaults.jl` 3/3、`test_assemble_coupled_system.jl` 通过；全套 24/24；`verify_czm_standalone.jl` 快照逐位一致 | 所有科学指标及 PNG SHA-256 完全一致（`4ba6207c…`；另经 stash A/B 复核接线前后同 SHA） | PASS |
 
 本轮 36 个顶层 `src/*.jl` 的 PowerShell 物理行统计由 10,027 降至 9,889，净减 138 行。
 

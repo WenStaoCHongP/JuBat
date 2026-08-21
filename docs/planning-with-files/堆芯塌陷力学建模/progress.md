@@ -89,12 +89,22 @@
 - **全套测试**：`test/runtests.jl` 22/22 通过（3m37.6s，含 eigenstrain 60/60），文档批次零回归。
 - 提交：Task 2 `d28b3b4`、Task 3 `879440c`、Task 4（本批）。
 
+#### Task 5–7：Batch 1（Option 子选项 + bulk 残差/切线统一入口 + 接线）
+
+- **状态：** complete
+- Task 5（`cd7be6e`）：`Option` 新增 6 个默认关子选项（`czm_geo_nonlinear`/`czm_winding_prestress`/`czm_j2_plasticity`/`czm_phi_bond`/`czm_continuous_feedback`/`czm_friction_mu`），TDD 三 testset 锁定默认值契约。
+- Task 6（`016a8b9`）：`src/czm.jl` 新增 `assemble_bulk_residual_tangent`（线弹性槽位：`f=K_bulk*u`、`K_tan=K_bulk`；`geo_nl`/`plasticity`/`mech_state` 非默认即 `error`；`K_bulk_cached` 透传同一对象）。6/6 testset 通过，含与 `K_bulk*u` 逐位等价、缓存同一对象（`===`）、对称性、维度/槽位报错。
+- Task 7：`assemble_coupled_system` 改走新入口（`assemble_coupled_system_full` 间接经它）。与 spec §4.1/§4.2 偏差三项已登记（Option 提前全加、`PlasticState`/`MechHistory` 延后、`K_bulk_cached` 签名扩充）。
+- **三道门禁实测**：全套 `runtests.jl` **24/24**（4m09s，含两个新测试文件）；`verify_czm_standalone.jl` 快照与冻结基线**逐位一致**（8×3 表含 10.0 FAIL 条目与 Summary）；`testexample.jl` exit 0，网格 1682/1763、步数 19、电压 4.0367/3.9438/0.0929、容量 0.0833 Ah、温度 298.15–299.00 K、D 0.0000%、分离 1.2557e-14 m、断裂 0，全部与冻结表一致，PNG SHA-256 `4ba6207c…e932` 一致。
+- **A/B 复核**：冻结表"CZM converged updates 19/19"不对应脚本打印行（日志实为 18 条 `converged=true` debug 行）；经 stash A/B 确认**接线前后同为 18 行、同一 PNG SHA**，属登记口径而非本批漂移；已在本节记录，不改冻结表（该行非脚本打印指标）。
+- `Simplify/baseline.md` 批次表已追加 Batch 1 行（PASS）。
+
 ## 5 问重启检查
 
 | 问题 | 回答 |
 |---|---|
-| 当前在哪里？ | 计划 v1.1 修订完成、基线快照已冻结（方案 B）；Batch 0'' 待用户放行后按计划 Task 2 起执行 |
-| 下一步去哪里？ | 用户授权提交本批文档变更 → 执行 Task 2–4（Batch 0'' 理论修订）→ Task 5–7（Batch 1 代码，三道门禁） |
+| 当前在哪里？ | Batch 0''+1 全部完成（Task 1–7，7 个提交），三道门禁全绿 |
+| 下一步去哪里？ | Batch 2（K_G/C1：完全 GL TL + 初应力几何刚度）单独立项出计划，经用户评审后执行 |
 | 目标是什么？ | 补齐工况 C 力学非线性核心，最终实现堆芯塌陷模拟（L4/C4） |
 | 已学到什么？ | 见 `findings.md` |
 | 已做什么？ | 见本文件上述记录 |
