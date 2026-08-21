@@ -274,13 +274,14 @@ mutable struct CzmLayout
     n_coh::Int                    # cohesive 单元数
     ndof::Int                     # 总位移 DOF 数 (2 * nnode)
     u_prev::Vector{Float64}       # 上一步位移场（跨时间步持有）
+    plastic_states::Union{Nothing, Matrix{PlasticState}}  # PCC/NCC 高斯点塑性状态（Batch 3，[ne,4]；收敛才提交 D-B3-2）
 end
 
 """便捷构造器：从 czm_mesh 初始化"""
 function CzmLayout(czm_mesh::CohesiveMesh)
     n_coh = czm_mesh.n_cohesive
     ndof = 2 * czm_mesh.nnode
-    CzmLayout(n_coh, ndof, zeros(Float64, ndof))
+    CzmLayout(n_coh, ndof, zeros(Float64, ndof), nothing)
 end
 
 # ========================================================================
@@ -593,16 +594,29 @@ function update_czm_damage!(case, variables, T_nodes_carry)
         visc_beta = delta_s / (czm_params.tau_visc + delta_s)
     end
 
+    geo_nl = case.opt.czm_geo_nonlinear
+    eig = geo_nl ? (α_eff=α_eff, β_n=β_n, β_p=β_p,
+                    dT=dT_elem, Δsn=Δsoc_n_elem, Δsp=Δsoc_p_elem) : nothing
+    plastic_on = case.opt.czm_j2_plasticity
+    mech_state = nothing
+    if plastic_on
+        geo_nl || error("update_czm_damage!: czm_j2_plasticity=true 需要 czm_geo_nonlinear=true（D-B3-1）。")
+        (param.PCC.sigma_y > 0.0 && param.NCC.sigma_y > 0.0) || error(
+            "update_czm_damage!: czm_j2_plasticity=true 但 PCC/NCC 的 sigma_y ≤ 0（未设置）。缺参即拦截，不默认、不置零（AGENTS 9.4/9.7）。")
+        if case.czm_layout.plastic_states === nothing
+            case.czm_layout.plastic_states = [PlasticState() for _ in 1:size(czm_mesh.bulk_element, 1), _ in 1:4]
+        end
+        mech_state = case.czm_layout.plastic_states
+    end
+
     result, updated_czm_mesh = solve_czm_step(
         czm_mesh, F_ext, czm_param_cache, param, u_czm_prev;
         α_eff=α_eff, β_n=β_n, β_p=β_p,
         dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
         max_iter=max_iter, tol=tol, n_load_steps=n_load_steps, arc_length_alpha=arc_length_alpha, iter_method=iter_method,
         cache=cache, visc_beta=visc_beta,
-        geo_nl=case.opt.czm_geo_nonlinear,
-        eigenstrain=case.opt.czm_geo_nonlinear ?
-            (α_eff=α_eff, β_n=β_n, β_p=β_p,
-             dT=dT_elem, Δsn=Δsoc_n_elem, Δsp=Δsoc_p_elem) : nothing
+        geo_nl=geo_nl, eigenstrain=eig,
+        plasticity=plastic_on, mech_state=mech_state
     )
 
     if case.opt.debug_coupling
@@ -631,6 +645,11 @@ function update_czm_damage!(case, variables, T_nodes_carry)
     result.converged || error("CZM solve did not converge after $(result.iterations) iterations (residual=$(result.residual_norm))")
 
     czm_mesh.damage_states = updated_czm_mesh.damage_states
+    if plastic_on
+        assemble_coupled_system(czm_mesh, result.displacement, czm_param_cache;
+            geo_nl=true, eigenstrain=eig, plasticity=true, mech_state=mech_state,
+            commit_plastic=true)
+    end
     case.czm_layout.u_prev = result.displacement
 
     return result
