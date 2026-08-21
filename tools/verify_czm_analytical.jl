@@ -84,17 +84,10 @@ function test_bilinear_constitutive(czm_model::String)
     @printf("  K = %.2e Pa/m\n", K)
     
     # 创建Cohesive参数
-    cohesive = JuBat.Cohesive()
-    # cohesive.σ_max_n = σ_max           # TODO Chunk 2 Task 2.1
-    # cohesive.δ_0_n = δ_0                # TODO Chunk 2 Task 2.1
-    # cohesive.δ_c_n = δ_c                # TODO Chunk 2 Task 2.1
-    # cohesive.K_n = K                    # TODO Chunk 2 Task 2.1
-    # cohesive.τ_max_t = σ_max            # TODO Chunk 2 Task 2.1
-    # cohesive.δ_0_t = δ_0                # TODO Chunk 2 Task 2.1
-    # cohesive.δ_c_t = δ_c                # TODO Chunk 2 Task 2.1
-    # cohesive.K_t = K                    # TODO Chunk 2 Task 2.1
-    cohesive.eta = 1.45
-    cohesive.czm_model = czm_model
+    cohesive = JuBat.CzmInterfaceParams(
+        σ_max = σ_max, K_n = K, δ_0_n = δ_0, δ_c_n = δ_c,
+        τ_max = σ_max, K_t = K, δ_0_t = δ_0, δ_c_t = δ_c,
+        η = 1.45, czm_model = czm_model)
     
     # 测试点
     test_points = [
@@ -253,17 +246,10 @@ function test_loading_unloading(czm_model::String)
     δ_c = 100e-9
     K = σ_max / δ_0
     
-    cohesive = JuBat.Cohesive()
-    # cohesive.σ_max_n = σ_max           # TODO Chunk 2 Task 2.1
-    # cohesive.δ_0_n = δ_0                # TODO Chunk 2 Task 2.1
-    # cohesive.δ_c_n = δ_c                # TODO Chunk 2 Task 2.1
-    # cohesive.K_n = K                    # TODO Chunk 2 Task 2.1
-    # cohesive.τ_max_t = σ_max            # TODO Chunk 2 Task 2.1
-    # cohesive.δ_0_t = δ_0                # TODO Chunk 2 Task 2.1
-    # cohesive.δ_c_t = δ_c                # TODO Chunk 2 Task 2.1
-    # cohesive.K_t = K                    # TODO Chunk 2 Task 2.1
-    cohesive.eta = 1.45
-    cohesive.czm_model = czm_model
+    cohesive = JuBat.CzmInterfaceParams(
+        σ_max = σ_max, K_n = K, δ_0_n = δ_0, δ_c_n = δ_c,
+        τ_max = σ_max, K_t = K, δ_0_t = δ_0, δ_c_t = δ_c,
+        η = 1.45, czm_model = czm_model)
     
     state = JuBat.DamageState()
     
@@ -360,17 +346,10 @@ function test_mixed_mode_bk(czm_model::String)
     
     eta = 1.45
     
-    cohesive = JuBat.Cohesive()
-    # cohesive.σ_max_n = σ_max_n          # TODO Chunk 2 Task 2.1
-    # cohesive.δ_0_n = δ_0_n              # TODO Chunk 2 Task 2.1
-    # cohesive.δ_c_n = δ_c_n              # TODO Chunk 2 Task 2.1
-    # cohesive.K_n = σ_max_n / δ_0_n      # TODO Chunk 2 Task 2.1
-    # cohesive.τ_max_t = τ_max_t          # TODO Chunk 2 Task 2.1
-    # cohesive.δ_0_t = δ_0_t              # TODO Chunk 2 Task 2.1
-    # cohesive.δ_c_t = δ_c_t              # TODO Chunk 2 Task 2.1
-    # cohesive.K_t = τ_max_t / δ_0_t      # TODO Chunk 2 Task 2.1
-    cohesive.eta = eta
-    cohesive.czm_model = czm_model
+    cohesive = JuBat.CzmInterfaceParams(
+        σ_max = σ_max_n, K_n = σ_max_n / δ_0_n, δ_0_n = δ_0_n, δ_c_n = δ_c_n,
+        τ_max = τ_max_t, K_t = τ_max_t / δ_0_t, δ_0_t = δ_0_t, δ_c_t = δ_c_t,
+        η = eta, czm_model = czm_model)
     
     println("\n参数：")
     @printf("  法向: σ_max=%.1fMPa, δ_0=%.0fnm, δ_c=%.0fnm\n", 
@@ -449,17 +428,10 @@ function test_fracture_energy(czm_model::String)
     δ_c = 100e-9
     K = σ_max / δ_0
     
-    cohesive = JuBat.Cohesive()
-    # cohesive.σ_max_n = σ_max           # TODO Chunk 2 Task 2.1
-    # cohesive.δ_0_n = δ_0                # TODO Chunk 2 Task 2.1
-    # cohesive.δ_c_n = δ_c                # TODO Chunk 2 Task 2.1
-    # cohesive.K_n = K                    # TODO Chunk 2 Task 2.1
-    # cohesive.τ_max_t = σ_max            # TODO Chunk 2 Task 2.1
-    # cohesive.δ_0_t = δ_0                # TODO Chunk 2 Task 2.1
-    # cohesive.δ_c_t = δ_c                # TODO Chunk 2 Task 2.1
-    # cohesive.K_t = K                    # TODO Chunk 2 Task 2.1
-    cohesive.eta = 1.45
-    cohesive.czm_model = czm_model
+    cohesive = JuBat.CzmInterfaceParams(
+        σ_max = σ_max, K_n = K, δ_0_n = δ_0, δ_c_n = δ_c,
+        τ_max = σ_max, K_t = K, δ_0_t = δ_0, δ_c_t = δ_c,
+        η = 1.45, czm_model = czm_model)
     
     # 理论断裂能
     G_c_theory = 0.5 * σ_max * δ_c

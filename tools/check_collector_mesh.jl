@@ -6,7 +6,7 @@ opt.thermal_enabled = true
 opt.thermalmodel = "distributed2D"
 opt.czm_enabled = true
 case = JuBat.SetCase(param, opt)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(param; nθ=180, nθ_czm=80, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(param; nθ=180, gsorder=2, czm_enabled=true)
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 mesh = case.mesh["thermal2D"]
 ne=size(mesh.element,1)
@@ -34,7 +34,7 @@ end
 # ── Export node coordinates and element connectivity to CSV ──
 begin
   scale = param.scale
-  csv_dir = joinpath(@__DIR__, "..", "output", "csv")
+  csv_dir = joinpath(@__DIR__, "..", "output", "check_collector_mesh")
   mkpath(csv_dir)
 
   # Node coordinates (physical units: m)
@@ -78,15 +78,15 @@ begin
   end
   println("Exported czm_nodes.csv ($(czm_mesh.nnode) nodes)")
 
-  # Export cohesive elements (bottom/top node pairs + length + layer index)
+  # Export cohesive elements (bottom/top node pairs + length + interface type)
   coh_csv = joinpath(csv_dir, "czm_elements.csv")
   open(coh_csv, "w") do f
-    println(f, "coh_id,n1_bot,n2_bot,n4_top,n3_top,length,layer_idx")
+    println(f, "coh_id,n1_bot,n2_bot,n4_top,n3_top,length,interface_type")
     for (i, elem) in enumerate(czm_mesh.cohesive_elements)
       nb1, nb2 = elem.nodes_bottom
       nt4, nt3 = elem.nodes_top
       len_phys = elem.length * scale.L
-      println(f, "$i,$nb1,$nb2,$nt4,$nt3,$len_phys,$(elem.layer_idx)")
+      println(f, "$i,$nb1,$nb2,$nt4,$nt3,$len_phys,$(elem.interface_type)")
     end
   end
   println("Exported czm_elements.csv ($n_coh cohesive elements)")

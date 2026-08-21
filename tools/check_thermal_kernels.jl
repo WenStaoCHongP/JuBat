@@ -1,6 +1,9 @@
 using LinearAlgebra, Statistics, Plots
 include("../src/JuBat.jl")
 
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "output", "check_thermal_kernels")
+mkpath(OUTPUT_DIR)
+
 # tools/check_thermal_kernels.jl
 # Compute and export per-element effective radial/tangential thermal conductivities
 # Usage: julia --project=. tools/check_thermal_kernels.jl
@@ -60,7 +63,7 @@ function main()
     println("  spiral params lambda_r_eff=$(lambda_r_eff), lambda_t_eff=$(lambda_t_eff)")
 
     # write CSV
-    outcsv = "tools/thermal_kernels_per_element.csv"
+    outcsv = joinpath(OUTPUT_DIR, "thermal_kernels_per_element.csv")
     open(outcsv, "w") do io
         println(io, "elem,x,y,r,lam_r,lam_t,f_NE,f_SP,f_PE,f_PCC,f_NCC")
         for e in 1:ne
@@ -75,10 +78,10 @@ function main()
     # scatter plots of lam_r and lam_t
     xs = centers[:,1]; ys = centers[:,2]
     plt1 = scatter(xs, ys, zcolor=lam_r, markerstrokewidth=0, ms=6, color=cgrad([:skyblue, :red]), title="Element λ_r (W/mK)", aspect_ratio=1)
-    savefig(plt1, "tools/thermal_lambda_r.png")
+    savefig(plt1, joinpath(OUTPUT_DIR, "thermal_lambda_r.png"))
     plt2 = scatter(xs, ys, zcolor=lam_t, markerstrokewidth=0, ms=6, color=cgrad([:skyblue, :red]), title="Element λ_t (W/mK)", aspect_ratio=1)
-    savefig(plt2, "tools/thermal_lambda_t.png")
-    println("Saved: tools/thermal_lambda_r.png, tools/thermal_lambda_t.png")
+    savefig(plt2, joinpath(OUTPUT_DIR, "thermal_lambda_t.png"))
+    println("Saved: ", joinpath(OUTPUT_DIR, "thermal_lambda_r.png"), ", ", joinpath(OUTPUT_DIR, "thermal_lambda_t.png"))
 
     return nothing
 end

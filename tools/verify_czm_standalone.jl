@@ -16,7 +16,7 @@ using Printf
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
 
-const OUTPUT_DIR = joinpath(@__DIR__, "..", "output", "czm_standalone")
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "output", "verify_czm_standalone")
 
 # ========================================================================
 # 结果记录
@@ -62,7 +62,7 @@ function main()
     case = JuBat.SetCase(param_dim, opt)
 
     nθ = 40
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, nθ_czm=40, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, gsorder=2, czm_enabled=true)
     czm_mesh_template = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
 
     println("  Mesh: nθ=$nθ, gsorder=2")
@@ -89,7 +89,7 @@ function main()
     #     czm_params.G_c_n, czm_params.δ_c_n)                                              # TODO Chunk 2 Task 2.1
 
     # ── 3. 构建缓存 ───────────────────────────────────────────────
-    cache = JuBat.build_czm_cache(czm_mesh_template, E_eff, ν_eff, param)
+    cache = JuBat.build_czm_cache(czm_mesh_template, czm_param_cache)
 
     # ── 4. 载荷水平 ────────────────────────────────────────────────
     # 使用 Δsoc_n 驱动（生产中损伤主要由 SOC 变化引起）

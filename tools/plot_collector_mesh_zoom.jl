@@ -1,5 +1,8 @@
 using Plots, Statistics
 include(joinpath(@__DIR__, "..", "src", "JuBat.jl"))
+
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "output", "plot_collector_mesh_zoom")
+mkpath(OUTPUT_DIR)
 param=JuBat.ChooseCell("Jellyroll")
 opt = JuBat.Option()
 opt.thermal_enabled = true
@@ -60,8 +63,8 @@ end
 xlims!(plt, xmin-padx, xmax+padx)
 ylims!(plt, ymin-pady, ymax+pady)
 
-png_path = joinpath(@__DIR__, "collector_mesh_zoom.png")
-svg_path = joinpath(@__DIR__, "collector_mesh_zoom.svg")
+png_path = joinpath(OUTPUT_DIR, "collector_mesh_zoom.png")
+svg_path = joinpath(OUTPUT_DIR, "collector_mesh_zoom.svg")
 
 savefig(plt, png_path)
 println("Saved: $png_path")

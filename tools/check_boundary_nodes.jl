@@ -1,6 +1,9 @@
 using Plots, LinearAlgebra, Statistics
 include("../src/JuBat.jl")
 
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "output", "check_boundary_nodes")
+mkpath(OUTPUT_DIR)
+
 # Simple diagnostic: mark tab nodes (red) and outer boundary nodes (green)
 function main()
     param_dim = JuBat.ChooseCell("Jellyroll")
@@ -61,12 +64,12 @@ function main()
         scatter!(plt, x[neg_nodes], y[neg_nodes]; ms=4.0, color=:yellow, label="neg tabs")
     end
     # save regular PNG
-    savefig(plt, "boundary_nodes.png")
-    println("Saved: boundary_nodes.png")
+    savefig(plt, joinpath(OUTPUT_DIR, "boundary_nodes.png"))
+    println("Saved: ", joinpath(OUTPUT_DIR, "boundary_nodes.png"))
     # also save vector SVG and a high-resolution bitmap to avoid pixelation when zooming
     try
-        savefig(plt, "boundary_nodes.svg")
-        println("Saved: boundary_nodes.svg")
+        savefig(plt, joinpath(OUTPUT_DIR, "boundary_nodes.svg"))
+        println("Saved: ", joinpath(OUTPUT_DIR, "boundary_nodes.svg"))
     catch e
         @warn "Failed to save SVG" exception=(e, catch_backtrace())
     end
@@ -86,8 +89,8 @@ function main()
         if !isempty(neg_nodes)
             scatter!(plt_hr, x[neg_nodes], y[neg_nodes]; ms=8.0, color=:yellow, label="neg tabs")
         end
-        savefig(plt_hr, "boundary_nodes_hr.png")
-        println("Saved: boundary_nodes_hr.png")
+        savefig(plt_hr, joinpath(OUTPUT_DIR, "boundary_nodes_hr.png"))
+        println("Saved: ", joinpath(OUTPUT_DIR, "boundary_nodes_hr.png"))
     catch e
         @warn "Failed to save high-res PNG" exception=(e, catch_backtrace())
     end

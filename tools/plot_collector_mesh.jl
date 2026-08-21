@@ -1,5 +1,8 @@
 using Plots, Statistics
 include(joinpath(@__DIR__, "..", "src", "JuBat.jl"))
+
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "output", "plot_collector_mesh")
+mkpath(OUTPUT_DIR)
 param=JuBat.ChooseCell("Jellyroll")
 opt = JuBat.Option()
 opt.thermal_enabled = true
@@ -37,5 +40,5 @@ for e in 1:min(20, ne)
         annotate!(plt, nx, ny, text(string(n), 6, :green))
     end
 end
-savefig(plt, joinpath(@__DIR__, "collector_mesh.png"))
-println("Saved: tools/collector_mesh.png")
+savefig(plt, joinpath(OUTPUT_DIR, "collector_mesh.png"))
+println("Saved: ", joinpath(OUTPUT_DIR, "collector_mesh.png"))
