@@ -16,7 +16,7 @@ function build_mech_core_fixture(; nθ::Int=40)
     opt.per_element_spme = true
     case = JuBat.SetCase(param_dim, opt)
 
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=nθ, czm_enabled=true, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, czm_enabled=true, gsorder=2)  # 归一化网格（生产路径传 case.param；Batch 1 曾误用 param_dim，Batch 2 对齐）
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
 
@@ -88,13 +88,16 @@ end
     @test norm(K_tan - transpose(K_tan), Inf) ≤ 1e-12 * norm(K_tan, Inf)
 end
 
-@testset "未实现槽位必须报错，不得静默降级（AGENTS 9.7 / spec §6）" begin
+@testset "未实现槽位与冲突参数必须报错，不得静默降级（AGENTS 9.7 / spec §6）" begin
     case, param_cache = build_mech_core_fixture()
     czm_mesh = case.czm_mesh
     u = make_test_u(czm_mesh.nnode)
 
+    # geo_nl 自 Batch 2 起已实现（行为测试见 test_czm_geometric_stiffness.jl）；
+    # 此处断言其缓存冲突契约：切线依赖 u，禁止与 K_bulk_cached 同用
+    cache = JuBat.ensure_czm_cache(case, czm_mesh, param_cache)
     @test_throws ErrorException JuBat.assemble_bulk_residual_tangent(
-        czm_mesh, u, param_cache; geo_nl=true)
+        czm_mesh, u, param_cache; geo_nl=true, K_bulk_cached=cache.K_bulk)
     @test_throws ErrorException JuBat.assemble_bulk_residual_tangent(
         czm_mesh, u, param_cache; plasticity=true)
     # mech_state 的消费者在 Batch 3 引入；此前传入非 nothing 即报错
