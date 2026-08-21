@@ -56,12 +56,22 @@
 | 2026-08-17 | ugrep 对混合中文+LaTeX 花括号模式报 invalid character class | 2 | 拆分简单模式分别检索 |
 | 2026-08-17 | Git Bash 下 sed/grep 输出中文文件名乱码 | 多次 | 行号仍有效；内容核对改用 Read 工具 |
 
+## 会话：2026-08-21
+
+### 实现计划评审 + spec v1.3 / 计划 v1.1 修订（方案 B）
+
+- **状态：** complete（Batch 0'' 待用户放行）
+- 评审 Batch 0''+1 实现计划（`49ec452`）并对 HEAD `e117fd2` 逐项核实：3 处前提失效（探针被删/PNG 路径迁移/eigenstrain 已修复）+ 4 项次要缺口，详见 findings"实现计划评审"节；核对无误项（行号、签名、几何数值、基线冻结值）未改动。
+- 用户决策**方案 B**：Batch 1 基线门禁改用 `tools/verify_czm_standalone.jl`；spec v1.3（§头部/§5/§7/§10.3）与计划 v1.1（Task 1 重写为复核、Task 2 KKT 扩清理、Task 3 计数订正、测试预期 22/22 全绿、PNG 路径更正、偏差登记第三项、修订记录 8 条）同步修订。
+- **基线已冻结**：实测运行 `verify_czm_standalone.jl`（exit 0），快照写入 `baseline_czm_standalone.md`——网格 10946 节点/6728 bulk/3364 cohesive；8×3 收敛表（0.1–5.0 全 OK，10.0 三方法 FAIL 冻结）；Summary 三方法各 7/8、total_iter 16/794/2187。工具既有瑕疵两条登记 findings，不修改。
+- 待提交变更：spec v1.3、计划 v1.1、`baseline_czm_standalone.md`、findings/progress/index（提交须经用户授权绕过 Mimosa 守卫）。
+
 ## 5 问重启检查
 
 | 问题 | 回答 |
 |---|---|
-| 当前在哪里？ | spec v1.2 修订完成（含 D12–D15），待用户评审 |
-| 下一步去哪里？ | 用户评审通过 → writing-plans 实现计划；Batch 0''（8 项阻塞理论矛盾）是 Batch 1 代码工作的前置 |
+| 当前在哪里？ | 计划 v1.1 修订完成、基线快照已冻结（方案 B）；Batch 0'' 待用户放行后按计划 Task 2 起执行 |
+| 下一步去哪里？ | 用户授权提交本批文档变更 → 执行 Task 2–4（Batch 0'' 理论修订）→ Task 5–7（Batch 1 代码，三道门禁） |
 | 目标是什么？ | 补齐工况 C 力学非线性核心，最终实现堆芯塌陷模拟（L4/C4） |
 | 已学到什么？ | 见 `findings.md` |
 | 已做什么？ | 见本文件上述记录 |

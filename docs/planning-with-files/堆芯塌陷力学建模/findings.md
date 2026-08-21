@@ -191,3 +191,22 @@
 | D15 | 理论修订**拆两批**：Batch 0'' 只修 8 项阻塞实现的矛盾（Batch 1 前置），5 项文档级并入 Batch 7 | `split_two` |
 
 Batch 0'' 的 8 项与 Batch 7 的 5 项清单见 spec §9。
+
+## 实现计划评审（2026-08-21，计划 v1.1 修订输入）
+
+### 评审发现（对 HEAD `e117fd2` 逐项核实）
+
+- 计划（`49ec452`）提交后三个提交使其 3 处前提失效：① `tools/czm_baseline_probe.jl` 被 `2bf2ac7` 整体删除（原 4 处 API 漂移诊断经 `git show 49ec452:` 历史版本核实属实，但修复对象不存在）；② testexample PNG 按 AGENTS §9.9（`a2caecc`）迁至 `output/testexample/testexample_results.png`，计划两处旧路径有"哈希旧文件假通过"风险；③ `unit_czm_eigenstrain.jl` 被 `e117fd2` 修复（60/60，全套 22/22），计划的"既有失败登记"豁免失效。
+- 次要缺口：`07:19`/`07:80`/`07:1162`（本章小结）三处**现行框架** KKT 表述未被原 Task 2 清理范围覆盖，而其自设 Step 9 门禁（仅许历史沿革表述）会失败；Task 3 命中计数与实测不符（`46.6|0.132` 实为 01:7 / 02:15 / 04:0，原写 11/25/2）；`03:77` 对"spec §1.3"的出处引用未随 `:44`/`:331` 同步改写；`assemble_bulk_residual_tangent` 比 spec §4.2 签名多 `K_bulk_cached` 关键字参数未登记。
+- 评审确认无误：src/Theory 行号与签名、Task 7 引用的旧代码逐字比对、几何重算数值独立复算、基线 14 项冻结值与 PNG SHA。
+
+### 用户决策（2026-08-21，基线工具二选一）
+
+**方案 B**：Batch 1 快照门禁改用 `tools/verify_czm_standalone.jl`（同覆盖三方法，`2bf2ac7` 已修复并实测通过），不恢复旧探针；spec v1.3 同步替换 §5/§7 引用。
+
+### verify_czm_standalone.jl 既有瑕疵登记（方案 B 采用时记录，不阻塞）
+
+- `:66` 模板网格用 `case.param` 而 `:134` 逐方法重建网格用 `param_dim`（有量纲），两处不一致；`create_czm_mesh` 对两者的差异不影响 bulk/cohesive 求解与门禁判定，但若未来该函数开始实质消费 `param` 尺度，须先统一再重冻结基线。
+- `:66/:134` 传未合并的 `mesh_data.thermal2D`（求解路径在 `czm_enabled=true` 时用 `thermal2D_merged`）；CZM 独立求解不消费该映射，仅 `cohesive_to_thermal` 尺寸受影响，门禁不受损。
+- 处置：待 Batch 1 完成后视需要单独小提交统一（改动会使基线快照作废，须同批重冻结并声明）。
+- 基线快照：`baseline_czm_standalone.md`（2026-08-21 冻结，HEAD `e117fd2`）：三方法各 7/8 收敛（Δsoc_n=10.0 全 FAIL 原样冻结，伴随 `CzmSolve.jl:603/:430` stall 警告），全表 D=0.0000（只行使线弹性 bulk + cohesive 装配路径，与 Batch 1 改动面匹配）。

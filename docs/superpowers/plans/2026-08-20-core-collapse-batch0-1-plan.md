@@ -13,14 +13,14 @@
 以下约束逐字来自 spec `docs/superpowers/specs/2026-08-20-core-collapse-mechanics-design.md` 与 `AGENTS.md`，每个 Task 的验收隐含包含本节。
 
 - **运行环境**：Julia 1.11.2，单线程（`JULIA_NUM_THREADS=1`），`GKSwstype=100`，`--startup-file=no`。
-- **强制行为基线**（AGENTS 9.6）：入口 `example/testexample.jl`，命令 `& 'D:\Julia-1.11.2\bin\julia.exe' --startup-file=no example\testexample.jl`；必须 exit code 0；网格/步数与 `Simplify/baseline/testexample/README.md` 冻结表全部科学结果在脚本打印精度下完全一致；`output/testexample_results.png` 的 SHA-256 应与 `4ba6207c3ccf92da5e37349ee335cf21a10a50b46a14cda13de95eefa6cae932` 一致。任一科学指标不一致 → 停止并回退当批。
-- **兼容性契约**（spec §5）：`czm_geo_nonlinear`/`czm_winding_prestress`/`czm_j2_plasticity`/`czm_phi_bond`/`czm_continuous_feedback` 全 false 时，行为、结果键、`tools/czm_baseline_probe.jl` 三方法快照与现状逐指标一致。
+- **强制行为基线**（AGENTS 9.6）：入口 `example/testexample.jl`，命令 `& 'D:\Julia-1.11.2\bin\julia.exe' --startup-file=no example\testexample.jl`；必须 exit code 0；网格/步数与 `Simplify/baseline/testexample/README.md` 冻结表全部科学结果在脚本打印精度下完全一致；`output/testexample/testexample_results.png`（a2caecc 起 testexample 按 AGENTS §9.9 输出到 `output/<脚本名>/` 子目录，路径见 README:42）的 SHA-256 应与 `4ba6207c3ccf92da5e37349ee335cf21a10a50b46a14cda13de95eefa6cae932` 一致。任一科学指标不一致 → 停止并回退当批。
+- **兼容性契约**（spec §5 v1.3）：`czm_geo_nonlinear`/`czm_winding_prestress`/`czm_j2_plasticity`/`czm_phi_bond`/`czm_continuous_feedback` 全 false 时，行为、结果键、`tools/verify_czm_standalone.jl` 三方法快照与现状逐指标一致。
 - **错误处理**（spec §6，继承 AGENTS 9.7）：缺参 → `error` 指明材料层；不默认、不置零、不截断；不引入任何新的静默回退分支；未实现的槽位传入非默认值一律 `error`，不得静默忽略。
 - **网格约定**（AGENTS 9.3）：`nθ` 同时控制热网格与力学/CZM 网格周向分辨率，力学网格直接继承热网格实际角节点，**不得**新增 `nθ_czm` 或独立角度数组。
 - **几何数值唯一来源**（D14）：Batch 0'' 之后，Theory 中一切几何数值以 `src/parameters/Jellyroll.jl` 与 `src/Jellyrollmodel.jl` 为唯一来源，表中每行必须标注对应代码字段名。
 - **planning 文件归属**（AGENTS 9.5）：进度与发现写入 `docs/planning-with-files/堆芯塌陷力学建模/`，并同步更新 `docs/planning-with-files/index.md`。
 - **提交粒度**（spec §9）：每批一次提交，沿用现有中文提交风格（`docs(...)`/`refactor(...)`/`test(...)`）。
-- **既有失败登记**：`test/unit_czm_eigenstrain.jl` 现为 58/60，在 Batch 1 开工时登记为前置状态，**不作为**本计划引入的新回归（spec §7 脚注）。
+- **测试套件现状**：`test/runtests.jl` 全套现为 **22/22 通过**（`e117fd2` 已修复 `unit_czm_eigenstrain.jl` 两条既有失败断言，60/60）。spec §7 脚注所载"58/60 既有失败登记"已过期作废；本计划所有批次的全套测试门禁为**全绿**，任何失败都视为新回归。
 
 ## 范围与后续计划
 
@@ -36,23 +36,24 @@
 - Batch 6：残差中是否写入 `(1−D)⁻²` 取决于 D12 三选一的专项推导结论（spec §3.6）。
 - Batch 7：并入 5 项文档级修订，须在 Batch 0''–6 的实际修订结果之后才能定稿。
 
-### 与 spec §4.1 的两处批次归属偏差（已记录，供评审）
+### 与 spec §4.1/§4.2 的批次归属与签名偏差（已记录，供评审）
 
 1. **`src/Option.jl` 六个子选项字段在本计划 Batch 1 全部加入**（与 §4.1 一致）。理由：§5 的兼容性契约"全 false 时逐指标一致"需要字段存在才可测试，Task 5 为此写了显式的默认值契约测试。
 2. **`PlasticState`、`MechHistory` 类型与 `CZMAssemblyCache` 的参考构型/机械状态字段不在本计划实现**（§4.1 将其标为 Batch 1-3 / 1,3,5,6）。理由：Batch 1 无消费者，提前定义即死类型，违反 YAGNI 且无法测试。`assemble_bulk_residual_tangent` 的 `mech_state` 参数按 §4.2 签名保留为尾置可选位置参数，Batch 3 引入 `PlasticState` 时无需改签名。
+3. **`assemble_bulk_residual_tangent` 的关键字参数比 spec §4.2 冻结签名多一个 `K_bulk_cached`**（v1.1 登记）。理由：Batch 1 接线必须在不重复装配的前提下透传既有 `assemble_coupled_system` 的 `K_bulk_cached` 快路径（零漂移）；§4.2 标注"内部，不进公共文档"，故以实现签名为准。Batch 2/3 实现者以本计划签名为准（4 位置参数 + 3 关键字参数）。
 
 ## File Structure
 
 | 文件 | 动作 | 职责 |
 |---|---|---|
-| `tools/czm_baseline_probe.jl` | 修改 | 修复 4 处过期 API 调用，使 spec §7 的 Batch 1 门禁"三方法快照不变"可执行 |
-| `docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_probe.md` | 新建 | 冻结探针快照，作为 Batch 1 及后续批次的回归基准 |
+| `tools/verify_czm_standalone.jl` | 不修改（直接运行） | Batch 1 快照门禁来源：三方法 × 8 载荷水平收敛对比（方案 B；原 `czm_baseline_probe.jl` 已被 `2bf2ac7` 删除，v1.1 修订，见 Task 1） |
+| `docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_standalone.md` | 已建立 | 冻结 `verify_czm_standalone.jl` 快照（2026-08-21，HEAD `e117fd2`），Batch 1 及后续批次的回归基准 |
 | `tools/theory_geometry_recompute.jl` | 新建 | 只读脚本：从 `ChooseCell("Jellyroll")` 重算螺旋几何表并打印代码字段来源（D14 防漂移） |
 | `Theory/07_弱形式与求解.md` | 修改 | 消除同号 §6.4.5 与 KKT 残留、统一 `K_uu`、新增 §6.10 柱面弧长法、补 Φ 约束施加方式 |
-| `Theory/02_几何与运动学.md` | 修改 | 几何数值按代码重算（25 处）、γ 量级联动订正、`κ_ss` 与 C⁰ Q4 不兼容实现注记 |
-| `Theory/01_符号与守恒律公理.md` | 修改 | 几何数值（11 处）、层编号双约定声明、`A_eff` 量纲 |
+| `Theory/02_几何与运动学.md` | 修改 | 几何数值按代码重算（`46.6\|0.132` 15 处 + `284` 7 处 + `\approx 6` 5 处）、γ 量级联动订正、`κ_ss` 与 C⁰ Q4 不兼容实现注记 |
+| `Theory/01_符号与守恒律公理.md` | 修改 | 几何数值（`46.6\|0.132` 7 处 + `284` 3 处）、层编号双约定声明、`A_eff` 量纲 |
 | `Theory/03_本构理论.md` | 修改 | 式 (2.68) `A_eff` 改为无量纲面积分数 |
-| `Theory/04_CZM.md` | 修改 | 几何数值（2 处） |
+| `Theory/04_CZM.md` | 修改 | 几何数值（仅 `284` 2 处：`:34`、`:49`；无 `46.6/0.132` 命中） |
 | `Theory/09_附录A_符号表.md` | 修改 | `A_eff` 量纲与关系式同步 |
 | `src/Option.jl` | 修改 | 新增 6 个默认关子选项字段 |
 | `src/czm.jl` | 修改 | 新增 `assemble_bulk_residual_tangent`；`assemble_coupled_system` 改走该入口 |
@@ -63,165 +64,38 @@
 
 ---
 
-## Task 1: 修复 CZM 基线探针并冻结快照
+## Task 1: 复核 CZM 基线快照（verify_czm_standalone，方案 B）
 
-Batch 1 的验收门是"`czm_baseline_probe.jl` 快照不变"，但该探针当前调用 4 处已废弃 API，根本无法运行，因此**当前不存在任何快照**。必须先修好并冻结，否则 Batch 1 的门禁是空的。
+**v1.1 修订背景**：本 Task 原为"修复 `czm_baseline_probe.jl` 的 4 处过期 API 并冻结快照"。计划评审（2026-08-21）对照 `49ec452` 历史版本核实该 4 处诊断属实，但该探针已被 `2bf2ac7` 作为过时脚本**整体删除**，修复对象不存在。用户决策采用**方案 B**：Batch 1 快照门禁改用 `tools/verify_czm_standalone.jl`（同覆盖 basic/load_substep/arc_length 三方法 × 8 个 Δsoc_n 载荷水平；`2bf2ac7` 已修复其 `build_czm_cache` 签名并实测通过），不恢复旧探针。spec 已随 v1.3 同步替换 §5/§7 引用。
+
+基线快照 `docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_standalone.md` 已于 2026-08-21 冻结（HEAD `e117fd2`，计划 v1.1 修订时执行）。本 Task 在开工时**复核其可复现性**，不改任何代码。
 
 **Files:**
-- Modify: `tools/czm_baseline_probe.jl:39`、`:63`、`:69`、`:76`、`:100-101`
-- Create: `docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_probe.md`
+- 无修改。只读运行 `tools/verify_czm_standalone.jl`，对照既有快照 `docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_standalone.md`。
 
 **Interfaces:**
-- Consumes: `JuBat.jellyroll_collector_seed_mesh(param; nθ, gsorder, phase, tol, czm_enabled)`（`src/Jellyrollmodel.jl:18`）；`JuBat.build_czm_cache(czm_mesh::CohesiveMesh, param_cache::CzmParamCache; fix_inner::Bool=true)`（`src/czm.jl:435`）；`JuBat.create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)`（`src/CzmMesh.jl:33`）；`JuBat.bilinear_traction_state(δ_n, δ_t, ::DamageState, ::CzmInterfaceParams; visc_beta)`（`src/Materialmatrix.jl:68`）；`JuBat.bilinear_tangent`（同文件 `:182`）。
-- Produces: 冻结快照文件 `docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_probe.md`，Task 7 与后续所有批次据此比对。
+- Consumes: `JuBat.solve_czm_step(czm_mesh, F_ext, param_cache, param, u_prev; α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem, max_iter, tol, n_load_steps, iter_method, cache)`（`src/CzmSolve.jl:651`）；`JuBat.get_damage_statistics(czm_mesh)`（`src/CzmPostProcess.jl:12`，返回 `max_D`/`mean_D`/`n_fractured`）。
+- Produces: 无新文件；复核结论记入 progress.md。Task 7 Step 6 与后续所有批次按该快照比对。
 
-- [ ] **Step 1: 运行探针，确认当前失败**
+- [ ] **Step 1: 重跑工具，逐位比对冻结快照**
 
-Run: `julia --startup-file=no --project=. tools/czm_baseline_probe.jl`
+Run（与冻结时同环境）: `GKSwstype=100 JULIA_NUM_THREADS=1 julia --startup-file=no --project=. tools/verify_czm_standalone.jl`
 
-Expected: 退出码 1，报 `MethodError: no method matching jellyroll_collector_seed_mesh(::Params; nθ, nθ_czm, gsorder)`，并提示 `got unsupported keyword argument "nθ_czm"`。
+Expected: 退出码 0。输出中（i）网格统计行（Nodes/Bulk/Cohesive）、（ii）有效参数行（E_eff/ν_eff/α_eff/β_n/β_p）、（iii）8 行收敛对比表的每个 `OK/FAIL it D r` 字段、（iv）Summary 各方法行——全部与 `baseline_czm_standalone.md` 冻结表**在打印精度下逐位一致**。
 
-- [ ] **Step 2: 修复第 1 处——移除已废弃的 `nθ_czm`，显式开启 CZM 子网格**
+两点纪律（与冻结快照时的记录一致）：
 
-`tools/czm_baseline_probe.jl:39`，把
+1. **`FAIL` 条目是冻结行为**。`2bf2ac7` 实测为三方法 7/8 载荷水平收敛；不收敛的条目原样冻结，**不得**调参（改 tol/max_iter/n_load_steps）使其收敛后当作通过。若冻结表存在 FAIL 行而重跑变 OK（或反向），同样视为行为漂移，须停下定位。
+2. 工具在 `tools/verify_czm_standalone.jl:134` 重建网格时传 `param_dim`（与 `:66` 模板用的 `case.param` 不一致），且 `:66/:134` 用未合并的 `mesh_data.thermal2D`——这是工具自身的既有状态，**本 Task 不修**（改它会移动基线、混淆批次归因）；已登记为 findings 待办，见 Step 2。CZM 求解只用 bulk/cohesive 拓扑，不受 thermal 网格合并影响，门禁有效性不因此受损。
 
-```julia
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=40, nθ_czm=40, gsorder=2)
-```
+- [ ] **Step 2: 确认工具既有瑕疵已在 findings 登记（不改代码）**
 
-替换为
+该登记已于 2026-08-21（计划 v1.1 修订）写入 `docs/planning-with-files/堆芯塌陷力学建模/findings.md`"verify_czm_standalone.jl 既有瑕疵登记"节（`:66`/`:134` 传参不一致、用未合并 `thermal2D`、处置约定）。本步只核对条目仍在；若缺失按 findings 同名节补齐。
 
-```julia
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=40, gsorder=2, czm_enabled=true)
-```
+- [ ] **Step 3: 复核结论记入 progress.md**
 
-`czm_enabled=true` 是必需的：默认 `false` 时 `mesh_data.czm_submesh === nothing`，`create_czm_mesh` 会收到 `nothing`。力学周向分辨率由同一个 `nθ` 继承（AGENTS 9.3），不再有独立参数。
+在 `docs/planning-with-files/堆芯塌陷力学建模/progress.md` 追加一行复核记录（日期、HEAD、比对结果一致/不一致）。本 Task 不产生代码变更，无独立提交；若 Step 1 比对不一致，**停止**，先定位漂移来源（src 改动 or 工具改动 or 环境），不得进入 Task 2。
 
-- [ ] **Step 3: 修复第 2 处——`build_czm_cache` 改为 `param_cache` 签名**
-
-`tools/czm_baseline_probe.jl:69`，把
-
-```julia
-    cache = JuBat.build_czm_cache(czm_mesh, E_eff, ν_eff, param)
-```
-
-替换为
-
-```julia
-    cache = JuBat.build_czm_cache(czm_mesh, czm_param_cache)
-```
-
-`czm_param_cache` 已在第 48 行绑定。`fix_inner` 用默认 `true`，与 `Option.czm_fix_inner` 默认值一致。
-
-- [ ] **Step 4: 修复第 3 处——重建网格时使用归一化参数**
-
-`tools/czm_baseline_probe.jl:76`，把
-
-```julia
-        czm_mesh_fresh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, param_dim)
-```
-
-替换为
-
-```julia
-        czm_mesh_fresh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_data.thermal2D, case.param)
-```
-
-第 40 行的首次构造已经用 `case.param`（归一化后），第 76 行用 `param_dim`（有量纲）是不一致的，会让三方法快照建立在与实际求解路径不同的尺度上。
-
-- [ ] **Step 5: 修复第 4 处——本构层测试传 `CzmInterfaceParams`**
-
-`bilinear_traction_state` / `bilinear_tangent` 的第 4 个参数类型是 `CzmInterfaceParams`，而 `case.param.cohesive` 不是该类型，会 `MethodError`。
-
-`tools/czm_baseline_probe.jl:63`，删除这一行：
-
-```julia
-    czm_params = case.param.cohesive
-```
-
-`tools/czm_baseline_probe.jl:100-101`，把
-
-```julia
-    T_n, T_t, D, new_state = JuBat.bilinear_traction_state(δ_n, δ_t, state, czm_params)
-    dT = JuBat.bilinear_tangent(δ_n, δ_t, new_state, czm_params)
-```
-
-替换为
-
-```julia
-    T_n, T_t, D, new_state = JuBat.bilinear_traction_state(δ_n, δ_t, state, pe)
-    dT = JuBat.bilinear_tangent(δ_n, δ_t, new_state, pe)
-```
-
-`pe = czm_param_cache.by_interface[:PE_PCC]` 已在第 49 行绑定。
-
-- [ ] **Step 6: 运行探针，确认三方法全部产出**
-
-Run: `julia --startup-file=no --project=. tools/czm_baseline_probe.jl`
-
-Expected: 退出码 0；输出含 `BASELINE_START` 与 `BASELINE_END`；其间恰好 3 行，形如
-
-```
-method=basic: converged=true, iterations=N, residual_norm=R, D_max=..., D_mean=..., n_fractured=0
-method=load_substep: converged=true, iterations=..., ...
-method=arc_length: converged=true, iterations=..., ...
-```
-
-以及 `--- Constitutive Baseline ---` 下的 `constitutive:` 与 `tangent:` 两行。
-
-若某方法 `converged=false`：**不要**调参使其收敛。原样记录（这是真实的当前行为），并在快照文件中标注，以便 Batch 2 的 `K_G→0` 退化对比使用同一基准。若出现新的 `MethodError`，说明还有第 5 处 API 漂移，按报错栈定位后同样以"改调用、不改语义"的方式修复，并在快照文件中追记。
-
-- [ ] **Step 7: 写入快照文件**
-
-创建 `docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_probe.md`，内容为下面模板，把 `<...>` 替换为 Step 6 的实测值（原样复制打印精度，不重新格式化数字）：
-
-```markdown
-# CZM 基线探针快照（Batch 1 门禁基准）
-
-- **入口**: `tools/czm_baseline_probe.jl`
-- **命令**: `julia --startup-file=no --project=. tools/czm_baseline_probe.jl`
-- **环境**: Julia 1.11.2，1 thread，`--startup-file=no`
-- **Git HEAD**: `<git rev-parse HEAD 的输出>`
-- **网格**: `nθ=40`，`czm_enabled=true`；nodes=`<...>`，bulk elements=`<...>`，cohesive elements=`<...>`
-- **说明**: 本快照建立前，探针有 4 处过期 API 调用（`nθ_czm` 关键字、`build_czm_cache` 旧签名、`create_czm_mesh` 传有量纲 `param_dim`、本构层传 `param.cohesive`），全部为"改调用不改语义"的修复。此前不存在可运行的快照。
-
-## 有效参数
-
-| 量 | 值 |
-|---|---|
-| E_eff | `<...>` |
-| ν_eff | `<...>` |
-| α_eff | `<...>` |
-| β_n | `<...>` |
-| β_p | `<...>` |
-
-## 三方法快照（冻结）
-
-| method | converged | iterations | residual_norm | D_max | D_mean | n_fractured |
-|---|---|---:|---:|---:|---:|---:|
-| basic | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` |
-| load_substep | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` |
-| arc_length | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` | `<...>` |
-
-## 本构层快照（冻结）
-
-- 输入：`δ_n=1e-3`，`δ_t=0.5e-3`，界面 `:PE_PCC`
-- `constitutive: T_n=<...>, T_t=<...>, D=<...>`
-- `tangent: dT11=<...>, dT12=<...>, dT21=<...>, dT22=<...>`
-
-## 比较规则
-
-- Batch 1 起每批完成后重跑本探针，上两表全部数值必须在打印精度下逐位一致。
-- 不一致即视为行为漂移：停止该批，先定位或回退，不得以"数值接近"放行。
-- `converged=false` 的条目同样属于冻结行为，不得通过调参"修好"后当作通过。
-```
-
-- [ ] **Step 8: 提交**
-
-```bash
-git add tools/czm_baseline_probe.jl "docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_probe.md"
-git commit -m "fix(tools): 修复 czm_baseline_probe 四处过期 API 并冻结三方法快照"
-```
 
 ---
 
@@ -270,6 +144,44 @@ Expected: 两行不同定义 —— `156`（含 `K_G(\sigma)`，无 cohesive 项
 
 ```markdown
 其中 $x\in\{T,c_s,c_e\}$（含时间导数的场量）。位移 $u$ 与电势 $\phi$ 为准静态（无 $\dot u,\dot\phi$）；损伤 $D$ 由 §6.4 的位移阈值代数更新给出（max-history 式 (6.38') + 代数残差 (6.42')），无 $\dot D$ 显式，**不使用** KKT 互补条件。
+```
+
+**v1.1 扩充（评审发现：另有三处现行框架的 KKT 表述，原 Step 3 未覆盖而 Step 9 门禁会失败，一并清除）**：
+
+`Theory/07:19`（§1.1 未知量表），把
+
+```markdown
+| $D,\dot D$，KKT 条件 | §3.3 式 (3.28)–(3.30) | 损伤未知量 $R_D$ |
+```
+
+替换为
+
+```markdown
+| $D,\dot D$，位移阈值代数更新 | §3.3 式 (3.28)–(3.30) | 损伤未知量 $R_D$ |
+```
+
+`Theory/07:80`（§1.1 方程表），把
+
+```markdown
+| $R_D=0$ | $D$ | §3.3 式 (3.30) 损伤演化 + KKT | 内聚力一致性 |
+```
+
+替换为
+
+```markdown
+| $R_D=0$ | $D$ | §3.3 式 (3.30) 损伤演化（max-history 代数更新） | 内聚力一致性 |
+```
+
+`Theory/07:1162`（本章小结第 4 条；位于 §6.10 插入点之后，与 Step 7 同区域），把
+
+```markdown
+4. **§6.4 损伤演化变分**：KKT 条件（式 6.38）、互补问题形式（式 6.42–6.43）、$K_{Du},K_{DD}$（式 6.44, 6.66）；
+```
+
+替换为
+
+```markdown
+4. **§6.4 损伤演化变分**：位移阈值代数更新（式 6.38' max-history、式 6.42' 代数残差，v2.3 重写）、$K_{Du},K_{DD}$（式 6.44, 6.66）；
 ```
 
 - [ ] **Step 4: 统一 `K_uu` 定义（式 6.8 补全三项）**
@@ -396,7 +308,7 @@ Run: `rg -n "§6\.4\.5" "Theory/07_弱形式与求解.md"`
 Expected: 恰好 1 行。
 
 Run: `rg -n "KKT" "Theory/07_弱形式与求解.md"`
-Expected: 仅出现在 §6.4 说明"由 v2.2 的 KKT 互补形式重写为位移阈值代数更新"这类**历史沿革**表述中；不得出现"损伤由 KKT 约束/互补条件给出"这类**现行框架**表述。逐条人工确认每处命中属于前者。
+Expected: 仅出现在历史沿革表述中（§6.4 的 v2.3 修订说明块、"与 v2.2 KKT 形式对比"类措辞）。v1.1 清理后 `:19`、`:80`、`:573`、`:1162` 四处现行框架表述均已改为位移阈值代数更新措辞。逐条人工确认每处命中属于历史沿革；出现任何"损伤由 KKT 约束/互补条件给出"的现行表述即未完成。
 
 Run: `rg -n "K_\{uu\}=" "Theory/07_弱形式与求解.md"`
 Expected: 2 行（156 与 677 区域），两者三项完全一致，其中一处带 `(\text{同式 }6.8)`。
@@ -415,11 +327,11 @@ git commit -m "docs(theory): 07 消除同号小节与 K_uu 双定义，补柱面
 
 ## Task 3: 几何参数表按代码重算并标注字段来源（D14）
 
-对应 spec §9 Batch 0'' 的 ⑧。Theory 的几何数值疑因把 21700 的直径当半径，导致匝数、弧长、螺距角全线偏离；共 38 处命中，分布在 3 个文件。
+对应 spec §9 Batch 0'' 的 ⑧。Theory 的几何数值疑因把 21700 的直径当半径，导致匝数、弧长、螺距角全线偏离。命中分布（2026-08-21 评审实测，v1.1 订正原"共 38 处"）：`46.6|0.132` 共 22 处（`01`:7、`02`:15、`04`:0）；`284` 共 18 处（`01`:3、`02`:7、`03`:3、`04`:2、`06`:2、`CLAUDE.md`:1，其中 `06:69` 为 ρ≈2846 豁免）；`02` 另有 `\approx 6` 5 处。计数仅供对账，最终以 Step 7 的零命中门禁为准。
 
 **Files:**
 - Create: `tools/theory_geometry_recompute.jl`
-- Modify: `Theory/02_几何与运动学.md`（`46.6/0.132/6 m` 25 处 + `284` 7 处）、`Theory/01_符号与守恒律公理.md`（11 处 + `284` 3 处）、`Theory/04_CZM.md`（2 处 + `284` 2 处）、`Theory/03_本构理论.md`（`284` 与层厚典型值 3 处：`:44`、`:77`、`:331`）、`Theory/06_热源.md:281`（`284` 1 处）、`Theory/CLAUDE.md:17`（`284` 1 处）
+- Modify: `Theory/02_几何与运动学.md`（`46.6/0.132/6 m` 类命中 15+5 处 + `284` 7 处）、`Theory/01_符号与守恒律公理.md`（`46.6|0.132` 7 处 + `284` 3 处）、`Theory/04_CZM.md`（仅 `284` 2 处：`:34`、`:49`，无 `46.6/0.132` 命中）、`Theory/03_本构理论.md`（`284` 与层厚典型值 3 处：`:44`、`:77`、`:331`）、`Theory/06_热源.md:281`（`284` 1 处）、`Theory/CLAUDE.md:17`（`284` 1 处）
 
 `Theory/03_本构理论.md` 也被 Task 4 修改，但两者改的是不同行（Task 3 改层厚与 `t_repeat`，Task 4 改式 2.68 的 `A_eff`），按顺序执行不冲突。
 
@@ -585,7 +497,7 @@ Run: `rg -n "284" "Theory/03_本构理论.md" "Theory/06_热源.md" "Theory/CLAU
 Expected: `03` 3 行（`:44`、`:77`、`:331`）、`06` 1 行（`:281`）、`CLAUDE.md` 1 行（`:17`）。
 
 - `03:44` 与 `03:331` 同时含五个层厚典型值和 `t_repeat`，全部按 Step 3 对照表替换。这两处原文称"与 spec §1.3 一致"/"基于 LGM50 典型值"——改数值后该出处已不成立，把出处改为 `代码字段 PE.thickness/NE.thickness/SP.thickness/PCC.thickness/NCC.thickness（src/parameters/Jellyroll.jl）`。`Jellyroll.jl` 的层厚注释虽标 Chen2020，但与 `03` 原文引用的 LGM50 整理值不同，以代码为准（D14）。
-- `03:77` 只需把 `≈ 284 μm` 改为 `= 373.6 μm`。
+- `03:77` 除把 `≈ 284 μm` 改为 `= 373.6 μm` 外，句中"亦等于 spec §1.3 中的 $t_{\mathrm{repeat}}\approx 284\,\mu\mathrm{m}$"的出处引用随 `:44`/`:331` 同标准改写为代码字段 `cell.layer`（`src/parameters/Jellyroll.jl`）——旧出处数值已失效，不得保留（v1.1 补充）。
 - `06:281` 是热正反馈量级估计中的 $L=t_{\mathrm{repeat}}$，改数值；该估计只给量级，$284\to373.6$ μm 不改变量级结论，不要改结论。
 - `CLAUDE.md:17` 改为 `n ∈ [0, t_repeat] = 373.6 μm（代码字段 cell.layer）`。
 
@@ -725,7 +637,7 @@ Expected: ≥1 命中。
 Batch 0'' 是纯文档批次，理论上不影响代码。但 `test/` 中有若干前置条件测试会读取文档/参数，须确认。
 
 Run: `julia --startup-file=no --project=. test/runtests.jl`
-Expected: 除 `unit_czm_eigenstrain.jl`（既有 58/60，Global Constraints 已登记）之外全部通过。把完整的通过/失败清单记入下一步的 progress.md。
+Expected: 全套 22/22 通过（`e117fd2` 起 `unit_czm_eigenstrain.jl` 已修复，Global Constraints"测试套件现状"）。把完整的通过清单记入下一步的 progress.md。
 
 - [ ] **Step 7: 更新 planning 三件套与总索引，并提交**
 
@@ -1210,14 +1122,14 @@ Expected: PASS（既有测试，验证签名与形状未变）。
 - [ ] **Step 5: 跑全套测试**
 
 Run: `julia --startup-file=no --project=. test/runtests.jl`
-Expected: 除 `unit_czm_eigenstrain.jl`（既有 58/60）之外全部通过，且失败清单与 Task 4 Step 6 记录的完全相同——不得有新增失败项。
+Expected: 全套 22/22 通过——不得出现任何失败项（v1.1 起 eigenstrain 豁免作废，见 Global Constraints）。
 
-- [ ] **Step 6: 探针快照门禁**
+- [ ] **Step 6: 基线快照门禁（verify_czm_standalone，方案 B）**
 
-Run: `julia --startup-file=no --project=. tools/czm_baseline_probe.jl`
-Expected: 三方法行与本构两行的全部数值，与 `docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_probe.md` 冻结表逐位一致。
+Run（与冻结时同环境）: `GKSwstype=100 JULIA_NUM_THREADS=1 julia --startup-file=no --project=. tools/verify_czm_standalone.jl`
+Expected: 网格统计行（Nodes/Bulk/Cohesive）、有效参数行（E_eff/ν_eff/α_eff/β_n/β_p）、8 行收敛对比表的每个 `OK/FAIL it D r` 字段、Summary 三行的全部数值，与 `docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_standalone.md` 冻结表在打印精度下逐位一致。
 
-任一数值不同即停止：新入口在开关全关时应当是同一算式，出现差异说明接线改变了语义（例如 `K_bulk_cached` 未透传导致重新装配，或求和次序变化）。定位后修复，不得放行。
+任一数值不同（含 OK↔FAIL 翻转）即停止：新入口在开关全关时应当是同一算式，出现差异说明接线改变了语义（例如 `K_bulk_cached` 未透传导致重新装配，或求和次序变化）。定位后修复，不得放行；不得调参使冻结的 FAIL 条目"变好"后放行。
 
 - [ ] **Step 7: 强制行为基线门禁**
 
@@ -1225,14 +1137,14 @@ Run: `& 'D:\Julia-1.11.2\bin\julia.exe' --startup-file=no example\testexample.jl
 
 Expected: exit code 0；`thermal elements = 1682`、`thermal nodes = 1763`、`result time steps = 19`、`initial voltage = 4.0367 V`、`final voltage = 3.9438 V`、`voltage drop = 0.0929 V`、`final capacity = 0.0833 Ah`、`minimum temperature = 298.15 K`、`maximum temperature = 299.00 K`、`final CZM D_max = 0.0000%`、`final CZM D_mean = 0.0000%`、`maximum normal separation = 1.2557e-14 m`、`fractured elements = 0`、`CZM converged updates = 19 / 19`，全部与 `Simplify/baseline/testexample/README.md` 冻结表一致。
 
-Run: `Get-FileHash output\testexample_results.png -Algorithm SHA256`
+Run: `Get-FileHash output\testexample\testexample_results.png -Algorithm SHA256`
 Expected: `4BA6207C3CCF92DA5E37349EE335CF21A10A50B46A14CDA13DE95EEFA6CAE932`（大小写不敏感）。
 
 任一科学指标不一致 → 停止并回退本 Task（Global Constraints）。
 
 - [ ] **Step 8: 更新 planning 与基线记录**
 
-在 `docs/planning-with-files/堆芯塌陷力学建模/progress.md` 追加 Batch 1 小节：新入口签名、`assemble_coupled_system` 接线方式、Step 5/6/7 三道门禁的实测结果、以及与 spec §4.1 的两处批次归属偏差（`PlasticState`/`MechHistory`/cache 字段延后至消费批次）。
+在 `docs/planning-with-files/堆芯塌陷力学建模/progress.md` 追加 Batch 1 小节：新入口签名、`assemble_coupled_system` 接线方式、Step 5/6/7 三道门禁的实测结果、以及与 spec 的偏差记录（`PlasticState`/`MechHistory`/cache 字段延后至消费批次；`K_bulk_cached` 签名扩充，见"与 spec §4.1/§4.2 的批次归属与签名偏差"）。
 
 在 `Simplify/baseline.md` 的批次记录表追加一行：日期、"堆芯塌陷 Batch 1：bulk 残差/切线统一入口"、行数变化、定向测试结果、"所有科学指标及 PNG SHA-256 完全一致"、PASS。
 
@@ -1268,13 +1180,13 @@ git commit -m "refactor(czm): assemble_coupled_system 改走 bulk 残差/切线�
 | §4.1 `src/czm.jl` Batch 1（`assemble_coupled_system` 改走新入口） | Task 7 Step 3 |
 | §7 Batch 1 新测试（新入口 ≡ `K_bulk*u`、缓存不变量） | Task 6 Step 1、Task 7 Step 1 |
 | §7 Batch 1 验收门（`testexample` 基线一致） | Task 7 Step 7 |
-| §7 Batch 1 验收门（探针快照不变） | Task 1（建立）、Task 7 Step 6（比对） |
+| §7 Batch 1 验收门（基线快照不变；v1.3 起 `verify_czm_standalone.jl`） | Task 1（复核）、Task 7 Step 6（比对）；快照 `baseline_czm_standalone.md` 已于 2026-08-21 冻结 |
 | §5 兼容性契约（子选项全 false 时一致） | Task 5、Task 7 Step 6–7 |
 | §6 错误处理（不静默降级） | Task 6 Step 1/3 的槽位报错与维度检查 |
 
-**已知缺口（有意为之，理由见"与 spec §4.1 的两处批次归属偏差"）**：`PlasticState`、`MechHistory`、`CZMAssemblyCache` 的参考构型/机械状态字段不在本计划实现，随消费批次引入。
+**已知缺口（有意为之，理由见"与 spec §4.1/§4.2 的批次归属与签名偏差"）**：`PlasticState`、`MechHistory`、`CZMAssemblyCache` 的参考构型/机械状态字段不在本计划实现，随消费批次引入。
 
-**计划外新增的两项交付**：`tools/czm_baseline_probe.jl` 的修复（Batch 1 门禁的前提，spec 假定其可运行但实测已损坏）、`tools/theory_geometry_recompute.jl`（D14"防止再次漂移"的可复现实现）。两项都不改任何求解路径。
+**计划外新增的交付（v1.1 更新）**：`tools/theory_geometry_recompute.jl`（D14"防止再次漂移"的可复现实现，不改求解路径）；`docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_standalone.md`（方案 B 基线冻结，2026-08-21 随 v1.1 修订执行）。原计划的 `czm_baseline_probe.jl` 修复交付因对象被 `2bf2ac7` 删除而取消，由 `verify_czm_standalone.jl` 快照替代。
 
 **2. 占位符扫描**
 
@@ -1288,3 +1200,20 @@ git commit -m "refactor(czm): assemble_coupled_system 改走 bulk 残差/切线�
 - `create_czm_mesh(::CzmSubmesh, ::Mesh, param)`：Task 1 Step 4 与 Task 6 fixture 均传归一化 `case.param`。
 - Option 字段名在 Task 5 的测试、实现、以及 spec §5 表格中三处一致（`czm_geo_nonlinear`、`czm_winding_prestress`、`czm_j2_plasticity`、`czm_phi_bond`、`czm_continuous_feedback`、`czm_friction_mu`）。
 - `get_damage_statistics` 返回字段 `max_D`/`mean_D`/`n_fractured` 与探针打印一致（`src/CzmPostProcess.jl:12`）。
+
+---
+
+## 修订记录
+
+### v1.1（2026-08-21，计划评审后修订）
+
+评审结论与用户决策（方案 B）回填，共 8 项；评审确认无误的部分（src/Theory 行号与签名、几何重算数值、基线冻结值、TDD 步骤）未改动：
+
+1. **Task 1 重写（方案 B）**：`czm_baseline_probe.jl` 已被 `2bf2ac7` 删除，原"修复 4 处 API 漂移"交付取消；Batch 1 门禁改用 `verify_czm_standalone.jl`（spec v1.3 同步替换 §5/§7 引用）。基线快照 `baseline_czm_standalone.md` 已于本修订时冻结（HEAD `e117fd2`，实测三方法各 7/8 收敛、10.0 水平 FAIL 原样冻结）；Task 1 改为复核可复现性。工具既有瑕疵（`:66`/`:134` 传参不一致、用未合并 `thermal2D`）登记 findings，不修改不改基线。
+2. **PNG 基线路径更正**：`a2caecc`（AGENTS §9.9）后 testexample 输出于 `output/testexample/testexample_results.png`；Global Constraints 与 Task 7 Step 7 两处同步更正（原路径已过期，且存在哈希迁移前旧文件造成假通过的风险）。
+3. **测试套件预期更正**：`e117fd2` 已修复 `unit_czm_eigenstrain.jl`（60/60），全套 22/22；删除"既有失败登记"豁免，Task 4 Step 6、Task 7 Step 5 门禁改为全绿。
+4. **Task 2 KKT 清理扩充**：评审发现 `07:19`、`07:80`、`07:1162`（本章小结）三处现行框架 KKT 表述不在原 Step 3 范围，而 Step 9 自设门禁（"仅历史沿革"）会失败；三处补入 Step 3，Step 9 预期同步改写。
+5. **Task 3 计数订正**：实测 `46.6|0.132` 22 处（01:7、02:15、04:0）+ `284` 18 处（06:69 豁免）+ `\approx 6` 5 处；原"25/11/2、共 38 处"与实际不符（04 的"2 处"与"284 2 处"为同一组，疑笔误）。零命中门禁不变，计数仅供参考。
+6. **`03:77` 出处联动**：该行"亦等于 spec §1.3 中的 t_repeat≈284 μm"出处随 `:44`/`:331` 同标准改为代码字段溯源。
+7. **偏差登记补第三项**：`assemble_bulk_residual_tangent` 比 spec §4.2 冻结签名多 `K_bulk_cached` 关键字参数（零漂移快路径所需，内部接口），章节标题相应改为"与 spec §4.1/§4.2 的批次归属与签名偏差"。
+8. **评审方法说明**：上述各项均对当前 HEAD（`e117fd2`）逐项核实——含 `src/czm.jl` 引用代码逐字比对、Theory 行号逐行核对、几何数值独立复算、基线冻结表比对；非推测性修订。
