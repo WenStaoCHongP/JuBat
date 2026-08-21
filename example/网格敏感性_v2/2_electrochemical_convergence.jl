@@ -194,7 +194,7 @@ function main()
     end
 
     # ── 绘图 ──
-    out_dir = joinpath(root_dir, "output", "mesh_convergence")
+    out_dir = joinpath(root_dir, "output", "2_electrochemical_convergence")
     mkpath(out_dir)
 
     colors = [:blue, :orange, :green, :red]

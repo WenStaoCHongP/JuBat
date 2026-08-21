@@ -215,7 +215,7 @@ function main()
     end
 
     # ── 绘图 ──
-    out_dir = joinpath(root_dir, "output", "mesh_sensitivity")
+    out_dir = joinpath(root_dir, "output", "4_czm_mesh_sensitivity")
     mkpath(out_dir)
 
     colors = [:red, :orange, :green, :blue]

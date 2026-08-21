@@ -1,5 +1,9 @@
 using Plots, CSV
-include("../src/JuBat.jl") 
+include("../src/JuBat.jl")
+
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "output", "change_time_step")
+mkpath(OUTPUT_DIR)
+
 
 param_dim = JuBat.ChooseCell("LG M50")
 opt = JuBat.Option()
@@ -22,5 +26,5 @@ t3 = time()
 plot(result["time [s]"], result["cell voltage [V]"], label="constant dt", xlabel="time [s]", ylabel="cell voltage [V]",lw=1)
 plot!(result1["time [s]"], result1["cell voltage [V]"], label="auto dt", linestyle=:dot, lw=1) # shape=:circle
 print("running time: constant dt=$(t2-t1) s; auto dt=$(t3-t2) s; \n")
-savefig("change_dt.pdf")
+savefig(joinpath(OUTPUT_DIR, "change_dt.pdf"))
 # CSV.write("result2.csv", result2, bufsize=10^9)

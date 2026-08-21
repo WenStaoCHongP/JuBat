@@ -154,7 +154,7 @@ function main()
     
     # 导出到CSV
     println("\n导出数据到CSV文件...")
-    output_dir = joinpath(@__DIR__, "..", "output", "cycle_data")
+    output_dir = joinpath(@__DIR__, "..", "output", "export_cycle_data_example")
     
     files = JuBat.export_cycle_data_to_csv(export_data, output_dir; prefix="cycle")
     

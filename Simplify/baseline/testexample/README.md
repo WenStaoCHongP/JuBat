@@ -39,7 +39,7 @@
 
 - 必须 exit code 0。
 - 网格规模、时间步数和上表全部科学结果必须与基线在脚本打印精度下完全一致。
-- `output/testexample_results.png` 的 SHA-256 应一致；如图片哈希不同，即使打印指标相同也需检查曲线数据或绘图库环境变化。
+- `output/testexample/testexample_results.png`（2026-08-21 起 testexample.jl 按 AGENTS.md §9.9 输出到该子目录）的 SHA-256 应一致；如图片哈希不同，即使打印指标相同也需检查曲线数据或绘图库环境变化。
 - wall-clock、模块耗时、耗时占比不作严格相等要求，只记录趋势。
 - 任一科学指标不一致时，该简化批次不得继续，先定位差异或回滚。
 - 本次未生成 `output/simple_coupling_debug.log`，因此该文件不属于基线。

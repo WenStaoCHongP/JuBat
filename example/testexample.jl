@@ -54,7 +54,7 @@ function main()
     opt.per_element_spme = true
 
     opt.debug_coupling = true
-    opt.debug_log_path = "output/simple_coupling_debug.log"
+    opt.debug_log_path = joinpath(@__DIR__, "..", "output", "testexample", "simple_coupling_debug.log")
     opt.czm_enabled = true
     opt.czm_fix_inner = false
     opt.czm_iter_method = "basic"
@@ -190,7 +190,7 @@ function main()
     # ========================================================================
     println("\n[绘图]")
 
-    output_dir = joinpath(@__DIR__, "..", "output")
+    output_dir = joinpath(@__DIR__, "..", "output", "testexample")
     mkpath(output_dir)
 
     # ── 图1: 温度及电压随容量变化 ──

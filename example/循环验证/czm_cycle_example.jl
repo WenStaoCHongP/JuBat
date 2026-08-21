@@ -28,6 +28,9 @@ using LinearAlgebra, SparseArrays, Statistics, Plots, Printf
 include(joinpath(@__DIR__, "../../src/JuBat.jl"))
 using .JuBat
 
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "..", "output", "czm_cycle_example")
+mkpath(OUTPUT_DIR)
+
 function main()
     println("="^70)
     println("充放电循环CZM损伤累积仿真")
@@ -167,7 +170,7 @@ function main()
     println("\n[5/5] 生成结果图像...")
     
     # 确保输出目录存在
-    isdir("output") || mkdir("output")
+    isdir(OUTPUT_DIR) || mkpath(OUTPUT_DIR)
     
     cycles = result.cycle_idx
     
@@ -190,8 +193,8 @@ function main()
         plot!(p1[2], cycles, result.D_mean .* 100,
               label="D_mean", linewidth=2.5, color=:blue, linestyle=:dash)
         
-        savefig(p1, "output/cycle_capacity_damage.png")
-        println("  OK: 保存 output/cycle_capacity_damage.png")
+        savefig(p1, joinpath(OUTPUT_DIR, "cycle_capacity_damage.png"))
+        println("  OK: 保存 ", joinpath(OUTPUT_DIR, "cycle_capacity_damage.png"))
         
         # 图2: 温度和库伦效率
         p2 = plot(layout=(2, 1), size=(800, 600))
@@ -205,12 +208,12 @@ function main()
               xlabel="Cycle Number", ylabel="CE (%)",
               label="Coulombic Efficiency", linewidth=2, marker=:circle)
         
-        savefig(p2, "output/cycle_temperature_ce.png")
-        println("  OK: 保存 output/cycle_temperature_ce.png")
+        savefig(p2, joinpath(OUTPUT_DIR, "cycle_temperature_ce.png"))
+        println("  OK: 保存 ", joinpath(OUTPUT_DIR, "cycle_temperature_ce.png"))
         
         # 图3: 综合汇总
         try
-            p_all = JuBat.plot_cycling_results(result; save_path="output/")
+            p_all = JuBat.plot_cycling_results(result; save_path=OUTPUT_DIR)
         catch
             println("  WARN: 综合图生成失败")
         end
@@ -234,9 +237,9 @@ function main()
     end
     
     println("\n生成的图像:")
-    println("  1. output/cycle_capacity_damage.png - 容量衰减和损伤演化")
-    println("  2. output/cycle_temperature_ce.png - 温度和库伦效率")
-    println("  3. output/cycling_summary.png - 综合汇总图")
+    println("  1. ", joinpath(OUTPUT_DIR, "cycle_capacity_damage.png"), " - 容量衰减和损伤演化")
+    println("  2. ", joinpath(OUTPUT_DIR, "cycle_temperature_ce.png"), " - 温度和库伦效率")
+    println("  3. ", joinpath(OUTPUT_DIR, "cycling_summary.png"), " - 综合汇总图")
     
     println("\n" * "="^70)
     

@@ -269,7 +269,7 @@ function compare_and_visualize(jellyroll_result, ring_result)
     println("第三部分：结果对比与可视化")
     println(SEP)
 
-    out_dir = joinpath(@__DIR__, "..", "..", "output", "thermal_verify")
+    out_dir = joinpath(@__DIR__, "..", "..", "output", "jellyroll_vs_ring_thermal_compare")
     isdir(out_dir) || mkpath(out_dir)
 
     t = jellyroll_result.t

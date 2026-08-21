@@ -73,7 +73,7 @@ function mesh_convergence(param_dim, t_end)
 		V = run.result["cell voltage [V]"]
 		@printf("  %6d | %13.4f | %9.4f\n", nθ, T_mean[end], V[end])
 		if nθ == ntheta_list[1]
-			out_dir = joinpath(root_dir, "output")
+			out_dir = joinpath(@__DIR__, "..", "..", "output", "热网格收敛性检查")
 			isdir(out_dir) || mkpath(out_dir)
 			plot_mesh_outline(run.mesh, joinpath(out_dir, "spme_thermal_mesh.png"))
 		end

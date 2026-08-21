@@ -19,6 +19,9 @@
 using LinearAlgebra, SparseArrays, Statistics, Plots, Printf
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "..", "output", "SPMe_soc_example")
+mkpath(OUTPUT_DIR)
+
 function main()
     println("="^80)
     println("截止电压逻辑测试：单元放电达到截止时的系统行为")
@@ -327,7 +330,7 @@ function main()
     scatter!([t[end]], [V[end]], label="Termination Point", 
              markersize=8, color=:red, markershape=:star5)
     
-    savefig(p1, "testexample_cutoff_voltage.png")
+    savefig(p1, joinpath(OUTPUT_DIR, "testexample_cutoff_voltage.png"))
     println("  ✓ 保存: testexample_cutoff_voltage.png")
     
     # 图2：逐单元电流演化
@@ -348,7 +351,7 @@ function main()
         
         hline!([0.0], label="Zero Current", linestyle=:dash, color=:black)
         
-        savefig(p2, "testexample_element_currents.png")
+        savefig(p2, joinpath(OUTPUT_DIR, "testexample_element_currents.png"))
         println("  ✓ 保存: testexample_element_currents.png")
         
         # 图3：电流分布热图
@@ -357,7 +360,7 @@ function main()
                      title="Element Current Distribution (A)",
                      color=:viridis)
         
-        savefig(p3, "testexample_current_heatmap.png")
+        savefig(p3, joinpath(OUTPUT_DIR, "testexample_current_heatmap.png"))
         println("  ✓ 保存: testexample_current_heatmap.png")
     
     # 图4：SOC演化
@@ -385,7 +388,7 @@ function main()
               label="Positive Electrode", fillalpha=0.3, linewidth=2, color=:red,
               xlabel="Time (s)", ylabel="SOC (θ)", title="Positive Electrode SOC")
         
-        savefig(p4, "testexample_soc_evolution.png")
+        savefig(p4, joinpath(OUTPUT_DIR, "testexample_soc_evolution.png"))
         println("  ✓ 保存: testexample_soc_evolution.png")
     
     # 图5：电流异质性演化
@@ -396,7 +399,7 @@ function main()
               label="Current Heterogeneity", linewidth=2, 
               title="Current Distribution Heterogeneity")
     
-    savefig(p5, "testexample_current_heterogeneity.png")
+    savefig(p5, joinpath(OUTPUT_DIR, "testexample_current_heterogeneity.png"))
     println("  ✓ 保存: testexample_current_heterogeneity.png")
     
     # ========================================================================

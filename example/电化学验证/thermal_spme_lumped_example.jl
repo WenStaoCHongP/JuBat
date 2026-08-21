@@ -3,6 +3,9 @@ using Plots, CSV
 const PROJECT_ROOT = normpath(joinpath(@__DIR__, "..", ".."))
 include(joinpath(PROJECT_ROOT, "src", "JuBat.jl"))
 
+const OUTPUT_DIR = joinpath(PROJECT_ROOT, "output", "thermal_spme_lumped_example")
+mkpath(OUTPUT_DIR)
+
 function build_case(cell_name::String)
     param_dim = JuBat.ChooseCell(cell_name)
     param_dim.cell.v_l = 2.5
@@ -50,8 +53,8 @@ function main()
     plot!(pV, ref_capacity, ref_voltage, label="PyBaMM SPMe LGM50 1C", linestyle=:dash, linecolor=:red, linewidth=2)
     plot!(pT, ref_capacity, ref_temperature, label="PyBaMM SPMe LGM50 1C", linestyle=:dash, linecolor=:red, linewidth=2)
 
-    savefig(pV, "thermal_spme_lumped_example-V.pdf")
-    savefig(pT, "thermal_spme_lumped_example-T.pdf")
+    savefig(pV, joinpath(OUTPUT_DIR, "thermal_spme_lumped_example-V.pdf"))
+    savefig(pT, joinpath(OUTPUT_DIR, "thermal_spme_lumped_example-T.pdf"))
 end
 
 main()

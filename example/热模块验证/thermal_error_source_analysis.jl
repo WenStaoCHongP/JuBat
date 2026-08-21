@@ -262,7 +262,9 @@ function main()
     @printf("  PyBaMM: %.6f K -> %.6f K, ΔT = %.6f K\n", T_ref_on_t[1], T_ref_on_t[end], T_ref_on_t[end] - T_ref_on_t[1])
 
     # 写 CSV
-    out_csv = joinpath(@__DIR__, "../output/thermal_error_breakdown.csv")
+    out_dir = joinpath(@__DIR__, "..", "..", "output", "thermal_error_source_analysis")
+    isdir(out_dir) || mkpath(out_dir)
+    out_csv = joinpath(out_dir, "thermal_error_breakdown.csv")
     open(out_csv, "w") do io
         println(io, "time_s,T_jubat_vol_K,T_pybamm_interp_K,P_internal_W,P_boundary_outer_W,P_boundary_surface_W,P_boundary_total_W,P_net_jubat_W,P_net_pybamm_equiv_W,P_Q_rxn_NE_W,P_Q_rev_NE_W,P_Q_ohm_s_NE_W,P_Q_ohm_e_NE_W,P_Q_SP_W,P_Q_rxn_PE_W,P_Q_rev_PE_W,P_Q_ohm_s_PE_W,P_Q_ohm_e_PE_W,P_Q_PCC_W,P_Q_NCC_W")
         @inbounds for k in 1:nstep
@@ -289,12 +291,12 @@ function main()
     plot!(p1, t, P_boundary_total, label="JuBat Boundary Loss", linewidth=2)
     plot!(p1, t, P_net_jubat, label="JuBat Net", linewidth=2, color=:black)
     plot!(p1, t, P_net_ref, label="PyBaMM Net (equiv)", linewidth=2, linestyle=:dash, color=:red)
-    savefig(p1, joinpath(@__DIR__, "../output/thermal_error_power_breakdown.png"))
+    savefig(p1, joinpath(out_dir, "thermal_error_power_breakdown.png"))
 
     # 图2：温度对比
     p2 = plot(t, T_vol, label="JuBat Volume-Avg T", linewidth=2, xlabel="Time (s)", ylabel="Temperature (K)", title="Temperature Comparison")
     plot!(p2, t, T_ref_on_t, label="PyBaMM Interp T", linewidth=2, linestyle=:dash)
-    savefig(p2, joinpath(@__DIR__, "../output/thermal_error_temperature_compare.png"))
+    savefig(p2, joinpath(out_dir, "thermal_error_temperature_compare.png"))
 
     p3 = plot(t, P_components["thermal2D Q_rxn_NE [W/m3]"], label="Q_rxn_NE", linewidth=2,
               xlabel="Time (s)", ylabel="Power (W)", title="JuBat Internal Heat Components")
@@ -302,7 +304,7 @@ function main()
     plot!(p3, t, P_components["thermal2D Q_ohm_e_NE [W/m3]"], label="Q_ohm_e_NE", linewidth=2)
     plot!(p3, t, P_components["thermal2D Q_ohm_e_PE [W/m3]"], label="Q_ohm_e_PE", linewidth=2)
     plot!(p3, t, P_components["thermal2D Q_SP [W/m3]"], label="Q_SP", linewidth=2)
-    savefig(p3, joinpath(@__DIR__, "../output/thermal_error_component_breakdown.png"))
+    savefig(p3, joinpath(out_dir, "thermal_error_component_breakdown.png"))
 
     println("已写出: output/thermal_error_power_breakdown.png")
     println("已写出: output/thermal_error_temperature_compare.png")

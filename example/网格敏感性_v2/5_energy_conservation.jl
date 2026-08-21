@@ -170,7 +170,7 @@ function main()
 
     # ── 绘图 ──
     println("\n[5] 绘图...")
-    out_dir = joinpath(root_dir, "output", "mesh_convergence")
+    out_dir = joinpath(root_dir, "output", "5_energy_conservation")
     mkpath(out_dir)
 
     p1 = plot(xlabel="Time [s]", ylabel="Energy [J]",

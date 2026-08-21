@@ -254,7 +254,7 @@ function main()
     # ====================================================================
     println("\n[绘图]")
 
-    output_dir = joinpath(@__DIR__, "..", "output")
+    output_dir = joinpath(@__DIR__, "..", "output", "jellyroll_stress_displacement")
     mkpath(output_dir)
 
     nT = length(fields_per_ti)

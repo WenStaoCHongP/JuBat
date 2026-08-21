@@ -381,7 +381,7 @@ function main()
     results = (FEM_Q4=fem, Polar_FVM=polar)
 
     # 输出目录
-    out_dir = normpath(joinpath(@__DIR__, "..", "..", "output", "thermal_ring_verify"))
+    out_dir = normpath(joinpath(@__DIR__, "..", "..", "output", "thermal_ring_verify_pure"))
     isdir(out_dir) || mkpath(out_dir)
 
     # 打印误差报告

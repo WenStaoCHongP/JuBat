@@ -16,6 +16,9 @@ using LinearAlgebra, SparseArrays, Statistics, Plots, Printf
 include(joinpath(@__DIR__, "../../src/JuBat.jl"))
 using .JuBat
 
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "..", "output", "SPMe_Thermal_example")
+mkpath(OUTPUT_DIR)
+
 function element_areas(mesh)
     A = zeros(Float64, size(mesh.element, 1))
     ngs = length(mesh.gs.detJ)
@@ -190,7 +193,6 @@ function main()
 
     # Base mesh for visualization
     ntheta_base = 80
-    mesh_out = joinpath("output", "spme_thermal_mesh.png")
 
     # Run convergence test (1C)
     mesh_convergence(param_dim, 3600.0)
@@ -205,8 +207,7 @@ function main()
 
         # Mesh outline (once)
         if c == cases[1]
-            isdir("output") || mkpath("output")
-            plot_mesh_outline(mesh, mesh_out)
+            plot_mesh_outline(mesh, joinpath(OUTPUT_DIR, "spme_thermal_mesh.png"))
         end
 
         # 60 s temperature cloud
@@ -214,7 +215,7 @@ function main()
         t = result["time [s]"]
         _, idx = findmin(abs.(t .- 60.0))
         T_nodes_60 = ndims(T_nodes_hist) == 2 ? T_nodes_hist[:, idx] : T_nodes_hist
-        out_path = joinpath("output", @sprintf("spme_thermal_T60_%.1fC.png", c.crate))
+        out_path = joinpath(OUTPUT_DIR, @sprintf("spme_thermal_T60_%.1fC.png", c.crate))
         plot_temperature_cloud(mesh, T_nodes_60, out_path;
             title=@sprintf("T at 60 s (%.1fC)", c.crate))
 
@@ -239,14 +240,14 @@ function main()
     for (crate, (cap, Tmean)) in sort(collect(T_mean_curves))
         plot!(p, cap, Tmean, lw=2, label=@sprintf("%.1fC", crate))
     end
-    savefig(p, joinpath("output", "spme_thermal_Tmean_vs_capacity.png"))
+    savefig(p, joinpath(OUTPUT_DIR, "spme_thermal_Tmean_vs_capacity.png"))
 
     println("\nOutputs:")
-    println("  - output/spme_thermal_mesh.png")
-    println("  - output/spme_thermal_T60_0.3C.png")
-    println("  - output/spme_thermal_T60_0.7C.png")
-    println("  - output/spme_thermal_T60_1.0C.png")
-    println("  - output/spme_thermal_Tmean_vs_capacity.png")
+    println("  - ", joinpath(OUTPUT_DIR, "spme_thermal_mesh.png"))
+    println("  - ", joinpath(OUTPUT_DIR, "spme_thermal_T60_0.3C.png"))
+    println("  - ", joinpath(OUTPUT_DIR, "spme_thermal_T60_0.7C.png"))
+    println("  - ", joinpath(OUTPUT_DIR, "spme_thermal_T60_1.0C.png"))
+    println("  - ", joinpath(OUTPUT_DIR, "spme_thermal_Tmean_vs_capacity.png"))
 end
 
 main()

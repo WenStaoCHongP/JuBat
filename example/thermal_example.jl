@@ -1,5 +1,9 @@
 using Plots, CSV, DataFrames
-include("../src/JuBat.jl") 
+include("../src/JuBat.jl")
+
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "output", "thermal_example")
+mkpath(OUTPUT_DIR)
+
 param_dim = JuBat.ChooseCell("LG M50")
 param_dim.cell.v_l = 2.5
 opt = JuBat.Option()
@@ -32,5 +36,5 @@ for i in eachindex(Crates)
     plot!(pT, result1[:,1]/3600*Crates[i]*5, result1[:,4],label=string(Crates[i]) * "C (PyBaMM)", linestyle =:dot, linecolor=colors[i], lw=2)
 end
 
-savefig(pV, "thermal example-V.pdf")
-savefig(pT, "thermal example-T.pdf")
+savefig(pV, joinpath(OUTPUT_DIR, "thermal example-V.pdf"))
+savefig(pT, joinpath(OUTPUT_DIR, "thermal example-T.pdf"))

@@ -26,6 +26,9 @@
 using LinearAlgebra, SparseArrays, Statistics, Plots, Printf
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "..", "output", "cycle_example")
+mkpath(OUTPUT_DIR)
+
 function main()
     println("="^70)
     println("电化学-热耦合循环仿真验证")
@@ -160,7 +163,7 @@ function main()
     println("\n[5/5] 生成结果图像...")
     
     # 确保输出目录存在
-    isdir("output") || mkdir("output")
+    isdir(OUTPUT_DIR) || mkpath(OUTPUT_DIR)
     
     cycles = result.cycle_idx
     
@@ -182,8 +185,8 @@ function main()
               label="Max Temperature", linewidth=2, marker=:circle, markersize=6,
               color=:red)
         
-        savefig(p1, "output/cycle_example_results.png")
-        println("  OK: 保存 output/cycle_example_results.png")
+        savefig(p1, joinpath(OUTPUT_DIR, "cycle_example_results.png"))
+        println("  OK: 保存 ", joinpath(OUTPUT_DIR, "cycle_example_results.png"))
         
         # 图2: 库伦效率
         if length(cycles) > 0
@@ -193,8 +196,8 @@ function main()
                       title="Coulombic Efficiency",
                       legend=:bottomleft)
             
-            savefig(p2, "output/cycle_example_ce.png")
-            println("  OK: 保存 output/cycle_example_ce.png")
+            savefig(p2, joinpath(OUTPUT_DIR, "cycle_example_ce.png"))
+            println("  OK: 保存 ", joinpath(OUTPUT_DIR, "cycle_example_ce.png"))
         end
     end
     
@@ -246,8 +249,8 @@ function main()
     end
     
     println("\n  【生成的图像】")
-    println("    1. output/cycle_example_results.png - 容量和温度")
-    println("    2. output/cycle_example_ce.png - 库伦效率")
+    println("    1. ", joinpath(OUTPUT_DIR, "cycle_example_results.png"), " - 容量和温度")
+    println("    2. ", joinpath(OUTPUT_DIR, "cycle_example_ce.png"), " - 库伦效率")
     
     println("\n" * "="^70)
     println("验证完成")

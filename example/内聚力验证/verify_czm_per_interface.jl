@@ -83,8 +83,9 @@ println("✓ 单元级验证通过")
 # 可选：保存 σ-δ 曲线 CSV
 if haskey(ENV, "SAVE_CSV")
     using DelimitedFiles
-    mkpath("output")
-    writedlm("output/czm_pe_pcc_sigma_delta.csv",
+    out_dir = joinpath(@__DIR__, "..", "..", "output", "verify_czm_per_interface")
+    mkpath(out_dir)
+    writedlm(joinpath(out_dir, "czm_pe_pcc_sigma_delta.csv"),
              [δ_n_history σ_n_history D_history], ',')
-    println("σ-δ 曲线已保存到 output/czm_pe_pcc_sigma_delta.csv")
+    println("σ-δ 曲线已保存到 ", joinpath(out_dir, "czm_pe_pcc_sigma_delta.csv"))
 end

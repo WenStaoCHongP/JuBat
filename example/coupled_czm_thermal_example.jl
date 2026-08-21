@@ -155,9 +155,9 @@ result = JuBat.solve_cycling(case, cycle_opt, czm_mesh; verbose=true, save_detai
 # ========================================================================
 println("\n[7.5] 导出CSV文件...")
 
-output_dir = joinpath(@__DIR__, "..", "output")
+output_dir = joinpath(@__DIR__, "..", "output", "coupled_czm_thermal_example")
 mkpath(output_dir)
-csv_dir = joinpath(output_dir, "csv", "czm_study_2")
+csv_dir = joinpath(output_dir, "czm_study_2")
 
 # 配置CSV导出选项：仅输出每个阶段首尾步，指定循环完整输出
 csv_opt = JuBat.CsvExportOptions(

@@ -392,7 +392,7 @@ function main()
     @printf("  - 建议: 使用等效换热系数 h_eff ≈ %.1f × h 可使 2D 散热与集总模型等效\n",
             mean((T2d .- Tamb) ./ (T_edge .- Tamb .+ 1e-6)))
 
-    out_dir = joinpath(@__DIR__, "../../output")
+    out_dir = joinpath(@__DIR__, "..", "..", "output", "thermal_equivalent_lumped_compare")
     isdir(out_dir) || mkpath(out_dir)
     out_csv = joinpath(out_dir, "thermal_equivalent_lumped_compare.csv")
     open(out_csv, "w") do io

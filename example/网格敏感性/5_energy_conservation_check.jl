@@ -203,7 +203,7 @@ function main()
     # [5] 绘图
     # ================================================================
     println("\n[5] 绘图...")
-    out_dir = joinpath(root_dir, "output", "mesh_sensitivity")
+    out_dir = joinpath(root_dir, "output", "5_energy_conservation_check")
     mkpath(out_dir)
 
     # 图1: 各能量分量随时间变化

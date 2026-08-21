@@ -1,5 +1,9 @@
 using Plots, CSV, DataFrames, Interpolations
-include("../src/JuBat.jl") 
+include("../src/JuBat.jl")
+
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "output", "change_current")
+mkpath(OUTPUT_DIR)
+
 param_dim = JuBat.ChooseCell("LG M50")
 param_dim.cell.v_h = 4.3
 opt = JuBat.Option()
@@ -21,7 +25,7 @@ path = pwd() * "/src/data/"
 result = CSV.read(path * "pybamm_drive_P2D_UDDS.csv", DataFrame, header = 1)
 pybamm_drive = Matrix(result)
 plot!(pybamm_drive[:,1], pybamm_drive[:,3],label="PyBaMM", linestyle=:dot, linecolor=:red, lw=2, title="Drive cycle UDDS", legend=(0.8,0.95))
-savefig("drive_UDDS_V.pdf")
+savefig(joinpath(OUTPUT_DIR, "drive_UDDS_V.pdf"))
 
 # plot(times, current,xlabel="time [s]", ylabel="current [A]", label="Current", fontsize=12, size=(400,300), title="Drive cycle UDDS")
 # savefig("drive_UDDS_I.pdf")

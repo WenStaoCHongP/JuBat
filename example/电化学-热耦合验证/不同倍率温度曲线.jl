@@ -161,7 +161,7 @@ function main()
 		(crate=1.0, t_end=3600.0)
 	]
 
-	out_dir = joinpath(root_dir, "output")
+	out_dir = joinpath(root_dir, "output", "不同倍率温度曲线")
 	csv_dir = joinpath(out_dir, "csv")
 	isdir(out_dir) || mkpath(out_dir)
 

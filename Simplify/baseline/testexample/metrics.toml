@@ -40,7 +40,8 @@ czm_updates = 19
 czm_converged_updates = 19
 
 [artifact]
-result_png_path = "output/testexample_results.png"
+# 2026-08-21: testexample.jl 输出迁移至 output/testexample/（AGENTS.md §9.9）；PNG 内容与 SHA 未变，路径随脚本同步更新
+result_png_path = "output/testexample/testexample_results.png"
 result_png_bytes = 96438
 result_png_sha256 = "4ba6207c3ccf92da5e37349ee335cf21a10a50b46a14cda13de95eefa6cae932"
 debug_log_produced = false

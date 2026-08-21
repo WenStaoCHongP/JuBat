@@ -1,5 +1,9 @@
 using Plots, CSV, DataFrames
-include("../src/JuBat.jl") 
+include("../src/JuBat.jl")
+
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "output", "mechanical_example")
+mkpath(OUTPUT_DIR)
+
 param_dim = JuBat.ChooseCell("LG M50")
 opt = JuBat.Option()
 data_path = joinpath(@__DIR__, "..", "src", "data", "pybamm_SPM_1C_Stress_t.csv")
@@ -18,4 +22,4 @@ pybamm_drive = Matrix(result2)
 plot(result1["time [s]"], result1["negative particle surface tangential stress[Pa]"]', label="Jubat", xlabel="time [s]", ylabel="negative particle surface tangential stress[Pa]", lw=1)
 plot!(pybamm_drive[:,1], pybamm_drive[:,2],label="PyBaMM", linestyle=:dot, linecolor=:red, lw=2, title="mechanical validation", legend=(0.8,0.95))
 
-savefig("mechanical_example_SPM.pdf")
+savefig(joinpath(OUTPUT_DIR, "mechanical_example_SPM.pdf"))

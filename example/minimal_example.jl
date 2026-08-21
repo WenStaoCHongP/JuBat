@@ -1,5 +1,9 @@
 using Plots, CSV, DataFrames
-include("../src/JuBat.jl") 
+include("../src/JuBat.jl")
+
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "output", "minimal_example")
+mkpath(OUTPUT_DIR)
+
 param_dim = JuBat.ChooseCell("LG M50")
 opt = JuBat.Option()
 Crate = 1
@@ -10,4 +14,4 @@ opt.model = "P2D" # choose model, other options are "SPM" or "SPMe"
 case1 = JuBat.SetCase(param_dim, opt)
 result = JuBat.Solve(case1)
 plot(result["time [s]"], result["cell voltage [V]"], label="P2D", xlabel="time [s]", ylabel="cell voltage [V]", lw=1)
-savefig("minimal_example.pdf")
+savefig(joinpath(OUTPUT_DIR, "minimal_example.pdf"))

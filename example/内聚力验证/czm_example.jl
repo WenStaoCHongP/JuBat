@@ -29,6 +29,9 @@ using LinearAlgebra, Printf, Plots
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
 
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "..", "output", "czm_example")
+mkpath(OUTPUT_DIR)
+
 """
     create_czm_test_params()
 
@@ -405,7 +408,7 @@ function plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoid
           label="D", linewidth=2.5, color=:purple,
           legend=:bottomright, grid=true)
     
-    savefig(p1, "output/czm_monotonic_loading.png")
+    savefig(p1, joinpath(OUTPUT_DIR, "czm_monotonic_loading.png"))
     println("  OK: 保存 output/czm_monotonic_loading.png")
     
     # ====================================================================
@@ -452,7 +455,7 @@ function plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoid
           label="D", linewidth=1.5, color=:purple,
           grid=true, legend=:bottomright)
     
-    savefig(p2, "output/czm_cyclic_hysteresis.png")
+    savefig(p2, joinpath(OUTPUT_DIR, "czm_cyclic_hysteresis.png"))
     println("  OK: 保存 output/czm_cyclic_hysteresis.png")
     
     # ====================================================================
@@ -505,7 +508,7 @@ function plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoid
           title="(d) Mixed-Mode: Tangential Component",
           legend=:topright, grid=true)
     
-    savefig(p3, "output/czm_mixed_mode.png")
+    savefig(p3, joinpath(OUTPUT_DIR, "czm_mixed_mode.png"))
     println("  OK: 保存 output/czm_mixed_mode.png")
     
     # ====================================================================
@@ -547,7 +550,7 @@ function plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoid
           label="D(t)", linewidth=1.5, color=:red,
           grid=true)
     
-    savefig(p4, "output/czm_sinusoidal_loading.png")
+    savefig(p4, joinpath(OUTPUT_DIR, "czm_sinusoidal_loading.png"))
     println("  OK: 保存 output/czm_sinusoidal_loading.png")
     
     # ====================================================================
@@ -573,7 +576,7 @@ function plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoid
           title="CZM Hysteresis Comparison",
           legend=:topright, grid=true)
     
-    savefig(p5, "output/czm_hysteresis_comparison.png")
+    savefig(p5, joinpath(OUTPUT_DIR, "czm_hysteresis_comparison.png"))
     println("  OK: 保存 output/czm_hysteresis_comparison.png")
     
     # ====================================================================
@@ -626,7 +629,7 @@ function plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoid
                    ((δ_0 + δ_c) / 2, T_max * 0.55, text("Softening", 9, :center)),
                    (δ_c * 1.05, T_max * 0.15, text("Fractured", 9, :left))])
     
-    savefig(p6, "output/czm_bilinear_schematic.png")
+    savefig(p6, joinpath(OUTPUT_DIR, "czm_bilinear_schematic.png"))
     println("  OK: 保存 output/czm_bilinear_schematic.png")
     
     # 图7：加载示意图
@@ -678,18 +681,18 @@ function plot_all_results(monotonic_data, cyclic_data, mixed_mode_data, sinusoid
           linewidth=3, color=:purple, label="Sin")
     hline!(p7[4], [0.5], linestyle=:dash, color=:gray, label="Mean")
 
-    savefig(p7, "output/czm_loading_schematics.png")
+    savefig(p7, joinpath(OUTPUT_DIR, "czm_loading_schematics.png"))
     println("  OK: 保存 output/czm_loading_schematics.png")
 
     # 保存SVG格式
     try
-        savefig(p1, "output/czm_monotonic_loading.svg")
-        savefig(p2, "output/czm_cyclic_hysteresis.svg")
-        savefig(p3, "output/czm_mixed_mode.svg")
-        savefig(p4, "output/czm_sinusoidal_loading.svg")
-        savefig(p5, "output/czm_hysteresis_comparison.svg")
-        savefig(p6, "output/czm_bilinear_schematic.svg")
-        savefig(p7, "output/czm_loading_schematics.svg")
+        savefig(p1, joinpath(OUTPUT_DIR, "czm_monotonic_loading.svg"))
+        savefig(p2, joinpath(OUTPUT_DIR, "czm_cyclic_hysteresis.svg"))
+        savefig(p3, joinpath(OUTPUT_DIR, "czm_mixed_mode.svg"))
+        savefig(p4, joinpath(OUTPUT_DIR, "czm_sinusoidal_loading.svg"))
+        savefig(p5, joinpath(OUTPUT_DIR, "czm_hysteresis_comparison.svg"))
+        savefig(p6, joinpath(OUTPUT_DIR, "czm_bilinear_schematic.svg"))
+        savefig(p7, joinpath(OUTPUT_DIR, "czm_loading_schematics.svg"))
         println("  OK: SVG格式图像已保存")
     catch e
         println("  WARN: SVG格式保存失败")
