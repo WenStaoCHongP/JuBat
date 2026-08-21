@@ -210,3 +210,8 @@ Batch 0'' 的 8 项与 Batch 7 的 5 项清单见 spec §9。
 - `:66/:134` 传未合并的 `mesh_data.thermal2D`（求解路径在 `czm_enabled=true` 时用 `thermal2D_merged`）；CZM 独立求解不消费该映射，仅 `cohesive_to_thermal` 尺寸受影响，门禁不受损。
 - 处置：待 Batch 1 完成后视需要单独小提交统一（改动会使基线快照作废，须同批重冻结并声明）。
 - 基线快照：`baseline_czm_standalone.md`（2026-08-21 冻结，HEAD `e117fd2`）：三方法各 7/8 收敛（Δsoc_n=10.0 全 FAIL 原样冻结，伴随 `CzmSolve.jl:603/:430` stall 警告），全表 D=0.0000（只行使线弹性 bulk + cohesive 装配路径，与 Batch 1 改动面匹配）。
+
+### Batch 0'' 执行中新增的 Batch 7 文档级待办
+
+- `Theory/07:1073`（§6.9 输入 2 清单）把式 (6.54) 说成 $C_{\mathrm{eff}}^{\mathrm{ps}}$ 分量（$C_{nn},C_{ss},C_{sn},C_s$）的来源，而 (6.54) 实际是 $K_{uu}$ 的复述。Batch 0'' 保留 (6.54) 编号以免产生新悬空引用，引用错位本身并入 Batch 7 修订。
+- Batch 0'' 执行时另发现并即时清理两处现行 KKT 残留（计划 v1.1 三处之外）：§6.9.6 校核表"损伤 KKT"（→"损伤代数更新（位移阈值，v2.3 起）"）与 §6.9 输入 3 清单"`$KKT$ 条件：式 (6.38)`"（→ 位移阈值代数更新 (6.38')–(6.42')）；符号自查行的"KKT"改为 $D_{\mathrm{Camanho}}$。
