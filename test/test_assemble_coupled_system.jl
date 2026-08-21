@@ -41,3 +41,18 @@ using .JuBat
     @test !any(isnan, K)
     @test !any(isnan, f)
 end
+
+# 原 test_thermal_resistance_disabled.jl 的唯一实质断言（spec v2 §2.4）：
+# czm_enabled=true 时热求解仍使用合并网格（连续径向导热路径）
+@testset "czm_enabled uses merged thermal mesh" begin
+    param_dim = JuBat.ChooseCell("Jellyroll")
+    opt = JuBat.Option()
+    opt.thermal_enabled = true
+    opt.thermalmodel = "distributed2D"
+    opt.czm_enabled = true
+    case = JuBat.SetCase(param_dim, opt)
+
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, gsorder=2)
+    case = JuBat.setup_thermal2D_mesh(case, mesh_data)
+    @test case.mesh["thermal2D"] === mesh_data.thermal2D_merged
+end

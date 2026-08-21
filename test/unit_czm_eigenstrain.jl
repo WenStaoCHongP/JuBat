@@ -140,7 +140,9 @@ end
 
     T_ref = case.param_dim.scale.T_ref
     ΔT_phys = 10.0
-    Δsoc_frac = 0.8          # 实际 SOC 变化幅值
+    # 放电方向（Δsoc<0）：PE 膨胀（β_p<0）、NE 收缩（β_n>0），NE_NCC 界面进入受拉
+    # （Δsoc=+0.8 时全部界面受压、D≡0；线性弹性下反号给出 coh4 δ_n≈+7.7e-3 > δ0_NE）
+    Δsoc_frac = -0.8
     ΔT_end = ΔT_phys / T_ref
     n_steps = 40
     n_hold = 10
@@ -271,7 +273,7 @@ end
     @test D_max_last > 0.0
     @test any(czm_mesh.damage_states[i].D > 0 && seps_last[i][1] > 0 for i in 1:4)
 
-    out_dir = joinpath(@__DIR__, "../output")
+    out_dir = joinpath(@__DIR__, "../output", "unit_czm_eigenstrain")
     out_png = joinpath(out_dir, "unit_czm_eigenstrain_deformed.png")
     path, mag, umax = plot_unit_strip_deformed(
         czm_mesh, meta, u;
