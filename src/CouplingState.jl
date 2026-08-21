@@ -598,7 +598,11 @@ function update_czm_damage!(case, variables, T_nodes_carry)
         α_eff=α_eff, β_n=β_n, β_p=β_p,
         dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
         max_iter=max_iter, tol=tol, n_load_steps=n_load_steps, arc_length_alpha=arc_length_alpha, iter_method=iter_method,
-        cache=cache, visc_beta=visc_beta
+        cache=cache, visc_beta=visc_beta,
+        geo_nl=case.opt.czm_geo_nonlinear,
+        eigenstrain=case.opt.czm_geo_nonlinear ?
+            (α_eff=α_eff, β_n=β_n, β_p=β_p,
+             dT=dT_elem, Δsn=Δsoc_n_elem, Δsp=Δsoc_p_elem) : nothing
     )
 
     if case.opt.debug_coupling

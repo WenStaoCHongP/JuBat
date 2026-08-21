@@ -726,14 +726,17 @@ function assemble_coupled_system(
     K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,
     geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,
     ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,
-    visc_beta::Float64=1.0
+    visc_beta::Float64=1.0,
+    geo_nl::Bool=false,
+    eigenstrain=nothing
 )
     ndof = 2 * czm_mesh.nnode
 
-    # 固体残差与切线（统一入口，spec §4.2）。Batch 1 只有线弹性槽位，
-    # 与原 K_bulk*u 逐位等价；Batch 2/3 的 K_G 与塑性从此处接入。
+    # 固体残差与切线（统一入口，spec §4.2）。geo_nl=false 为 Batch 1 线弹性槽位
+    # （与 K_bulk*u 逐位等价）；geo_nl=true 走完全 GL（Batch 2），ε* 内嵌（D-B2-1）。
     f_int_bulk, K_bulk = assemble_bulk_residual_tangent(
-        czm_mesh, u, param_cache; K_bulk_cached=K_bulk_cached)
+        czm_mesh, u, param_cache; K_bulk_cached=K_bulk_cached,
+        geo_nl=geo_nl, eigenstrain=eigenstrain)
 
     # 内聚力刚度和内力（使用几何缓存和工作区，透传 param_cache）
     K_coh, f_int_coh, separations, tractions = assemble_czm_system(
