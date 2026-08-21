@@ -338,6 +338,57 @@ function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, param_cache::CzmParamCa
 end
 
 """
+    assemble_bulk_residual_tangent(czm_mesh, u, param_cache, mech_state=nothing;
+                                  geo_nl=false, plasticity=false, K_bulk_cached=nothing)
+        -> (f_int_bulk, K_tangent)
+
+bulk 残差/切线的统一入口（spec 2026-08-20-core-collapse-mechanics-design.md §4.2）。
+
+三个槽位，当前只实现第一个：
+
+1. **线弹性**（`geo_nl=false, plasticity=false`）：`f_int = K_bulk*u`，`K_tangent = K_bulk`，
+   与既有 `assemble_bulk_stiffness` 路径逐位等价。
+2. **几何非线性**（`geo_nl=true`）：完全 Green-Lagrange TL + 标准初应力 `K_G`，Batch 2。
+3. **J2 塑性**（`plasticity=true`）：PCC/NCC 平面应力一致返回映射，Batch 3；届时经
+   `mech_state` 传入 `PlasticState`。
+
+未实现的槽位传入非默认值一律 `error`——静默走线弹性会让上层误以为几何非线性/塑性已生效
+（AGENTS 9.7）。
+
+`mech_state` 按 spec §4.2 保留为尾置可选位置参数，使 Batch 3 引入塑性状态时无需改签名。
+"""
+function assemble_bulk_residual_tangent(
+    czm_mesh::CohesiveMesh,
+    u::Vector{Float64},
+    param_cache::CzmParamCache,
+    mech_state=nothing;
+    geo_nl::Bool=false,
+    plasticity::Bool=false,
+    K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing
+)
+    ndof = 2 * czm_mesh.nnode
+    length(u) == ndof || throw(DimensionMismatch(
+        "assemble_bulk_residual_tangent: u 长度为 $(length(u))，应为 $ndof " *
+        "(2 × nnode=$(czm_mesh.nnode))"))
+
+    geo_nl && error(
+        "assemble_bulk_residual_tangent: geo_nl=true 尚未实现（Batch 2：完全 " *
+        "Green-Lagrange TL + K_G）。不静默退回线弹性。")
+    plasticity && error(
+        "assemble_bulk_residual_tangent: plasticity=true 尚未实现（Batch 3：PCC/NCC " *
+        "平面应力一致 J2 返回映射）。不静默退回线弹性。")
+    mech_state === nothing || error(
+        "assemble_bulk_residual_tangent: mech_state 的消费者在 Batch 3 引入，" *
+        "当前必须传 nothing，收到 $(typeof(mech_state))。")
+
+    K_tangent = K_bulk_cached !== nothing ? K_bulk_cached :
+                assemble_bulk_stiffness(czm_mesh, param_cache)
+    f_int_bulk = K_tangent * u
+
+    return f_int_bulk, K_tangent
+end
+
+"""
     assemble_thermal_chemical_load(czm_mesh, param_cache, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
 
 组装热-化学载荷向量。按 `czm_submesh.material_type` 分组取 (E, ν)（PE/NE 用
