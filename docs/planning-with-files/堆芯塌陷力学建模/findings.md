@@ -227,3 +227,11 @@ Batch 0'' 的 8 项与 Batch 7 的 5 项清单见 spec §9。
 - 定义性 `A_eff=A_0(1-D)` 除计划列出的 01:649/09:63/03:1196 外，另存在于 04:503/:1523/:1696、05:635、06:391、08:484（计划门禁 `A_eff…m²` 捕不住），全部按 ⑦ 统一为 `A_eff=1−D`（A_0≡1 归一，绝对面积写 A_0·A_eff）。
 - **D12 冻结区未触碰**：`04:1476/:1481/:1712`、`07:438`、`05:683-691` 的 (1−D)⁻² 推导与辩护保持原样（A_0 在代数中相消，结构不变）；D12 三选一仍按 spec 在 Batch 6 开工前定夺。
 - `09:62` R_contact 单位 Ω→Ω·m²（面电阻率）：A_eff 改无量纲后 η_eff=j·R/A_eff 量纲自洽的必然要求；`01:657` 本已正确，仅 09 表错。
+
+### Batch 2 立项研究（2026-08-21，单位契约核定）
+
+- **更正一次测量误判**：此前曾报"`czm_mesh.node` 为物理米制"——那是向网格构造器传 `param_dim`（测试夹具旧例）所致。**生产路径（testexample:79、探针 :65）传 `case.param`，节点坐标正确归一化**（x/L：Rin*=11.11、Rout*=58.74、节点范围 ±58.7，`NormaliseParam` 已归一 `cell.Rin/Rout/layer` 与各层 thickness）。CZM 求解全程在 (L, σ_czm) 归一系：u 为 L 归一位移（Λ=L/δ_czm=280 印证）、S 为 σ_czm 归一应力——GL 列式 F = I+∂u/∂x 在生产构型上直接无量纲自洽，无需换算。
+- **夹具不一致（Batch 2 须修）**：`test_assemble_coupled_system.jl:20` 与 `test_czm_mech_core.jl` 的 fixture 仿旧例向 `jellyroll_collector_seed_mesh` 传 `param_dim`（→带量纲网格），与生产传 `case.param` 不一致；Batch 1 测试因断言自洽（同网格等价）未受影响，但 Batch 2 的刚体转动/patch/膨胀测试必须在归一化构型下做，fixture 改传 `case.param`。
+- **载荷约定为 TL 累计制**：`compute_czm_strain_inputs` 的 `Δsoc = soc − cs0`、dT 相对参考构型累计，u 经 `czm_layout.u_prev` 累计——现行约定本就是全 Lagrangian，GL 残差内嵌 ε₀ 无需新增状态。
+- **`create_czm_mesh` 第三参 `param` 当前未使用**（docstring 自述"保留签名一致性"）——探针 `:134` 传 `param_dim` 现阶段无害（既有 findings 条目成立）。
+- **本征应变进 GL 残差的设计依据（Batch 2 计划核心决策）**：S = C:(E_GL − ε₀I)（Theory/07 式 6.6 一致）；ε₀ 逐单元复用 `assemble_thermal_chemical_load` 同式（α·dT + β_n·Δsoc_n + β_p·Δsoc_p，PE/NE 靠零模式分工）。geo_nl=true 时 F_tc 不再单独装配（避免双计），求解器 R = F_ext − f_int^GL；load_substep 的残差空间斜坡（F_applied = f_int_ref + t·F_delta）在 GL 下原样适用。此设计同时满足 spec §7 Batch 2 "自由膨胀零应力"精确测试，并为 Batch 5 弧长 λ 缩放 Δε*（spec §3.5）铺路。
