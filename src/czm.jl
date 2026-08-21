@@ -338,21 +338,88 @@ function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, param_cache::CzmParamCa
 end
 
 """
+    gl_element_residual_tangent(x_e, y_e, u_e, D_mat, ε0, gsorder) -> (f_e, K_e)
+
+单个 Q4 的完全 Green-Lagrange 残差/切线（Batch 2，spec §3.2，D9）。坐标与位移均在
+L 归一系（生产 `czm_mesh.node` 已 x/L 归一，u 为 L 归一位移），F = I + ∇u 无量纲。
+
+- 应变（工程剪切约定，E_vec = [E11, E22, 2E12]，直接由 E = ½(FᵀF−I) 计算）；
+- 本构 S = C:(E_vec − ε₀[1,1,0])（逐层各向同性 SVK，D_mat 同线性路径；D-B2-1）；
+- f = ∫ B_GLᵀ S dA；K = ∫ B_GLᵀ C B_GL dA + ∫ Gᵀ Ŝ G dA（标准初应力 K_G，
+  无手工曲率项——曲率由物理坐标网格几何携带）。
+"""
+function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
+                                     D_mat::Matrix{Float64}, ε0::Float64, gsorder::Int)
+    f_e = zeros(Float64, 8)
+    K_e = zeros(Float64, 8, 8)
+    IntQ4(x_e, y_e; order=gsorder) do ξ, η, w, dNdx, dNdy, detJ
+        # ∇u
+        uxx = 0.0; uxy = 0.0; uyx = 0.0; uyy = 0.0
+        for i in 1:4
+            uxx += dNdx[i] * u_e[2*i-1]
+            uxy += dNdy[i] * u_e[2*i-1]
+            uyx += dNdx[i] * u_e[2*i]
+            uyy += dNdy[i] * u_e[2*i]
+        end
+        # 完全 GL 应变（E = ½(FᵀF − I)）
+        E11 = uxx + 0.5 * (uxx * uxx + uyx * uyx)
+        E22 = uyy + 0.5 * (uxy * uxy + uyy * uyy)
+        g12 = (uxy + uyx) + (uxx * uxy + uyx * uyy)
+        S1 = D_mat[1, 1] * (E11 - ε0) + D_mat[1, 2] * (E22 - ε0)
+        S2 = D_mat[1, 2] * (E11 - ε0) + D_mat[2, 2] * (E22 - ε0)
+        S3 = D_mat[3, 3] * g12
+        # B_GL = ∂E_vec/∂u_e（u=0 时退化为线性 B）
+        B = zeros(Float64, 3, 8)
+        for i in 1:4
+            dx, dy = dNdx[i], dNdy[i]
+            B[1, 2*i-1] = (1.0 + uxx) * dx
+            B[1, 2*i]   = uyx * dx
+            B[2, 2*i-1] = uxy * dy
+            B[2, 2*i]   = (1.0 + uyy) * dy
+            B[3, 2*i-1] = (1.0 + uxx) * dy + uxy * dx
+            B[3, 2*i]   = (1.0 + uyy) * dx + uyx * dy
+        end
+        # 残差 f = ∫ Bᵀ S dA
+        BtS = B' * [S1, S2, S3]
+        axpy!(w * detJ, BtS, f_e)
+        # 材料切线 ∫ Bᵀ C B dA
+        DB = D_mat * B
+        K_e .+= (w * detJ) .* (B' * DB)
+        # 标准初应力 K_G = ∫ Gᵀ Ŝ G dA
+        G = zeros(Float64, 4, 8)
+        for i in 1:4
+            G[1, 2*i-1] = dNdx[i]
+            G[2, 2*i-1] = dNdy[i]
+            G[3, 2*i]   = dNdx[i]
+            G[4, 2*i]   = dNdy[i]
+        end
+        Sh = [S1 S3 0.0 0.0; S3 S2 0.0 0.0; 0.0 0.0 S1 S3; 0.0 0.0 S3 S2]
+        K_e .+= (w * detJ) .* (G' * Sh * G)
+    end
+    return f_e, K_e
+end
+
+"""
     assemble_bulk_residual_tangent(czm_mesh, u, param_cache, mech_state=nothing;
-                                  geo_nl=false, plasticity=false, K_bulk_cached=nothing)
+                                  geo_nl=false, plasticity=false, K_bulk_cached=nothing,
+                                  eigenstrain=nothing)
         -> (f_int_bulk, K_tangent)
 
 bulk 残差/切线的统一入口（spec 2026-08-20-core-collapse-mechanics-design.md §4.2）。
 
-三个槽位，当前只实现第一个：
+三个槽位，前两个已实现：
 
 1. **线弹性**（`geo_nl=false, plasticity=false`）：`f_int = K_bulk*u`，`K_tangent = K_bulk`，
    与既有 `assemble_bulk_stiffness` 路径逐位等价。
-2. **几何非线性**（`geo_nl=true`）：完全 Green-Lagrange TL + 标准初应力 `K_G`，Batch 2。
+2. **几何非线性**（`geo_nl=true`，Batch 2）：完全 Green-Lagrange 全 Lagrangian——
+   `gl_element_residual_tangent` 逐单元装配，S = C:(E_GL − ε₀I)（D-B2-1，ε₀ 与
+   `assemble_thermal_chemical_load` 同式）；切线含标准初应力 K_G。切线依赖 u，
+   禁止传 `K_bulk_cached`。`eigenstrain` 为 NamedTuple `(α_eff, β_n, β_p, dT, Δsn, Δsp)`，
+   `nothing` 表示本次调用无本征应变（ε₀≡0，运动学场景合法状态）。
 3. **J2 塑性**（`plasticity=true`）：PCC/NCC 平面应力一致返回映射，Batch 3；届时经
    `mech_state` 传入 `PlasticState`。
 
-未实现的槽位传入非默认值一律 `error`——静默走线弹性会让上层误以为几何非线性/塑性已生效
+未实现的槽位传入非默认值一律 `error`——静默走线弹性会让上层误以为已生效
 （AGENTS 9.7）。
 
 `mech_state` 按 spec §4.2 保留为尾置可选位置参数，使 Batch 3 引入塑性状态时无需改签名。
@@ -364,16 +431,14 @@ function assemble_bulk_residual_tangent(
     mech_state=nothing;
     geo_nl::Bool=false,
     plasticity::Bool=false,
-    K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing
+    K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,
+    eigenstrain=nothing
 )
     ndof = 2 * czm_mesh.nnode
     length(u) == ndof || throw(DimensionMismatch(
         "assemble_bulk_residual_tangent: u 长度为 $(length(u))，应为 $ndof " *
         "(2 × nnode=$(czm_mesh.nnode))"))
 
-    geo_nl && error(
-        "assemble_bulk_residual_tangent: geo_nl=true 尚未实现（Batch 2：完全 " *
-        "Green-Lagrange TL + K_G）。不静默退回线弹性。")
     plasticity && error(
         "assemble_bulk_residual_tangent: plasticity=true 尚未实现（Batch 3：PCC/NCC " *
         "平面应力一致 J2 返回映射）。不静默退回线弹性。")
@@ -381,11 +446,68 @@ function assemble_bulk_residual_tangent(
         "assemble_bulk_residual_tangent: mech_state 的消费者在 Batch 3 引入，" *
         "当前必须传 nothing，收到 $(typeof(mech_state))。")
 
-    K_tangent = K_bulk_cached !== nothing ? K_bulk_cached :
-                assemble_bulk_stiffness(czm_mesh, param_cache)
-    f_int_bulk = K_tangent * u
-
-    return f_int_bulk, K_tangent
+    if geo_nl
+        K_bulk_cached !== nothing && error(
+            "assemble_bulk_residual_tangent: geo_nl=true 时切线依赖 u，" *
+            "不得传 K_bulk_cached（须逐迭代重组）。")
+        α_eff = eigenstrain === nothing ? 0.0 : eigenstrain.α_eff
+        β_n   = eigenstrain === nothing ? 0.0 : eigenstrain.β_n
+        β_p   = eigenstrain === nothing ? 0.0 : eigenstrain.β_p
+        dT_el = eigenstrain === nothing ? nothing : eigenstrain.dT
+        Δsn   = eigenstrain === nothing ? nothing : eigenstrain.Δsn
+        Δsp   = eigenstrain === nothing ? nothing : eigenstrain.Δsp
+        param = param_cache.param_ref
+        submesh = czm_mesh.czm_submesh
+        element = czm_mesh.bulk_element
+        node = czm_mesh.node
+        ne0 = size(element, 1)
+        if dT_el !== nothing
+            (length(dT_el) == ne0 && length(Δsn) == ne0 && length(Δsp) == ne0) ||
+                throw(DimensionMismatch(
+                    "assemble_bulk_residual_tangent: eigenstrain 向量长度应为 bulk 单元数 $ne0"))
+        end
+        I_idx = Int64[]; J_idx = Int64[]; K_vals = Float64[]
+        sizehint!(I_idx, ne0 * 64); sizehint!(J_idx, ne0 * 64); sizehint!(K_vals, ne0 * 64)
+        f_gl = zeros(Float64, ndof)
+        for e in 1:ne0
+            E_e, ν_e = moduli_of(param, submesh.material_type[e])
+            D_mat = E_e / (1.0 - ν_e^2) * [1.0 ν_e 0.0;
+                                          ν_e 1.0 0.0;
+                                          0.0 0.0 (1.0 - ν_e) / 2.0]
+            ε0 = 0.0
+            if dT_el !== nothing
+                ε0 = α_eff * dT_el[e] + β_n * Δsn[e] + β_p * Δsp[e]
+            end
+            elem_nodes = element[e, :]
+            x_e = node[elem_nodes, 1]
+            y_e = node[elem_nodes, 2]
+            u_e = zeros(Float64, 8)
+            for (k, n) in enumerate(elem_nodes)
+                u_e[2*k-1] = u[2*n-1]
+                u_e[2*k] = u[2*n]
+            end
+            f_e, K_e = gl_element_residual_tangent(x_e, y_e, u_e, D_mat, ε0, 2)
+            dofs = Int64[]
+            for n in elem_nodes
+                push!(dofs, 2*n - 1)
+                push!(dofs, 2*n)
+            end
+            for a in 1:8
+                f_gl[dofs[a]] += f_e[a]
+                for b in 1:8
+                    push!(I_idx, dofs[a])
+                    push!(J_idx, dofs[b])
+                    push!(K_vals, K_e[a, b])
+                end
+            end
+        end
+        return f_gl, sparse(I_idx, J_idx, K_vals, ndof, ndof)
+    else
+        K_tangent = K_bulk_cached !== nothing ? K_bulk_cached :
+                    assemble_bulk_stiffness(czm_mesh, param_cache)
+        f_int_bulk = K_tangent * u
+        return f_int_bulk, K_tangent
+    end
 end
 
 """
