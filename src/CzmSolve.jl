@@ -286,7 +286,7 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, pa
         ws = cache !== nothing ? cache.ws : CZMAssemblyWorkspace(ndof, n_coh)
 
         # 增量载荷参考
-        _, f_int_ref, _, _ = assemble_coupled_system(czm_mesh, u, param_cache;damage_states=damage_states, K_bulk_cached=K_bulk_cached,geom_cache=geom_cache, ws=ws, visc_beta=visc_beta, eig_kwargs...)
+        _, f_int_ref, _, _ = assemble_coupled_system(czm_mesh, u, param_cache;damage_states=damage_states, K_bulk_cached=K_bulk_cached,geom_cache=geom_cache, ws=ws, visc_beta=visc_beta)
         F_target = F_ext + F_thermo_chem_total
         F_delta = F_target - f_int_ref
 
