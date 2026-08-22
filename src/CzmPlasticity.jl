@@ -99,3 +99,65 @@ end
 """
 clone_plastic_states(states::Matrix{PlasticState}) =
     PlasticState[PlasticState(s.eps_p, s.kappa) for s in states]
+
+"""
+    winding_prestress_field(czm_mesh, param) -> Vector{NTuple{3,Float64}}
+
+卷绕预应力初始应力场 σ₀（Batch 2'，spec §3.7，D-B2'-1；σ_czm/L 归一系）。
+逐单元（质心）全局系三分量 (σ_xx, σ_yy, σ_xy)：
+
+1. **卷入张力（等应变/Voigt 分担）**：`ε_w,side = T_side/Ē_side`，
+   `Ē_side = Σ(E_k·t_k)/Σt_k`（NE 侧 {NE,NCC}、PE 侧 {PE,PCC}，SP 取两侧均值），
+   层 i 卷入环向张力 `σ_t,i = E_i·ε_w,side(i)`；
+2. **对数累积压力**（外层缠绕压内层）：`p(r) = f·ln(R_end/r)`，
+   `f = F_rev/t_repeat`，`F_rev = T_ne·t_ne_rev + T_pe·t_pe_rev`（每匝每轴长环向力）；
+   `σ_θ0,i = σ_t,i − p(r̄_i)`，`σ_r0 = −p(r̄)`。
+
+未设张力（T 全 0）或负张力 → `error`（AGENTS 9.4/9.7）。自平衡重分布由首个平衡求解完成（D-B2'-4）。
+"""
+function winding_prestress_field(czm_mesh::CohesiveMesh, param)
+    T_ne = param.cell.winding_T_ne
+    T_pe = param.cell.winding_T_pe
+    (T_ne > 0.0 || T_pe > 0.0) || error(
+        "winding_prestress_field: 卷绕张力未设置（cell.winding_T_ne/pe 均为 0）。" *
+        "开启 czm_winding_prestress 前须给定参数，不默认、不置零（AGENTS 9.4/9.7）。")
+    (T_ne >= 0.0 && T_pe >= 0.0) || error(
+        "winding_prestress_field: 卷绕张力为负（T_ne=$T_ne, T_pe=$T_pe）物理非法。")
+
+    Ew(mt) = moduli_of(param, mt)[1]
+    t_ne = 2 * param.NE.thickness + param.NCC.thickness
+    t_pe = 2 * param.PE.thickness + param.PCC.thickness
+    E_ne = (2 * Ew(:NE) * param.NE.thickness + Ew(:NCC) * param.NCC.thickness) / t_ne
+    E_pe = (2 * Ew(:PE) * param.PE.thickness + Ew(:PCC) * param.PCC.thickness) / t_pe
+    ε_ne = T_ne / E_ne
+    ε_pe = T_pe / E_pe
+    ε_sp = 0.5 * (ε_ne + ε_pe)
+    F_rev = T_ne * t_ne + T_pe * t_pe
+    f = F_rev / param.cell.layer
+
+    node = czm_mesh.node
+    element = czm_mesh.bulk_element
+    mt_all = czm_mesh.czm_submesh.material_type
+    ne = size(element, 1)
+    R_end = maximum(hypot.(node[:, 1], node[:, 2]))
+    σ0 = Vector{NTuple{3, Float64}}(undef, ne)
+    for e in 1:ne
+        mt = mt_all[e]
+        ε_w = mt in (:NE, :NCC) ? ε_ne : mt in (:PE, :PCC) ? ε_pe : ε_sp
+        E_i = Ew(mt)
+        xs = view(node, element[e, :], 1)
+        ys = view(node, element[e, :], 2)
+        xc = (xs[1] + xs[2] + xs[3] + xs[4]) / 4
+        yc = (ys[1] + ys[2] + ys[3] + ys[4]) / 4
+        r = hypot(xc, yc)
+        pref = f * log(R_end / r)
+        σ_θ = E_i * ε_w - pref
+        σ_r = -pref
+        c, s = xc / r, yc / r
+        tx, ty, nx, ny = -s, c, c, s
+        σ0[e] = (σ_θ * tx * tx + σ_r * nx * nx,
+                 σ_θ * ty * ty + σ_r * ny * ny,
+                 σ_θ * tx * ty + σ_r * nx * ny)
+    end
+    return σ0
+end

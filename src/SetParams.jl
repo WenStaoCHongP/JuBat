@@ -113,6 +113,8 @@ end
 
 @with_kw mutable struct Cell
     length::Float64 = 0
+    winding_T_ne::Float64 = 0   # Batch 2'：负极侧卷绕张力（Pa，厚度平均；0=未设置，开启 opt 即拦截）
+    winding_T_pe::Float64 = 0   # Batch 2'：正极侧卷绕张力（Pa）
     width::Float64 = 0
     wrapper::Float64 = 0
     I1C::Float64 = 0
@@ -491,6 +493,8 @@ function NormaliseParam(param_dim::Params)
     param.cell.lambda_r = param_dim.cell.lambda_r / param.scale.lambda
     param.cell.lambda_t = param_dim.cell.lambda_t / param.scale.lambda
     param.cell.Rin = param_dim.cell.Rin / param.scale.L
+    param.cell.winding_T_ne = param_dim.cell.winding_T_ne / param.scale.σ_czm
+    param.cell.winding_T_pe = param_dim.cell.winding_T_pe / param.scale.σ_czm
     param.cell.Rout = param_dim.cell.Rout / param.scale.L
     param.cell.width = param_dim.cell.width / param.scale.L
 
