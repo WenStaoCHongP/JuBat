@@ -89,7 +89,6 @@ end
     czm_geo_nonlinear::Bool = false        # 完全 Green-Lagrange TL 残差 + 标准初应力 K_G（Batch 2）
     czm_winding_prestress::Bool = false    # 卷绕预应力初始应力场 σ₀(r)，缺参即 error（Batch 2'）
     czm_j2_plasticity::Bool = false        # PCC/NCC 平面应力一致 J2 返回映射，缺 sigma_y 即 error（Batch 3）
-    czm_phi_bond::Bool = false             # Φ 跨匝完美粘结（phi_pairs 节点合并）（Batch 4'）
     czm_continuous_feedback::Bool = false  # 连续损伤–电–热反馈 + 界面热阻（Batch 6）
     czm_friction_mu::Float64 = 0.10        # SP Coulomb 摩擦系数（Batch 8 预留，当前无消费者）
 end

@@ -12,7 +12,6 @@ using .JuBat
     @test opt.czm_geo_nonlinear == false
     @test opt.czm_winding_prestress == false
     @test opt.czm_j2_plasticity == false
-    @test opt.czm_phi_bond == false
     @test opt.czm_continuous_feedback == false
 
     # Batch 8 预留：当前无消费者，只锁定默认值
@@ -29,7 +28,6 @@ end
     @test opt.czm_geo_nonlinear == false
     @test opt.czm_winding_prestress == false
     @test opt.czm_j2_plasticity == false
-    @test opt.czm_phi_bond == false
     @test opt.czm_continuous_feedback == false
 end
 

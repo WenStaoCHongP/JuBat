@@ -246,3 +246,10 @@ Batch 0'' 的 8 项与 Batch 7 的 5 项清单见 spec §9。
 - **载荷约定为 TL 累计制**：`compute_czm_strain_inputs` 的 `Δsoc = soc − cs0`、dT 相对参考构型累计，u 经 `czm_layout.u_prev` 累计——现行约定本就是全 Lagrangian，GL 残差内嵌 ε₀ 无需新增状态。
 - **`create_czm_mesh` 第三参 `param` 当前未使用**（docstring 自述"保留签名一致性"）——探针 `:134` 传 `param_dim` 现阶段无害（既有 findings 条目成立）。
 - **本征应变进 GL 残差的设计依据（Batch 2 计划核心决策）**：S = C:(E_GL − ε₀I)（Theory/07 式 6.6 一致）；ε₀ 逐单元复用 `assemble_thermal_chemical_load` 同式（α·dT + β_n·Δsoc_n + β_p·Δsoc_p，PE/NE 靠零模式分工）。geo_nl=true 时 F_tc 不再单独装配（避免双计），求解器 R = F_ext − f_int^GL；load_substep 的残差空间斜坡（F_applied = f_int_ref + t·F_delta）在 GL 下原样适用。此设计同时满足 spec §7 Batch 2 "自由膨胀零应力"精确测试，并为 Batch 5 弧长 λ 缩放 Δε*（spec §3.5）铺路。
+
+
+### Batch 5 Task 1 进行中记录（2026-08-22，Φ 合并实现路径修正）
+
+- 已完成：`Option.czm_phi_bond` 字段与契约测试断言删除（v1.5）；计划/spec/弧长决策（Crisfield）定稿。
+- **Φ 合并两次尝试的教训**：①在 `build_czm_submesh` 尾部合并 → `build_thermal_to_czm_interp` 的父单元定位用 `mod(i-1, n_theta_nodes)` 结构化布局假设，合并删节点后失效（DimensionMismatch 1360/169）；②改在 `create_czm_mesh` 的 interp 之后合并 CohesiveMesh 扩展节点 → interp 矩阵行数是**子网格**节点数（1521），而 keep 按**cohesive 扩展后** nnode（2197）建 → BoundsError（已 stash WIP）。
+- **正确路径（下一步执行）**：合并必须发生在子网格层（interp 之前），同时把 `build_thermal_to_czm_interp` 的父定位从 `mod(i-1)` 改为**坐标法**：对节点 (px,py)，θ_m = atan(y,x)+2πm（m=0..N_turns），径向窗 s = r−(a+bθ_m) ∈ [0, t_repeat] 定匝，列 k = clamp(round(θ_m/dθ)+1)；a/b/t_repeat 可从 thermal_mesh 首末节点坐标反推或经参数传入。此后 create_czm_mesh 全流程用合并后子网格（cohesive 副本节点同样按重映射索引），无需二次合并。
