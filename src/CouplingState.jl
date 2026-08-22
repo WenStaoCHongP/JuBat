@@ -718,8 +718,8 @@ function build_thermal_to_czm_interp(thermal_mesh::Mesh, czm_submesh::CzmSubmesh
     n_czm_node % n_theta_nodes == 0 || throw(DimensionMismatch(
         "build_thermal_to_czm_interp: CZM node count $n_czm_node is not divisible by thermal angular node count $n_theta_nodes"))
     n_spirals = div(n_czm_node, n_theta_nodes)
-    n_spirals == 9 || throw(DimensionMismatch(
-        "build_thermal_to_czm_interp: expected 9 inherited mechanical spirals, got $n_spirals"))
+    n_spirals >= 9 || throw(DimensionMismatch(
+        "build_thermal_to_czm_interp: expected >= 9 mechanical spirals (8 base + thin subdiv), got $n_spirals"))
 
     # 双线性形函数 N_i(ξ, η) = 0.25 * (1 ± ξ)(1 ± η)
     function shape_funcs(ξ::Float64, η::Float64)

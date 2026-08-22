@@ -352,9 +352,11 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
                                      D_mat::Matrix{Float64}, ε0::Float64, gsorder::Int;
                                      plastic::Union{Nothing, Tuple}=nothing,
                                      commit_to::Union{Nothing, Vector{Tuple{NTuple{3,Float64},Float64}}}=nothing,
-                                     σ0::NTuple{3, Float64}=(0.0, 0.0, 0.0))
+                                     σ0::NTuple{3, Float64}=(0.0, 0.0, 0.0), split_KG::Bool=false)
     f_e = zeros(Float64, 8)
     K_e = zeros(Float64, 8, 8)
+    K_mat_e = split_KG ? zeros(Float64, 8, 8) : nothing
+    K_G_e = split_KG ? zeros(Float64, 8, 8) : nothing
     gp = 0
     IntQ4(x_e, y_e; order=gsorder) do ξ, η, w, dNdx, dNdy, detJ
         gp += 1
@@ -408,7 +410,11 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
         axpy!(w * detJ, BtS, f_e)
         # 材料切线 ∫ Bᵀ C B dA（塑性时为算法一致切线 C_ep）
         DB = D_tan * B
-        K_e .+= (w * detJ) .* (B' * DB)
+        wJ = w * detJ
+        K_e .+= wJ .* (B' * DB)
+        if split_KG
+            K_mat_e .+= wJ .* (B' * DB)
+        end
         # 标准初应力 K_G = ∫ Gᵀ Ŝ G dA
         G = zeros(Float64, 4, 8)
         for i in 1:4
@@ -418,8 +424,12 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
             G[4, 2*i]   = dNdy[i]
         end
         Sh = [S1 S3 0.0 0.0; S3 S2 0.0 0.0; 0.0 0.0 S1 S3; 0.0 0.0 S3 S2]
-        K_e .+= (w * detJ) .* (G' * Sh * G)
+        K_e .+= wJ .* (G' * Sh * G)
+        if split_KG
+            K_G_e .+= wJ .* (G' * Sh * G)
+        end
     end
+    split_KG && return f_e, K_mat_e, K_G_e
     return f_e, K_e
 end
 
@@ -458,7 +468,8 @@ function assemble_bulk_residual_tangent(
     K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,
     eigenstrain=nothing,
     commit_plastic::Bool=false,
-    prestress=nothing
+    prestress=nothing,
+    split_KG::Bool=false
 )
     ndof = 2 * czm_mesh.nnode
     length(u) == ndof || throw(DimensionMismatch(
@@ -474,6 +485,9 @@ function assemble_bulk_residual_tangent(
               "未开塑性时必须传 nothing，收到 $(typeof(mech_state))。")
     end
 
+    if split_KG && !geo_nl
+        error("assemble_bulk_residual_tangent: split_KG=true 仅在 geo_nl 路径支持（K_G 分离装配）。")
+    end
     if prestress !== nothing
         geo_nl || error(
             "assemble_bulk_residual_tangent: prestress 需要 geo_nl=true（D-B2'-2：初应力由 GL 残差与 K_G 消费）。")
@@ -512,6 +526,8 @@ function assemble_bulk_residual_tangent(
         end
         I_idx = Int64[]; J_idx = Int64[]; K_vals = Float64[]
         sizehint!(I_idx, ne0 * 64); sizehint!(J_idx, ne0 * 64); sizehint!(K_vals, ne0 * 64)
+        I_mat = split_KG ? Int64[] : nothing; J_mat = split_KG ? Int64[] : nothing; V_mat = split_KG ? Float64[] : nothing
+        I_G = split_KG ? Int64[] : nothing; J_G = split_KG ? Int64[] : nothing; V_G = split_KG ? Float64[] : nothing
         f_gl = zeros(Float64, ndof)
         for e in 1:ne0
             mt = submesh.material_type[e]
@@ -546,9 +562,15 @@ function assemble_bulk_residual_tangent(
                 u_e[2*k-1] = u[2*n-1]
                 u_e[2*k] = u[2*n]
             end
-            f_e, K_e = gl_element_residual_tangent(x_e, y_e, u_e, D_mat, ε0, 2;
+            res_gl = gl_element_residual_tangent(x_e, y_e, u_e, D_mat, ε0, 2;
                                                    plastic=plastic, commit_to=commit_to,
-                                                   σ0=prestress === nothing ? (0.0, 0.0, 0.0) : prestress[e])
+                                                   σ0=prestress === nothing ? (0.0, 0.0, 0.0) : prestress[e],
+                                                   split_KG=split_KG)
+            if split_KG
+                f_e, K_mat_e, K_G_e = res_gl
+            else
+                f_e, K_e = res_gl
+            end
             if commit_to !== nothing
                 for g in 1:4
                     mech_state[e, g].eps_p = commit_to[g][1]
@@ -563,11 +585,17 @@ function assemble_bulk_residual_tangent(
             for a in 1:8
                 f_gl[dofs[a]] += f_e[a]
                 for b in 1:8
-                    push!(I_idx, dofs[a])
-                    push!(J_idx, dofs[b])
-                    push!(K_vals, K_e[a, b])
+                    if split_KG
+                        push!(I_mat, dofs[a]); push!(J_mat, dofs[b]); push!(V_mat, K_mat_e[a, b])
+                        push!(I_G, dofs[a]); push!(J_G, dofs[b]); push!(V_G, K_G_e[a, b])
+                    else
+                        push!(I_idx, dofs[a]); push!(J_idx, dofs[b]); push!(K_vals, K_e[a, b])
+                    end
                 end
             end
+        end
+        if split_KG
+            return f_gl, sparse(I_mat, J_mat, V_mat, ndof, ndof), sparse(I_G, J_G, V_G, ndof, ndof)
         end
         return f_gl, sparse(I_idx, J_idx, K_vals, ndof, ndof)
     else

@@ -16,7 +16,7 @@ struct JellyrollMesh
 end
 
 function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phase::Float64=0.0,
-        tol::Float64=1e-8, czm_enabled::Bool=false)
+        tol::Float64=1e-8, czm_enabled::Bool=false, thin_subdiv::Int=1)
     nθ >= 3 || throw(ArgumentError("collector-seeded: nθ must be at least 3, got $nθ"))
     isfinite(phase) || throw(ArgumentError("collector-seeded: phase must be finite, got $phase"))
     isfinite(tol) && tol > 0.0 || throw(ArgumentError(
@@ -195,7 +195,7 @@ function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phas
 
     # 分层力学网格直接继承热网格的实际周向角节点和 Φ 配对
     czm_submesh = czm_enabled ?
-        build_czm_submesh(param, mesh_unmerged, theta, interface_pairs; gsorder=gsorder) : nothing
+        build_czm_submesh(param, mesh_unmerged, theta, interface_pairs; gsorder=gsorder, thin_subdiv=thin_subdiv) : nothing
 
     Jellyroll_Mesh = JellyrollMesh(mesh_unmerged, thermal2D_merged, merge_map, interface_pairs,czm_element_map, element_layer, is_inner_layer,inner_nodes, outer_nodes, pos_tab_nodes, neg_tab_nodes,ne, nnode, czm_submesh)
     return Jellyroll_Mesh
@@ -599,7 +599,8 @@ end
 见 spec §4.1.1。
 """
 function build_czm_submesh(param, thermal2D, theta::AbstractVector{<:Real},
-        thermal_phi_pairs::Vector{Tuple{Int,Int}}; gsorder::Int)
+        thermal_phi_pairs::Vector{Tuple{Int,Int}}; gsorder::Int, thin_subdiv::Int=1)
+    thin_subdiv >= 1 || error("build_czm_submesh: thin_subdiv must be >= 1, got $thin_subdiv")
     # 螺旋几何参数（与粗热网格一致，使用归一化值）
     a = param.cell.Rin
     s_total = param.cell.layer
@@ -613,7 +614,19 @@ function build_czm_submesh(param, thermal2D, theta::AbstractVector{<:Real},
         param.NE.thickness, param.SP.thickness,
     ]
     material_sequence = [:PE, :PCC, :PE, :SP, :NE, :NCC, :NE, :SP]
-    n_layers = 8
+    if thin_subdiv > 1
+        # Batch 2''（D-B2''-1）：厚涂层（PE/NE）径向等厚细分（用户语义：细分承载压缩/起皱的厚层），材料继承；同材内部边界豁免
+        ts = Float64[]; ms = Symbol[]
+        for (t, m) in zip(layer_thicknesses, material_sequence)
+            k = m in (:PE, :NE) ? thin_subdiv : 1   # 细分厚涂层（PE/NE）：本征应变压缩载体、起皱物理所在
+            for _ in 1:k
+                push!(ts, t / k); push!(ms, m)
+            end
+        end
+        layer_thicknesses = ts
+        material_sequence = ms
+    end
+    n_layers = length(layer_thicknesses)
     @assert sum(layer_thicknesses) ≈ s_total rtol=1e-6
 
     n_thermal = size(thermal2D.element, 1)
