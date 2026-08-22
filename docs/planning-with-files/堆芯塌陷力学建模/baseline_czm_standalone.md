@@ -57,3 +57,41 @@ arc_length     : converged 7/8 levels, D_max=0.0000 (final) / 0.0000 (peak), tot
 - Batch 1 起每批完成后重跑本工具，上两节全部数值必须在打印精度下逐位一致（含 OK↔FAIL 状态与迭代数）。
 - 不一致即视为行为漂移：停止该批，先定位或回退，不得以"数值接近"或"FAIL 仍 FAIL"以外任何宽松判据放行。
 - 重跑环境必须与冻结时一致（Julia 1.11.2、单线程、`GKSwstype=100`、`--startup-file=no`）。
+
+
+---
+
+# 基线 v2（2026-08-22 重冻结，用户宏观参数修正）
+
+- **触发**：用户修正宏观力学参数（`src/parameters/Jellyroll.jl`，提交 `1a74411`）：`PCC.E 500e6→7e10`/`nu→0.33`、`NCC.E 500e6→1.1e11`/`nu→0.34`、`PE/NE.E_coat 500e6→1e9`、`SP.E 500e6→750e6`/`nu→0.35`。物理参数刻意变更 ⟹ 全部冻结力学指标整体移动，按既定程序同批重冻结并声明（v1 见上文，SHA 历史保留）。
+- **Git HEAD**: `1a74411`（重冻结时）
+- **环境**: Julia 1.11.2，1 thread，`GKSwstype=100`，`--startup-file=no`
+- **网格/参数实测**: Nodes 10946 / Bulk 6728 / Cohesive 3364；E_eff=1.219512e+01（原 6.097561e+00，E_coat 翻倍所致）、ν_eff=0.3000、α_eff=4.470000e-03、β_n=3.423743e-02、β_p=-1.531324e-02
+
+## 收敛对比表（v2 冻结）
+
+```
+Δsoc_n | basic                  | load_substep           | arc_length
+ 0.100 | OK   2it D=0.0000 r=9.6e-09 | OK 100it D=0.0000 r=6.2e-09 | OK  50it D=0.0000 r=4.8e-08
+ 0.500 | OK   2it D=0.0000 r=4.7e-08 | OK 100it D=0.0000 r=2.9e-08 | OK  50it D=0.0000 r=2.5e-07
+ 1.000 | OK   2it D=0.0000 r=9.3e-08 | OK 100it D=0.0000 r=5.7e-08 | OK  50it D=0.0000 r=5.0e-07
+ 1.500 | OK   2it D=0.0000 r=1.5e-07 | OK 100it D=0.0000 r=9.4e-08 | OK  50it D=0.0000 r=7.4e-07
+ 2.000 | OK   2it D=0.0000 r=1.9e-07 | OK 100it D=0.0000 r=1.1e-07 | OK  50it D=0.0000 r=1.0e-06
+ 3.000 | OK   2it D=0.0000 r=3.0e-07 | OK 100it D=0.0000 r=1.9e-07 | OK  50it D=0.0000 r=1.5e-06
+ 5.000 | OK   2it D=0.0945 r=1.3e+00 | FAIL  83it D=0.0000 r=6.0e-04 | FAIL 1632it D=0.0000 r=6.0e-04
+10.000 | OK   2it D=0.5475 r=7.4e+00 | FAIL  52it D=0.0000 r=6.0e-04 | FAIL 1617it D=0.0000 r=6.0e-04
+```
+
+## Summary（v2 冻结）
+
+```
+basic          : converged 8/8 levels, D_max=0.5475 (final) / 0.5475 (peak), total_iter=16
+load_substep   : converged 6/8 levels, D_max=0.0000 (final) / 0.0000 (peak), total_iter=735
+arc_length     : converged 6/8 levels, D_max=0.0000 (final) / 0.0000 (peak), total_iter=3549
+```
+
+## v2 景观说明（与 v1 的定性差异）
+
+- 刚性箔（70/110 GPa）嵌入软叠层使 Δsoc≥5 的应力集中显著升高：basic 在 5/10 水平经**相对残差判据**收敛并出现损伤（D=0.0945/0.5475，绝对残差 1.3/7.4 大——相对判据触发）；load_substep/arc_length 在同水平失速（6.0e-04，低于其步长下限容差）转 6/8。
+- 这些条目同样属**冻结行为**：不得调参"修好"，OK↔FAIL/D 值漂移均视为行为变化，先定位再处置。
+- 比较规则与 v1 相同（打印精度逐位、同环境重跑）。

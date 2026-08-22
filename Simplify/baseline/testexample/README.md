@@ -28,10 +28,10 @@
 | maximum temperature | 299.00 K |
 | final CZM D_max | 0.0000% |
 | final CZM D_mean | 0.0000% |
-| maximum normal separation | 1.2557e-14 m |
+| maximum normal separation | 1.2572e-13 m |
 | fractured elements | 0 |
 | CZM converged updates | 19 / 19 |
-| result PNG SHA-256 | `4ba6207c3ccf92da5e37349ee335cf21a10a50b46a14cda13de95eefa6cae932` |
+| result PNG SHA-256 | `b31ffb494c8e83701caad1b1181be1373b50236019a580b72c795c891ebd05ac` |
 
 ## 后续比较规则
 
@@ -50,3 +50,8 @@
 - `source_manifest.tsv`: 运行时所有 Julia 源文件和入口脚本的 SHA-256。
 - `preflight.log`: 运行前身份和旧输出状态。
 - `run.log`: 完整控制台输出。
+
+## 基线 v2（2026-08-22 重冻结，用户宏观参数修正）
+
+- 触发：用户修正 `src/parameters/Jellyroll.jl` 宏观力学参数（PCC.E→70 GPa/0.33、NCC.E→110 GPa/0.34、PE/NE.E_coat→1 GPa、SP.E→750 MPa/0.35；提交 `1a74411`）。电化学/热全部指标与 v1 一致；仅两项力学输出移动：`maximum normal separation 1.2557e-14 → 1.2572e-13 m`（刚性箔下微小变形放大一个量级，仍为 ~零损伤工况）与 PNG SHA（上表已更新为 v2 值）。
+- v1 SHA：`4ba6207c…e932`（历史比对记录见 `Simplify/baseline.md` 批次表）。
