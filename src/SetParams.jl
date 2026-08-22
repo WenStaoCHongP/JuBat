@@ -92,9 +92,7 @@ end
     E::Float64 = 0            # 弹性模量 [Pa]
     nu::Float64 = 0           # 泊松比 [-]
     alphaT::Float64 = 0       # 热膨胀系数 [1/K]
-    # Batch 3（D-B3-0）：物理箔本构，仅 czm_j2_plasticity=true 时消费；sigma_y=0 视为未设置
-    E_foil::Float64 = 0       # 金属箔弹性模量 [Pa]
-    nu_foil::Float64 = 0.0    # 箔泊松比 [-]
+    # Batch 3：箔塑性参数（模量沿用 E/nu；用户参数修正后不重复定义）；sigma_y=0 视为未设置
     sigma_y::Float64 = 0      # 屈服应力 [Pa]
     H::Float64 = 0            # 各向同性硬化模量 [Pa]（0=理想塑性）
 end
@@ -451,8 +449,6 @@ function NormaliseParam(param_dim::Params)
     end
     param.PCC.nu = param_dim.PCC.nu
     param.PCC.alphaT = param_dim.PCC.alphaT * param.scale.T_ref
-    param.PCC.E_foil = param_dim.PCC.E_foil / param.scale.σ_czm
-    param.PCC.nu_foil = param_dim.PCC.nu_foil
     param.PCC.sigma_y = param_dim.PCC.sigma_y / param.scale.σ_czm
     param.PCC.H = param_dim.PCC.H / param.scale.σ_czm
     # negative current colloctor
@@ -468,8 +464,6 @@ function NormaliseParam(param_dim::Params)
     end
     param.NCC.nu = param_dim.NCC.nu
     param.NCC.alphaT = param_dim.NCC.alphaT * param.scale.T_ref
-    param.NCC.E_foil = param_dim.NCC.E_foil / param.scale.σ_czm
-    param.NCC.nu_foil = param_dim.NCC.nu_foil
     param.NCC.sigma_y = param_dim.NCC.sigma_y / param.scale.σ_czm
     param.NCC.H = param_dim.NCC.H / param.scale.σ_czm
 

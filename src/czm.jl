@@ -351,7 +351,8 @@ L 归一系（生产 `czm_mesh.node` 已 x/L 归一，u 为 L 归一位移），
 function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
                                      D_mat::Matrix{Float64}, ε0::Float64, gsorder::Int;
                                      plastic::Union{Nothing, Tuple}=nothing,
-                                     commit_to::Union{Nothing, Vector{Tuple{NTuple{3,Float64},Float64}}}=nothing)
+                                     commit_to::Union{Nothing, Vector{Tuple{NTuple{3,Float64},Float64}}}=nothing,
+                                     σ0::NTuple{3, Float64}=(0.0, 0.0, 0.0))
     f_e = zeros(Float64, 8)
     K_e = zeros(Float64, 8, 8)
     gp = 0
@@ -386,6 +387,10 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
                 commit_to[gp] = ((eps_p[gp][1] + Δp[1], eps_p[gp][2] + Δp[2], eps_p[gp][3] + Δp[3]),
                                  κ[gp] + Δκ)
             end
+        end
+        # 卷绕预应力 σ₀（Batch 2'，D-B2'-3：零值旁路保逐位；残差与 K_G 的 Ŝ 均用总应力）
+        if σ0 != (0.0, 0.0, 0.0)
+            S1 += σ0[1]; S2 += σ0[2]; S3 += σ0[3]
         end
         # B_GL = ∂E_vec/∂u_e（u=0 时退化为线性 B）
         B = zeros(Float64, 3, 8)
@@ -452,7 +457,8 @@ function assemble_bulk_residual_tangent(
     plasticity::Bool=false,
     K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,
     eigenstrain=nothing,
-    commit_plastic::Bool=false
+    commit_plastic::Bool=false,
+    prestress=nothing
 )
     ndof = 2 * czm_mesh.nnode
     length(u) == ndof || throw(DimensionMismatch(
@@ -468,6 +474,12 @@ function assemble_bulk_residual_tangent(
               "未开塑性时必须传 nothing，收到 $(typeof(mech_state))。")
     end
 
+    if prestress !== nothing
+        geo_nl || error(
+            "assemble_bulk_residual_tangent: prestress 需要 geo_nl=true（D-B2'-2：初应力由 GL 残差与 K_G 消费）。")
+        length(prestress) == size(czm_mesh.bulk_element, 1) || throw(DimensionMismatch(
+            "assemble_bulk_residual_tangent: prestress 长度 $(length(prestress)) 应为 bulk 单元数 $(size(czm_mesh.bulk_element, 1))"))
+    end
     if geo_nl
         K_bulk_cached !== nothing && error(
             "assemble_bulk_residual_tangent: geo_nl=true 时切线依赖 u，" *
@@ -504,21 +516,21 @@ function assemble_bulk_residual_tangent(
         for e in 1:ne0
             mt = submesh.material_type[e]
             local D_mat::Matrix{Float64}, plastic::Union{Nothing, Tuple}
+            # 模量统一走 moduli_of（E 为 ÷E_coat 归一，×E_coat/σ_czm 链到 σ_czm 系；
+            # 用户参数修正后 PCC.E/NCC.E 即物理箔模量，塑性与弹性路径共用）
+            E_e, ν_e = moduli_of(param, mt)
+            D_mat = E_e / (1.0 - ν_e^2) * [1.0 ν_e 0.0;
+                                          ν_e 1.0 0.0;
+                                          0.0 0.0 (1.0 - ν_e) / 2.0]
             plastic = nothing
             if plasticity && (mt === :PCC || mt === :NCC)
-                E_f, ν_f, σ_y, H = foil_params_of(param, mt)
+                σ_y, H = foil_params_of(param, mt)
                 σ_y > 0.0 || error(
                     "assemble_bulk_residual_tangent: czm_j2_plasticity=true 但 $mt 的 sigma_y ≤ 0（未设置）。" *
                     "缺参即拦截，不默认、不置零（AGENTS 9.4/9.7）。")
-                D_mat = plane_stress_C(E_f, ν_f)   # σ_czm 归一，不经 moduli_of 双缩放链（D-B3-0）
                 plastic = (σ_y, H,
                            NTuple{3, Float64}[mech_state[e, g].eps_p for g in 1:4],
                            Float64[mech_state[e, g].kappa for g in 1:4])
-            else
-                E_e, ν_e = moduli_of(param, mt)
-                D_mat = E_e / (1.0 - ν_e^2) * [1.0 ν_e 0.0;
-                                              ν_e 1.0 0.0;
-                                              0.0 0.0 (1.0 - ν_e) / 2.0]
             end
             ε0 = 0.0
             if dT_el !== nothing
@@ -535,7 +547,8 @@ function assemble_bulk_residual_tangent(
                 u_e[2*k] = u[2*n]
             end
             f_e, K_e = gl_element_residual_tangent(x_e, y_e, u_e, D_mat, ε0, 2;
-                                                   plastic=plastic, commit_to=commit_to)
+                                                   plastic=plastic, commit_to=commit_to,
+                                                   σ0=prestress === nothing ? (0.0, 0.0, 0.0) : prestress[e])
             if commit_to !== nothing
                 for g in 1:4
                     mech_state[e, g].eps_p = commit_to[g][1]
@@ -786,17 +799,20 @@ function assemble_coupled_system(
     eigenstrain=nothing,
     plasticity::Bool=false,
     mech_state=nothing,
-    commit_plastic::Bool=false
+    commit_plastic::Bool=false,
+    prestress=nothing
 )
     ndof = 2 * czm_mesh.nnode
 
     # 固体残差与切线（统一入口，spec §4.2）。geo_nl=false 为 Batch 1 线弹性槽位
     # （与 K_bulk*u 逐位等价）；geo_nl=true 走完全 GL（Batch 2），ε* 内嵌（D-B2-1）；
-    # plasticity=true 时 PCC/NCC 用物理箔 J2（Batch 3，D-B3-0）。
+    # plasticity=true 时 PCC/NCC 用物理箔 J2（Batch 3，D-B3-0）；
+    # prestress 叠加卷绕预应力 σ₀ 进残差与 K_G（Batch 2'，D-B2'-1/2）。
     f_int_bulk, K_bulk = assemble_bulk_residual_tangent(
         czm_mesh, u, param_cache, mech_state; K_bulk_cached=K_bulk_cached,
         geo_nl=geo_nl, eigenstrain=eigenstrain,
-        plasticity=plasticity, commit_plastic=commit_plastic)
+        plasticity=plasticity, commit_plastic=commit_plastic,
+        prestress=prestress)
 
     # 内聚力刚度和内力（使用几何缓存和工作区，透传 param_cache）
     K_coh, f_int_coh, separations, tractions = assemble_czm_system(

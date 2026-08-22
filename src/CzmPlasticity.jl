@@ -16,14 +16,16 @@ end
 PlasticState() = PlasticState((0.0, 0.0, 0.0), 0.0)
 
 """
-    foil_params_of(param, mt) -> (E, ν, σ_y, H)
+    foil_params_of(param, mt) -> (σ_y, H)
 
-物理箔参数（D-B3-0）：`czm_j2_plasticity=true` 时 PCC/NCC 采用金属箔本构（σ_czm 归一系，
-不经 `moduli_of` 的 E_coat 双缩放链）。其余材料类型返回 `nothing`。
+箔塑性屈服/硬化参数（Batch 3，`/σ_czm` 归一）。弹性模量/泊松比不在此取——
+统一走 `moduli_of(param, mt)`（`param.PCC.E` 为 ÷E_coat 归一，须乘
+`E_coat/σ_czm` 链才到 σ_czm 系；用户参数修正后 PCC.E/NCC.E 即物理箔模量）。
+其余材料类型返回 `nothing`。
 """
 function foil_params_of(param, mt::Symbol)
-    mt === :PCC && return (param.PCC.E_foil, param.PCC.nu_foil, param.PCC.sigma_y, param.PCC.H)
-    mt === :NCC && return (param.NCC.E_foil, param.NCC.nu_foil, param.NCC.sigma_y, param.NCC.H)
+    mt === :PCC && return (param.PCC.sigma_y, param.PCC.H)
+    mt === :NCC && return (param.NCC.sigma_y, param.NCC.H)
     return nothing
 end
 

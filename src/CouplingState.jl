@@ -275,13 +275,14 @@ mutable struct CzmLayout
     ndof::Int                     # 总位移 DOF 数 (2 * nnode)
     u_prev::Vector{Float64}       # 上一步位移场（跨时间步持有）
     plastic_states::Union{Nothing, Matrix{PlasticState}}  # PCC/NCC 高斯点塑性状态（Batch 3，[ne,4]；收敛才提交 D-B3-2）
+    winding_prestress::Union{Nothing, Vector{NTuple{3, Float64}}}  # 卷绕预应力 σ₀ 场（Batch 2'，逐单元全局三分量；几何固定一次计算持久持有）
 end
 
 """便捷构造器：从 czm_mesh 初始化"""
 function CzmLayout(czm_mesh::CohesiveMesh)
     n_coh = czm_mesh.n_cohesive
     ndof = 2 * czm_mesh.nnode
-    CzmLayout(n_coh, ndof, zeros(Float64, ndof), nothing)
+    CzmLayout(n_coh, ndof, zeros(Float64, ndof), nothing, nothing)
 end
 
 # ========================================================================
@@ -597,6 +598,16 @@ function update_czm_damage!(case, variables, T_nodes_carry)
     geo_nl = case.opt.czm_geo_nonlinear
     eig = geo_nl ? (α_eff=α_eff, β_n=β_n, β_p=β_p,
                     dT=dT_elem, Δsn=Δsoc_n_elem, Δsp=Δsoc_p_elem) : nothing
+    prestress = nothing
+    if case.opt.czm_winding_prestress
+        geo_nl || error("update_czm_damage!: czm_winding_prestress=true 需要 czm_geo_nonlinear=true（D-B2'-2）。")
+        (param.cell.winding_T_ne > 0.0 || param.cell.winding_T_pe > 0.0) || error(
+            "update_czm_damage!: czm_winding_prestress=true 但 cell.winding_T_ne/pe 均为 0（未设置）。缺参即拦截（AGENTS 9.4/9.7）。")
+        if case.czm_layout.winding_prestress === nothing
+            case.czm_layout.winding_prestress = winding_prestress_field(czm_mesh, param)
+        end
+        prestress = case.czm_layout.winding_prestress
+    end
     plastic_on = case.opt.czm_j2_plasticity
     mech_state = nothing
     if plastic_on
@@ -616,7 +627,7 @@ function update_czm_damage!(case, variables, T_nodes_carry)
         max_iter=max_iter, tol=tol, n_load_steps=n_load_steps, arc_length_alpha=arc_length_alpha, iter_method=iter_method,
         cache=cache, visc_beta=visc_beta,
         geo_nl=geo_nl, eigenstrain=eig,
-        plasticity=plastic_on, mech_state=mech_state
+        plasticity=plastic_on, mech_state=mech_state, prestress=prestress
     )
 
     if case.opt.debug_coupling

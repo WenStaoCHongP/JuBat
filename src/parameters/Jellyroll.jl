@@ -28,7 +28,7 @@ PE.sig = 0.18
 PE.E = 3.75e10         # Pa颗粒的弹性模量
 PE.nu = 0.20          # -颗粒的泊松比
 PE.alphaT = 1.5e-5    # 1/K
-PE.E_coat = 500e6         # Pa 正极片弹性模量 (500 MPa)
+PE.E_coat = 1e9         # Pa 正极片弹性模量 (500 MPa)
 PE.nu_coat = 0.3          # 正极片泊松比
 PE.Omega = -7.28e-7     # m^3/mol (placeholder if diffusion-stress needed)
 PE.Eac_D = 0
@@ -58,7 +58,7 @@ NE.sig = 215.0
 NE.E = 1.5e10         # Pa颗粒的弹性模量
 NE.nu = 0.28          # -颗粒的泊松比
 NE.alphaT = 8.0e-6    # 1/K
-NE.E_coat = 500e6         # Pa 负极片弹性模量 (500 MPa)
+NE.E_coat = 1e9         # Pa 负极片弹性模量 (500 MPa)
 NE.nu_coat = 0.25          # 负极片泊松比
 NE.Omega = 3.1e-6    # m^3/mol (placeholder if diffusion-stress needed)
 NE.Eac_D = 0.
@@ -86,8 +86,8 @@ SP.heat_Q = 1128        # Specific_heat_capacity_sep (J/kg/K)
 SP.eps = 0.47            # Chen2020 separator porosity
 SP.eps_fi = 0.
 SP.brugg = 1.5           # Chen2020 electrolyte Bruggeman for separator
-SP.E = 500e6         # Pa 隔膜的弹性模量
-SP.nu = 0.3          # 隔膜的泊松比
+SP.E = 750e6         # Pa 隔膜的弹性模量
+SP.nu = 0.35          # 隔膜的泊松比
 
 # Positive Current Collector 
 PCC = CurrentCollector()
@@ -96,11 +96,9 @@ PCC.lambda = 237.   # 热导率 (W/m/K)
 PCC.rho = 2702.    # 密度 (kg/m³)
 PCC.heat_Q = 8.76e2      # 比热容 (J/kg/K)
 PCC.sig =3.55e7
-PCC.E = 500e6         # Pa 正极集流体的弹性模量（软等效层，默认路径）
-PCC.nu = 0.3          # 正极集流体的泊松比
-# Batch 3（D-B3-0）：Al 箔物理本构（文献整理 §10.7；仅 czm_j2_plasticity=true 消费）
-PCC.E_foil = 70e9     # Pa
-PCC.nu_foil = 0.33
+PCC.E = 7e10         # Pa 正极集流体的弹性模量（软等效层，默认路径）
+PCC.nu = 0.33          # 正极集流体的泊松比
+# Batch 3：Al 箔塑性参数（本构模量直接用上面的 PCC.E/nu，用户参数修正后不再单列 foil 字段）
 PCC.sigma_y = 60e6    # Pa（Shi 2026 屈服起始）
 PCC.H = 0.0           # Pa 理想塑性（敏感性扫描 0–2 GPa）
 
@@ -111,11 +109,9 @@ NCC.lambda = 401.   # 热导率 (W/m/K)
 NCC.rho = 8933.    # 密度 (kg/m³)
 NCC.heat_Q = 3.83e2      # 比热容 (J/kg/K)
 NCC.sig = 5.96e7
-NCC.E = 500e6         # Pa 负极集流体的弹性模量（软等效层，默认路径）
-NCC.nu = 0.3          # 负极集流体的泊松比
-# Batch 3（D-B3-0）：Cu 箔物理本构（文献整理 §10.7；仅 czm_j2_plasticity=true 消费）
-NCC.E_foil = 110e9    # Pa
-NCC.nu_foil = 0.34
+NCC.E = 1.1e11         # Pa 负极集流体的弹性模量（软等效层，默认路径）
+NCC.nu = 0.34         # 负极集流体的泊松比
+# Batch 3：Cu 箔塑性参数（本构模量直接用上面的 NCC.E/nu）
 NCC.sigma_y = 200e6   # Pa（ED Cu 文献区间 108–441 MPa 中值）
 NCC.H = 0.0           # Pa 理想塑性
 
