@@ -35,6 +35,7 @@ $env:JULIA_NUM_THREADS = '1'
 | 2026-08-21 | 堆芯塌陷 Batch 2：完全 GL/TL geo_nl 槽位（SVK + 初应力 K_G，ε* 内嵌 D-B2-1）+ basic/load_substep 求解器接线 | `+182/-38`（czm +159、CzmSolve +55/-38、CouplingState +6/-2） | `test_czm_geometric_stiffness.jl` 5/5（FD 切线/刚体转动/线性退化/自由膨胀/K_G 方向）、`test_czm_geo_c1.jl` 2/2（C1）、mech_core 8/8；全套 26/26；`verify_czm_standalone.jl` 快照逐位一致（含 b551dac arc 误伤被门禁捕获后回滚 `1bb0026`） | 所有科学指标及 PNG SHA-256 完全一致（geo_nl 默认关） | PASS |
 | 2026-08-21 | 堆芯塌陷 Batch 3：PCC/NCC 平面应力一致 J2 塑性（物理箔本构 D-B3-0、mech_state 消费、收敛提交 D-B3-2） | `+246/-39`（CzmPlasticity 新建 +101） | `unit_czm_j2.jl` 5/5（含一致切线 FD）、`test_czm_j2_integration.jl` 4/4（C2-lite 屈服/回归锚/不可逆/报错）；全套 28/28；`verify_czm_standalone.jl` 快照逐位一致 | 所有科学指标及 PNG SHA-256 完全一致（塑性默认关） | PASS |
 | 2026-08-22 | 堆芯塌陷 Batch 2'：卷绕预应力 σ₀（等应变卷入张力 + 对数累积压力，D-B2'-1）+ 用户宏观参数修正（PCC 70GPa/NCC 110GPa/E_coat 1GPa/SP 750MPa）→ **基线重冻结 v2** | `+165/-52`（链路 5 文件 + Jellyroll/SetParams 参数） | `test_czm_winding_prestress.jl` 6/6；全套 29/29 | **参数刻意变更，基线 v2 重冻结**：testexample 电/热指标不变、分离 1.2557e-14→1.2572e-13 m、PNG SHA→`b31ffb49…`；探针景观移动（basic 8/8 D=0.55、load_sub/arc 6/8）——v1/v2 档案同存 | PASS（v2 基线） |
+| 2026-08-22 | 堆芯塌陷 Batch 2''：D13 网格探针（厚涂层细分 + split_KG + μ_crit 二分/主模态/单匝 DFT，八组双参考态） | `+302`（mesh/czm/probe/test） | `test_czm_thin_subdiv.jl` 4/4；全套 30/30；探针 Summary 与 v2 逐位 | 所有科学指标及 PNG SHA-256 与 v2 一致（细分/分离默认关） | PASS |
 
 本轮 36 个顶层 `src/*.jl` 的 PowerShell 物理行统计由 10,027 降至 9,889，净减 138 行。
 
