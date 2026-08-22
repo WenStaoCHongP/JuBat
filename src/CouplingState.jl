@@ -275,14 +275,55 @@ mutable struct CzmLayout
     ndof::Int                     # 总位移 DOF 数 (2 * nnode)
     u_prev::Vector{Float64}       # 上一步位移场（跨时间步持有）
     plastic_states::Union{Nothing, Matrix{PlasticState}}  # PCC/NCC 高斯点塑性状态（Batch 3，[ne,4]；收敛才提交 D-B3-2）
-    winding_prestress::Union{Nothing, Vector{NTuple{3, Float64}}}  # 卷绕预应力 σ₀ 场（Batch 2'，逐单元全局三分量；几何固定一次计算持久持有）
+    winding_prestress::Union{Nothing, Vector{NTuple{3, Float64}}}
+    node_ref::Union{Nothing, Matrix{Float64}}          # 初始螺旋节点快照（Δ_core 基准，永不重置）  # 卷绕预应力 σ₀ 场（Batch 2'，逐单元全局三分量；几何固定一次计算持久持有）
 end
 
 """便捷构造器：从 czm_mesh 初始化"""
 function CzmLayout(czm_mesh::CohesiveMesh)
     n_coh = czm_mesh.n_cohesive
     ndof = 2 * czm_mesh.nnode
-    CzmLayout(n_coh, ndof, zeros(Float64, ndof), nothing, nothing)
+    CzmLayout(n_coh, ndof, zeros(Float64, ndof), nothing, nothing, nothing)
+end
+
+"""
+    ensure_node_ref!(case) -> Matrix{Float64}
+
+初始螺旋节点快照（惰性建立、永不重置）：Δ_core 始终相对初始完美螺旋计算（spec §3.5）。
+"""
+function ensure_node_ref!(case)
+    if case.czm_layout.node_ref === nothing
+        case.czm_layout.node_ref = copy(case.czm_mesh.node)
+    end
+    return case.czm_layout.node_ref
+end
+
+"""
+    core_ovalization(czm_mesh, u, ref_node) -> (w_core, Δ_core)
+
+spec §3.5（D8 冻结定义）位移基 Δ_core：Γ_in,free = 内螺旋第一匝窗口节点，
+u_n = u·r̂（r̂ 取初始螺旋节点向径，始终相对初始螺旋）；窗口内离散 Fourier 去除
+n=0（均值）与 n=1（刚体平移）后取 max|ũ_n|；Δ_core = w_core / cell.Rin。
+"""
+function core_ovalization(czm_mesh, u, ref_node::AbstractMatrix{<:Real})
+    bonded = czm_mesh.czm_submesh.mesh_bonded
+    # 单匝窗口 = 每匝角节点数（第 1 匝分段数，由 winding_turn 反推；element[1,2] 是整条
+    # 螺旋角节点总数跨全部匝，不得使用）；节点 1..nθn 天然按角序（θ>π 处 atan 断跳，禁排序）
+    wt = czm_mesh.czm_submesh.winding_turn
+    nθn = count(==(1), wt[1:count(==(wt[1]), wt)])
+    r_ref = hypot(ref_node[1, 1], ref_node[1, 2])
+    u_n = zeros(nθn)
+    for (i, k) in enumerate(1:nθn)        x, y = ref_node[k, 1], ref_node[k, 2]
+        c, s = x / hypot(x, y), y / hypot(x, y)
+        u_n[i] = c * u[2*k-1] + s * u[2*k]
+    end
+    u_n .-= sum(u_n) / nθn                    # 去 n=0
+    # 去 n=1（最小二乘一阶谐波）
+    a1 = 2 / nθn * sum(u_n[i] * cos(2π * (i - 1) / nθn) for i in 1:nθn)
+    b1 = 2 / nθn * sum(u_n[i] * sin(2π * (i - 1) / nθn) for i in 1:nθn)
+    u_n .-= [a1 * cos(2π * (i - 1) / nθn) + b1 * sin(2π * (i - 1) / nθn) for i in 1:nθn]
+    w_core = maximum(abs.(u_n))
+    return w_core, w_core / r_ref
 end
 
 # ========================================================================
