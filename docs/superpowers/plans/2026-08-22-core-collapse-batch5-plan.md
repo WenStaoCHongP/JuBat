@@ -17,7 +17,7 @@
 ### 设计决策（执行契约）
 
 **D-B5-1（Δ_core 冻结实现）**：`core_ovalization(czm_mesh, u, ref_node) -> (w_core, Δ_core)`——Γ_in,free = 内螺旋（螺旋 1）**第一匝窗口**节点（`1:nθ`，同探针方法）；`u_n,i = u·r̂`（r̂ 取初始螺旋节点向径，**始终相对初始螺旋**）；窗口内离散 Fourier 去除 n=0（均值）与 n=1（刚体平移）后 `w_core = max|ũ_n|`；`Δ_core = w_core/r_ref`，`r_ref = a`（`cell.Rin`，11.111 归一）。初始节点快照存 `CzmLayout.node_ref`（首次更新时惰性拷贝，永不重置）。输出键 `Delta core [-]`、`core wrinkle amplitude [m]`（写入 variables，CallModel 同站点）+ `collapse_approx = "sp_perfect_bond_phi_free"`（geo_nl 开启时输出；**用户修订：4' 不做**，SP–电极层内完美粘结、Φ 缝自由，至 Batch 8 重估）。
-**D-B5-2（弧长为 λ-本征应变斜坡，偏离声明）**：解锁 `arc_length + geo_nl`：现有自适应子步结构上，把载荷斜坡从力空间改为**本征应变空间**——`ε*(λ) = ε_ref + λ·Δε*`（`Δε* = ε*_total − ε_ref`，`ε_ref` 由 `update_czm_damage!` 快照于 `CzmLayout.eigenstrain_prev`）；每子步 λ→target，残差 `R = F_ext − f_int^GL(u, ε*(λ))`，收敛判据同 §6.8；步长自适应减半至 `step/128` 报错终止（不伪造收敛）。**偏离**：暂不实现 Crisfield 柱面二次约束（§6.90–6.91）——现结构为增量-迭代斜坡，不能越过极值点；越过极值点的需求出现时再单独立项（Theory §6.10 已备公式）。此偏离在计划批准时一并确认。
+**D-B5-2（已撤回，用户批准 2026-08-22：完整 Crisfield 柱面弧长）**：解锁 `arc_length + geo_nl`，实现 Theory §6.10 完整列式：λ 缩放本征应变增量（`ε*(λ) = ε_ref + λ·Δε*`，`ε_ref` 快照于 `CzmLayout.eigenstrain_prev`）；增广 Newton `Δu = Δu_r + Δλ·Δu_t`（`Δu_r = −K⁻¹R`、`Δu_t = K⁻¹f̂`，`f̂ = ∫BᵀC·Δε* dA` 等效载荷）；柱面约束 `ΔuᵀΔu = Δl²` → Δλ 二次方程 (6.90–6.91)，取与上步切向内积为正的根，无实根 Δl/2 重试；越过极值点（λ 可降）推进至 λ≥1 提交；步长自适应，`step/128` 下限报错终止（不伪造收敛）；**损伤 max-history 与弧长回溯的交互按 §6.10 语义**（D 不回退、重试不幂等，诊断记录重试次数）。撤回理由：D13 探针实测预应力参考态近临界（μ≈5e-3），C4-lite 目标现象即极值点——λ-斜坡会在临界点停滞并阻断 C4-lite。
 **D-B5-3（多圈持久化审计而非新建）**：`solve_phase` 已跨相位携带 `czm_mesh`（u_prev/damage/plastic 均在其上与 `czm_layout`），不重置完美圆（旧 bug 已修，代码注释在案）；本批补：`node_ref`/`eigenstrain_prev` 快照字段 + 审计测试锁死"跨相位/跨圈不重置"契约。
 **D-B5-4（C4-lite 判据与 D10 分支）**：判据 = 多圈（≥3 相位）Δ_core 与 D_max 联合增长（允许物理合理的非单调，取趋势断言）；输出必须携带 `collapse_approx` 声明。不可达 → D10：预应力量级（0.5/1×）× 本征应变幅值（0.5/1/2×，≤6 组）有界探针 → 停止评审记录结论，不降级验收门。
 
@@ -45,11 +45,11 @@
 实现：`core_ovalization`（单匝窗口 DFT 同探针法）；`CzmLayout` 两新字段；`update_czm_damage!` 尾部计算并写 variables；`CallModel` 键透传。
 提交 `feat(czm): Φ 缝默认完美粘结（节点合并入构造，v1.5）+ Δ_core 位移基计算与多圈快照`。
 
-## Task 2: 弧长 geo 解锁——λ-本征应变斜坡（TDD）
+## Task 2: 弧长 geo 解锁——完整 Crisfield 柱面弧长（TDD）
 
-测试（`test_czm_arc_geo.jl`，3 testset）：① `arc_length + geo_nl + eigenstrain`（小载荷）收敛且位移 ≈ basic 方法解（rtol 1e-6，弹性区）；② λ 达 1（`result.iterations` 有限、残差 < tol）；③ `geo_nl=false + arc_length` 行为不变（回归锚：与 Batch 2' 前输出一致）。
+测试（`test_czm_arc_geo.jl`，3 testset）：① `arc_length + geo_nl + eigenstrain`（小载荷）收敛且位移 ≈ basic 方法解（rtol 1e-6，弹性区）；② λ 达 1（`result.iterations` 有限、残差 < tol）；③ 越极值点能力：构造软化解（人工降低 σ_max 使 cohesive 早期软化）验证 λ 中途下降仍推进至 λ≥1 并提交失稳后构型。④ `geo_nl=false + arc_length` 行为不变（回归锚）。
 实现：`solve_czm_arc_length_step` geo 分支：F_tc 不装配；`eigenstrain_mix(t) = (α,βn,βp, ε_ref + t·(ε_tot−ε_ref))` 逐子步混参装配（新增 `mix_eigenstrain` 帮助函数）；目标 R = F_ext − f_int；收敛/步长/终止沿用现结构（§6.10 终止约定已在）；dispatch 删除 geo_nl 拒绝分支（plasticity/prestress/phi_bond 透传同 load_substep 模式）。`update_czm_damage!`：`eigenstrain_prev` 快照（几何无关，首次建立后每相位更新）。
-提交 `feat(czm): 弧长 geo 路径解锁——λ 缩放本征应变增量斜坡（D-B5-2 偏离声明：无 Crisfield 二次约束）`。
+提交 `feat(czm): 弧长 geo 路径解锁——完整 Crisfield 柱面弧长（§6.10，可越极值点）`。
 
 ## Task 3: C4-lite 多圈集成 + 三道门禁（v2）
 
@@ -63,6 +63,6 @@
 ## 自评审记录
 
 1. **spec 覆盖**：§3.5 Δ_core/输出键/多圈持久化 → Task 1；§3.5 路径跟踪 + §4.1 CzmSolve 行 → Task 2（含 D-B5-2 偏离）；§7 Batch 5 三测试（滤波单测/持久化/弧长回归）→ Task 1①/1④/2③；C4-lite/D10 → Task 3。**§3.4（4'）按用户修订不实现**——spec §9 序列留空，C4-lite 声明如实标注 Φ 自由。
-2. **决策登记**：**用户二次修订（spec v1.5）：Φ 缝默认完美粘结（同 SP–涂层连接形式），4' 取消，基线 v3 重冻结**；D-B5-1（Δ_core 窗口=第一匝、基准=初始螺旋恒定）；D-B5-2（**弧长偏离 Crisfield**——用户批准点）；D-B5-3（持久化审计不重建）；D-B5-4（C4-lite 判据与 D10 分支）。
+2. **决策登记**：**用户二次修订（spec v1.5）：Φ 缝默认完美粘结，4' 取消，基线 v3 重冻结**；D-B5-1（Δ_core 窗口=第一匝、基准=初始螺旋恒定）；D-B5-2（**原偏离已撤回**——用户批准完整 Crisfield，理由：预应力近临界 + C4-lite 目标即极值点）；D-B5-3（持久化审计不重建）；D-B5-4（C4-lite 判据与 D10 分支）。
 3. **类型一致性**：`core_ovalization(czm_mesh,u,ref_node)`、`mix_eigenstrain(ref,tot,t)` 命名一致；新键名与 spec §3.5 逐字（collapse_approx 除外——用户修订后的近似声明）。
 4. **风险**：C4-lite 可达性未知（D10 兜底已定义）；弧长在小载荷弹性区应与 basic 一致（rtol 1e-6 偏紧则放宽至 1e-4 并记录）；32 个测试文件的运行时长增长。
