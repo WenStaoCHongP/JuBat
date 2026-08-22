@@ -39,11 +39,11 @@
 
 测试（`test_czm_delta_core.jl`，4 testset）：① 滤波精确性：构造 `u_n(θ) = 0.3+0.5cos θ+0.2cos 2θ+0.1cos 5θ`（放大 1e-4）位移场 → max|ũ_n| ≥ 0.25×max|u_n| 且纯 0/1 阶场 → w≈0（机器零级）；② Δ_core 归一（÷a）；③ `node_ref` 恒定：两次 update 后 Δ_core 基准不变（相对初始螺旋）；④ 持久化审计：跨两次相位调用 u_prev/damage_states 连续（第二次初值 == 第一次终值）。
 实现：`core_ovalization`（第一匝窗口 DFT，同探针法）；`CzmLayout.node_ref/eigenstrain_prev` 两新字段；`update_czm_damage!` 尾部计算并写 variables；`CallModel` 键透传 + `collapse_approx = "sp_perfect_bond_phi_free"`（geo_nl 开启时）。
-提交 `feat(czm): Δ_core 位移基计算与多圈快照（D8 冻结定义，node_ref/eigenstrain_prev）`。
+提交 `feat(czm): Φ 缝默认完美粘结（节点合并入构造，v1.5）+ Δ_core 位移基计算与多圈快照`。
 
 测试（`test_czm_delta_core.jl`，4 testset）：① 滤波精确性：构造 `u_n(θ) = 0.3+0.5cos θ+0.2cos 2θ+0.1cos 5θ`（放大 1e-4）位移场 → `w_core ≈ 0.2+0.1`（幅值）量级断言（max|ũ| ≥ 0.25·max|u_n|，且纯 0/1 阶场 → w≈0 机器零）；② Δ_core 归一（÷a）；③ `node_ref` 持久：两次 update_czm_damage! 后 Δ_core 基准不变（相对初始螺旋）；④ 持久化审计：跨两次 solve_phase 调用 u_prev/damage_states 连续（不重置断言：第二次初值 == 第一次终值）。
 实现：`core_ovalization`（单匝窗口 DFT 同探针法）；`CzmLayout` 两新字段；`update_czm_damage!` 尾部计算并写 variables；`CallModel` 键透传。
-提交 `feat(czm): Δ_core 位移基计算与多圈快照（D8 冻结定义，node_ref/eigenstrain_prev）`。
+提交 `feat(czm): Φ 缝默认完美粘结（节点合并入构造，v1.5）+ Δ_core 位移基计算与多圈快照`。
 
 ## Task 2: 弧长 geo 解锁——λ-本征应变斜坡（TDD）
 
@@ -53,8 +53,8 @@
 
 ## Task 3: C4-lite 多圈集成 + 三道门禁（v2）
 
-- [ ] `test_czm_multicycle_c4lite.jl`：nθ=8 夹具，`geo+plastic+prestress(0.2×)` 全开（Φ 自由，用户修订），模拟 3 相位（Δsoc −0.3 → 静置 → 再放电幅值递增 20%）：断言 Δ_core 相位间总体增长（允许一次回落 ≤10%）、D_max 不减、输出含 `collapse_approx = "sp_perfect_bond_phi_free"`。**不可达即转 D10**：探针（预应力 0.5/1× × 本征应变 0.5/1/2×）打印矩阵 → 测试改 `@test_broken` + findings 记录，**不降级**。
-- [ ] 全套 32/32；探针 v2 逐位；testexample v2（指标 + PNG `b31ffb49…`）。
+- [ ] `test_czm_multicycle_c4lite.jl`：nθ=8 夹具，`geo+plastic+prestress(0.2×)` 全开（Φ 默认粘结，v1.5），模拟 3 相位（Δsoc −0.3 → 静置 → 再放电幅值递增 20%）：断言 Δ_core 相位间总体增长（允许一次回落 ≤10%）、D_max 不减、输出含 `collapse_approx = "phi_perfect_bond"`。**不可达即转 D10**：探针（预应力 0.5/1× × 本征应变 0.5/1/2×）打印矩阵 → 测试改 `@test_broken` + findings 记录，**不降级**。
+- [ ] 全套；探针与 testexample **v3 重冻结**（Φ 粘结拓扑变化 + 决策声明；v1/v2/v3 档案同存）。
 - [ ] `Simplify/baseline.md` 行、progress（C4-lite 证据或 D10 结论）、index；spec 若 C4-lite 达成 → §7 Batch 5 行勾稽注记（v1.4.1 小修，不动决策表）。
 - [ ] 提交 `feat/test(czm): C4-lite 多圈集成与门禁记录`。
 
@@ -63,6 +63,6 @@
 ## 自评审记录
 
 1. **spec 覆盖**：§3.5 Δ_core/输出键/多圈持久化 → Task 1；§3.5 路径跟踪 + §4.1 CzmSolve 行 → Task 2（含 D-B5-2 偏离）；§7 Batch 5 三测试（滤波单测/持久化/弧长回归）→ Task 1①/1④/2③；C4-lite/D10 → Task 3。**§3.4（4'）按用户修订不实现**——spec §9 序列留空，C4-lite 声明如实标注 Φ 自由。
-2. **决策登记**：**用户修订：Batch 4' 不做（SP 完美粘结维持、Φ 自由）**；D-B5-1（Δ_core 窗口=第一匝、基准=初始螺旋恒定）；D-B5-2（**弧长偏离 Crisfield**——用户批准点）；D-B5-3（持久化审计不重建）；D-B5-4（C4-lite 判据与 D10 分支）。
+2. **决策登记**：**用户二次修订（spec v1.5）：Φ 缝默认完美粘结（同 SP–涂层连接形式），4' 取消，基线 v3 重冻结**；D-B5-1（Δ_core 窗口=第一匝、基准=初始螺旋恒定）；D-B5-2（**弧长偏离 Crisfield**——用户批准点）；D-B5-3（持久化审计不重建）；D-B5-4（C4-lite 判据与 D10 分支）。
 3. **类型一致性**：`core_ovalization(czm_mesh,u,ref_node)`、`mix_eigenstrain(ref,tot,t)` 命名一致；新键名与 spec §3.5 逐字（collapse_approx 除外——用户修订后的近似声明）。
 4. **风险**：C4-lite 可达性未知（D10 兜底已定义）；弧长在小载荷弹性区应与 basic 一致（rtol 1e-6 偏紧则放宽至 1e-4 并记录）；32 个测试文件的运行时长增长。
