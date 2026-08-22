@@ -49,11 +49,11 @@ using .JuBat
     @test issorted(radial_profile)
     @test all(diff(radial_profile) .<= 1)
 
-    # 力学 Φ 配对直接继承热网格配对，坐标严格重合
+    # 力学 Φ 配对继承热网格配对计数；v1.5 合并后为 bonded 索引下的 (i,i)（完美粘结记录）
     @test length(submesh.phi_pairs) == length(mesh_data.interface_pairs)
     for (outer_node, inner_node) in submesh.phi_pairs
-        @test outer_node > 8 * (n_thermal + 1)
-        @test inner_node <= n_thermal + 1
-        @test submesh.mesh.node[outer_node, :] ≈ submesh.mesh.node[inner_node, :] atol=1e-12
+        @test outer_node == inner_node
+        @test outer_node <= submesh.mesh_bonded.nlen
     end
+    @test submesh.mesh_bonded.nlen == submesh.mesh.nlen - length(submesh.phi_pairs)
 end

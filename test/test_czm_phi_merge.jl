@@ -20,19 +20,20 @@ end
 @testset "Φ 合并拓扑：绑定对同节点、cohesive 恒量、末端豁免" begin
     case, md = merge_fixture(nθ=8)
     sub = md.czm_submesh
-    pp = sub.phi_pairs
+    # v1.5 双网格契约：phi_pairs 为合并网格（mesh_bonded）索引下的 (i,i)；拓扑节点数减少
+    sub = sub.mesh_bonded.nlen == sub.mesh.nlen ? sub : sub  # 说明行
+    pp = md.czm_submesh.phi_pairs
     @test !isempty(pp)
     nseg = size(case.czm_mesh.bulk_element, 1) ÷ 8
     @test case.czm_mesh.n_cohesive == 4 * nseg          # 合并不产生新 cohesive
     # 合并后外匝节点已并入内匝：配对两端为同一节点索引（重映射后 o == i）
     @test all(o == i for (o, i) in pp)
     # nnode 减少量 == 合并对数（重映射后没有节点消失两次）
-    sub2_spirals = sub.mesh.nlen
-    @test sub2_spirals == 9 * (8 * 21 + 1) - length(pp) # 9 螺旋原始数 − 合并数（近似核对该式不严格，
-                                                        # 主体断言是上面的 o==i 与 cohesive 恒量）
-    # 合并节点索引不越界且连续（cumsum 重映射正确）
-    mx = maximum(sub.mesh.element)
-    @test mx == sub.mesh.nlen
+    # mesh_bonded 节点数 = mesh 原始数 − 合并对数；单元最大索引 = bonded nlen（重映射连续）
+    @test md.czm_submesh.mesh_bonded.nlen == md.czm_submesh.mesh.nlen - length(pp)
+    @test maximum(md.czm_submesh.mesh_bonded.element) == md.czm_submesh.mesh_bonded.nlen
+    @test length(md.czm_submesh.phi_keep) == md.czm_submesh.mesh_bonded.nlen
+    @test size(case.czm_mesh.thermal_to_czm, 1) == md.czm_submesh.mesh.nlen  # 插值行数契约（未合并布局）
 end
 
 @testset "绑定对位移恒等（装配级）" begin
@@ -45,7 +46,7 @@ end
         u[2*n-1] = 1e-4 * sin(0.3 * cm.node[n, 1] + 1.0)
         u[2*n] = 1e-4 * cos(0.2 * cm.node[n, 2])
     end
-    f, K = JuBat.assemble_coupled_system(cm, u, pc)
+    K, f = JuBat.assemble_coupled_system(cm, u, pc)
     # 合并节点在 K 中表现为同一自由度行/列（无重复索引）——用 f 有限性与 K 对称近似性作烟雾断言
     @test all(isfinite, f) && all(isfinite, K)
     @test norm(Array(K) - Array(K)') ≤ 1e-9 * norm(Array(K))

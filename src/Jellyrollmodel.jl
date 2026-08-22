@@ -695,7 +695,39 @@ function build_czm_submesh(param, thermal2D, theta::AbstractVector{<:Real},
         push!(phi_pairs, (mechanical_outer, mechanical_inner))
     end
 
+    # —— v1.5 §3.4：Φ 缝默认完美粘结（与层内 SP–涂层共享节点同构）——
+    # .mesh 保留未合并布局（插值 mod 定位原封不动）；mesh_bonded 为合并后拓扑网格。
     gs = GetGS(element, node, gsorder, "Q4")
     mesh = Mesh("Q4", 2, node, nnode, element, gs)
-    return CzmSubmesh(mesh, material_type, winding_turn, thermal_elem_map, phi_pairs)
+
+    merge_map = Dict{Int,Int}()
+    for (outer_n, inner_n) in phi_pairs
+        dist = hypot(node[outer_n, 1] - node[inner_n, 1], node[outer_n, 2] - node[inner_n, 2])
+        dist <= 1e-9 || error(
+            "build_czm_submesh: Φ 配对 ($outer_n, $inner_n) 坐标不重合（distance=$dist），拒绝合并")
+        merge_map[outer_n] = inner_n
+    end
+    if isempty(merge_map)
+        return CzmSubmesh(mesh, material_type, winding_turn, thermal_elem_map,
+                          phi_pairs, mesh, collect(1:nnode))
+    end
+    element_b = copy(element)
+    for e in 1:size(element_b, 1), c in 1:4
+        element_b[e, c] = get(merge_map, element_b[e, c], element_b[e, c])
+    end
+    keep = trues(nnode)
+    for k in keys(merge_map)
+        keep[k] = false
+    end
+    old2new = cumsum(keep)
+    for e in 1:size(element_b, 1), c in 1:4
+        element_b[e, c] = old2new[element_b[e, c]]
+    end
+    node_b = node[keep, :]
+    nnode_b = count(keep)
+    gs_b = GetGS(element_b, node_b, gsorder, "Q4")
+    mesh_bonded = Mesh("Q4", 2, node_b, nnode_b, element_b, gs_b)
+    pairs_b = Tuple{Int,Int}[(old2new[i], old2new[i]) for (_, i) in phi_pairs]
+    return CzmSubmesh(mesh, material_type, winding_turn, thermal_elem_map,
+                      pairs_b, mesh_bonded, findall(keep))
 end

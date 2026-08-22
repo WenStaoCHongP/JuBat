@@ -46,7 +46,9 @@ struct CzmSubmesh
     material_type::Vector{Symbol}           # :PE / :PCC / :SP / :NE / :NCC
     winding_turn::Vector{Int}               # 卷绕圈号（从内到外 1, 2, ...）
     thermal_elem_map::Vector{Int}           # 每个 CZM 单元 → 对应的粗热单元 id
-    phi_pairs::Vector{Tuple{Int,Int}}        # (outer_node_at_θ, inner_node_at_θ+2π)
+    phi_pairs::Vector{Tuple{Int,Int}}        # (outer_node_at_θ, inner_node_at_θ+2π)——v1.5 合并后两端同索引
+    mesh_bonded::Mesh                        # v1.5 §3.4：Φ 合并后网格（.mesh 保留未合并布局供插值 mod 定位）
+    phi_keep::Vector{Int}                    # 未合并节点中保留的行（升序原索引），插值矩阵按此裁剪
 end
 
 mutable struct CohesiveMesh

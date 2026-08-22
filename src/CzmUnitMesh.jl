@@ -47,7 +47,7 @@ function create_unit_czm_strip(param; width=nothing, y0::Float64=1.0, gsorder::I
     material_type = copy(layer_materials)
     winding_turn = ones(Int, 8)
     thermal_elem_map = ones(Int, 8)
-    submesh = CzmSubmesh(bulk, material_type, winding_turn, thermal_elem_map, Tuple{Int,Int}[])
+    submesh = CzmSubmesh(bulk, material_type, winding_turn, thermal_elem_map, Tuple{Int,Int}[], bulk, collect(1:bulk.nlen))
 
     # 哑热网格：单 Q4 覆盖条带 bbox（供 build_thermal_to_czm_interp）
     pad = 1e-6 * max(W, H)
