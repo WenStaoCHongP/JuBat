@@ -182,3 +182,31 @@ end
     # 布局持久化语义：caching after first call stays（此处直接验证字段类型）
     @test (case.czm_layout === nothing) || (case.czm_layout.winding_prestress === nothing)  # 求解级调用不触碰布局（生产路径才写；夹具未建布局）
 end
+
+@testset "MultiSPMe 生产路径标记类型与最终结果元数据" begin
+    param_dim = JuBat.ChooseCell("Jellyroll")
+    opt = JuBat.Option()
+    opt.model = "SPMe"
+    opt.thermal_enabled = true
+    opt.thermalmodel = "distributed2D"
+    opt.per_element_spme = true
+    opt.czm_enabled = true
+    opt.czm_geo_nonlinear = true
+    opt.czm_winding_prestress = true
+    case = JuBat.SetCase(param_dim, opt)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=8, czm_enabled=true, gsorder=2)
+    case = JuBat.setup_thermal2D_mesh(case, mesh_data)
+    case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
+
+    y0 = JuBat.ModelInitialisation_MultiSPMe(case)
+    out = JuBat.CallModel_MultiSPMe(case, y0, 0.0; jacobi="update")
+    variables = out[4]
+    @test variables["winding prestress"] == [1.0]
+
+    hist = JuBat.StandardVariables(case, 2)
+    @test haskey(hist, "winding prestress")
+    JuBat.Variable_update!(hist, variables, 1)
+    result = JuBat.PostProcessing(case, hist, 1)
+    @test result["winding prestress"] == [1.0]
+    @test result["collapse_approx"] == "phi_perfect_bond"
+end

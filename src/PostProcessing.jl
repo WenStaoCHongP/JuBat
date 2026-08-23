@@ -97,6 +97,10 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
         result["thermal2D margin_to_cutoff"] = variables["thermal2D margin_to_cutoff"][1, 1:v]
     end
     if case.opt.czm_enabled == true
+        result["collapse_approx"] = "phi_perfect_bond"
+        if case.opt.czm_winding_prestress
+            result["winding prestress"] = vec(variables["winding prestress"][1, 1:v])
+        end
         result["czm D_max"] = vec(variables["czm D_max"][1, 1:v])
         result["czm D_mean"] = vec(variables["czm D_mean"][1, 1:v])
         # δ_max_n 存储于分离空间（scale.δ_czm 归一，重设计 v2；修正原误用 scale.L）

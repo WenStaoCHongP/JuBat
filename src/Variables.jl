@@ -132,6 +132,9 @@ function StandardVariables(case::Case, num::Int64)
         variables["czm δ_max_n"] = zeros(Float64, 1, num)
         variables["czm δ_mean_n"] = zeros(Float64, 1, num)
         variables["czm n_fractured"] = zeros(Float64, 1, num)
+        if case.opt.czm_winding_prestress
+            variables["winding prestress"] = zeros(Float64, 1, num)
+        end
         if case.czm_mesh !== nothing
             n_coh = case.czm_mesh.n_cohesive
             n_czm_nodes = case.czm_mesh.nnode

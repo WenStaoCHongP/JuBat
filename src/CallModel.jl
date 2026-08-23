@@ -148,7 +148,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         stats = get_damage_statistics(case.czm_mesh)
         variables["czm D_max"] = [stats.max_D]
         if case.opt.czm_winding_prestress
-            variables["winding prestress"] = [true]   # Batch 2' 标记（spec §3.7）
+            variables["winding prestress"] = [1.0]   # 浮点历史标记；最终结果再解释为功能开启
         end
         variables["czm D_mean"] = [stats.mean_D]
         δ_max_n_vals = [s.δ_max_n for s in case.czm_mesh.damage_states]
