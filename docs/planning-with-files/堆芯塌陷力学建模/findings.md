@@ -253,3 +253,10 @@ Batch 0'' 的 8 项与 Batch 7 的 5 项清单见 spec §9。
 - 已完成：`Option.czm_phi_bond` 字段与契约测试断言删除（v1.5）；计划/spec/弧长决策（Crisfield）定稿。
 - **Φ 合并两次尝试的教训**：①在 `build_czm_submesh` 尾部合并 → `build_thermal_to_czm_interp` 的父单元定位用 `mod(i-1, n_theta_nodes)` 结构化布局假设，合并删节点后失效（DimensionMismatch 1360/169）；②改在 `create_czm_mesh` 的 interp 之后合并 CohesiveMesh 扩展节点 → interp 矩阵行数是**子网格**节点数（1521），而 keep 按**cohesive 扩展后** nnode（2197）建 → BoundsError（已 stash WIP）。
 - **正确路径（下一步执行）**：合并必须发生在子网格层（interp 之前），同时把 `build_thermal_to_czm_interp` 的父定位从 `mod(i-1)` 改为**坐标法**：对节点 (px,py)，θ_m = atan(y,x)+2πm（m=0..N_turns），径向窗 s = r−(a+bθ_m) ∈ [0, t_repeat] 定匝，列 k = clamp(round(θ_m/dθ)+1)；a/b/t_repeat 可从 thermal_mesh 首末节点坐标反推或经参数传入。此后 create_czm_mesh 全流程用合并后子网格（cohesive 副本节点同样按重映射索引），无需二次合并。
+
+
+### Batch 5 Task 2 已知阻塞（2026-08-22，Crisfield geo 弧长）
+
+- 实现完成（solve_czm_arc_geo_step + dispatch 路由 + f̂ 符号/BC 置零/Δl 解尺度初始化/子步 10×tol/根合理性守卫），调试中修复四个缺陷：f̂ 符号反（轨迹 ±震荡）、f̂ 未在 BC 置零、Δl 固定 1/n 远超解范数、λ=0 平凡平衡死循环。
+- **剩余阻塞**：nθ=8 夹具上 `assemble_coupled_system` 切线存在近奇异模态（疑与 Φ 合并节点 + cohesive 副本副本自由度的弱连接模式相关）——残差 ~1e-8 时 K⁻¹R 放大出大 Δu_R，污染柱面约束二次方程的根（回跳 −0.2Δλ 或停滞 1e-7Δλ），步长减半至下限后诚实报错（14 次迭代即停）。basic/load_substep 不受影响（纯 Newton 不做约束步）。
+- 处置：`test_czm_arc_geo.jl` 收敛断言 @test_broken + @test_skip（geo_nl=false 回归锚保持有效）；C4-lite（Task 3）改用 load_substep 推进；解除条件 = D13 ② 单元技术改造批次（EAS/选择性减缩积分）或切线预条件（对病态模式正则）。spec §3.5 弧长条款维持目标态，实现状态在 progress 如实记录。

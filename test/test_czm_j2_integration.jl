@@ -106,8 +106,9 @@ end
     # plasticity 无 mech_state
     @test_throws ErrorException JuBat.assemble_coupled_system(
         czm_mesh, zeros(ndof), param_cache; geo_nl=true, eigenstrain=eig, plasticity=true)
-    # 非法组合：arc_length + geo_nl（含塑性场景）
-    @test_throws ErrorException JuBat.solve_czm_step(
+    # Batch 5 起 arc_length + geo_nl 可路由（Crisfield geo 弧长，不再显式拒绝）
+    r_arc, _ = JuBat.solve_czm_step(
         czm_mesh, zeros(ndof), param_cache, case.param, zeros(ndof);
         iter_method="arc_length", geo_nl=true, eigenstrain=eig)
+    @test r_arc isa JuBat.CZMResult
 end

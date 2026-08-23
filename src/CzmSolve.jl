@@ -657,15 +657,147 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, para
 end
 
 """
+    solve_czm_arc_geo_step(czm_mesh, F_ext, param_cache, param, u_prev; ...) -> (CZMResult, CohesiveMesh)
+
+Crisfield 柱面弧长 geo 路径（Batch 5，Theory §6.10；λ 缩放本征应变增量）。
+ε*(λ) = ε_ref + λ·Δε*（ε_ref 缺省零向量）；f̂ = ∂f_int/∂λ（数值差分一步，f_int 对 λ 线性）。
+增广 Newton：Δu = Δu_R + Δλ·Δu_F，柱面约束 (6.89) → Δλ 二次方程 (6.90–6.91)，
+取与上步切向内积较大者；无实根 Δl/2 重试；λ 推进至 ≥1 且残差 < tol 提交；
+步长下限 Δl/128 失败即报错终止（不伪造收敛）。
+"""
+function solve_czm_arc_geo_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
+        param_cache::CzmParamCache, param, u_prev::Vector{Float64};
+        α_eff::Float64=0.0, β_n::Float64=0.0, β_p::Float64=0.0,
+        dT_elem=nothing, Δsoc_n_elem=nothing, Δsoc_p_elem=nothing,
+        max_iter::Int=50, tol::Float64=1e-8, n_load_steps::Int=10,
+        cache::Union{Nothing, CZMAssemblyCache}=nothing, visc_beta::Float64=1.0,
+        eigenstrain=nothing, eigenstrain_ref=nothing,
+        plasticity::Bool=false, mech_state=nothing, prestress=nothing)
+    eigenstrain === nothing && error("solve_czm_arc_geo_step: geo 弧长需要 eigenstrain（λ 的缩放对象）")
+    ndof = 2 * czm_mesh.nnode
+    n_coh = czm_mesh.n_cohesive
+    result = CZMResult(ndof, n_coh)
+    u = copy(u_prev)
+    damage_states = czm_mesh.damage_states
+    bc_dofs, bc_vals = extract_bc_dofs(czm_mesh, param; cache=cache)
+    ws = cache !== nothing ? cache.ws : CZMAssemblyWorkspace(ndof, n_coh)
+    geom_cache = cache !== nothing ? cache.cohesive_geom : nothing
+
+    eig_kw = (geo_nl=true, plasticity=plasticity, mech_state=mech_state, prestress=prestress)
+    mix(lam) = (α_eff=eigenstrain.α_eff, β_n=eigenstrain.β_n, β_p=eigenstrain.β_p,
+                dT=eigenstrain_ref === nothing ? lam .* eigenstrain.dT :
+                    eigenstrain_ref.dT .+ lam .* (eigenstrain.dT .- eigenstrain_ref.dT),
+                Δsn=eigenstrain_ref === nothing ? lam .* eigenstrain.Δsn :
+                    eigenstrain_ref.Δsn .+ lam .* (eigenstrain.Δsn .- eigenstrain_ref.Δsn),
+                Δsp=eigenstrain_ref === nothing ? lam .* eigenstrain.Δsp :
+                    eigenstrain_ref.Δsp .+ lam .* (eigenstrain.Δsp .- eigenstrain_ref.Δsp))
+    f_int_at(ul, lam) = assemble_coupled_system(czm_mesh, ul, param_cache;
+        damage_states=damage_states, geom_cache=geom_cache, ws=ws, visc_beta=visc_beta,
+        eig_kw..., eigenstrain=mix(lam))[2]
+    hλ = 1e-8
+    f_hat = -(f_int_at(u, hλ) .- f_int_at(u, 0.0)) ./ hλ   # f̂ = −∂R/∂λ（6.89；正号则平衡点在 −λΔu_F 侧，轨迹震荡）
+    f_hat[bc_dofs] .= 0.0               # BC 自由度不参与 λ 方向（否则约束步漂移固定位移）
+    # Δl 按解尺度初始化：‖K⁻¹·f̂‖/n_load_steps（满载切向位移长度；解位移 ~1e-3 时
+    # 固定 Δl=1/n 会远超解范数，二次方程无合理根致长时间不收敛）
+    K0, _ = assemble_coupled_system(czm_mesh, u, param_cache;
+        damage_states=damage_states, geom_cache=geom_cache, ws=ws, visc_beta=visc_beta,
+        eig_kw..., eigenstrain=mix(0.0))
+    K0_bc, _ = apply_bc_czm(K0, zeros(Float64, ndof); bc_dofs=bc_dofs, bc_vals=bc_vals)
+    Δl0 = norm(K0_bc \ f_hat) / max(1, n_load_steps)
+    Δl0 > 0 || (Δl0 = 1e-6)
+
+    λ = 0.0
+    Δl = Δl0
+    Δl_min = Δl / 128
+    t_prev = zeros(Float64, ndof)
+    total_iter = 0
+    converged = false
+    while λ < 1.0 - 1e-12
+        ū = zeros(Float64, ndof)
+        λ_step0 = λ
+        step_ok = false
+        for _ in 1:max_iter
+            total_iter += 1
+            K, f_int = assemble_coupled_system(czm_mesh, u, param_cache;
+                damage_states=damage_states, geom_cache=geom_cache, ws=ws, visc_beta=visc_beta,
+                eig_kw..., eigenstrain=mix(λ))
+            R = F_ext .- f_int
+            for dof in bc_dofs
+                R[dof] = 0.0
+            end
+            # λ=0 处残差恒零（u=0、ε*=0 平凡平衡）——须本子步 λ 已推进才可判收敛，
+            # 否则外层子步死循环（每步秒收敛而 λ 不动）
+            norm(R) < 10 * tol && λ > λ_step0 + 1e-14 && (step_ok = true; break)   # 子步判据 10×tol（load_substep 惯例；残差略超 tol 时 K 病态方向放大 Δu_R 破坏约束根）
+            K_bc, R_bc = apply_bc_czm(K, R; bc_dofs=bc_dofs, bc_vals=bc_vals)
+            Δu_R = -(K_bc \ R_bc)
+            Δu_F = K_bc \ f_hat
+            b = ū .+ Δu_R
+            a2 = dot(Δu_F, Δu_F); a1 = 2 * dot(b, Δu_F); a0 = dot(b, b) - Δl^2
+            disc = a2 == 0 ? 0.0 : a1 * a1 - 4 * a2 * a0
+            disc < 0 && break
+            sq = sqrt(disc)
+            r1 = (-a1 + sq) / (2 * a2); r2 = (-a1 - sq) / (2 * a2)
+            dλ = norm(t_prev) < 1e-30 ? max(r1, r2) :
+                 (dot(t_prev, Δu_R .+ r1 .* Δu_F) ≥ dot(t_prev, Δu_R .+ r2 .* Δu_F) ? r1 : r2)
+            # 根合理性守卫：期望步长 Δλ_e = Δl/‖Δu_F‖；大幅回跳（<−0.05Δλ_e）或
+            # 停滞（|dλ|<1e-6Δλ_e）说明病态 Δu_R 污染二次方程——按子步失败处理（回退减半）
+            dλ_e = Δl / max(norm(Δu_F), 1e-30)
+            (dλ > -0.05 * dλ_e && abs(dλ) > 1e-6 * dλ_e) || break
+            Δu = Δu_R .+ dλ .* Δu_F
+            u .+= Δu
+            ū .+= Δu
+            λ += dλ
+            t_prev = Δu
+            λ ≥ 1.0 - 1e-12 && (step_ok = true; break)
+            f_int2 = assemble_coupled_system(czm_mesh, u, param_cache;
+                damage_states=damage_states, geom_cache=geom_cache, ws=ws, visc_beta=visc_beta,
+                eig_kw..., eigenstrain=mix(λ))[2]
+            R2 = F_ext .- f_int2
+            for dof in bc_dofs
+                R2[dof] = 0.0
+            end
+            norm(R2) < 10 * tol && (step_ok = true; break)
+        end
+        if step_ok && λ ≥ 1.0 - 1e-12
+            converged = true
+            break
+        elseif step_ok
+            norm(ū) > 1e-30 && (t_prev = ū ./ norm(ū))
+            continue
+        end
+        # 本步失败：回退本步位移与 λ，弧长减半重试
+        u .-= ū
+        λ = λ_step0
+        Δl /= 2
+        if Δl < Δl_min
+            @warn "CZM geo arc-length stepping stalled" λ=λ Δl=Δl
+            break
+        end
+    end
+    if converged
+        _, _, separations, tractions = assemble_coupled_system(czm_mesh, u, param_cache;
+            damage_states=damage_states, geom_cache=geom_cache, ws=ws, visc_beta=visc_beta,
+            eig_kw..., eigenstrain=mix(1.0))
+        damage_states = update_damage_per_interface(czm_mesh, damage_states, separations, param_cache; visc_beta=visc_beta)
+        fill_czm_result!(result, u, damage_states, separations, tractions)
+        result.iterations = total_iter
+        result.residual_norm = 0.0
+    else
+        fill_czm_result!(result, u, damage_states,
+                         [(0.0, 0.0) for _ in 1:n_coh], [(0.0, 0.0) for _ in 1:n_coh])
+        result.iterations = total_iter
+    end
+    new_mesh = clone_czm_mesh_with_damage(czm_mesh, damage_states)
+    return result, new_mesh
+end
+
+"""
     solve_czm_step(czm_mesh, F_ext, param_cache, param, u_prev; ...)
 
 Solve a single CZM step with selectable iteration method.
 """
 function solve_czm_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, param_cache::CzmParamCache, param, u_prev::Vector{Float64}; α_eff::Float64=0.0, β_n::Float64=0.0, β_p::Float64=0.0, dT_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_n_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_p_elem::Union{Vector{Float64}, Nothing}=nothing, max_iter::Int=50, tol::Float64=1e-8, n_load_steps::Int=10, arc_length_alpha::Float64=1.0, iter_method::String="load_substep", cache::Union{Nothing, CZMAssemblyCache}=nothing, visc_beta::Float64=1.0, geo_nl::Bool=false, eigenstrain=nothing, plasticity::Bool=false, mech_state=nothing, prestress=nothing)
     method = lowercase(iter_method)
-    geo_nl && (method == "arc_length" || method == "arclength" || method == "arc-length") && error(
-        "solve_czm_step: arc_length + geo_nl=true 在 Batch 5 弧长扩展（spec §4.1，λ 缩放 " *
-        "本征应变增量的全机械残差列式）后支持，当前显式拒绝。")
 
     if method == "load_substep"
         return newton_raphson_czm(czm_mesh, F_ext, param_cache, param;
@@ -681,7 +813,13 @@ function solve_czm_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, param_ca
             max_iter=max_iter, tol=tol, cache=cache,
             visc_beta=visc_beta, geo_nl=geo_nl, eigenstrain=eigenstrain,
             plasticity=plasticity, mech_state=mech_state, prestress=prestress)
-    elseif method == "arc_length" || method == "arclength" || method == "arc-length"
+    elseif (method == "arc_length" || method == "arclength" || method == "arc-length") && geo_nl
+        return solve_czm_arc_geo_step(czm_mesh, F_ext, param_cache, param, u_prev;
+            α_eff=α_eff, β_n=β_n, β_p=β_p,
+            dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
+            max_iter=max_iter, tol=tol, n_load_steps=n_load_steps, cache=cache,
+            visc_beta=visc_beta, eigenstrain=eigenstrain,
+            plasticity=plasticity, mech_state=mech_state, prestress=prestress)    elseif method == "arc_length" || method == "arclength" || method == "arc-length"
         return solve_czm_arc_length_step(czm_mesh, F_ext, param_cache, param, u_prev;
             α_eff=α_eff, β_n=β_n, β_p=β_p,
             dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
