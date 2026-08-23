@@ -89,8 +89,8 @@ end
         geo_nl=true, eigenstrain=eig, plasticity=true, mech_state=states, commit_plastic=true)
     κ_after2 = maximum(s.kappa for s in states)
     @test κ_after1 > 0.0
-    @test κ_after2 ≥ κ_after1 * 0.999   # 允许数值级持平，不得回退
-    @test κ_after2 ≤ 4 * κ_after1        # 同载荷重解的再预测漂移有界（D-B3-2 语义：单调不可逆成立，新 Δε* 步进下漂移二阶小）
+    @test κ_after2 ≥ κ_after1 * (1 - 1e-8)   # 数值级持平，不得回退
+    @test isapprox(κ_after2, κ_after1; rtol=1e-6, atol=1e-12)
 end
 
 @testset "缺参/组合非法必须报错（AGENTS 9.7 / D-B3-1）" begin

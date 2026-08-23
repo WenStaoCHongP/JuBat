@@ -381,7 +381,8 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
             D_tan = D_mat
         else
             σ_y, H, eps_p, κ = plastic
-            e_mech = [E11 - ε0 - eps_p[gp][1], E22 - ε0 - eps_p[gp][2], g12 - eps_p[gp][3]]
+            # return_mapping_plane_stress 独占历史 eps_p 的扣除；此处只传总机械应变。
+            e_mech = [E11 - ε0, E22 - ε0, g12]
             σ, C_ep, Δp, Δκ = return_mapping_plane_stress(e_mech, D_mat, σ_y, H, eps_p[gp], κ[gp])
             S1, S2, S3 = σ
             D_tan = C_ep

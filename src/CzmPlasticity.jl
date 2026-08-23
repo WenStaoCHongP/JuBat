@@ -51,12 +51,16 @@ const _A_PS = [1.0 -0.5 0.0; -0.5 1.0 0.0; 0.0 0.0 3.0]  # σ̄ = sqrt(σᵀAσ)
 - 弹性步（f≤0）：`σ = C(e_mech − eps_p)`，`C_ep = C`。
 - 塑性步：解 4×4 系统 `x=[σ11,σ22,σ12,Δγ]`：
   `R₁․₃ = σ − C(e_mech − eps_p − Δγ n(σ))`，`R₄ = σ̄(σ) − σ_y − H(κ+Δγ)`，
-  `n = ∂σ̄/∂σ = Aσ/σ̄`；Newton（3D 径向返回初值，tol 1e-12，≤50 步）。
+  `n = ∂σ̄/∂σ = Aσ/σ̄`；Newton（3D 径向返回初值，默认相对 tol 1e-12，≤50 步）。
 - 一致切线：收敛系统线性化 `J[dσ;dΔγ] = −∂R/∂e·de`，`∂R₁․₃/∂e = −C` ⟹
   `C_ep = dσ/de = (J⁻¹)[1:3,1:3]·C`（算法一致性切线，有限差分可精确复现）。
 """
 function return_mapping_plane_stress(e_mech, C::Matrix{Float64}, σ_y::Float64,
-                                     H::Float64, eps_p::NTuple{3, Float64}, κ::Float64)
+                                     H::Float64, eps_p::NTuple{3, Float64}, κ::Float64;
+                                     max_iter::Int=50, tol::Float64=1e-12)
+    max_iter > 0 || throw(ArgumentError("return_mapping_plane_stress: max_iter must be positive, got $max_iter"))
+    isfinite(tol) && tol > 0.0 || throw(ArgumentError(
+        "return_mapping_plane_stress: tol must be finite and positive, got $tol"))
     e_trial = [e_mech[1] - eps_p[1], e_mech[2] - eps_p[2], e_mech[3] - eps_p[3]]
     σ = C * e_trial
     f = qbar(σ) - (σ_y + H * κ)
@@ -68,7 +72,11 @@ function return_mapping_plane_stress(e_mech, C::Matrix{Float64}, σ_y::Float64,
     Δγ0 = f / (3.0 * G + H)
     x = [σ[1], σ[2], σ[3], Δγ0]
     J = zeros(4, 4)
-    for _ in 1:50
+    converged = false
+    final_residual = Inf
+    iterations = 0
+    for iter in 1:max_iter
+        iterations = iter
         σ1, σ2, σ3, Δγ = x
         q = qbar([σ1, σ2, σ3])
         q > 1e-300 || error("return_mapping_plane_stress: σ̄→0 in plastic step (invalid state)")
@@ -82,13 +90,37 @@ function return_mapping_plane_stress(e_mech, C::Matrix{Float64}, σ_y::Float64,
         J[4, 4] = -H
         δ = -(J \ R)
         x .+= δ
-        norm(R, Inf) < 1e-12 && norm(δ, Inf) < 1e-12 && break
+        residual_scale = max(1.0, norm(x[1:3], Inf), abs(σ_y + H * (κ + x[4])))
+        increment_scale = max(1.0, norm(x, Inf))
+        if norm(R, Inf) <= tol * residual_scale && norm(δ, Inf) <= tol * increment_scale
+            converged = true
+            break
+        end
     end
     σn = x[1:3]
     Δγ = x[4]
     Δγ ≥ 0.0 || error("return_mapping_plane_stress: negative plastic multiplier Δγ=$Δγ")
     q = qbar(σn)
     n = (_A_PS * σn) / q
+    σhat = C * (e_trial .- Δγ .* n)
+    R_final = [σn[1] - σhat[1], σn[2] - σhat[2], σn[3] - σhat[3],
+               q - σ_y - H * (κ + Δγ)]
+    final_residual = norm(R_final, Inf)
+    residual_scale = max(1.0, norm(σn, Inf), abs(σ_y + H * (κ + Δγ)))
+    relative_residual = final_residual / residual_scale
+    all(isfinite, R_final) || error(
+        "return_mapping_plane_stress: non-finite residual after $iterations iterations")
+    if relative_residual <= tol
+        converged = true
+    end
+    converged || error(
+        "return_mapping_plane_stress: local Newton did not converge after $iterations iterations " *
+        "(residual=$final_residual, relative_residual=$relative_residual, tol=$tol)")
+    Dn = (_A_PS - n * n') / q
+    J[1:3, 1:3] .= (Δγ .* (C * Dn)) + I
+    J[1:3, 4] .= C * n
+    J[4, 1:3] .= n
+    J[4, 4] = -H
     Δeps_p = (Δγ * n[1], Δγ * n[2], Δγ * n[3])
     # 一致切线：C_ep = (J⁻¹)[1:3,1:3]·C（J 为收敛点雅可比）
     X = J \ Matrix{Float64}(I, 4, 4)

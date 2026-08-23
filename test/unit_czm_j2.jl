@@ -90,3 +90,26 @@ end
     @test JuBat.qbar(σ) ≈ σy2 + H2 * (κ0 + Δκ) rtol = 1e-10
     @test all(isfinite, C_ep)
 end
+
+@testset "非零历史塑性应变只扣除一次（单元入口契约）" begin
+    x = [0.0, 1.0, 1.0, 0.0]
+    y = [0.0, 0.0, 1.0, 1.0]
+    u = zeros(8)
+    p0 = 1e-5
+    p = (p0, p0, 0.0)
+    plastic = (1e20, 0.0, fill(p, 4), zeros(4))
+
+    f_hist, K_hist = JuBat.gl_element_residual_tangent(
+        x, y, u, C_f, 0.0, 2; plastic=plastic)
+    f_ref, K_ref = JuBat.gl_element_residual_tangent(
+        x, y, u, C_f, p0, 2)
+
+    @test f_hist ≈ f_ref rtol=1e-12 atol=1e-6
+    @test K_hist ≈ K_ref rtol=1e-12 atol=1e-3
+end
+
+@testset "返回映射迭代上限必须显式失败" begin
+    e = [2.0 * σ_y / E_f, -ν_f * 2.0 * σ_y / E_f, 0.0]
+    @test_throws ErrorException JuBat.return_mapping_plane_stress(
+        e, C_f, σ_y, H_f, (0.0, 0.0, 0.0), 0.0; max_iter=1, tol=1e-30)
+end
