@@ -260,3 +260,11 @@ Batch 0'' 的 8 项与 Batch 7 的 5 项清单见 spec §9。
 - 实现完成（solve_czm_arc_geo_step + dispatch 路由 + f̂ 符号/BC 置零/Δl 解尺度初始化/子步 10×tol/根合理性守卫），调试中修复四个缺陷：f̂ 符号反（轨迹 ±震荡）、f̂ 未在 BC 置零、Δl 固定 1/n 远超解范数、λ=0 平凡平衡死循环。
 - **剩余阻塞**：nθ=8 夹具上 `assemble_coupled_system` 切线存在近奇异模态（疑与 Φ 合并节点 + cohesive 副本副本自由度的弱连接模式相关）——残差 ~1e-8 时 K⁻¹R 放大出大 Δu_R，污染柱面约束二次方程的根（回跳 −0.2Δλ 或停滞 1e-7Δλ），步长减半至下限后诚实报错（14 次迭代即停）。basic/load_substep 不受影响（纯 Newton 不做约束步）。
 - 处置：`test_czm_arc_geo.jl` 收敛断言 @test_broken + @test_skip（geo_nl=false 回归锚保持有效）；C4-lite（Task 3）改用 load_substep 推进；解除条件 = D13 ② 单元技术改造批次（EAS/选择性减缩积分）或切线预条件（对病态模式正则）。spec §3.5 弧长条款维持目标态，实现状态在 progress 如实记录。
+
+
+### Batch 5 关键缺陷登记（2026-08-22，Φ 合并在生产网格尺度发散）
+
+- **现象**：Φ 合并网格 nθ=40、Δsoc=0.1 线弹性路径 basic 方法 2 步发散（残差 5.7e4→停滞）；load_substep 38 步后步长减半至下限失败；探针（三方法）进程内存涨至 9.3 GB（正常 0.9 GB）被终止。nθ=8 全部正常（套件 33/33 因此全绿——测试夹具均为 nθ=8，未覆盖生产尺度）。
+- **拓扑核对无异常**：submesh 7578→6776（802 对合并 ✓）、czm_mesh 10144 = 10946−802 ✓、cohesive 3364 = 4·841 ✓、testexample（nθ=80 生产设置）正常完成且指标合理。
+- **首要嫌疑**：cohesive 界面节点复制（node_map 链）与 Φ 合并节点冲突——某节点既是 Φ 合并对象又在 cohesive 界面上时，副本自由度与合并约束矛盾 → K 奇异/不定。nθ=8 可能因几何巧合未触发。
+- **处置**：Batch 5 T3 门禁暂停于探针 v3 重冻结（testexample v3 数据已采：电/热指标与 v2 全同、separation 6.6820e-15、PNG SHA 272402bb…）；缺陷修复为 T3 前置。调查入口：create_czm_mesh 中 node_map 构造与 phi_pairs 合并索引的交集。

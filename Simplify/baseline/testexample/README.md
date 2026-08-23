@@ -28,10 +28,10 @@
 | maximum temperature | 299.00 K |
 | final CZM D_max | 0.0000% |
 | final CZM D_mean | 0.0000% |
-| maximum normal separation | 1.2572e-13 m |
+| maximum normal separation | 6.6820e-15 m |
 | fractured elements | 0 |
 | CZM converged updates | 19 / 19 |
-| result PNG SHA-256 | `b31ffb494c8e83701caad1b1181be1373b50236019a580b72c795c891ebd05ac` |
+| result PNG SHA-256 | `272402bb33d5b2869bfa2e33fde15fb8bdcdd0e27b74cffc4e34e77ad86dd386` |
 
 ## 后续比较规则
 
@@ -55,3 +55,7 @@
 
 - 触发：用户修正 `src/parameters/Jellyroll.jl` 宏观力学参数（PCC.E→70 GPa/0.33、NCC.E→110 GPa/0.34、PE/NE.E_coat→1 GPa、SP.E→750 MPa/0.35；提交 `1a74411`）。电化学/热全部指标与 v1 一致；仅两项力学输出移动：`maximum normal separation 1.2557e-14 → 1.2572e-13 m`（刚性箔下微小变形放大一个量级，仍为 ~零损伤工况）与 PNG SHA（上表已更新为 v2 值）。
 - v1 SHA：`4ba6207c…e932`（历史比对记录见 `Simplify/baseline.md` 批次表）。
+
+## 基线 v3（2026-08-22 重冻结，Φ 缝默认完美粘结 spec v1.5）
+
+- 触发：Φ 配对节点默认合并（`8ab8863`，spec v1.5 §3.4）——网格拓扑变化。电/热全部指标与 v2 一致；仅 `separation 1.2572e-13 → 6.6820e-15 m`（Φ 粘结约束了匝间自由度）与 PNG SHA（上表已更新为 v3）。v1/v2 历史见上文与 baseline.md 批次表。
