@@ -37,9 +37,10 @@ end
     @test count(==(:NCC), mt3) == nseg
     # cohesive 恒 4·nseg（同材边界豁免）
     @test case3.czm_mesh.n_cohesive == 4 * nseg == case1.czm_mesh.n_cohesive
-    # Φ 配对坐标重合
-    for (o, i) in case3.czm_mesh.czm_submesh.phi_pairs[1:5:end]
-        @test norm(case3.czm_mesh.node[o, :] .- case3.czm_mesh.node[i, :]) < 1e-8
+    # Φ 配对索引属于未合并的真实力学网格；求解网格节点由 mesh_bonded 提供。
+    submesh3 = case3.czm_mesh.czm_submesh
+    for (o, i) in submesh3.phi_pairs[1:5:end]
+        @test norm(submesh3.mesh.node[o, :] .- submesh3.mesh.node[i, :]) < 1e-8
     end
 end
 

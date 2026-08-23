@@ -17,17 +17,17 @@ function merge_fixture(; nθ::Int=8)
     return case, md
 end
 
-@testset "Φ 合并拓扑：绑定对同节点、cohesive 恒量、末端豁免" begin
+@testset "Φ 合并拓扑：真实配对、cohesive 恒量、末端豁免" begin
     case, md = merge_fixture(nθ=8)
     sub = md.czm_submesh
-    # v1.5 双网格契约：phi_pairs 为合并网格（mesh_bonded）索引下的 (i,i)；拓扑节点数减少
-    sub = sub.mesh_bonded.nlen == sub.mesh.nlen ? sub : sub  # 说明行
+    # v1.5 双网格契约：phi_pairs 保留未合并 .mesh 上的真实节点对；mesh_bonded 承担拓扑合并
     pp = md.czm_submesh.phi_pairs
     @test !isempty(pp)
     nseg = size(case.czm_mesh.bulk_element, 1) ÷ 8
     @test case.czm_mesh.n_cohesive == 4 * nseg          # 合并不产生新 cohesive
-    # 合并后外匝节点已并入内匝：配对两端为同一节点索引（重映射后 o == i）
-    @test all(o == i for (o, i) in pp)
+    @test all(o != i for (o, i) in pp)
+    @test all(isapprox(sub.mesh.node[o, :], sub.mesh.node[i, :]; atol=1e-12) for (o, i) in pp)
+    @test all(!(o in sub.phi_keep) && i in sub.phi_keep for (o, i) in pp)
     # nnode 减少量 == 合并对数（重映射后没有节点消失两次）
     # mesh_bonded 节点数 = mesh 原始数 − 合并对数；单元最大索引 = bonded nlen（重映射连续）
     @test md.czm_submesh.mesh_bonded.nlen == md.czm_submesh.mesh.nlen - length(pp)
@@ -53,10 +53,10 @@ end
 end
 
 @testset "坐标不重合即拒绝合并（AGENTS 9.7）" begin
-    # 直接构造非法 phi_pairs 场景太重；断言函数内的守卫以单元测试形式触发：
-    # 用 monkey-patch 不可行（Julia），改为验证真实网格的配对全部重合（正向断言）
-    case, md = merge_fixture(nθ=8)
-    n = md.czm_submesh.mesh.node
-    # 重映射后配对 (o,o) 同点——遍历原始构造逻辑不可达，此处断言重映射一致性已由 testset 1 覆盖
-    @test all(o == i for (o, i) in md.czm_submesh.phi_pairs)
+    _, md = merge_fixture(nθ=8)
+    sub = md.czm_submesh
+    bad_mesh = deepcopy(sub.mesh)
+    outer, _ = first(sub.phi_pairs)
+    bad_mesh.node[outer, 1] += 1e-4
+    @test_throws ErrorException JuBat.merge_phi_pairs(bad_mesh, sub.phi_pairs, 2)
 end

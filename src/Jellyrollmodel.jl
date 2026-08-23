@@ -588,6 +588,49 @@ end
 # ========================================================================
 
 """
+    merge_phi_pairs(mesh, phi_pairs, gsorder) -> (mesh_bonded, phi_keep)
+
+把未合并力学网格上的真实 Φ 配对消元为共享自由度拓扑。配对必须索引有效、
+外/内节点不同且坐标重合；任何不满足均显式报错，不做就近吸附。
+"""
+function merge_phi_pairs(mesh::Mesh, phi_pairs::Vector{Tuple{Int,Int}}, gsorder::Int)
+    nnode = mesh.nlen
+    isempty(phi_pairs) && return mesh, collect(1:nnode)
+
+    merge_map = Dict{Int,Int}()
+    for (outer_n, inner_n) in phi_pairs
+        1 <= outer_n <= nnode || throw(BoundsError(mesh.node, (outer_n, :)))
+        1 <= inner_n <= nnode || throw(BoundsError(mesh.node, (inner_n, :)))
+        outer_n != inner_n || error(
+            "merge_phi_pairs: physical Φ pair must contain distinct nodes, got ($outer_n, $inner_n)")
+        haskey(merge_map, outer_n) && error(
+            "merge_phi_pairs: outer node $outer_n appears in more than one Φ pair")
+        dist = hypot(mesh.node[outer_n, 1] - mesh.node[inner_n, 1],
+                     mesh.node[outer_n, 2] - mesh.node[inner_n, 2])
+        dist <= 1e-9 || error(
+            "merge_phi_pairs: Φ 配对 ($outer_n, $inner_n) 坐标不重合（distance=$dist），拒绝合并")
+        merge_map[outer_n] = inner_n
+    end
+
+    element_b = copy(mesh.element)
+    for e in axes(element_b, 1), c in axes(element_b, 2)
+        element_b[e, c] = get(merge_map, element_b[e, c], element_b[e, c])
+    end
+    keep = trues(nnode)
+    for outer_n in keys(merge_map)
+        keep[outer_n] = false
+    end
+    old2new = cumsum(keep)
+    for e in axes(element_b, 1), c in axes(element_b, 2)
+        element_b[e, c] = old2new[element_b[e, c]]
+    end
+    node_b = mesh.node[keep, :]
+    gs_b = GetGS(element_b, node_b, gsorder, "Q4")
+    mesh_bonded = Mesh("Q4", 2, node_b, count(keep), element_b, gs_b)
+    return mesh_bonded, findall(keep)
+end
+
+"""
     build_czm_submesh(param, thermal2D, theta, thermal_phi_pairs; gsorder) -> CzmSubmesh
 
 构造径向 8 层分层 Q4 子网格。周向节点直接继承热网格，
@@ -700,34 +743,7 @@ function build_czm_submesh(param, thermal2D, theta::AbstractVector{<:Real},
     gs = GetGS(element, node, gsorder, "Q4")
     mesh = Mesh("Q4", 2, node, nnode, element, gs)
 
-    merge_map = Dict{Int,Int}()
-    for (outer_n, inner_n) in phi_pairs
-        dist = hypot(node[outer_n, 1] - node[inner_n, 1], node[outer_n, 2] - node[inner_n, 2])
-        dist <= 1e-9 || error(
-            "build_czm_submesh: Φ 配对 ($outer_n, $inner_n) 坐标不重合（distance=$dist），拒绝合并")
-        merge_map[outer_n] = inner_n
-    end
-    if isempty(merge_map)
-        return CzmSubmesh(mesh, material_type, winding_turn, thermal_elem_map,
-                          phi_pairs, mesh, collect(1:nnode))
-    end
-    element_b = copy(element)
-    for e in 1:size(element_b, 1), c in 1:4
-        element_b[e, c] = get(merge_map, element_b[e, c], element_b[e, c])
-    end
-    keep = trues(nnode)
-    for k in keys(merge_map)
-        keep[k] = false
-    end
-    old2new = cumsum(keep)
-    for e in 1:size(element_b, 1), c in 1:4
-        element_b[e, c] = old2new[element_b[e, c]]
-    end
-    node_b = node[keep, :]
-    nnode_b = count(keep)
-    gs_b = GetGS(element_b, node_b, gsorder, "Q4")
-    mesh_bonded = Mesh("Q4", 2, node_b, nnode_b, element_b, gs_b)
-    pairs_b = Tuple{Int,Int}[(old2new[i], old2new[i]) for (_, i) in phi_pairs]
+    mesh_bonded, phi_keep = merge_phi_pairs(mesh, phi_pairs, gsorder)
     return CzmSubmesh(mesh, material_type, winding_turn, thermal_elem_map,
-                      pairs_b, mesh_bonded, findall(keep))
+                      phi_pairs, mesh_bonded, phi_keep)
 end

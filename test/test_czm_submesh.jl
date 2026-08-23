@@ -49,11 +49,19 @@ using .JuBat
     @test issorted(radial_profile)
     @test all(diff(radial_profile) .<= 1)
 
-    # 力学 Φ 配对继承热网格配对计数；v1.5 合并后为 bonded 索引下的 (i,i)（完美粘结记录）
+    # 力学 Φ 配对继承热网格配对计数；保存未合并 .mesh 上的真实物理节点对
     @test length(submesh.phi_pairs) == length(mesh_data.interface_pairs)
     for (outer_node, inner_node) in submesh.phi_pairs
-        @test outer_node == inner_node
-        @test outer_node <= submesh.mesh_bonded.nlen
+        @test outer_node != inner_node
+        @test submesh.mesh.node[outer_node, :] ≈ submesh.mesh.node[inner_node, :] atol=1e-12
+        @test !(outer_node in submesh.phi_keep)
+        @test inner_node in submesh.phi_keep
     end
     @test submesh.mesh_bonded.nlen == submesh.mesh.nlen - length(submesh.phi_pairs)
+
+    # 导出类型的 5 参数历史构造方式继续可用
+    compat = JuBat.CzmSubmesh(submesh.mesh, submesh.material_type, submesh.winding_turn,
+                              submesh.thermal_elem_map, submesh.phi_pairs)
+    @test compat.mesh_bonded === compat.mesh
+    @test compat.phi_keep == collect(1:compat.mesh.nlen)
 end
