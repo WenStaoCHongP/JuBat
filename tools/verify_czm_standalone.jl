@@ -99,7 +99,10 @@ function main()
     ne = size(czm_mesh_template.bulk_element, 1)
     soc_n_levels = [0.1, 0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 10.0]
 
-    methods = ["basic", "load_substep", "arc_length"]
+    # v3 (2026-08-23, Option B): Φ 粘结网格在 Δsoc_n≥~1.0 处真实极限点（findings 2026-08-23），
+    # load_substep/arc_length 停滞 grinding 分钟级/水平。默认仅跑 basic（相对判据全水平快速收敛）；
+    # 三方法完整跑用 JUBAT_PROBE_ALL=1（仅限弧长修复后）。
+    methods = get(ENV, "JUBAT_PROBE_ALL", "") == "1" ? ["basic", "load_substep", "arc_length"] : ["basic"]
 
     println("\n--- Solver parameters ---")
     println("  tol = 1e-4, max_iter = 200, n_load_steps = 50")
@@ -162,8 +165,8 @@ function main()
             push!(row_parts, part)
         end
 
-        @printf("%6.3f | %s | %s | %s\n",
-            soc_n_val, row_parts[1], row_parts[2], row_parts[3])
+        @printf("%6.3f | %s
+", soc_n_val, join(row_parts, " | "))
     end
 
     # ── 6. 汇总 ───────────────────────────────────────────────────
