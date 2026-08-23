@@ -40,6 +40,9 @@ function clone_czm_mesh_with_damage(czm_mesh::CohesiveMesh, damage_states::Abstr
     new_czm_mesh.node_map = czm_mesh.node_map
     new_czm_mesh.interface_nodes = czm_mesh.interface_nodes
     new_czm_mesh.damage_states = damage_states
+    new_czm_mesh.czm_submesh = czm_mesh.czm_submesh
+    new_czm_mesh.thermal_to_czm = czm_mesh.thermal_to_czm
+    new_czm_mesh.cohesive_to_thermal = czm_mesh.cohesive_to_thermal
     return new_czm_mesh
 end
 
@@ -164,6 +167,30 @@ function build_arc_length_augmented_matrix(K_bc::SparseMatrixCSC{Float64, Int64}
     end
     A[ndof + 1, ndof + 1] = 2.0 * arc_length_alpha^2 * delta_lambda
     return A
+end
+
+function spherical_arc_length_correction(delta_u_bar::AbstractVector{<:Real},
+        delta_lambda_bar::Real, delta_u_R::AbstractVector{<:Real},
+        delta_u_F::AbstractVector{<:Real}, arc_length_alpha::Real, arc_radius::Real)
+    length(delta_u_bar) == length(delta_u_R) == length(delta_u_F) ||
+        throw(DimensionMismatch("spherical arc correction vectors must have equal length"))
+    isfinite(arc_length_alpha) && arc_length_alpha > 0.0 || throw(ArgumentError(
+        "spherical arc correction requires finite positive alpha, got $arc_length_alpha"))
+    isfinite(arc_radius) && arc_radius > 0.0 || throw(ArgumentError(
+        "spherical arc correction requires finite positive radius, got $arc_radius"))
+    g = dot(delta_u_bar, delta_u_bar) +
+        arc_length_alpha^2 * delta_lambda_bar^2 - arc_radius^2
+    denominator = 2.0 * dot(delta_u_bar, delta_u_F) +
+                  2.0 * arc_length_alpha^2 * delta_lambda_bar
+    denominator_scale = 2.0 * (norm(delta_u_bar) * norm(delta_u_F) +
+                                arc_length_alpha^2 * abs(delta_lambda_bar))
+    abs(denominator) > eps(Float64) * max(1.0, denominator_scale) || error(
+        "spherical arc correction is singular (denominator=$denominator, g=$g)")
+    delta_lambda = (-g - 2.0 * dot(delta_u_bar, delta_u_R)) / denominator
+    delta_u = delta_u_R .+ delta_lambda .* delta_u_F
+    all(isfinite, delta_u) && isfinite(delta_lambda) || error(
+        "spherical arc correction produced a non-finite update")
+    return delta_u, delta_lambda, g
 end
 
 function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, param_cache::CzmParamCache, param, u_prev::Vector{Float64}; α_eff::Float64=0.0, β_n::Float64=0.0, β_p::Float64=0.0, dT_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_n_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_p_elem::Union{Vector{Float64}, Nothing}=nothing, max_iter::Int=50, tol::Float64=1e-8, cache::Union{Nothing, CZMAssemblyCache}=nothing, visc_beta::Float64=1.0, geo_nl::Bool=false, eigenstrain=nothing, plasticity::Bool=false, mech_state=nothing, prestress=nothing)
@@ -659,27 +686,38 @@ end
 """
     solve_czm_arc_geo_step(czm_mesh, F_ext, param_cache, param, u_prev; ...) -> (CZMResult, CohesiveMesh)
 
-Crisfield 柱面弧长 geo 路径（Batch 5，Theory §6.10；λ 缩放本征应变增量）。
-ε*(λ) = ε_ref + λ·Δε*（ε_ref 缺省零向量）；f̂ = ∂f_int/∂λ（数值差分一步，f_int 对 λ 线性）。
-增广 Newton：Δu = Δu_R + Δλ·Δu_F，柱面约束 (6.89) → Δλ 二次方程 (6.90–6.91)，
-取与上步切向内积较大者；无实根 Δl/2 重试；λ 推进至 ≥1 且残差 < tol 提交；
-步长下限 Δl/128 失败即报错终止（不伪造收敛）。
+Crisfield 球面弧长 geo 路径（Theory §6.10；λ 缩放本征应变增量）。
+约束为 `‖Δu‖² + α²Δλ² = Δl²`。平衡残差采用代码约定
+`R = F_ext - f_int`，故修正分解为 `δu = K⁻¹R + δλ K⁻¹f̂`，
+其中 `f̂ = ∂R/∂λ = -∂f_int/∂λ` 在每个当前迭代状态重新差分。
+失败子步回滚位移/λ；损伤和塑性状态只在最终 `λ=1` 平衡验收后提交。
 """
 function solve_czm_arc_geo_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
         param_cache::CzmParamCache, param, u_prev::Vector{Float64};
         α_eff::Float64=0.0, β_n::Float64=0.0, β_p::Float64=0.0,
         dT_elem=nothing, Δsoc_n_elem=nothing, Δsoc_p_elem=nothing,
         max_iter::Int=50, tol::Float64=1e-8, n_load_steps::Int=10,
+        arc_length_alpha::Float64=1.0,
         cache::Union{Nothing, CZMAssemblyCache}=nothing, visc_beta::Float64=1.0,
         eigenstrain=nothing, eigenstrain_ref=nothing,
         plasticity::Bool=false, mech_state=nothing, prestress=nothing)
     eigenstrain === nothing && error("solve_czm_arc_geo_step: geo 弧长需要 eigenstrain（λ 的缩放对象）")
+    isfinite(arc_length_alpha) && arc_length_alpha > 0.0 || throw(ArgumentError(
+        "solve_czm_arc_geo_step: arc_length_alpha must be finite and positive, got $arc_length_alpha"))
+    max_iter > 0 || throw(ArgumentError(
+        "solve_czm_arc_geo_step: max_iter must be positive, got $max_iter"))
+    n_load_steps > 0 || throw(ArgumentError(
+        "solve_czm_arc_geo_step: n_load_steps must be positive, got $n_load_steps"))
+    isfinite(tol) && tol > 0.0 || throw(ArgumentError(
+        "solve_czm_arc_geo_step: tol must be finite and positive, got $tol"))
     ndof = 2 * czm_mesh.nnode
     n_coh = czm_mesh.n_cohesive
     result = CZMResult(ndof, n_coh)
     u = copy(u_prev)
-    damage_states = czm_mesh.damage_states
+    damage_states = clone_damage_states(czm_mesh.damage_states)
     bc_dofs, bc_vals = extract_bc_dofs(czm_mesh, param; cache=cache)
+    zero_bc_vals = zeros(Float64, length(bc_vals))
+    apply_czm_dirichlet!(u, bc_dofs, bc_vals)
     ws = cache !== nothing ? cache.ws : CZMAssemblyWorkspace(ndof, n_coh)
     geom_cache = cache !== nothing ? cache.cohesive_geom : nothing
 
@@ -691,102 +729,184 @@ function solve_czm_arc_geo_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
                     eigenstrain_ref.Δsn .+ lam .* (eigenstrain.Δsn .- eigenstrain_ref.Δsn),
                 Δsp=eigenstrain_ref === nothing ? lam .* eigenstrain.Δsp :
                     eigenstrain_ref.Δsp .+ lam .* (eigenstrain.Δsp .- eigenstrain_ref.Δsp))
-    f_int_at(ul, lam) = assemble_coupled_system(czm_mesh, ul, param_cache;
-        damage_states=damage_states, geom_cache=geom_cache, ws=ws, visc_beta=visc_beta,
-        eig_kw..., eigenstrain=mix(lam))[2]
-    hλ = 1e-8
-    f_hat = -(f_int_at(u, hλ) .- f_int_at(u, 0.0)) ./ hλ   # f̂ = −∂R/∂λ（6.89；正号则平衡点在 −λΔu_F 侧，轨迹震荡）
-    f_hat[bc_dofs] .= 0.0               # BC 自由度不参与 λ 方向（否则约束步漂移固定位移）
-    # Δl 按解尺度初始化：‖K⁻¹·f̂‖/n_load_steps（满载切向位移长度；解位移 ~1e-3 时
-    # 固定 Δl=1/n 会远超解范数，二次方程无合理根致长时间不收敛）
-    K0, _ = assemble_coupled_system(czm_mesh, u, param_cache;
-        damage_states=damage_states, geom_cache=geom_cache, ws=ws, visc_beta=visc_beta,
-        eig_kw..., eigenstrain=mix(0.0))
-    K0_bc, _ = apply_bc_czm(K0, zeros(Float64, ndof); bc_dofs=bc_dofs, bc_vals=bc_vals)
-    Δl0 = norm(K0_bc \ f_hat) / max(1, n_load_steps)
-    Δl0 > 0 || (Δl0 = 1e-6)
+    function assemble_at(ul, lam)
+        return assemble_coupled_system(czm_mesh, ul, param_cache;
+            damage_states=damage_states, geom_cache=geom_cache, ws=ws, visc_beta=visc_beta,
+            eig_kw..., eigenstrain=mix(lam))
+    end
+    function residual_at(f_int, ul)
+        R = F_ext .- f_int
+        for dof in bc_dofs
+            R[dof] = 0.0
+        end
+        return R
+    end
+    function load_direction_at(ul, lam)
+        hλ = cbrt(eps(Float64)) * max(1.0, abs(lam))
+        f_plus = copy(assemble_at(ul, lam + hλ)[2])
+        f_minus = copy(assemble_at(ul, lam - hλ)[2])
+        f_hat = -(f_plus .- f_minus) ./ (2.0 * hλ)
+        f_hat[bc_dofs] .= 0.0
+        all(isfinite, f_hat) || error(
+            "solve_czm_arc_geo_step: non-finite load direction at λ=$lam")
+        return f_hat
+    end
+
+    K0, f0, _, _ = assemble_at(u, 0.0)
+    R0 = residual_at(f0, u)
+    if norm(R0) > tol
+        K0_bc, R0_bc = apply_bc_czm(K0, R0; bc_dofs=bc_dofs, bc_vals=zero_bc_vals)
+        u .+= K0_bc \ R0_bc
+        apply_czm_dirichlet!(u, bc_dofs, bc_vals)
+        K0, f0, _, _ = assemble_at(u, 0.0)
+        R0 = residual_at(f0, u)
+        norm(R0) <= 10tol || error(
+            "solve_czm_arc_geo_step: reference state is not in equilibrium (residual=$(norm(R0)))")
+    end
+    f_hat0 = load_direction_at(u, 0.0)
+    K0_bc, _ = apply_bc_czm(K0, zeros(Float64, ndof);
+                            bc_dofs=bc_dofs, bc_vals=zero_bc_vals)
+    tangent0 = K0_bc \ f_hat0
+    tangent_norm0 = sqrt(dot(tangent0, tangent0) + arc_length_alpha^2)
+    isfinite(tangent_norm0) && tangent_norm0 > 0.0 || error(
+        "solve_czm_arc_geo_step: invalid initial augmented tangent norm $tangent_norm0")
 
     λ = 0.0
+    Δl0 = tangent_norm0 / n_load_steps
     Δl = Δl0
-    Δl_min = Δl / 128
-    t_prev = zeros(Float64, ndof)
+    Δl_min = Δl0 / 128.0
+    previous_tangent = Vector{Float64}()
     total_iter = 0
-    converged = false
-    while λ < 1.0 - 1e-12
-        ū = zeros(Float64, ndof)
-        λ_step0 = λ
+    step_count = 0
+    residual_history = Float64[]
+    lambda_history = Float64[λ]
+    step_history = Float64[]
+
+    while λ < 1.0 - 1e-10
+        step_count += 1
+        step_count <= 10000 || error(
+            "solve_czm_arc_geo_step: exceeded 10000 arc steps " *
+            "(λ_history=$lambda_history, residual_history=$residual_history)")
+        u_start = copy(u)
+        λ_start = λ
+
+        K_start, _, _, _ = assemble_at(u_start, λ_start)
+        f_hat_start = load_direction_at(u_start, λ_start)
+        K_start_bc, _ = apply_bc_czm(K_start, zeros(Float64, ndof);
+                                     bc_dofs=bc_dofs, bc_vals=zero_bc_vals)
+        tangent = K_start_bc \ f_hat_start
+        augmented_norm = sqrt(dot(tangent, tangent) + arc_length_alpha^2)
+        isfinite(augmented_norm) && augmented_norm > 0.0 || error(
+            "solve_czm_arc_geo_step: invalid augmented tangent at λ=$λ_start")
+
+        direction = 1.0
+        if !isempty(previous_tangent)
+            augmented_tangent = vcat(tangent, arc_length_alpha)
+            dot(augmented_tangent, previous_tangent) < 0.0 && (direction = -1.0)
+        end
+        dλ_pred = direction * Δl / augmented_norm
+        if direction > 0.0 && dλ_pred > 1.0 - λ_start
+            dλ_pred = 1.0 - λ_start
+        end
+        Δl_step = abs(dλ_pred) * augmented_norm
+        Δl_step > 0.0 || error(
+            "solve_czm_arc_geo_step: zero predictor step at λ=$λ_start")
+        u .= u_start .+ dλ_pred .* tangent
+        λ = λ_start + dλ_pred
+        apply_czm_dirichlet!(u, bc_dofs, bc_vals)
+
         step_ok = false
+        last_residual = Inf
         for _ in 1:max_iter
             total_iter += 1
-            K, f_int = assemble_coupled_system(czm_mesh, u, param_cache;
-                damage_states=damage_states, geom_cache=geom_cache, ws=ws, visc_beta=visc_beta,
-                eig_kw..., eigenstrain=mix(λ))
-            R = F_ext .- f_int
-            for dof in bc_dofs
-                R[dof] = 0.0
+            K, f_int, _, _ = assemble_at(u, λ)
+            R = residual_at(f_int, u)
+            Δu_bar = u .- u_start
+            Δλ_bar = λ - λ_start
+            g = dot(Δu_bar, Δu_bar) + arc_length_alpha^2 * Δλ_bar^2 - Δl_step^2
+            last_residual = norm(R)
+            push!(residual_history, last_residual)
+            if last_residual <= tol && abs(g) <= tol * max(Δl_step^2, eps(Float64))
+                step_ok = true
+                break
             end
-            # λ=0 处残差恒零（u=0、ε*=0 平凡平衡）——须本子步 λ 已推进才可判收敛，
-            # 否则外层子步死循环（每步秒收敛而 λ 不动）
-            norm(R) < 10 * tol && λ > λ_step0 + 1e-14 && (step_ok = true; break)   # 子步判据 10×tol（load_substep 惯例；残差略超 tol 时 K 病态方向放大 Δu_R 破坏约束根）
-            K_bc, R_bc = apply_bc_czm(K, R; bc_dofs=bc_dofs, bc_vals=bc_vals)
-            Δu_R = -(K_bc \ R_bc)
+
+            K_bc, R_bc = apply_bc_czm(K, R;
+                bc_dofs=bc_dofs, bc_vals=zero_bc_vals)
+            f_hat = load_direction_at(u, λ)
+            Δu_R = K_bc \ R_bc
             Δu_F = K_bc \ f_hat
-            b = ū .+ Δu_R
-            a2 = dot(Δu_F, Δu_F); a1 = 2 * dot(b, Δu_F); a0 = dot(b, b) - Δl^2
-            disc = a2 == 0 ? 0.0 : a1 * a1 - 4 * a2 * a0
-            disc < 0 && break
-            sq = sqrt(disc)
-            r1 = (-a1 + sq) / (2 * a2); r2 = (-a1 - sq) / (2 * a2)
-            dλ = norm(t_prev) < 1e-30 ? max(r1, r2) :
-                 (dot(t_prev, Δu_R .+ r1 .* Δu_F) ≥ dot(t_prev, Δu_R .+ r2 .* Δu_F) ? r1 : r2)
-            # 根合理性守卫：期望步长 Δλ_e = Δl/‖Δu_F‖；大幅回跳（<−0.05Δλ_e）或
-            # 停滞（|dλ|<1e-6Δλ_e）说明病态 Δu_R 污染二次方程——按子步失败处理（回退减半）
-            dλ_e = Δl / max(norm(Δu_F), 1e-30)
-            (dλ > -0.05 * dλ_e && abs(dλ) > 1e-6 * dλ_e) || break
-            Δu = Δu_R .+ dλ .* Δu_F
-            u .+= Δu
-            ū .+= Δu
-            λ += dλ
-            t_prev = Δu
-            λ ≥ 1.0 - 1e-12 && (step_ok = true; break)
-            f_int2 = assemble_coupled_system(czm_mesh, u, param_cache;
-                damage_states=damage_states, geom_cache=geom_cache, ws=ws, visc_beta=visc_beta,
-                eig_kw..., eigenstrain=mix(λ))[2]
-            R2 = F_ext .- f_int2
-            for dof in bc_dofs
-                R2[dof] = 0.0
+            local Δu, dλ
+            try
+                Δu, dλ, _ = spherical_arc_length_correction(
+                    Δu_bar, Δλ_bar, Δu_R, Δu_F, arc_length_alpha, Δl_step)
+            catch err
+                err isa ErrorException || rethrow()
+                break
             end
-            norm(R2) < 10 * tol && (step_ok = true; break)
+            u .+= Δu
+            λ += dλ
+            apply_czm_dirichlet!(u, bc_dofs, bc_vals)
         end
-        if step_ok && λ ≥ 1.0 - 1e-12
-            converged = true
-            break
-        elseif step_ok
-            norm(ū) > 1e-30 && (t_prev = ū ./ norm(ū))
+
+        if step_ok
+            Δu_step = u .- u_start
+            Δλ_step = λ - λ_start
+            previous_tangent = vcat(Δu_step, arc_length_alpha * Δλ_step)
+            previous_norm = norm(previous_tangent)
+            previous_norm > 0.0 || error(
+                "solve_czm_arc_geo_step: accepted a zero arc step at λ=$λ")
+            previous_tangent ./= previous_norm
+            push!(lambda_history, λ)
+            push!(step_history, Δl_step)
             continue
         end
-        # 本步失败：回退本步位移与 λ，弧长减半重试
-        u .-= ū
-        λ = λ_step0
-        Δl /= 2
+
+        u .= u_start
+        λ = λ_start
+        Δl *= 0.5
         if Δl < Δl_min
-            @warn "CZM geo arc-length stepping stalled" λ=λ Δl=Δl
-            break
+            error("solve_czm_arc_geo_step: arc stepping stalled at λ=$λ " *
+                  "(residual=$last_residual, Δl=$Δl, λ_history=$lambda_history, " *
+                  "step_history=$step_history, residual_history=$residual_history)")
         end
     end
-    if converged
-        _, _, separations, tractions = assemble_coupled_system(czm_mesh, u, param_cache;
-            damage_states=damage_states, geom_cache=geom_cache, ws=ws, visc_beta=visc_beta,
-            eig_kw..., eigenstrain=mix(1.0))
-        damage_states = update_damage_per_interface(czm_mesh, damage_states, separations, param_cache; visc_beta=visc_beta)
-        fill_czm_result!(result, u, damage_states, separations, tractions)
-        result.iterations = total_iter
-        result.residual_norm = 0.0
-    else
-        fill_czm_result!(result, u, damage_states,
-                         [(0.0, 0.0) for _ in 1:n_coh], [(0.0, 0.0) for _ in 1:n_coh])
-        result.iterations = total_iter
+
+    # 精确落到 λ=1，并以固定 λ Newton 复算最终平衡；不能用弧长预测残差代替。
+    λ = 1.0
+    final_residual = Inf
+    separations = Vector{Tuple{Float64,Float64}}(undef, n_coh)
+    tractions = Vector{Tuple{Float64,Float64}}(undef, n_coh)
+    for _ in 1:max_iter
+        total_iter += 1
+        K, f_int, separations, tractions = assemble_at(u, λ)
+        R = residual_at(f_int, u)
+        final_residual = norm(R)
+        push!(residual_history, final_residual)
+        final_residual <= tol && break
+        K_bc, R_bc = apply_bc_czm(K, R;
+            bc_dofs=bc_dofs, bc_vals=zero_bc_vals)
+        Δu = K_bc \ R_bc
+        all(isfinite, Δu) || error(
+            "solve_czm_arc_geo_step: non-finite final λ=1 correction")
+        u .+= Δu
+        apply_czm_dirichlet!(u, bc_dofs, bc_vals)
     end
+    final_residual <= tol || error(
+        "solve_czm_arc_geo_step: final λ=1 equilibrium did not converge " *
+        "(residual=$final_residual, λ_history=$lambda_history, " *
+        "step_history=$step_history, residual_history=$residual_history)")
+
+    _, f_final, separations, tractions = assemble_at(u, 1.0)
+    final_residual = norm(residual_at(f_final, u))
+    final_residual <= tol || error(
+        "solve_czm_arc_geo_step: final residual recomputation failed (residual=$final_residual)")
+    damage_states = update_damage_per_interface(
+        czm_mesh, damage_states, separations, param_cache; visc_beta=visc_beta)
+    result.converged = true
+    result.iterations = total_iter
+    result.residual_norm = final_residual
+    fill_czm_result!(result, u, damage_states, separations, tractions)
     new_mesh = clone_czm_mesh_with_damage(czm_mesh, damage_states)
     return result, new_mesh
 end
@@ -817,7 +937,8 @@ function solve_czm_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, param_ca
         return solve_czm_arc_geo_step(czm_mesh, F_ext, param_cache, param, u_prev;
             α_eff=α_eff, β_n=β_n, β_p=β_p,
             dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
-            max_iter=max_iter, tol=tol, n_load_steps=n_load_steps, cache=cache,
+            max_iter=max_iter, tol=tol, n_load_steps=n_load_steps,
+            arc_length_alpha=arc_length_alpha, cache=cache,
             visc_beta=visc_beta, eigenstrain=eigenstrain,
             plasticity=plasticity, mech_state=mech_state, prestress=prestress)    elseif method == "arc_length" || method == "arclength" || method == "arc-length"
         return solve_czm_arc_length_step(czm_mesh, F_ext, param_cache, param, u_prev;

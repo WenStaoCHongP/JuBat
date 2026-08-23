@@ -34,10 +34,28 @@ end
     r_arc, _ = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, zeros(ndof);
         kw..., max_iter = 100, tol = 1e-8, n_load_steps = 10, iter_method = "arc_length",
         cache = cache, geo_nl = true, eigenstrain = eig)
-    # Batch 5 T2 已知阻塞（findings）：切线病态使 Crisfield 约束步在该网格不收敛——
-    # 待单元技术改造批次（D13 ②）或凝结预条件后解除
-    @test_broken r_basic.converged && r_arc.converged
-    @test_skip isapprox(r_arc.displacement, r_basic.displacement; rtol = 1e-6, atol = 1e-12)
+    @test r_basic.converged && r_arc.converged
+    @test isfinite(r_arc.residual_norm) && r_arc.residual_norm < 1e-6
+    @test isapprox(r_arc.displacement, r_basic.displacement; rtol = 1e-6, atol = 1e-12)
+end
+
+@testset "geo 弧长系数进入约束且非法值显式失败" begin
+    case, pc, cache = arc_fixture()
+    cm = case.czm_mesh
+    ne = size(cm.bulk_element, 1)
+    ndof = 2 * cm.nnode
+    eig = (α_eff = 1.0, β_n = 0.0, β_p = 0.0, dT = fill(1e-6, ne),
+           Δsn = zeros(ne), Δsp = zeros(ne))
+    kw = (α_eff = 1.0, β_n = 0.0, β_p = 0.0, dT_elem = eig.dT,
+          Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp,
+          max_iter = 100, tol = 1e-8, n_load_steps = 10, iter_method = "arc_length",
+          cache = cache, geo_nl = true, eigenstrain = eig)
+    r_half, _ = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, zeros(ndof);
+        kw..., arc_length_alpha = 0.5)
+    @test r_half.converged
+    @test_throws ArgumentError JuBat.solve_czm_step(
+        cm, zeros(ndof), pc, case.param, zeros(ndof);
+        kw..., arc_length_alpha = 0.0)
 end
 
 @testset "geo_nl=false + arc_length 行为不变（回归锚）" begin
@@ -58,4 +76,49 @@ end
         cache = cache, geo_nl = false)
     @test r1.converged == r2.converged
     @test r1.displacement == r2.displacement   # 逐位（geo_nl=false 路径零漂移）
+end
+
+@testset "球面弧长修正跨越合成极限点" begin
+    # 一自由度软化平衡路径 λ = u - u³，在 u=1/√3 处有极限点。
+    alpha = 0.2
+    radius = 0.05
+    u = 0.0
+    lambda = 0.0
+    previous_tangent = Float64[]
+    u_hist = [u]
+    lambda_hist = [lambda]
+
+    for _ in 1:20
+        K = 1.0 - 3.0 * u^2
+        tangent = 1.0 / K
+        direction = isempty(previous_tangent) || dot([tangent, alpha], previous_tangent) >= 0 ? 1.0 : -1.0
+        dlambda = direction * radius / hypot(tangent, alpha)
+        u0, lambda0 = u, lambda
+        u += tangent * dlambda
+        lambda += dlambda
+        for _ in 1:30
+            R = lambda - (u - u^3)
+            du_bar = [u - u0]
+            dlambda_bar = lambda - lambda0
+            g = dot(du_bar, du_bar) + alpha^2 * dlambda_bar^2 - radius^2
+            abs(R) < 1e-12 && abs(g) < 1e-12 && break
+            K = 1.0 - 3.0 * u^2
+            du_R = [R / K]
+            du_F = [1.0 / K]
+            du, dlambda_corr, _ = JuBat.spherical_arc_length_correction(
+                du_bar, dlambda_bar, du_R, du_F, alpha, radius)
+            u += du[1]
+            lambda += dlambda_corr
+        end
+        @test abs(lambda - (u - u^3)) < 1e-10
+        step_tangent = [u - u0, alpha * (lambda - lambda0)]
+        previous_tangent = step_tangent ./ norm(step_tangent)
+        push!(u_hist, u)
+        push!(lambda_hist, lambda)
+    end
+
+    imax = argmax(lambda_hist)
+    @test 1 < imax < length(lambda_hist)
+    @test maximum(u_hist) > 0.7
+    @test any(diff(lambda_hist) .< 0.0)
 end
