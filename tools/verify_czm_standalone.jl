@@ -115,7 +115,7 @@ function main()
     println("Convergence Comparison Table")
     println("=" ^ 70)
 
-    header = @sprintf("Δsoc_n | %-22s | %-22s | %-22s", "basic", "load_substep", "arc_length")
+    header = join(vcat(["Δsoc_n"], methods), " | ")
     println(header)
     println("-" ^ length(header))
 
@@ -199,8 +199,9 @@ function main()
         #     czm_params.G_c_n, czm_params.δ_c_n)                                        # TODO Chunk 2 Task 2.1
         println(io, "tol=1e-4, max_iter=200, n_load_steps=50, visc_beta=1.0")
         println(io, "")
-        println(io, @sprintf("%-8s | %-22s | %-22s | %-22s", "Δsoc_n", "basic", "load_substep", "arc_length"))
-        println(io, "-" ^ 80)
+        report_header = join(vcat([@sprintf("%-8s", "Δsoc_n")], methods), " | ")
+        println(io, report_header)
+        println(io, "-" ^ length(report_header))
 
         for (i, soc_n_val) in enumerate(soc_n_levels)
             parts = String[]
@@ -212,7 +213,7 @@ function main()
                     push!(parts, @sprintf("FAIL %3dit D=%.4f r=%.1e", mr.iterations, mr.D_max, mr.residual_norm))
                 end
             end
-            @printf(io, "%-8.3f | %s | %s | %s\n", soc_n_val, parts[1], parts[2], parts[3])
+            @printf(io, "%-8.3f | %s\n", soc_n_val, join(parts, " | "))
         end
 
         println(io, "")

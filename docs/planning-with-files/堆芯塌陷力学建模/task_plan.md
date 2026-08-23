@@ -10,14 +10,14 @@
 |---|---|
 | 各向异性路线 | **不存在本征正交各向异性**：每个材料都是各向同性的，各向异性只由多种材料层叠加等效产生（切向并联/法向串联）；Theory 中的横观各向同性 5 常数表述属于理解错误，须修复理论文档（Batch 0'） |
 | SP–电极界面 | 先按**完美接触（完美粘结）**假设：层内 SP 面共享节点天然粘结，跨匝 `phi_pairs` 绑定；单边接触+Coulomb 摩擦后置为 Batch 8 |
-| 配置入口 | `czm_enabled` 为唯一主开关；新增子选项（几何非线性/J2 塑性/Φ 绑定/连续反馈）全部默认关，`czm_enabled=true` 单独使用行为与现状完全一致 |
+| 配置入口 | `czm_enabled` 为唯一主开关；几何非线性/J2 塑性/预应力/连续反馈默认关；spec v1.5 起 Φ 完美粘结并入 CZM 网格默认构造，不再有独立开关，结果必须携带近似声明 |
 | 求解架构 | 先 operator-splitting；‖ΔD‖>0.05 等触发条件验证必要时再升级 monolithic |
 | 新反馈 | 全部 opt-in；连续 R_contact(D)/A_eff(D) 与界面热阻恢复不改变默认基线 |
 | 文档 | 双份：`docs/superpowers/specs/`（规格）+ 本目录三件套；均需更新 |
 
 ## 当前阶段
 
-Batch 0' Complete — Batch 1 Pending（等待规格文档评审）
+Batch 5 实现与收尾门禁已完成；2026-08-23 提交审查修复 R0–R6 complete。对称 D10 仍未触发 `Δ_core`/损伤，因此 C4-lite 物理验收未满足，Batch 6/7 未开始。修复记录见 `../堆芯塌陷提交修复/task_plan.md`。
 
 ## 批次
 
@@ -29,30 +29,35 @@ Batch 0' Complete — Batch 1 Pending（等待规格文档评审）
 - **状态：** complete
 
 ### Batch 1：规格文档 + 基线冻结 + 非线性机械核边界
-- [ ] 规格文档已写入 `docs/superpowers/specs/2026-08-20-core-collapse-mechanics-design.md`（含 Δ_core 离散定义：最内螺旋边界节点对最小二乘拟合圆的归一化最大径向偏差）；**等待用户评审后才开始实现**
-- [ ] 开工前登记 `test/` 现状，把 `unit_czm_eigenstrain.jl` 既有失败标记为前置状态
-- [ ] 按 AGENTS 9.6 核对 `example/testexample.jl` 对 `Simplify/baseline/testexample/`（退出码/网格步数/metrics.toml/PNG SHA-256）
-- [ ] `src/Option.jl` 新增默认关子选项；`src/Czm.jl` 新增 `assemble_bulk_residual_tangent`：bulk/cohesive/contact 三槽位分列（contact 槽位留空）；位移/塑性/接触依赖切线不再沿用常量 `K_bulk` 缓存；弹性层材料切线可按单元缓存
-- **验收门**：现有路径基线按记录精度一致；全开关关时新入口 ≡ `K_bulk*u`；`tools/czm_baseline_probe.jl` 三方法快照不变
+- [x] 规格文档已写入 `docs/superpowers/specs/2026-08-20-core-collapse-mechanics-design.md`，并经后续 v1.5 决策同步。
+- [x] 开工前已登记 `test/` 现状；既有 eigenstrain 缺口在后续参数一致性修复后纳入全量绿色门禁。
+- [x] 按 AGENTS 9.6 核对 `example/testexample.jl` 对 `Simplify/baseline/testexample/`（退出码/网格步数/metrics.toml/PNG SHA-256）。
+- [x] `Option` 子选项与 `assemble_bulk_residual_tangent` 已实现；未实现/冲突组合保持显式失败。
+- **验收门**：现有路径基线按记录精度一致；默认关闭的新增路径不改变 `testexample`；现行 standalone v3 快照不变。
+- **状态：** implementation complete；现行门禁入口为 `tools/verify_czm_standalone.jl`，v3 与 `testexample` 已复核。
 
 ### Batch 2（C1）：von Kármán 残差 + 几何刚度 K_G
 - 逐层各向同性 Q4（现有 `moduli_of` 路径不动）+ von Kármán 残差 + 一致 K_G；不叠加 CLT D
 - 测试：有限差分切线、刚体零应变、patch、自由膨胀零应力、K_G→0 退化回冻结解
 - **验收门（C1）**：塑性关、接触关、K_G→0 按记录精度退回冻结基线
+- **状态：** implementation complete；完全 Green–Lagrange/几何刚度路径及回归锚通过。
 
 ### Batch 3（C2/L1）：PCC/NCC J2 塑性
 - 参数集新增 `σ_y0`（Al 60 MPa / Cu 200 MPa）、`H→0+`（AGENTS 9.4 防御模式）；高斯点平面应力 J2 返回映射 + 一致切线 + `εp/κ` 提交—回滚；跨半循环持久化
 - 测试：单轴屈服、卸载、KKT、塑性耗散非负、切线有限差分
 - **验收门（C2/L1）**：强侧约束+完美圆仅预屈曲场；塑性关退回 C1
+- **状态：** implementation complete；历史塑性应变只扣除一次，局部不收敛显式失败。
 
 ### Batch 4'（小批次）：Φ 跨匝完美粘结绑定
-- 工况 C 开关下将 `phi_pairs` 节点对绑定（合并重合节点或 MPC tie）：零穿透、零分离、零滑移；默认关不影响基线
+- Φ 完美粘结已并入 CZM 默认求解网格；`phi_pairs` 保留未合并力学网格真实节点对，`mesh_bonded`/`phi_keep` 单独承担自由度合并
 - 测试：绑定对位移一致；基线不变
+- **状态：** implementation complete；旧 5 参数 `CzmSubmesh` 构造器已恢复。
 
 ### Batch 5（C4-lite）：多圈状态 + 路径跟踪 + Δ_core
 - 状态持久化挂 Case 层（仿 `czm_layout.u_prev`）：`u/几何`、`εp/κ`、cohesive D、`Δ_core`；**修改 `src/CycleSolver.jl` phase 交接**，参考构型来自持久化状态而非重建完美圆；失败步全回滚
 - `solve_czm_arc_length_step` 扩展为全机械残差路径跟踪；分岔附近步长缩减与可诊断终止
 - **验收门（C4-lite）**：完美粘结近似下多圈 Δ_core 与 D 联合增长；单循环全塌陷不算成功；默认基线一致
+- **状态：** implementation and code gates complete；对称 D10 真实提交后仍为 `Δ_core≡0,D≡0`，故上述物理验收未满足，不作塌陷能力宣称。
 
 ### Batch 6：损伤–电–热反馈闭环（opt-in）
 - `czm_continuous_feedback=true`：`R_contact(D)/A_eff(D)` 进分支电压/BV 残差；旧面积权重代理保持默认

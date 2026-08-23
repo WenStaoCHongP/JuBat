@@ -3,21 +3,19 @@ CZM Solver Convergence Comparison (Mode I)
 
 Mesh: nθ=40, gsorder=2
 Cohesive elements: 3364
-E_eff=6.097561e+00, ν_eff=0.3000, α_eff=4.470000e-03
+E_eff=1.219512e+01, ν_eff=0.3000, α_eff=4.470000e-03
 tol=1e-4, max_iter=200, n_load_steps=50, visc_beta=1.0
 
-Δsoc_n   | basic                  | load_substep           | arc_length            
---------------------------------------------------------------------------------
-0.100    | OK   2it D=0.0000 r=8.0e-09 | OK 100it D=0.0000 r=5.8e-09 | OK  50it D=0.0000 r=4.6e-08
-0.500    | OK   2it D=0.0000 r=4.1e-08 | OK 100it D=0.0000 r=2.8e-08 | OK  50it D=0.0000 r=2.4e-07
-1.000    | OK   2it D=0.0000 r=8.1e-08 | OK 100it D=0.0000 r=5.7e-08 | OK  50it D=0.0000 r=4.7e-07
-1.500    | OK   2it D=0.0000 r=1.3e-07 | OK 100it D=0.0000 r=8.7e-08 | OK  50it D=0.0000 r=6.9e-07
-2.000    | OK   2it D=0.0000 r=1.6e-07 | OK 100it D=0.0000 r=1.1e-07 | OK  50it D=0.0000 r=9.4e-07
-3.000    | OK   2it D=0.0000 r=2.6e-07 | OK 100it D=0.0000 r=1.7e-07 | OK  50it D=0.0000 r=1.4e-06
-5.000    | OK   2it D=0.0000 r=4.1e-07 | OK 100it D=0.0000 r=2.9e-07 | OK  50it D=0.0000 r=2.3e-06
-10.000   | FAIL   2it D=0.0000 r=1.6e+03 | FAIL  94it D=0.0000 r=7.7e-04 | FAIL 1837it D=0.0000 r=8.0e-04
+Δsoc_n   | basic
+----------------
+0.100    | OK   2it D=0.0000 r=2.8e-09
+0.500    | OK   2it D=0.0000 r=1.3e-08
+1.000    | FAIL   2it D=0.0000 r=2.0e+04
+1.500    | FAIL   2it D=0.0000 r=3.0e+04
+2.000    | FAIL   2it D=0.0000 r=3.9e+04
+3.000    | FAIL   2it D=0.0000 r=5.9e+04
+5.000    | FAIL   2it D=0.0000 r=9.9e+04
+10.000   | FAIL   2it D=0.0000 r=2.0e+05
 
 Summary:
-  basic          : converged 7/8, D_max(final)=0.0000, total_iter=16
-  load_substep   : converged 7/8, D_max(final)=0.0000, total_iter=794
-  arc_length     : converged 7/8, D_max(final)=0.0000, total_iter=2187
+  basic          : converged 2/8, D_max(final)=0.0000, total_iter=16
