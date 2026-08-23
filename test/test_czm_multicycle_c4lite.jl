@@ -4,7 +4,7 @@ using LinearAlgebra
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
 
-# Batch 5 Task 3：C4-lite 多圈集成——多相位 Δ_core 与 D 联合增长（spec §7 Batch 5）
+# Batch 5 Task 3：C4-lite 多圈集成——多相位状态持久化与对称 D10 结论
 # 驱动：Δsoc 失配（与 unit_czm_eigenstrain 同机理）；推进用 load_substep（低载荷避开极限点，
 # Crisfield 弧长阻塞已登记 findings）。
 
@@ -27,7 +27,7 @@ function c4_fixture(; nθ::Int=8)
     return case, pc, cache
 end
 
-@testset "C4-lite：多相位 Δ_core 与 D_max 联合增长（低载荷避开极限点）" begin
+@testset "C4-lite：多相位真实提交状态；对称 D10 工况未触发损伤" begin
     case, pc, cache = c4_fixture()
     cm = case.czm_mesh
     ndof = 2 * cm.nnode
@@ -48,7 +48,7 @@ end
     for (i, lvl) in enumerate(lvls)
         eig = (α_eff = α, β_n = βn, β_p = βp,
                dT = zeros(ne), Δsn = fill(-lvl, ne), Δsp = fill(-lvl, ne))
-        r, _ = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, case.czm_layout.u_prev;
+        r, updated = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, case.czm_layout.u_prev;
             α_eff = α, β_n = βn, β_p = βp,
             dT_elem = eig.dT, Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp,
             max_iter = 200, tol = 1e-8, n_load_steps = 50, iter_method = "load_substep",
@@ -57,6 +57,7 @@ end
             prestress = scaled)
         @test r.converged
         case.czm_layout.u_prev = r.displacement
+        cm.damage_states = updated.damage_states
         JuBat.assemble_coupled_system(cm, r.displacement, pc;
             geo_nl = true, eigenstrain = eig, plasticity = true,
             mech_state = case.czm_layout.plastic_states, commit_plastic = true)
@@ -69,4 +70,22 @@ end
     @test all(iszero, Δ_hist)
     @test all(iszero, D_hist)
     @test all(isfinite, Δ_hist)
+end
+
+@testset "受控分离产生非零损伤并可跨步提交" begin
+    case, pc, _ = c4_fixture()
+    cm = case.czm_mesh
+    separations = [begin
+        p = pc.by_interface[coh.interface_type]
+        (0.5 * (p.δ_0_n + p.δ_c_n), 0.0)
+    end for coh in cm.cohesive_elements]
+    trial = JuBat.update_damage_per_interface(cm, JuBat.clone_damage_states(cm.damage_states),
+                                               separations, pc)
+    updated = JuBat.clone_czm_mesh_with_damage(cm, trial)
+    @test maximum(s.D for s in updated.damage_states) > 0.0
+    @test updated.czm_submesh === cm.czm_submesh
+    @test updated.thermal_to_czm === cm.thermal_to_czm
+    @test updated.cohesive_to_thermal === cm.cohesive_to_thermal
+    cm.damage_states = updated.damage_states
+    @test maximum(s.D for s in cm.damage_states) > 0.0
 end
