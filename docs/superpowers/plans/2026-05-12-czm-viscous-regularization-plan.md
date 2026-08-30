@@ -83,7 +83,7 @@
 - [ ] 检查残差峰值、收敛标志、D_visc 单调性
 - [ ] 确认 `basic` 模式下粘性正则化效果有限（β ≈ 1）
 - [ ] 确认失败步没有推进损伤历史
-- [ ] 记录结果到 `docs/planning-with-files/内聚力病态问题解决/progress.md`
+- [ ] 记录结果到 `docs/planning-with-files/12_内聚力病态问题解决/progress.md`
 
 - **Status:** pending
 

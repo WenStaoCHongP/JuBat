@@ -9,8 +9,8 @@
 **Tech Stack:** Julia, 现有 JuBat 模块体系，无外部依赖变更。
 
 **Design Specs:**
-- `docs/planning-with-files/温度数据流管理/findings.md`
-- `docs/planning-with-files/内聚力模块变量优化/findings.md`
+- `docs/planning-with-files/08_温度数据流管理/findings.md`
+- `docs/planning-with-files/03_内聚力模块变量优化/findings.md`
 
 **Protected Constraints:**
 1. PostProcessing.jl 中已有的物理单位还原公式不可改变（scale.q, scale.T_ref, scale.L, scale.E_n, scale.E_p, scale.r0）
@@ -607,7 +607,7 @@ println("All exports OK")
 
 - [ ] **Step 6: Update progress files**
 
-Update `docs/planning-with-files/温度数据流管理/progress.md` and `docs/planning-with-files/内聚力模块变量优化/progress.md`.
+Update `docs/planning-with-files/08_温度数据流管理/progress.md` and `docs/planning-with-files/03_内聚力模块变量优化/progress.md`.
 
 - [ ] **Step 7: Final commit**
 

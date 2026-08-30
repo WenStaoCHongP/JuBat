@@ -2,7 +2,7 @@
 
 > 日期: 2026-05-18
 > 状态: revised (v2) — 已针对评审意见补充收敛准则、损伤更新语义和残差报告说明
-> 关联: `docs/planning-with-files/代码简化/`
+> 关联: `docs/planning-with-files/02_代码简化/`
 
 ## 1. 问题定义
 

@@ -4,7 +4,7 @@
 >
 > **For agentic workers:** REQUIRED: Keep this plan synchronized with findings/progress. Do not cross-derive thermal and cohesive criteria unless the spec explicitly says so.
 >
-> **Context:** Based on the discussion recorded in [findings.md](../../planning-with-files/网格敏感性分析/findings.md).
+> **Context:** Based on the discussion recorded in [findings.md](../../planning-with-files/07_网格敏感性分析/findings.md).
 >
 > **Updated:** 2026-04-22 (rev 2) — thermal criterion replaced by Biot number + systematic refinement; cohesive $l_c$ confirmed with $E_{eff}$; pure thermal/mechanical paths clarified.
 
@@ -241,6 +241,6 @@ where $Q_{generated}$ is obtained by integrating `total heat source [W]` over ti
 
 ## 8. Reference Files
 
-- [findings.md](../../planning-with-files/网格敏感性分析/findings.md) — upstream discussion and constraints
-- [progress.md](../../planning-with-files/网格敏感性分析/progress.md) — session log and status
+- [findings.md](../../planning-with-files/07_网格敏感性分析/findings.md) — upstream discussion and constraints
+- [progress.md](../../planning-with-files/07_网格敏感性分析/progress.md) — session log and status
 - [2026-04-22-grid-sensitivity-analysis-design.md](../specs/2026-04-22-grid-sensitivity-analysis-design.md) — formal definitions and assumptions

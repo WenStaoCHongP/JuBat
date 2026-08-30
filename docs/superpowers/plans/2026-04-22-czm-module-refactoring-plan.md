@@ -8,7 +8,7 @@
 
 **Tech Stack:** Julia, 现有 JuBat 模块体系（`include` + `export` 模式），无外部依赖变更。
 
-**Design Spec:** `docs/planning-with-files/内聚力模块拆分/task_plan.md`, `docs/planning-with-files/内聚力模块拆分/findings.md`
+**Design Spec:** `docs/planning-with-files/04_内聚力模块拆分/task_plan.md`, `docs/planning-with-files/04_内聚力模块拆分/findings.md`
 
 **Protected Constraints (不可破坏):**
 1. 线搜索：`for _ in 1:8; α *= 0.5; end`
@@ -62,12 +62,12 @@ cd "D:/OneDrive/Desktop/Jubat For Cursor/JuBat"
 julia tools/czm_baseline_probe.jl
 ```
 
-Expected: 输出 `BASELINE_START` ... `BASELINE_END` 段，记录三种方法的 `converged`, `iterations`, `residual_norm`, `D_max`, `D_mean`, `n_fractured`。将这些值复制到 `docs/planning-with-files/内聚力模块拆分/findings.md` 的 `## Baseline Snapshot` 段。
+Expected: 输出 `BASELINE_START` ... `BASELINE_END` 段，记录三种方法的 `converged`, `iterations`, `residual_norm`, `D_max`, `D_mean`, `n_fractured`。将这些值复制到 `docs/planning-with-files/04_内聚力模块拆分/findings.md` 的 `## Baseline Snapshot` 段。
 
 - [ ] **Step 3: Commit baseline**
 
 ```bash
-git add tools/czm_baseline_probe.jl docs/planning-with-files/内聚力模块拆分/findings.md
+git add tools/czm_baseline_probe.jl docs/planning-with-files/04_内聚力模块拆分/findings.md
 git commit -m "chore: add CZM baseline probe for refactoring regression check"
 ```
 
@@ -591,7 +591,7 @@ newton_raphson_czm and arc_length keep their own line search
 
 **Files:**
 - Read: all modified files
-- Modify: `docs/planning-with-files/内聚力模块拆分/progress.md`
+- Modify: `docs/planning-with-files/04_内聚力模块拆分/progress.md`
 
 - [ ] **Step 1: Run full baseline probe**
 
@@ -639,7 +639,7 @@ Expected: `All exports OK`
 - [ ] **Step 5: Final commit**
 
 ```bash
-git add docs/planning-with-files/内聚力模块拆分/progress.md
+git add docs/planning-with-files/04_内聚力模块拆分/progress.md
 git commit -m "docs: update CZM refactoring progress — all phases complete"
 ```
 

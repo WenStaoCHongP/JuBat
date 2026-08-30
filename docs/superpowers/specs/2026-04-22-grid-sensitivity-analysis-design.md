@@ -6,7 +6,7 @@
 >
 > **Plan:** [2026-04-22-grid-sensitivity-analysis-plan.md](../plans/2026-04-22-grid-sensitivity-analysis-plan.md)
 >
-> **Source discussion:** [findings.md](../../planning-with-files/网格敏感性分析/findings.md)
+> **Source discussion:** [findings.md](../../planning-with-files/07_网格敏感性分析/findings.md)
 
 ---
 
@@ -160,5 +160,5 @@ A candidate family is considered acceptable when:
 
 ## 7. Reference Material
 
-- [findings.md](../../planning-with-files/网格敏感性分析/findings.md) — review conclusions and discussion record
+- [findings.md](../../planning-with-files/07_网格敏感性分析/findings.md) — review conclusions and discussion record
 - [2026-04-22-grid-sensitivity-analysis-plan.md](../plans/2026-04-22-grid-sensitivity-analysis-plan.md) — execution plan

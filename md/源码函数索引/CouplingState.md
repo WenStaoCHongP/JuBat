@@ -4,7 +4,7 @@
 - **行数**: 750 行
 - **函数/struct 计数**: 18 个（10 struct + 8 函数）
 - **职责**: 类型安全的状态布局与网格几何定义——CZM 本构参数缓存（`CzmInterfaceParams`/`CzmParamCache`）、多 SPMe 状态向量布局索引（`MultiSPMeLayout`）、CZM 装配缓存与工作区（`CZMAssemblyCache`/`CZMAssemblyWorkspace`）、CZM 跨时间步损伤更新入口（`update_czm_damage!`）、粗热→CZM 节点双线性插值矩阵构造
-- **相关技术文档**: `md/10_参数传递与模块架构.md`、`md/06_内聚力模型_CZM.md`、`docs/planning-with-files/力学模块修改/宏观力学模块无量纲化重设计.md`
+- **相关技术文档**: `md/10_参数传递与模块架构.md`、`md/06_内聚力模型_CZM.md`、`docs/planning-with-files/14_力学模块修改/宏观力学模块无量纲化重设计.md`
 
 ## 数据结构
 

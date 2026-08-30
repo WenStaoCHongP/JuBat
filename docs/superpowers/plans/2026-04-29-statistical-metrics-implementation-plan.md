@@ -21,8 +21,8 @@
 | Modify | `example/网格敏感性/3_thermal_mesh_sensitivity.jl` | 热学 Track 后处理 |
 | Modify | `example/网格敏感性/4_czm_mesh_sensitivity.jl` | CZM Track 后处理 |
 | Modify | `example/网格敏感性/5_energy_conservation_check.jl` | 能量守恒后处理 |
-| Modify | `docs/planning-with-files/网格敏感性分析/findings.md` | 更新发现记录 |
-| Modify | `docs/planning-with-files/网格敏感性分析/progress.md` | 更新进度记录 |
+| Modify | `docs/planning-with-files/07_网格敏感性分析/findings.md` | 更新发现记录 |
+| Modify | `docs/planning-with-files/07_网格敏感性分析/progress.md` | 更新进度记录 |
 
 ---
 
@@ -603,8 +603,8 @@ git commit -m "feat: add normalized RMS residual to energy conservation check"
 ### Task 6: 更新 findings.md 和 progress.md
 
 **Files:**
-- Modify: `docs/planning-with-files/网格敏感性分析/findings.md`
-- Modify: `docs/planning-with-files/网格敏感性分析/progress.md`
+- Modify: `docs/planning-with-files/07_网格敏感性分析/findings.md`
+- Modify: `docs/planning-with-files/07_网格敏感性分析/progress.md`
 
 - [ ] **Step 1: 在 findings.md 末尾追加统计指标设计记录**
 
@@ -675,6 +675,6 @@ git commit -m "feat: add normalized RMS residual to energy conservation check"
 - [ ] **Step 3: Commit**
 
 ```bash
-git add "docs/planning-with-files/网格敏感性分析/findings.md" "docs/planning-with-files/网格敏感性分析/progress.md"
+git add "docs/planning-with-files/07_网格敏感性分析/findings.md" "docs/planning-with-files/07_网格敏感性分析/progress.md"
 git commit -m "docs: update findings and progress for statistical metrics upgrade"
 ```

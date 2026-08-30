@@ -260,4 +260,4 @@ end
 
 - [2026-04-22-grid-sensitivity-analysis-design.md](2026-04-22-grid-sensitivity-analysis-design.md) — 原始设计规格（§3 指标定义被本文档取代）
 - [2026-04-22-grid-sensitivity-analysis-plan.md](../plans/2026-04-22-grid-sensitivity-analysis-plan.md) — 实施计划
-- [findings.md](../../planning-with-files/网格敏感性分析/findings.md) — 发现记录
+- [findings.md](../../planning-with-files/07_网格敏感性分析/findings.md) — 发现记录

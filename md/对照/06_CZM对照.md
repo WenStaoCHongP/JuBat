@@ -57,7 +57,7 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (6.6) | md/06 §2.3 BK 准则 `δ_c^mix = [(G_n/G_c^I)^α + (G_t/G_c^II)^α]^(1/α)·δ_c^I` | — | src 未直接实现 BK 形式；改用 δ_0_eff/δ_c_eff 的幂指数插值（见 (6.x2)） | 🟡 | md L73 标准 BK 形式；代码用等效分离 + β^η 插值；指向 `docs/planning-with-files/内聚力模块归一化检查/findings.md` |
+| (6.6) | md/06 §2.3 BK 准则 `δ_c^mix = [(G_n/G_c^I)^α + (G_t/G_c^II)^α]^(1/α)·δ_c^I` | — | src 未直接实现 BK 形式；改用 δ_0_eff/δ_c_eff 的幂指数插值（见 (6.x2)） | 🟡 | md L73 标准 BK 形式；代码用等效分离 + β^η 插值；指向 `docs/planning-with-files/05_内聚力模块归一化检查/findings.md` |
 | (6.x2) | md 06 §2.3 隐含：δ_0_eff/δ_c_eff 通过 `β^η` 插值 | `src/Materialmatrix.jl:108-115 (bilinear_traction_state)` + `:210-217 (bilinear_tangent)` | `β=abs(δ_t)/δ_eff`；`δ_0_eff=sqrt(δ_0_n²+(δ_0_t²−δ_0_n²)·β^η)`；δ_c_eff 同 | ✅ | md 未显式列此式，但 BK 的工程近似；η 默认 1.45（CzmInterfaceParams.η） |
 
 ### §2.4 bilinear_traction_state 函数
@@ -109,7 +109,7 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (6.17) | md/06 §4.1 统一入口 `solve_czm_step(...; iter_method="load_substep", ...)` | `src/CzmSolve.jl:651-675 (solve_czm_step)` | 三分支：`load_substep → newton_raphson_czm`；`basic → solve_czm_basic_step`；`arc_length* → solve_czm_arc_length_step` | 🟡 | md L187 默认 `iter_method="load_substep"`；代码默认也是 `load_substep`；但 md §4.4 推荐 basic；指向 `docs/planning-with-files/损伤异常/findings.md` |
+| (6.17) | md/06 §4.1 统一入口 `solve_czm_step(...; iter_method="load_substep", ...)` | `src/CzmSolve.jl:651-675 (solve_czm_step)` | 三分支：`load_substep → newton_raphson_czm`；`basic → solve_czm_basic_step`；`arc_length* → solve_czm_arc_length_step` | 🟡 | md L187 默认 `iter_method="load_substep"`；代码默认也是 `load_substep`；但 md §4.4 推荐 basic；指向 `docs/planning-with-files/06_损伤异常/findings.md` |
 | (6.x5) | md/06 §4.1 残差格式 `R = F_applied − f_int(u)` | `src/CzmSolve.jl:199,313,350,535 (multiple solvers)` + `:807 (assemble_coupled_system_full)` | `R = F_external + F_thermo_chem − f_int_total`（含热-化学载荷） | ✅ | md L195；F_applied 隐含 F_ext + F_thermo_chem |
 
 ### §4.2 损伤更新策略（隐式冻结）
@@ -133,7 +133,7 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| — | md/06 §4.4 性能表（basic 5.5s / load_sub 22s / arc 22s） | — | md 给 1C 放电 nθ=16 实测；代码无显式基准（性能特征由实现体现） | — | 卡点：md §4.4 表 L284-288 为经验数据，非公式；指向 `docs/planning-with-files/CZM瓶颈/findings.md` |
+| — | md/06 §4.4 性能表（basic 5.5s / load_sub 22s / arc 22s） | — | md 给 1C 放电 nθ=16 实测；代码无显式基准（性能特征由实现体现） | — | 卡点：md §4.4 表 L284-288 为经验数据，非公式；指向 `docs/planning-with-files/01_CZM瓶颈/findings.md` |
 
 ### §4.5 热-化学载荷
 
@@ -155,9 +155,9 @@
 |---|---|---|---|---|---|
 | (6.x15) | md/06 §4.7 入口 `compute_effective_coating_modulus(case)` | — | src **未找到此函数**；实际等效入口是 `compute_czm_params_per_interface(case)`（per-interface 分组） | — | md L349 函数名与 src 不一致；指向 CLAUDE.md §9.4 提及；卡点：md 描述的 API 不存在；改由 `CouplingState.jl:302-401` 实现 |
 | (6.x16) | md/06 §4.7 `compute_czm_effective_params` 调用后归一化逆变换 | — | src **未找到此函数**；归一化由 `compute_czm_params_per_interface` 内联：`E_eff_pe = param.PE.E_coat·scale.E_coat/scale.σ_czm` | — | md L363 描述的函数不存在；指向 CLAUDE.md §9.4；卡点：md API 失效 |
-| (6.20) | md/06 §4.7 全栈厚度加权 `E_eff = Σ(E_i·t_i)/Σt_i` | `src/CouplingState.jl:351-352 (compute_czm_params_per_interface)` | `E_eff_pe = param.PE.E_coat·scale.E_coat/scale.σ_czm`（PE 单层，非全栈加权） | 🟡 | md L353 写"PE+NE+SP+PCC+NCC 五层加权"；代码实际**只取 PE.E_coat 单层**（per-interface 分组，PE_PCC 界面用 PE）；指向 `docs/planning-with-files/力学模块修改/宏观力学模块无量纲化重设计.md` |
+| (6.20) | md/06 §4.7 全栈厚度加权 `E_eff = Σ(E_i·t_i)/Σt_i` | `src/CouplingState.jl:351-352 (compute_czm_params_per_interface)` | `E_eff_pe = param.PE.E_coat·scale.E_coat/scale.σ_czm`（PE 单层，非全栈加权） | 🟡 | md L353 写"PE+NE+SP+PCC+NCC 五层加权"；代码实际**只取 PE.E_coat 单层**（per-interface 分组，PE_PCC 界面用 PE）；指向 `docs/planning-with-files/14_力学模块修改/宏观力学模块无量纲化重设计.md` |
 | (6.x17) | md/06 §4.7 调用路径：`thermal_diffusion_stress_2D` 调 `compute_effective_coating_modulus` | `src/Mechanical.jl:184-187 (thermal_diffusion_stress_2D)` | 实际调用：`czm_param_cache = compute_czm_params_per_interface(case)`；取 `by_interface[:PE_PCC].E_eff/ν/α` | 🟡 | md L362 路径描述与代码不符；功能等价（取 PE_PCC 占位） |
-| (6.x18) | md/06 §4.7 参数缺失告警 `PE.E_coat==0 → @warn` | `src/CouplingState.jl:317 (compute_czm_params_per_interface)` + `src/Mechanical.jl:167 (thermal_diffusion_stress_2D)` | CouplingState 用 `@assert param.PE.E_coat > 0`；Mechanical 同 | 🟡 | md L365 说"ChooseCell 发 @warn，后续 @assert 拦截"；实际两处都是 @assert（无 ChooseCell 告警）；指向 `docs/planning-with-files/力学模块修改/宏观层面力学模块无量纲化.md` |
+| (6.x18) | md/06 §4.7 参数缺失告警 `PE.E_coat==0 → @warn` | `src/CouplingState.jl:317 (compute_czm_params_per_interface)` + `src/Mechanical.jl:167 (thermal_diffusion_stress_2D)` | CouplingState 用 `@assert param.PE.E_coat > 0`；Mechanical 同 | 🟡 | md L365 说"ChooseCell 发 @warn，后续 @assert 拦截"；实际两处都是 @assert（无 ChooseCell 告警）；指向 `docs/planning-with-files/14_力学模块修改/宏观层面力学模块无量纲化.md` |
 
 ### §4.8 无量纲化重设计 v2（2026-07-22）
 
@@ -169,7 +169,7 @@
 | (6.x20) | md/06 §4.8 内力不乘 Λ，切线乘一次 | `src/Czm.jl:38-43 (assemble_czm_system)` | `wJΛ = wJ·Λ`；`K_e += wJΛ·BL_dT·B_local`（切线）；`f_int_e += wJ·BLtT`（内力不乘 Λ） | ✅ | md L382-383；虚功一致性：f=∫BᵀT̃ dΓ；dT/dũ=(dT/dδ̃)·Λ·B |
 | (6.x21) | md/06 §4.8 体/界面应力空间统一 `moduli_of` 双重再缩放 | `src/Czm.jl:57-65 (moduli_of)` | `s = scale.σ_czm>0 ? scale.E_coat/scale.σ_czm : 1.0`；`E_e = param.PE.E_coat·s` | ✅ | md L385-387；moduli_of 对 PE/NE/PCC/NCC/SP 都乘 s，统一到 σ_czm 应力空间 |
 | (6.x22) | md/06 §4.8 单位契约 `compute_gap_conductance` 输入 δ÷Λ | `src/Materialmatrix.jl:344-347 (compute_gap_conductance)` | `inv_Λ = 1.0/params.Λ`；`delta = max(δ_n,0)·inv_Λ`；`delta0 = params.δ_0_n·inv_Λ` | ✅ | md L389；分离空间（δ_czm 归一）→ 长度空间（L 归一），再与 h_c0/k_air（L/λ 归一）运算 |
-| (6.x23) | md/06 §4.8 输出还原：分离×δ_czm，牵引×σ_czm | `src/CzmPostProcess.jl:99-117 (czm_output_to_variables)` + `src/CsvExport.jl` | czm_output_to_variables 直接写 `separation_n`（未乘 δ_czm）；还原由 CsvExport/PostProcessing 外层 | 🟡 | md L392；代码内 czm_output_to_variables **未做单位还原**；CSV 导出层才乘 δ_czm/σ_czm；指向 `docs/planning-with-files/CZM瓶颈/findings.md` |
+| (6.x23) | md/06 §4.8 输出还原：分离×δ_czm，牵引×σ_czm | `src/CzmPostProcess.jl:99-117 (czm_output_to_variables)` + `src/CsvExport.jl` | czm_output_to_variables 直接写 `separation_n`（未乘 δ_czm）；还原由 CsvExport/PostProcessing 外层 | 🟡 | md L392；代码内 czm_output_to_variables **未做单位还原**；CSV 导出层才乘 δ_czm/σ_czm；指向 `docs/planning-with-files/01_CZM瓶颈/findings.md` |
 | (6.x24) | md/06 §4.8 派生诊断量 Λ / E* / L_ch | `src/CouplingState.jl:357,330-333,345-347 (compute_czm_params_per_interface)` | `Λ = scale.L/scale.δ_czm`；`E_star_pe_dim = 2·E_pe·E_pcc/(E_pe+E_pcc)`；`L_ch_pe = E_star·G_c/σ_max²/L` | ✅ | md L394；E* 用双材料调和平均，L_ch 用内禀长度公式 |
 
 ---
@@ -200,7 +200,7 @@
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
 | (6.27) | md/06 §6.1 `SOH = C_discharge/C_initial` | — | src/CycleSolver.jl `_update_soh_and_capacity!`（md §8 引述） | — | 卡点：本卷范围不含 CycleSolver.jl；md §8 已声明归属；指向 `md/对照/07_算法与求解对照.md`（待建） |
-| (6.x26) | md/06 §6.1 终止条件 SOH≤0.8 / 断裂比例>50% | `src/CzmPostProcess.jl:37-52 (check_fracture_criterion)` | `is_fractured_avg = stats.mean_D ≥ threshold(0.99)`；`is_fractured_count = (n_fractured/n) > 0.5` | 🟡 | md L457 阈值（SOH≤0.8）vs 代码阈值（mean_D≥0.99）— 不同物理量；md 是 SOH 终止，代码是单步断裂判定；指向 `docs/planning-with-files/CZM瓶颈/findings.md` |
+| (6.x26) | md/06 §6.1 终止条件 SOH≤0.8 / 断裂比例>50% | `src/CzmPostProcess.jl:37-52 (check_fracture_criterion)` | `is_fractured_avg = stats.mean_D ≥ threshold(0.99)`；`is_fractured_count = (n_fractured/n) > 0.5` | 🟡 | md L457 阈值（SOH≤0.8）vs 代码阈值（mean_D≥0.99）— 不同物理量；md 是 SOH 终止，代码是单步断裂判定；指向 `docs/planning-with-files/01_CZM瓶颈/findings.md` |
 
 ### §6.2 损伤更新
 

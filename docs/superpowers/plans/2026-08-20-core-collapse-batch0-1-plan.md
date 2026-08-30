@@ -18,7 +18,7 @@
 - **错误处理**（spec §6，继承 AGENTS 9.7）：缺参 → `error` 指明材料层；不默认、不置零、不截断；不引入任何新的静默回退分支；未实现的槽位传入非默认值一律 `error`，不得静默忽略。
 - **网格约定**（AGENTS 9.3）：`nθ` 同时控制热网格与力学/CZM 网格周向分辨率，力学网格直接继承热网格实际角节点，**不得**新增 `nθ_czm` 或独立角度数组。
 - **几何数值唯一来源**（D14）：Batch 0'' 之后，Theory 中一切几何数值以 `src/parameters/Jellyroll.jl` 与 `src/Jellyrollmodel.jl` 为唯一来源，表中每行必须标注对应代码字段名。
-- **planning 文件归属**（AGENTS 9.5）：进度与发现写入 `docs/planning-with-files/堆芯塌陷力学建模/`，并同步更新 `docs/planning-with-files/index.md`。
+- **planning 文件归属**（AGENTS 9.5）：进度与发现写入 `docs/planning-with-files/30_堆芯塌陷力学建模/`，并同步更新 `docs/planning-with-files/index.md`。
 - **提交粒度**（spec §9）：每批一次提交，沿用现有中文提交风格（`docs(...)`/`refactor(...)`/`test(...)`）。
 - **测试套件现状**：`test/runtests.jl` 全套现为 **22/22 通过**（`e117fd2` 已修复 `unit_czm_eigenstrain.jl` 两条既有失败断言，60/60）。spec §7 脚注所载"58/60 既有失败登记"已过期作废；本计划所有批次的全套测试门禁为**全绿**，任何失败都视为新回归。
 
@@ -47,7 +47,7 @@
 | 文件 | 动作 | 职责 |
 |---|---|---|
 | `tools/verify_czm_standalone.jl` | 不修改（直接运行） | Batch 1 快照门禁来源：三方法 × 8 载荷水平收敛对比（方案 B；原 `czm_baseline_probe.jl` 已被 `2bf2ac7` 删除，v1.1 修订，见 Task 1） |
-| `docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_standalone.md` | 已建立 | 冻结 `verify_czm_standalone.jl` 快照（2026-08-21，HEAD `e117fd2`），Batch 1 及后续批次的回归基准 |
+| `docs/planning-with-files/30_堆芯塌陷力学建模/baseline_czm_standalone.md` | 已建立 | 冻结 `verify_czm_standalone.jl` 快照（2026-08-21，HEAD `e117fd2`），Batch 1 及后续批次的回归基准 |
 | `tools/theory_geometry_recompute.jl` | 新建 | 只读脚本：从 `ChooseCell("Jellyroll")` 重算螺旋几何表并打印代码字段来源（D14 防漂移） |
 | `Theory/07_弱形式与求解.md` | 修改 | 消除同号 §6.4.5 与 KKT 残留、统一 `K_uu`、新增 §6.10 柱面弧长法、补 Φ 约束施加方式 |
 | `Theory/02_几何与运动学.md` | 修改 | 几何数值按代码重算（`46.6\|0.132` 15 处 + `284` 7 处 + `\approx 6` 5 处）、γ 量级联动订正、`κ_ss` 与 C⁰ Q4 不兼容实现注记 |
@@ -68,10 +68,10 @@
 
 **v1.1 修订背景**：本 Task 原为"修复 `czm_baseline_probe.jl` 的 4 处过期 API 并冻结快照"。计划评审（2026-08-21）对照 `49ec452` 历史版本核实该 4 处诊断属实，但该探针已被 `2bf2ac7` 作为过时脚本**整体删除**，修复对象不存在。用户决策采用**方案 B**：Batch 1 快照门禁改用 `tools/verify_czm_standalone.jl`（同覆盖 basic/load_substep/arc_length 三方法 × 8 个 Δsoc_n 载荷水平；`2bf2ac7` 已修复其 `build_czm_cache` 签名并实测通过），不恢复旧探针。spec 已随 v1.3 同步替换 §5/§7 引用。
 
-基线快照 `docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_standalone.md` 已于 2026-08-21 冻结（HEAD `e117fd2`，计划 v1.1 修订时执行）。本 Task 在开工时**复核其可复现性**，不改任何代码。
+基线快照 `docs/planning-with-files/30_堆芯塌陷力学建模/baseline_czm_standalone.md` 已于 2026-08-21 冻结（HEAD `e117fd2`，计划 v1.1 修订时执行）。本 Task 在开工时**复核其可复现性**，不改任何代码。
 
 **Files:**
-- 无修改。只读运行 `tools/verify_czm_standalone.jl`，对照既有快照 `docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_standalone.md`。
+- 无修改。只读运行 `tools/verify_czm_standalone.jl`，对照既有快照 `docs/planning-with-files/30_堆芯塌陷力学建模/baseline_czm_standalone.md`。
 
 **Interfaces:**
 - Consumes: `JuBat.solve_czm_step(czm_mesh, F_ext, param_cache, param, u_prev; α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem, max_iter, tol, n_load_steps, iter_method, cache)`（`src/CzmSolve.jl:651`）；`JuBat.get_damage_statistics(czm_mesh)`（`src/CzmPostProcess.jl:12`，返回 `max_D`/`mean_D`/`n_fractured`）。
@@ -90,11 +90,11 @@ Expected: 退出码 0。输出中（i）网格统计行（Nodes/Bulk/Cohesive）
 
 - [ ] **Step 2: 确认工具既有瑕疵已在 findings 登记（不改代码）**
 
-该登记已于 2026-08-21（计划 v1.1 修订）写入 `docs/planning-with-files/堆芯塌陷力学建模/findings.md`"verify_czm_standalone.jl 既有瑕疵登记"节（`:66`/`:134` 传参不一致、用未合并 `thermal2D`、处置约定）。本步只核对条目仍在；若缺失按 findings 同名节补齐。
+该登记已于 2026-08-21（计划 v1.1 修订）写入 `docs/planning-with-files/30_堆芯塌陷力学建模/findings.md`"verify_czm_standalone.jl 既有瑕疵登记"节（`:66`/`:134` 传参不一致、用未合并 `thermal2D`、处置约定）。本步只核对条目仍在；若缺失按 findings 同名节补齐。
 
 - [ ] **Step 3: 复核结论记入 progress.md**
 
-在 `docs/planning-with-files/堆芯塌陷力学建模/progress.md` 追加一行复核记录（日期、HEAD、比对结果一致/不一致）。本 Task 不产生代码变更，无独立提交；若 Step 1 比对不一致，**停止**，先定位漂移来源（src 改动 or 工具改动 or 环境），不得进入 Task 2。
+在 `docs/planning-with-files/30_堆芯塌陷力学建模/progress.md` 追加一行复核记录（日期、HEAD、比对结果一致/不一致）。本 Task 不产生代码变更，无独立提交；若 Step 1 比对不一致，**停止**，先定位漂移来源（src 改动 or 工具改动 or 环境），不得进入 Task 2。
 
 
 ---
@@ -294,7 +294,7 @@ $\bar u$ 为本增量步内已累积的位移修正。两根中取与上一步�
 
 - [ ] **Step 8: 记录 Batch 7 待办**
 
-在 `docs/planning-with-files/堆芯塌陷力学建模/findings.md` 末尾追加：
+在 `docs/planning-with-files/30_堆芯塌陷力学建模/findings.md` 末尾追加：
 
 ```markdown
 ### Batch 0'' 执行中新增的 Batch 7 文档级待办
@@ -319,7 +319,7 @@ Expected: 至少 2 行命中，位于新增 §6.10。
 - [ ] **Step 10: 提交**
 
 ```bash
-git add "Theory/07_弱形式与求解.md" "docs/planning-with-files/堆芯塌陷力学建模/findings.md"
+git add "Theory/07_弱形式与求解.md" "docs/planning-with-files/30_堆芯塌陷力学建模/findings.md"
 git commit -m "docs(theory): 07 消除同号小节与 K_uu 双定义，补柱面弧长法与 Φ 约束施加方式"
 ```
 
@@ -641,12 +641,12 @@ Expected: 全套 22/22 通过（`e117fd2` 起 `unit_czm_eigenstrain.jl` 已修�
 
 - [ ] **Step 7: 更新 planning 三件套与总索引，并提交**
 
-在 `docs/planning-with-files/堆芯塌陷力学建模/progress.md` 追加 Batch 0'' 小节，逐条记录 8 项的处置结果（含 Task 2 Step 8 转入 Batch 7 的 1 项）、Step 6 的测试清单、以及 `tools/theory_geometry_recompute.jl` 的实测输出。
+在 `docs/planning-with-files/30_堆芯塌陷力学建模/progress.md` 追加 Batch 0'' 小节，逐条记录 8 项的处置结果（含 Task 2 Step 8 转入 Batch 7 的 1 项）、Step 6 的测试清单、以及 `tools/theory_geometry_recompute.jl` 的实测输出。
 
 在 `docs/planning-with-files/index.md` 更新"堆芯塌陷力学建模"任务行的状态与时间。
 
 ```bash
-git add "Theory/01_符号与守恒律公理.md" "Theory/02_几何与运动学.md" "Theory/03_本构理论.md" "Theory/09_附录A_符号表.md" "docs/planning-with-files/堆芯塌陷力学建模/progress.md" "docs/planning-with-files/index.md"
+git add "Theory/01_符号与守恒律公理.md" "Theory/02_几何与运动学.md" "Theory/03_本构理论.md" "Theory/09_附录A_符号表.md" "docs/planning-with-files/30_堆芯塌陷力学建模/progress.md" "docs/planning-with-files/index.md"
 git commit -m "docs(theory): 统一层编号双约定与 A_eff 量纲，补 kappa_ss 与 C0 Q4 不兼容实现注记"
 ```
 
@@ -1127,7 +1127,7 @@ Expected: 全套 22/22 通过——不得出现任何失败项（v1.1 起 eigens
 - [ ] **Step 6: 基线快照门禁（verify_czm_standalone，方案 B）**
 
 Run（与冻结时同环境）: `GKSwstype=100 JULIA_NUM_THREADS=1 julia --startup-file=no --project=. tools/verify_czm_standalone.jl`
-Expected: 网格统计行（Nodes/Bulk/Cohesive）、有效参数行（E_eff/ν_eff/α_eff/β_n/β_p）、8 行收敛对比表的每个 `OK/FAIL it D r` 字段、Summary 三行的全部数值，与 `docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_standalone.md` 冻结表在打印精度下逐位一致。
+Expected: 网格统计行（Nodes/Bulk/Cohesive）、有效参数行（E_eff/ν_eff/α_eff/β_n/β_p）、8 行收敛对比表的每个 `OK/FAIL it D r` 字段、Summary 三行的全部数值，与 `docs/planning-with-files/30_堆芯塌陷力学建模/baseline_czm_standalone.md` 冻结表在打印精度下逐位一致。
 
 任一数值不同（含 OK↔FAIL 翻转）即停止：新入口在开关全关时应当是同一算式，出现差异说明接线改变了语义（例如 `K_bulk_cached` 未透传导致重新装配，或求和次序变化）。定位后修复，不得放行；不得调参使冻结的 FAIL 条目"变好"后放行。
 
@@ -1144,7 +1144,7 @@ Expected: `4BA6207C3CCF92DA5E37349EE335CF21A10A50B46A14CDA13DE95EEFA6CAE932`（�
 
 - [ ] **Step 8: 更新 planning 与基线记录**
 
-在 `docs/planning-with-files/堆芯塌陷力学建模/progress.md` 追加 Batch 1 小节：新入口签名、`assemble_coupled_system` 接线方式、Step 5/6/7 三道门禁的实测结果、以及与 spec 的偏差记录（`PlasticState`/`MechHistory`/cache 字段延后至消费批次；`K_bulk_cached` 签名扩充，见"与 spec §4.1/§4.2 的批次归属与签名偏差"）。
+在 `docs/planning-with-files/30_堆芯塌陷力学建模/progress.md` 追加 Batch 1 小节：新入口签名、`assemble_coupled_system` 接线方式、Step 5/6/7 三道门禁的实测结果、以及与 spec 的偏差记录（`PlasticState`/`MechHistory`/cache 字段延后至消费批次；`K_bulk_cached` 签名扩充，见"与 spec §4.1/§4.2 的批次归属与签名偏差"）。
 
 在 `Simplify/baseline.md` 的批次记录表追加一行：日期、"堆芯塌陷 Batch 1：bulk 残差/切线统一入口"、行数变化、定向测试结果、"所有科学指标及 PNG SHA-256 完全一致"、PASS。
 
@@ -1153,7 +1153,7 @@ Expected: `4BA6207C3CCF92DA5E37349EE335CF21A10A50B46A14CDA13DE95EEFA6CAE932`（�
 - [ ] **Step 9: 提交**
 
 ```bash
-git add src/czm.jl test/test_czm_mech_core.jl Simplify/baseline.md "docs/planning-with-files/堆芯塌陷力学建模/progress.md" "docs/planning-with-files/index.md"
+git add src/czm.jl test/test_czm_mech_core.jl Simplify/baseline.md "docs/planning-with-files/30_堆芯塌陷力学建模/progress.md" "docs/planning-with-files/index.md"
 git commit -m "refactor(czm): assemble_coupled_system 改走 bulk 残差/切线统一入口（零漂移）"
 ```
 
@@ -1186,7 +1186,7 @@ git commit -m "refactor(czm): assemble_coupled_system 改走 bulk 残差/切线�
 
 **已知缺口（有意为之，理由见"与 spec §4.1/§4.2 的批次归属与签名偏差"）**：`PlasticState`、`MechHistory`、`CZMAssemblyCache` 的参考构型/机械状态字段不在本计划实现，随消费批次引入。
 
-**计划外新增的交付（v1.1 更新）**：`tools/theory_geometry_recompute.jl`（D14"防止再次漂移"的可复现实现，不改求解路径）；`docs/planning-with-files/堆芯塌陷力学建模/baseline_czm_standalone.md`（方案 B 基线冻结，2026-08-21 随 v1.1 修订执行）。原计划的 `czm_baseline_probe.jl` 修复交付因对象被 `2bf2ac7` 删除而取消，由 `verify_czm_standalone.jl` 快照替代。
+**计划外新增的交付（v1.1 更新）**：`tools/theory_geometry_recompute.jl`（D14"防止再次漂移"的可复现实现，不改求解路径）；`docs/planning-with-files/30_堆芯塌陷力学建模/baseline_czm_standalone.md`（方案 B 基线冻结，2026-08-21 随 v1.1 修订执行）。原计划的 `czm_baseline_probe.jl` 修复交付因对象被 `2bf2ac7` 删除而取消，由 `verify_czm_standalone.jl` 快照替代。
 
 **2. 占位符扫描**
 

@@ -1,7 +1,7 @@
 # SPMe-分布式热-CZM 支线仿真提速优化设计规格
 
 > 日期: 2026-08-19
-> 状态: 已实施（2026-08-19）。结论：批次 0 裁剪后仅 Task 7 开门并已合并（四判据 bit 级一致，CZM -1.7%）；profile 再定位真正瓶颈为 CzmSolve.jl:222 每迭代稀疏 LU 分解，增补方案（K_bc 因子内容判据复用）见 docs/planning-with-files/仿真提速-SPMe热CZM/findings.md
+> 状态: 已实施（2026-08-19）。结论：批次 0 裁剪后仅 Task 7 开门并已合并（四判据 bit 级一致，CZM -1.7%）；profile 再定位真正瓶颈为 CzmSolve.jl:222 每迭代稀疏 LU 分解，增补方案（K_bc 因子内容判据复用）见 docs/planning-with-files/29_仿真提速-SPMe热CZM/findings.md
 > 范围: 仅 SPMe (`per_element_spme=true`) - 分布式热 (`distributed2D`) - CZM 耦合支线
 > 关联既有工作: `2026-04-20-czm-vectorized-solver-design.md`（实施中，本计划 D 组为其延续）、`2026-04-02-initialisation-optimization-design.md`（已落地，`MultiSPMeLayout`/`MeshGeometry` 为本计划缓存挂载点）
 
@@ -51,9 +51,9 @@
 3. **两个关键事实核查**（决定收益上限）:
    - **3a 热系统矩阵系数是否随步变化**: 重点查界面热阻 `k_eff(D)`（`md/07_界面热阻模型.md`）——若损伤每步更新且热阻随之变化，KT 非常量，A2/C2 从"缓存分解因子"降级为"`lu!(F, A)` 复用符号结构、每步重算数值分解"。方法：运行中每步打印 `norm(KT_t - KT_{t-1})`。
    - **3b CZM basic 法实际迭代数**: Newton 迭代 × 线搜索重组装次数，决定 D 组值不值得开批。
-4. **CZM 既有计划残留核对**: 对照 `docs/superpowers/plans/2026-04-20-czm-vectorized-solver-plan.md` 与 `docs/planning-with-files/向量化CZM/`、`docs/planning-with-files/CZM瓶颈/`，列出已完成/未完成项，D 组只做残留项之外的部分，避免重复或冲突。
+4. **CZM 既有计划残留核对**: 对照 `docs/superpowers/plans/2026-04-20-czm-vectorized-solver-plan.md` 与 `docs/planning-with-files/09_向量化CZM/`、`docs/planning-with-files/01_CZM瓶颈/`，列出已完成/未完成项，D 组只做残留项之外的部分，避免重复或冲突。
 
-**输出**: `docs/planning-with-files/仿真提速-SPMe热CZM/`（按 AGENTS.md 9.5 约定，三件套由 planning-with-files 技能管理）下写 findings.md：实测占比表、3a/3b 答案、CZM 残留核对结论、据此裁剪的批次清单；同步更新 `docs/planning-with-files/index.md`。
+**输出**: `docs/planning-with-files/29_仿真提速-SPMe热CZM/`（按 AGENTS.md 9.5 约定，三件套由 planning-with-files 技能管理）下写 findings.md：实测占比表、3a/3b 答案、CZM 残留核对结论、据此裁剪的批次清单；同步更新 `docs/planning-with-files/index.md`。
 
 ## 5. 候选优化手段目录（批次 0 从中裁剪）
 

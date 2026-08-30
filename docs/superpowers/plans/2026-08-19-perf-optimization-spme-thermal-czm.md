@@ -20,18 +20,18 @@
 - 基线四判据（每批改动前后各跑一次本机基线，全部一致才通过）：退出码 0；网格/步数（控制台输出的单元数 ne、节点数 nT、`timing CallModel calls`）；`metrics.toml` 记录的科学结果（对照 `Simplify/baseline/testexample/metrics.toml`，按其记录精度）；本机锚点 PNG SHA-256（Task 1 建立；若 Task 1 判定 SHA 本机不稳定，则改为前三判据）。
 - **数值约束（最高优先级）**：任何改动不得改变浮点运算的数值与顺序。只允许：缓存已证明跨步不变的对象、预分配替换新建（数值路径逐位一致）、跳过结果未被使用的计算。禁止：预聚合多个累加步（会改变求和顺序）、换求解器、改收敛容差。
 - 每个任务单独 commit；四判据任一不一致 → `git revert` 该批 commit，在 findings.md 记录后跳过该手段。
-- 规划文件目录：`docs/planning-with-files/仿真提速-SPMe热CZM/`（findings.md / task_plan.md / progress.md 三件套按 AGENTS.md 9.5 管理；`task_plan.md` 由执行者从本计划摘抄任务清单生成）。
+- 规划文件目录：`docs/planning-with-files/29_仿真提速-SPMe热CZM/`（findings.md / task_plan.md / progress.md 三件套按 AGENTS.md 9.5 管理；`task_plan.md` 由执行者从本计划摘抄任务清单生成）。
 - 所有 findings、commit message 用中文或中英混合，与仓库既有风格一致。
-- 任务执行门：Task 3-7 开工前必须读 `docs/planning-with-files/仿真提速-SPMe热CZM/findings.md` 中 Task 2 写入的门裁决。Task 3-7 之间除标注的依赖外相互独立，**实际执行顺序按 findings.md 实测占比从高到低调整**（依赖：Task 6 依赖 Task 4 已合并；Task 7 依赖全部前置任务结束）。
+- 任务执行门：Task 3-7 开工前必须读 `docs/planning-with-files/29_仿真提速-SPMe热CZM/findings.md` 中 Task 2 写入的门裁决。Task 3-7 之间除标注的依赖外相互独立，**实际执行顺序按 findings.md 实测占比从高到低调整**（依赖：Task 6 依赖 Task 4 已合并；Task 7 依赖全部前置任务结束）。
 
 ---
 
 ### Task 1: 批次 0a — 本机基线锚点与 PNG SHA 稳定性验证
 
 **Files:**
-- Create: `docs/planning-with-files/仿真提速-SPMe热CZM/findings.md`
-- Create: `docs/planning-with-files/仿真提速-SPMe热CZM/task_plan.md`
-- Create: `docs/planning-with-files/仿真提速-SPMe热CZM/progress.md`
+- Create: `docs/planning-with-files/29_仿真提速-SPMe热CZM/findings.md`
+- Create: `docs/planning-with-files/29_仿真提速-SPMe热CZM/task_plan.md`
+- Create: `docs/planning-with-files/29_仿真提速-SPMe热CZM/progress.md`
 - Modify: `docs/planning-with-files/index.md`
 
 **Interfaces:**
@@ -92,9 +92,9 @@ git commit -m "perf(批次0a): 建立本机基线锚点并验证PNG SHA稳定性
 ### Task 2: 批次 0b — 矩阵常量性探针 + CZM 残留核对 + 批次裁决
 
 **Files:**
-- Create: `docs/planning-with-files/仿真提速-SPMe热CZM/probe_matrix_constancy.jl`
-- Create: `docs/planning-with-files/仿真提速-SPMe热CZM/probe_equivalence.jl`
-- Modify: `docs/planning-with-files/仿真提速-SPMe热CZM/findings.md`
+- Create: `docs/planning-with-files/29_仿真提速-SPMe热CZM/probe_matrix_constancy.jl`
+- Create: `docs/planning-with-files/29_仿真提速-SPMe热CZM/probe_equivalence.jl`
+- Modify: `docs/planning-with-files/29_仿真提速-SPMe热CZM/findings.md`
 
 **Interfaces:**
 - Consumes: Task 1 的 findings.md 结构
@@ -166,7 +166,7 @@ println("iterations = ", res.iterations, ", converged = ", res.converged)
 - [ ] **Step 2: 运行探针并记录事实 3a/3b**
 
 ```bash
-GKSwstype=100 JULIA_NUM_THREADS=1 /d/Julia-1.11.2/bin/julia.exe --startup-file=no docs/planning-with-files/仿真提速-SPMe热CZM/probe_matrix_constancy.jl 2>&1 | tee /tmp/probe.log
+GKSwstype=100 JULIA_NUM_THREADS=1 /d/Julia-1.11.2/bin/julia.exe --startup-file=no docs/planning-with-files/29_仿真提速-SPMe热CZM/probe_matrix_constancy.jl 2>&1 | tee /tmp/probe.log
 ```
 
 把 `M identical` / `K identical` / CZM `iterations` 写入 findings.md §事实核查。
@@ -215,14 +215,14 @@ println("手写同序加法 == SparseArrays + : ", ok2)
 （说明：等价性 2 中每个存储位置恰一次 `a+b` 加法、无重排，`Kb[i,col]`/`Kc[i,col]` 返回该位置存储值或 0.0——与 SparseArrays `+` 的合并语义逐位相同的假设由本实验验证。）
 
 ```bash
-GKSwstype=100 JULIA_NUM_THREADS=1 /d/Julia-1.11.2/bin/julia.exe --startup-file=no docs/planning-with-files/仿真提速-SPMe热CZM/probe_equivalence.jl
+GKSwstype=100 JULIA_NUM_THREADS=1 /d/Julia-1.11.2/bin/julia.exe --startup-file=no docs/planning-with-files/29_仿真提速-SPMe热CZM/probe_equivalence.jl
 ```
 
 两个 `true/false` 写入 findings.md §事实核查。
 
 - [ ] **Step 4: CZM 向量化计划残留核对**
 
-读 `docs/superpowers/plans/2026-04-20-czm-vectorized-solver-plan.md` 的任务勾选状态、`docs/planning-with-files/向量化CZM/progress.md`（若存在），并与当前代码对照（已知已落地：`CZMAssemblyCache` K_bulk 缓存、`assemble_czm_system` 的 K_coh pattern 复用+`fill!` 清零、`geom_cache`、`mul!` 无分配；已知残留：`src/czm.jl:569` `f_int_bulk = K_bulk * u` 与 `:575` `f_int_total = f_int_bulk + f_int_coh` 每次分配、`:572` `K_total = K_bulk + K_coh` 每次分配、`:251` `K_coh[dofs[a],dofs[b]] +=` 标量稀疏索引累加、`src/CzmSolve.jl:113` 线搜索全量组装）。残留清单写入 findings.md §事实核查，Task 7 只做残留且不与既有未完成项冲突的部分。
+读 `docs/superpowers/plans/2026-04-20-czm-vectorized-solver-plan.md` 的任务勾选状态、`docs/planning-with-files/09_向量化CZM/progress.md`（若存在），并与当前代码对照（已知已落地：`CZMAssemblyCache` K_bulk 缓存、`assemble_czm_system` 的 K_coh pattern 复用+`fill!` 清零、`geom_cache`、`mul!` 无分配；已知残留：`src/czm.jl:569` `f_int_bulk = K_bulk * u` 与 `:575` `f_int_total = f_int_bulk + f_int_coh` 每次分配、`:572` `K_total = K_bulk + K_coh` 每次分配、`:251` `K_coh[dofs[a],dofs[b]] +=` 标量稀疏索引累加、`src/CzmSolve.jl:113` 线搜索全量组装）。残留清单写入 findings.md §事实核查，Task 7 只做残留且不与既有未完成项冲突的部分。
 
 - [ ] **Step 5: 汇总占比与批次裁决写入 findings.md**
 
@@ -815,8 +815,8 @@ git commit -m "perf(CZM): K_total/f_int预装配缓冲、nzval直索引、线搜
 ### Task 8: 收尾 — 汇总、目标确认、文档同步
 
 **Files:**
-- Modify: `docs/planning-with-files/仿真提速-SPMe热CZM/findings.md`（§批次记录补总表）
-- Modify: `docs/planning-with-files/仿真提速-SPMe热CZM/progress.md`
+- Modify: `docs/planning-with-files/29_仿真提速-SPMe热CZM/findings.md`（§批次记录补总表）
+- Modify: `docs/planning-with-files/29_仿真提速-SPMe热CZM/progress.md`
 - Modify: `docs/planning-with-files/index.md`（任务收尾状态）
 - Modify: `docs/superpowers/specs/2026-08-19-perf-optimization-spme-thermal-czm-design.md`（状态行改为"已实施"，附结论一行）
 

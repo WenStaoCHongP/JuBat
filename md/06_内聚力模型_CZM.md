@@ -468,7 +468,7 @@ L 空间，再与 `lambda_m`/`threshold`/`k_air`（L/λ 归一）运算。
 
 派生诊断量：`Λ`、`E_star`（界面双材料调和模量 / σ_czm）、`L_ch`（内禀长度 E*·G_c/σ_max² / L）
 存于 `CzmInterfaceParams`。设计依据与 Jellyroll 数值示例见
-`docs/planning-with-files/力学模块修改/宏观力学模块无量纲化重设计.md`。
+`docs/planning-with-files/14_力学模块修改/宏观力学模块无量纲化重设计.md`。
 
 ---
 

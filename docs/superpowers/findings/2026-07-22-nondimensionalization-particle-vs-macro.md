@@ -7,7 +7,7 @@
 > δ_czm 现锚定为 `2·G_c_pe_pcc/σ_max_pe_pcc`（断裂能定义的临界分离，锚定界面 δ_c* ≡ 1），
 > 装配层引入换算因子 Λ = L/δ_czm。同时修复了体/界面应力空间混装（`moduli_of` 双重再缩放）
 > 与输出还原尺度误用（分离 ×r0→×δ_czm，牵引 ×E_n/E_p→×σ_czm）。
-> 见 `docs/planning-with-files/力学模块修改/宏观力学模块无量纲化重设计.md`。
+> 见 `docs/planning-with-files/14_力学模块修改/宏观力学模块无量纲化重设计.md`。
 
 ---
 

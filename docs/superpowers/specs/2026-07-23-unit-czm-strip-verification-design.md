@@ -209,7 +209,7 @@ create_unit_czm_strip(param; width=nothing, y0=1.0, gsorder=2)
 | `test/unit_czm_bilinear.jl` | 脚本 1 |
 | `test/unit_czm_eigenstrain.jl` | 脚本 2 |
 | `docs/superpowers/specs/2026-07-23-unit-czm-strip-verification-design.md` | 本规格 |
-| `docs/planning-with-files/SPMe-热-内聚力耦合模型单元级验证/SPMe-热-内聚力耦合模型单元级验证.md` | 计划摘要（指向本规格） |
+| `docs/planning-with-files/15_SPMe-热-内聚力耦合模型单元级验证/SPMe-热-内聚力耦合模型单元级验证.md` | 计划摘要（指向本规格） |
 
 ## 9. 验收清单
 

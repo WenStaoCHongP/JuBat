@@ -21,7 +21,7 @@ using Parameters: @with_kw
 - K_n, K_t: / scale.K_czm
 - η, czm_model, h_c0, k_air, lambda_m, beta, threshold: 沿用原 Cohesive 归一化（无因次或已有尺度）
 
-派生量（宏观力学无量纲化重设计 v2，见 docs/planning-with-files/力学模块修改/宏观力学模块无量纲化重设计.md）：
+派生量（宏观力学无量纲化重设计 v2，见 docs/planning-with-files/14_力学模块修改/宏观力学模块无量纲化重设计.md）：
 - Λ = scale.L / scale.δ_czm：位移空间（L 归一）→ 分离空间（δ_czm 归一）换算因子。
   装配时 δ̃ = Λ·B·ũ，切线刚度乘一次 Λ，内力不乘（虚功一致性，设计文档 §5）。
 - E_star：界面双材料等效模量（调和平均），/ scale.σ_czm，用于 L_ch 与数值判据

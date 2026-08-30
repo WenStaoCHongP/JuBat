@@ -628,7 +628,7 @@ git commit -m "test(czm): unit-strip eigenstrain vs 1D analytic openings"
 
 ```bash
 git add docs/superpowers/specs/2026-07-23-unit-czm-strip-verification-design.md \
-  "docs/planning-with-files/SPMe-热-内聚力耦合模型单元级验证/SPMe-热-内聚力耦合模型单元级验证.md"
+  "docs/planning-with-files/15_SPMe-热-内聚力耦合模型单元级验证/SPMe-热-内聚力耦合模型单元级验证.md"
 git commit -m "docs(czm): note cooling eigenstrain for fixed-end strip opening"
 ```
 
@@ -654,7 +654,7 @@ Expected: 三个脚本均退出码 0，无 FAIL。
 
 - [ ] **Step 3: 更新计划摘要为已实现**
 
-将 `docs/planning-with-files/SPMe-热-内聚力耦合模型单元级验证/SPMe-热-内聚力耦合模型单元级验证.md` 中状态改为：
+将 `docs/planning-with-files/15_SPMe-热-内聚力耦合模型单元级验证/SPMe-热-内聚力耦合模型单元级验证.md` 中状态改为：
 
 ```markdown
 - [x] Brainstorming / 设计批准
@@ -663,7 +663,7 @@ Expected: 三个脚本均退出码 0，无 FAIL。
 ```
 
 ```bash
-git add "docs/planning-with-files/SPMe-热-内聚力耦合模型单元级验证/SPMe-热-内聚力耦合模型单元级验证.md"
+git add "docs/planning-with-files/15_SPMe-热-内聚力耦合模型单元级验证/SPMe-热-内聚力耦合模型单元级验证.md"
 git commit -m "docs(czm): mark unit-strip verification implementation complete"
 ```
 

@@ -344,7 +344,7 @@ function ChooseCell(CellType::String="LG M50")
     end
     param_dim.scale.σ_czm = param_dim.cohesive.σ_max_pe_pcc  # PE-PCC 界面作为归一化锚点
     # δ 锚点：断裂能定义的临界分离 δ_c = 2G_c/σ_max（双线性），使锚定界面 δ_c* ≡ 1。
-    # 见 docs/planning-with-files/力学模块修改/宏观力学模块无量纲化重设计.md §2。
+    # 见 docs/planning-with-files/14_力学模块修改/宏观力学模块无量纲化重设计.md §2。
     # cohesive 数据缺失时回退到 scale.L（保持非 CZM 参数集的旧行为，Λ = 1）。
     if param_dim.cohesive.σ_max_pe_pcc > 0 && param_dim.cohesive.G_c_pe_pcc > 0
         param_dim.scale.δ_czm = 2 * param_dim.cohesive.G_c_pe_pcc / param_dim.cohesive.σ_max_pe_pcc

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Julia 1.11.2；`Test`/`LinearAlgebra`/`SparseArrays`。
 
-**Spec:** `docs/superpowers/specs/2026-08-20-core-collapse-mechanics-design.md`（v1.3）§3.3、§4.1/§4.2、§7 Batch 3 行；参数依据：`docs/planning-with-files/堆芯塌陷力学建模/宏观电池模型_正负极极片力学参数_文献整理.md` §10.7（联网核实记录见 findings"Batch 3 参数核实"节）。
+**Spec:** `docs/superpowers/specs/2026-08-20-core-collapse-mechanics-design.md`（v1.3）§3.3、§4.1/§4.2、§7 Batch 3 行；参数依据：`docs/planning-with-files/30_堆芯塌陷力学建模/宏观电池模型_正负极极片力学参数_文献整理.md` §10.7（联网核实记录见 findings"Batch 3 参数核实"节）。
 
 ## Global Constraints
 

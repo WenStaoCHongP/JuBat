@@ -555,10 +555,10 @@ Expected: exit 0；全部冻结指标与 PNG SHA-256 `4ba6207c…e932` 一致（
 
 - [ ] **Step 4: 记录与提交**
 
-`Simplify/baseline.md` 批次表追加 Batch 2 行（行数变化、26/26、快照一致、指标一致、PASS）；`docs/planning-with-files/堆芯塌陷力学建模/progress.md` 追加 Batch 2 小节（含 D-B2-1/D-B2-2 决策执行情况、C1 证据、门禁实测）；`index.md` 更新任务行。
+`Simplify/baseline.md` 批次表追加 Batch 2 行（行数变化、26/26、快照一致、指标一致、PASS）；`docs/planning-with-files/30_堆芯塌陷力学建模/progress.md` 追加 Batch 2 小节（含 D-B2-1/D-B2-2 决策执行情况、C1 证据、门禁实测）；`index.md` 更新任务行。
 
 ```bash
-git add Simplify/baseline.md "docs/planning-with-files/堆芯塌陷力学建模/progress.md" docs/planning-with-files/index.md
+git add Simplify/baseline.md "docs/planning-with-files/30_堆芯塌陷力学建模/progress.md" docs/planning-with-files/index.md
 git commit -m "docs(baseline): Batch 2 门禁记录（C1 通过，快照与基线一致）"
 ```
 
