@@ -37,13 +37,13 @@
 
 | 文件 | 职责 |
 |------|------|
-| `src/czm.jl` | 本构装配：`DamageState`、`moduli_of`、`assemble_czm_system`、`assemble_bulk_stiffness`、`assemble_thermal_chemical_load`、`build_czm_cache`/`ensure_czm_cache`、`assemble_coupled_system(_full)` |
+| `src/czm.jl` | 本构装配：`moduli_of`、`eigenstrain_of`、`assemble_czm_system`、`assemble_bulk_stiffness`、`assemble_thermal_chemical_load`、`assemble_coupled_system(_full)`、网格惰性缓存访问器（`bulk_stiffness`/`cohesive_geometry`/`assembly_workspace`）、`collector_params` |
 | `src/CzmMesh.jl` | 网格拓扑：`CohesiveElement`、`create_czm_mesh`（共边识别界面、节点复制、外层 bulk 连接重写、`cohesive_to_thermal` 映射） |
 | `src/CzmBC.jl` | 边界条件：`apply_bc_czm`（罚函数 Dirichlet）、`identify_bc_nodes_czm`（内外圈 `:fixed_xy`） |
 | `src/CzmSolve.jl` | 非线性求解：`CZMResult`、`solve_czm_basic_step`、`newton_raphson_czm`、`solve_czm_arc_length_step`、统一入口 `solve_czm_step`、`update_damage_per_interface`、`backtrack_line_search!` |
-| `src/CzmPostProcess.jl` | 统计与损伤管理：`get_damage_statistics`、`check_fracture_criterion`、`reset_damage_states`、`accumulate_cycle_damage`、`czm_output_to_variables` |
+| `src/CzmPostProcess.jl` | 统计与损伤管理：`get_damage_statistics`、`check_fracture_criterion`、`reset_damage_states!`、`accumulate_cycle_damage!`、`czm_output_to_variables`（2026-08-30 起接收 `damage_states` 向量/MechState） |
 | `src/CzmUnitMesh.jl` | 验证用 8 层平直条带网格 `create_unit_czm_strip`（4 个 COH2D4 + 硬断言） |
-| `src/CouplingState.jl` | 参数与状态：`CzmInterfaceParams`、`CzmParamCache`、装配缓存结构、`update_czm_damage!` |
+| `src/CouplingState.jl` | 状态与耦合：`MechState`（演化状态聚合）、`DamageState`、`update_czm_damage!`、`compute_czm_strain_inputs` |
 | `src/Materialmatrix.jl` | 本构数学：`bilinear_traction_state`、`bilinear_traction`、`bilinear_tangent`、`update_damage`、间隙导热系列 |
 
 结构体宿主：`CzmSubmesh` / `CohesiveMesh` / 抽象类型定义在 `src/SetMesh.jl:25-76`（避免 include 顺序问题）。
@@ -82,9 +82,10 @@ $$
 
 ### 2.2 参数定义
 
-参数按**界面类型**独立给出（`Cohesive` 结构，`src/SetParams.jl:156-193`）：每套
+参数按**界面类型**独立给出（2026-08-30 重构：挂 `CurrentCollector`——`param.PCC` 承载
+PE-PCC 界面、`param.NCC` 承载 NE-NCC 界面；`Cohesive` 结构已删除）：每套
 `σ_max / K_n / δ_0 / G_c / δ_c`（法向）与 `τ_max / K_t / δ_0_t / G_c_t / δ_c_t`（切向）
-都有 `_pe_pcc` 与 `_ne_ncc` 两套后缀，例如 `σ_max_pe_pcc`、`K_n_ne_ncc`。
+加 `eta`（BK 指数）与界面热阻五参数（`h_c0/k_air/lambda_m/beta/threshold`）。
 
 | 参数 | 符号 | 说明 |
 |------|------|------|
@@ -93,8 +94,7 @@ $$
 | 初始分离 | δ₀ = T_max/K | 开始损伤的分离位移 |
 | 临界分离 | δ_c = 2G_c/T_max | 完全断裂的分离位移 |
 | 断裂能 | G_c | 界面断裂所需能量（每界面独立） |
-| 极片弹性模量 | E_coat | PE/NE 极片（涂层）宏观弹性模量，用于 CZM 应变驱动的有效模量计算 |
-| 极片泊松比 | nu_coat | PE/NE 极片宏观泊松比 |
+| 极片弹性模量 | E_coat | PE/NE 极片（涂层）宏观弹性模量，逐层体刚度（`moduli_of`）与宏观应力 |
 
 ### 2.3 BK 混合模式准则
 
@@ -110,11 +110,12 @@ $$
 
 ```julia
 function bilinear_traction_state(δ_n::Float64, δ_t::Float64,
-    damage_state::DamageState, params::CzmInterfaceParams; visc_beta::Float64=1.0)
+    damage_state::DamageState, ip::CurrentCollector, czm_model::String; visc_beta::Float64=1.0)
 ```
 
-（定义于 `src/Materialmatrix.jl:68`；第 4 参是**按-接口参数** `CzmInterfaceParams`，
-不是 `Cohesive`。）
+（定义于 `src/Materialmatrix.jl`；第 4 参 `ip` 是**界面参数宿主**——`param.PCC` 或
+`param.NCC`（2026-08-30 重构，`collector_params(param, iface)` 分派）；第 5 参
+`czm_model`（"model1"/"mix"）来源 `opt.czm.model`，显式传入。）
 
 **返回**：
 - T_n, T_t：法向/切向牵引力
@@ -210,10 +211,12 @@ $$
 f_{global} = \sum_e f_{int,e}
 $$
 
-**装配缓存**：`CZMAssemblyCache`（`src/CouplingState.jl:248`）缓存罚函数边界处理后
-的体刚度/载荷矩阵，失效判据为 `objectid(czm_mesh) + param_cache.id + fix_inner`；
-`CZMAssemblyWorkspace`（`:201`）提供 `mul!` 复用的工作区；`CohesiveElementGeom`
-（`:183`）缓存单元几何量。求解器通过 `cache=` kwarg 接收缓存。
+**装配缓存（2026-08-30 重构）**：缓存随网格生灭——`CohesiveMesh` 惰性字段
+`K_bulk`/`cohesive_geom`/`ws`，经访问器 `bulk_stiffness(czm_mesh, param)` /
+`cohesive_geometry(czm_mesh)` / `assembly_workspace(czm_mesh)` 首次调用构建、
+跨步只读复用；**对象身份即失效判据**（重建网格即丢缓存）。新鲜度由参数冻结契约保证
+（SetCase 归一化后不得改 `param`）。BC 不缓存（每次求解入口现算）。
+`CZMAssemblyWorkspace` 提供 `mul!` 复用的工作区；`CohesiveElementGeom` 缓存单元几何量。
 
 ---
 
@@ -221,26 +224,27 @@ $$
 
 ### 4.1 求解框架
 
-所有迭代方法通过统一入口 `solve_czm_step` 分发（`src/CzmSolve.jl:651`）：
+所有迭代方法通过统一入口 `solve_czm_step` 分发（2026-08-30 终态签名）：
 
 ```julia
-result, updated_czm_mesh = solve_czm_step(
-    czm_mesh, F_ext, param_cache::CzmParamCache, param, u_prev;
+result = solve_czm_step(
+    czm_mesh, ms::MechState, param::Params, F_ext, czm_opt::CzmOptions;
     dT_elem=nothing, Δsoc_n_elem=nothing, Δsoc_p_elem=nothing,
-    max_iter=50, tol=1e-8, n_load_steps=10, arc_length_alpha=1.0,
-    iter_method="load_substep",             # "basic" | "load_substep" | "arc_length"
-    cache=nothing,                          # CZMAssemblyCache 装配缓存
-    visc_beta=1.0)
+    eigenstrain=nothing, mech_state=nothing, prestress=nothing)
+# -> CZMResult（收敛后在 ms 上原位提交损伤/位移；失败不触碰 ms）
 ```
+
+求解配置（iter_method/max_iter/tol/load_steps/arc_length_alpha/viscous_*/model/
+fix_inner/geo_nonlinear/j2_plasticity）全部从 `czm_opt` 展开，不再逐 kwarg 传递。
 
 热-化学应变系数不再逐参量传入：ε₀ 按单元 `material_type` 经
 `eigenstrain_of(param, mt)` 分层计算（α=该层 `alphaT`，β=该层 `Ω/3`，
 2026-08-29 α/β 同批分层化）。
 
-**参数缓存**：重构后求解/装配函数不再逐个接收 `E_eff`、`ν_eff`、`cohesive_params`，
-而是统一接收 `param_cache::CzmParamCache`（`src/CouplingState.jl:76`），其
-`by_interface::Dict{Symbol, CzmInterfaceParams}` 保存 `:PE_PCC` / `:NE_NCC` 两套
-按-接口参数，`id::UInt64` 为参数内容哈希，用于装配缓存失效判断。
+**参数直读（2026-08-30 重构）**：求解/装配函数统一接收 `param::Params`，热路径按
+单元 `interface_type` 分派 `collector_params(param, iface)`（`:PE_PCC`→`param.PCC`、
+`:NE_NCC`→`param.NCC`）；`CzmParamCache`/内容哈希失效机制已删除，失效语义唯一化为
+对象身份。
 
 **默认方法**：函数签名默认 `iter_method="load_substep"`；`Option.czm_iter_method`
 默认 `"basic"`（`src/Option.jl:73`），主循环调用时显式传入。
@@ -258,11 +262,11 @@ $$
 **所有三种方法采用相同的损伤更新策略**：在一个时间步内，NR 迭代过程中损伤状态保持冻结（使用时间步开始时的 $D$），仅当位移场收敛后才统一更新损伤。
 
 ```
-进入时间步 → damage_states = D_begin
+进入时间步 → damage_states = clone(ms.damage_states)（试探态，ms 不受影响）
   NR 迭代 (全过程用 D_begin 计算刚度 K 和内力 f_int)
   → 位移 u 收敛
-  → damage_states = update_damage_per_interface(D_begin, separations(u_converged), param_cache)
-退出时间步 → D_end 用于下一时间步
+  → ms.damage_states = update_damage_per_interface(D_begin, separations(u_converged), param, czm_model)
+退出时间步 → 收敛则 ms.damage_states/ms.u_prev 原位提交；失败则丢弃试探态
 ```
 
 **设计原因**：CZM 软化段的临界分离位移很小，即使微量载荷即可导致损伤从 0 跳至近 1.0。若在 NR 迭代或载荷子步中途更新损伤，刚度矩阵会骤降，导致后续迭代/子步在近乎零刚度的系统上发散。冻结损伤保证刚度矩阵在整个求解过程中一致，与隐式时间积分的物理假设（一个时间步内损伤为常数）相符。
@@ -272,11 +276,11 @@ $$
 #### 4.3.1 basic — 基本 Newton-Raphson
 
 ```julia
-function solve_czm_basic_step(czm_mesh, F_ext, param_cache::CzmParamCache, param, u_prev; ...)
+function solve_czm_basic_step(czm_mesh, F_ext, param, ms::MechState; ...)
 ```
-（`src/CzmSolve.jl:168`）
+（`src/CzmSolve.jl`）
 
-- 从 `u_prev`（上一步收敛位移）出发
+- 从 `ms.u_prev`（上一步收敛位移）出发
 - 一次性施加全量载荷 $F_{ext} + F_{thermo-chem}$
 - NR 迭代 + 回溯线搜索（最多 8 次减半）
 - 收敛后更新损伤
@@ -286,10 +290,9 @@ function solve_czm_basic_step(czm_mesh, F_ext, param_cache::CzmParamCache, param
 #### 4.3.2 load_substep — 载荷子步法
 
 ```julia
-function newton_raphson_czm(czm_mesh, F_ext, param_cache::CzmParamCache, param;
-    n_load_steps=10, u0=u_prev, ...)
+function newton_raphson_czm(czm_mesh, F_ext, param, ms::MechState; ...)
 ```
-（`src/CzmSolve.jl:481`）
+（`src/CzmSolve.jl`）
 
 将载荷从当前平衡态逐步推进到目标态：
 
@@ -298,7 +301,7 @@ F_{applied} = f_{int}^{ref} + \alpha \cdot F_{\Delta}
 $$
 
 其中：
-- $f_{int}^{ref} = f_{int}(u_{prev})$：上一步平衡态的内力
+- $f_{int}^{ref} = f_{int}(ms.u_{prev})$：上一步平衡态的内力
 - $F_{\Delta} = F_{target} - f_{int}^{ref}$：载荷增量（通常很小）
 - $\alpha \in [0, 1]$：载荷进度，从 0 到 1 逐步推进
 
@@ -317,10 +320,9 @@ $$
 #### 4.3.3 arc_length — Crisfield 弧长法
 
 ```julia
-function solve_czm_arc_length_step(czm_mesh, F_ext, param_cache::CzmParamCache, param, u_prev;
-    n_load_steps=10, arc_length_alpha=1.0, ...)
+function solve_czm_arc_length_step(czm_mesh, F_ext, param, ms::MechState; ...)
 ```
-（`src/CzmSolve.jl:265`）
+（`src/CzmSolve.jl`）
 
 在载荷子步的基础上引入 Crisfield 圆柱弧长约束：
 
@@ -357,7 +359,7 @@ $$
 ```julia
 function assemble_thermal_chemical_load(
     czm_mesh::CohesiveMesh,
-    param_cache::CzmParamCache,
+    param::Params,
     dT_elem::Vector{Float64},
     Δsoc_n_elem::Vector{Float64},
     Δsoc_p_elem::Vector{Float64}
@@ -387,7 +389,7 @@ $$
 function assemble_coupled_system(
     czm_mesh::CohesiveMesh,
     u::Vector{Float64},
-    param_cache::CzmParamCache;
+    param::Params;
     F_ext=nothing,
     F_thermo_chem=nothing,
     damage_states=nothing,
@@ -405,235 +407,30 @@ function assemble_coupled_system(
 - `separations`：分离位移
 - `tractions`：牵引力
 
-### 4.7 应变驱动的有效模量（极片层级）
+### 4.7 模量层级（极片 vs 颗粒）
 
 CZM 应变驱动所需的体模量必须使用**极片（涂层）宏观弹性模量**（经 `moduli_of` 逐层取
 `E_coat`/连续层 `E`），而**非**颗粒层面的 `PE.E`/`NE.E`。两者物理尺度相差约两个数量级
 （典型值：颗粒 ~1e10 Pa，极片 ~5e8 Pa），错误使用会造成刚度矩阵系统性偏差。
 
-**统一计算入口**：`compute_czm_params_per_interface(case)`（`src/CouplingState.jl:302`），
-返回 `CzmParamCache`（含 `:PE_PCC` 与 `:NE_NCC` 两个条目及派生量 Λ、E_star、L_ch）。
+2026-08-30 重构后 E_eff 概念与按界面参数缓存（含派生量 Λ、E_star、L_ch）已整体删除：
+装配直读 `param`，模量经 `moduli_of` 按材料类型逐层给出；Λ 使用点内联
+`scale.L/δ_czm`。全叠合厚度加权仅保留在参考尺度 `scale.E_coat` 的定义中。
 
-**E_eff 按界面直接取涂层模量（不做全叠合厚度加权）**：
-
-$$
-E_{eff}^{PE\text{-}PCC} = E_{coat}^{PE} \cdot \frac{\text{scale.E\_coat}}{\text{scale.}\sigma_{czm}},
-\qquad
-E_{eff}^{NE\text{-}NCC} = E_{coat}^{NE} \cdot \frac{\text{scale.E\_coat}}{\text{scale.}\sigma_{czm}}
-$$
-
-即 PE-PCC 界面用正极涂层模量、NE-NCC 界面用负极涂层模量，各自归一化到 σ_czm 应力
-空间（`src/CouplingState.jl:315-317`；早期版本的五层厚度加权全栈均一化已按
-"不再做全栈均一化"的设计撤销）。仅 `scale.E_coat` 本身仍是全叠合厚度加权的
-**参考尺度**（`src/SetParams.jl:320-324`），见 md/15。
-
-**调用路径**：
-- `export_macro_stress` / `thermal_diffusion_stress_2D`（`src/Mechanical.jl`）：
-  层分辨宏观应力——耦合流程求解中收割本步收敛位移，固体流程按需在 mesh_bonded 上
-  求解；逐层模量经 `moduli_of`，特征应变经 `eigenstrain_of` 分层计算
-- `update_czm_damage!`（`src/CouplingState.jl:535`）：经 `ensure_czm_cache` 构建/
-  失效重建参数缓存后驱动一次 CZM 求解
-
-**参数来源约束**：若 `PE.E_coat == 0` 或 `NE.E_coat == 0`，`ChooseCell` 会发出 `@warn`；
-`compute_czm_params_per_interface` 入口处的 `@assert`（`src/CouplingState.jl:307-313`）
-与 `thermal_diffusion_stress_2D` 入口断言（`src/Mechanical.jl:235`）会拦截
-（防止 `NaN` 传播）。
-
-### 4.8 无量纲化重设计 v2（2026-07-22）
-
-CZM 分离位移的归一化锚点由 `scale.L` 改为**断裂能定义的临界分离**：
-
-$$
-\delta_{czm} = \frac{2\,G_c^{PE\text{-}PCC}}{\sigma_{\max}^{PE\text{-}PCC}}
-\quad\Rightarrow\quad
-\tilde{\sigma}_{\max} \equiv 1,\;\; \tilde{\delta}_c \equiv 1,\;\; \tilde{G}_c \equiv \tfrac{1}{2},\;\; \tilde{K}_n = \delta_c/\delta_0
-$$
-
-整条牵引-分离曲线落在归一化空间的单位区间，损伤演化和硬编码阈值（`1e-15` 等）不再与病态小量竞争。
-
-**装配层换算因子 Λ**（`CzmInterfaceParams.Λ = scale.L / scale.δ_czm`）：位移以 `L` 归一、分离以 `δ_czm` 归一，由虚功一致性导出：
-
-1. 分离计算：$\tilde{\delta} = \Lambda \cdot B\,\tilde{u}$（`assemble_czm_system`）
-2. 内力：$\tilde{f} = \int B^T \tilde{T}\, d\bar{\Gamma}$（**不乘** Λ）
-3. 切线刚度：乘**一次** Λ
-
-**体/界面应力空间统一**：`moduli_of`（`src/czm.jl:56`）返回的体模量做双重再缩放
-（× `scale.E_coat / scale.σ_czm`），与 `CzmInterfaceParams.E_eff` 同参考，
-保证 `K_bulk`、`F_thermo_chem` 与内聚力项装配在同一 σ_czm 应力空间。
-
-**单位契约**：`compute_gap_conductance` 输入的分离量（δ_czm 归一）在函数内 ÷Λ 转到
-L 空间，再与 `lambda_m`/`threshold`/`k_air`（L/λ 归一）运算。
-
-**输出还原**：分离位移 × `scale.δ_czm`；牵引力 × `scale.σ_czm`（`PostProcessing.jl`、`CsvExport.jl`）。
-
-派生诊断量：`Λ`、`E_star`（界面双材料调和模量 / σ_czm）、`L_ch`（内禀长度 E*·G_c/σ_max² / L）
-存于 `CzmInterfaceParams`。设计依据与 Jellyroll 数值示例见
-`docs/planning-with-files/14_力学模块修改/宏观力学模块无量纲化重设计.md`。
-
----
-
-## 5. 与热的耦合
-
-### 5.1 界面导热系数模型
-
-**并联热路模型**（`src/Materialmatrix.jl` — `compute_gap_conductance`）：
-
-界面传热由两条并联路径组成：
-- 固体接触路径：$h_{contact} = h_{c0} \cdot (1 - D)$
-- 间隙介质路径：$h_{gap} = k_{air} / (\delta + 2\beta\lambda_m)$
-
-有效导热系数为两者之和：
-
-| 间隙状态 | 公式 |
-|----------|------|
-| 小间隙（$\delta < \delta_0$） | $h_{eff} = h_{c0} + k_{air} / (\delta + 2\beta\lambda_m)$ |
-| 中等间隙（$\delta_0 \leq \delta < threshold$） | $h_{eff} = h_{c0}(1 - D) + k_{air} / (\delta + 2\beta\lambda_m)$ |
-| 大间隙（$\delta \geq threshold$） | $h_{eff} = h_{c0}(1 - D) + k_{air} / (\delta + \delta_0)$ |
-
-其中：
-- h_c0：完好界面导热系数 [W/(m²·K)]
-- k_air：空气导热系数 [W/(m·K)]
-- λ_m：微观粗糙度参数 [m]
-- β：间隙尺度系数 [-]
-- D：损伤变量（经 `clamp(D, 0, 0.9999)` 限幅）
-- δ₀：损伤起始分离位移，threshold：大间隙判定阈值
-
-### 5.2 损伤对导热的影响
-
-> **状态**：界面热阻装配自 v2 修订（2026-07-21）起**整体注释禁用**
-> （`src/ThermalDistributed.jl:166-190`），当前损伤不通过界面导热影响温度场。
-> 详见 md/07。
-
-**影响机制**（恢复启用后）：
-1. 损伤增加 → 接触面积减少
-2. 间隙增大 → 热阻增加
-3. 导热系数降低
-
-**有限元装配**（对应注释代码）：
-
-```julia
-K[nb,nb] -= h_eff * l
-K[nb,nt] += h_eff * l
-K[nt,nb] += h_eff * l
-K[nt,nt] -= h_eff * l
-```
-
-其中 l 为界面单元长度，nb, nt 为界面两侧节点（h_eff 与 l 均为无量纲量）。
-
----
-
-## 6. 循环求解中的 CZM
-
-### 6.1 SOH 监控
-
-**SOH 定义**：
-
-$$
-SOH = C_{discharge} / C_{initial}
-$$
-
-**终止条件**：
-- SOH ≤ SOH_threshold（默认 0.8）
-- 断裂单元比例 > 50%
-
-注意：`soh` 不是单次求解 result 字典的键，而是 `CyclingResult.soh::Vector{Float64}`
-字段（`src/CycleSolver.jl:87`），循环汇总中另见 `cycle_summary.csv` 的 `soh` 列。
-
-### 6.2 损伤更新
-
-**更新频率**：由 `opt.czm_update_interval` 控制，**在 Solve 主时间循环内每 N 步调用
-`update_czm_damage!(case, variables, T_nodes_carry)`**（`src/Solve.jl:267-296`）：
-- 默认 `czm_update_interval = 1`，即**每个时间步都更新**
-- `solve_phase`（`src/CycleSolver.jl`）不再自行调用损伤更新
-- 循环仿真中可传入 `czm_snapshots::Vector{CZMSnapshot}` 记录归一化量快照
-
- **更新流程**（`update_czm_damage!`，`src/CouplingState.jl:535`）：
-1. `compute_czm_strain_inputs`（`:419`）由温度场/SOC 变化构造热-化学应变输入
-   （粗热 Q4 四节点平均温差与单元 SOC 均经 `thermal_elem_map` 映射到力学 bulk 单元；不生成细力学节点温度场）
-2. `compute_czm_params_per_interface` + `ensure_czm_cache` 构建/复用参数与装配缓存
-3. 调用 `solve_czm_step` 做一次 CZM 求解
-4. `czm_output_to_variables` 回写损伤统计
-5. （启用粘性正则化时）计算 `visc_beta = delta_s / (tau_visc + delta_s)`
-
-### 6.3 失效单元处理
-
-**电化学退出**：
-- 断裂单元（D ≥ 0.95）不再参与电化学反应
-- `CallModel_MultiSPMe` 从 `get_fractured_elements(case.czm_mesh)` +
-  `case.geometry.czm_element_map` 派生失活列表，分流求解时排除断裂单元
-  （`src/CallModel.jl:80-94`）
-
-**热源屏蔽**：
-- 断裂单元热源置零
-- 通过 `compute_heat_sources_with_czm` 函数实现（`src/ThermalDistributed.jl:390`，
-  内部用 `get_active_elements(czm_mesh, case.geometry)`）
-
-**渐进式有效面积损失**（可选）：
-- `opt.czm_area_loss_enabled = true` 时，D 超过 `czm_area_loss_threshold`（默认 0.83）
-  的单元按 `effective_area_factor(D, D_threshold) = (1-D)/(1-D_threshold)` 线性缩减
-  有效面积（`src/Materialmatrix.jl:424`），并以 `D_elem` 向量传入分流求解器
-  （`src/CallModel.jl:96-109`），是介于"完好"与"完全失活"之间的分级机制，见 md/09 §3
-
----
-
-## 7. 后处理
-
-### 7.1 czm_output_to_variables 函数
-
-**功能**：将 CZM 求解结果写入 variables 字典
-
-```julia
-function czm_output_to_variables(
-    czm_mesh::CohesiveMesh,
-    result::CZMResult,
-    variables::Dict{String, Union{Array{Float64}, Float64}}
-)
-```
-（`src/CzmPostProcess.jl:99`）
-
-**输出变量**：
-
-| 键 | 类型 | 说明 |
-|----|------|------|
-| `czm displacement x` | Vector | x 方向位移 |
-| `czm displacement y` | Vector | y 方向位移 |
-| `czm damage` | Vector | 各单元损伤变量 |
-| `czm traction normal` | Vector | 法向牵引力 |
-| `czm traction tangent` | Vector | 切向牵引力 |
-| `czm separation normal` | Vector | 法向分离 |
-| `czm separation tangent` | Vector | 切向分离 |
-| `czm D_max` | Float64 | 最大损伤 |
-| `czm D_mean` | Float64 | 平均损伤 |
-| `czm n_fractured` | Float64 | 断裂单元数 |
-
-（PostProcessing 物理单位还原后的结果键为 `czm D_max`、`czm δ_max_n [m]`、
-`czm δ_mean_n [m]` 等，见 `src/PostProcessing.jl:99-115`。）
-
----
-
-## 8. 代码位置
-
-| 功能 | 文件 | 函数 |
-|------|------|------|
-| CZMResult 结构体 | src/CzmSolve.jl | `CZMResult` (1-15) |
-| basic NR 求解 | src/CzmSolve.jl | `solve_czm_basic_step` (168) |
-| 载荷子步法求解 | src/CzmSolve.jl | `newton_raphson_czm` (481) |
-| 弧长法求解 | src/CzmSolve.jl | `solve_czm_arc_length_step` (265) |
-| 统一求解入口 | src/CzmSolve.jl | `solve_czm_step` (651，函数默认 `load_substep`) |
 | 按界面损伤更新 | src/CzmSolve.jl | `update_damage_per_interface` (52) |
-| 损伤克隆/还原 | src/CzmSolve.jl | `clone_damage_states` (17), `clone_czm_mesh_with_damage` (31) |
+| 损伤克隆 | src/CzmSolve.jl | `clone_damage_states`（克隆链 `clone_czm_mesh_with_damage` 已删除） |
 | BC 处理 | src/CzmSolve.jl | `extract_bc_dofs` (79), `apply_czm_dirichlet!` (130) |
 | 回溯线搜索 | src/CzmSolve.jl | `backtrack_line_search!` (107) |
 | 弧长增广矩阵 | src/CzmSolve.jl | `build_arc_length_augmented_matrix` (156) |
-| CZM 调度入口 | src/CouplingState.jl | `update_czm_damage!` (535) |
-| 热-化学应变输入 | src/CouplingState.jl | `compute_czm_strain_inputs` (419) |
-| 按界面参数/缓存 | src/CouplingState.jl | `compute_czm_params_per_interface` (302), `CzmParamCache` (76) |
+| CZM 调度入口 | src/CouplingState.jl | `update_czm_damage!` |
+| 热-化学应变输入 | src/CouplingState.jl | `compute_czm_strain_inputs` |
+| 界面参数分派 | src/czm.jl | `collector_params(param, iface)`（`:PE_PCC`→PCC、`:NE_NCC`→NCC） |
 | 本构模型 | src/Materialmatrix.jl | `bilinear_traction_state` (68), `bilinear_tangent` (182), `update_damage` (293) |
 | 内聚力单元装配 | src/czm.jl | `assemble_czm_system` (79) |
 | 体刚度装配 | src/czm.jl | `assemble_bulk_stiffness` (268) |
 | 系统组装 | src/czm.jl | `assemble_coupled_system` (546), `assemble_coupled_system_full` (586) |
 | 热-化学载荷 | src/czm.jl | `assemble_thermal_chemical_load` (347) |
-| 装配缓存 | src/czm.jl | `build_czm_cache` (435), `ensure_czm_cache` (528) |
+| 网格惰性缓存 | src/czm.jl | `bulk_stiffness` / `cohesive_geometry` / `assembly_workspace` |
 | CZM 网格创建 | src/CzmMesh.jl | `create_czm_mesh` (33) |
 | 验证条带网格 | src/CzmUnitMesh.jl | `create_unit_czm_strip` (7) |
 | CZM 边界条件 | src/CzmBC.jl | `apply_bc_czm` (7), `identify_bc_nodes_czm` (105) |

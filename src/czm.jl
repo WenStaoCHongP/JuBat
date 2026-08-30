@@ -1,31 +1,6 @@
 # CZM damage state, material lookup, and system assembly.
-
-"""
-    DamageState - 内聚力单元的损伤状态
-
-存储每个内聚力单元（或高斯点）的损伤历史。
-
-# 字段
-- `D`: 等效损伤 D_eq [0, 1]，由当前双线性律计算
-- `D_visc`: 粘性有效损伤，用于牵引力和切线（粘性正则化关闭时 D_visc = D）
-- `δ_max_n`: 历史最大法向分离位移
-- `δ_max_t`: 历史最大切向分离位移
-- `δ_max_eff`: 历史最大等效分离位移
-- `fractured`: 是否已完全断裂
-- `accumulated_damage`: 累积损伤（用于循环加载）
-"""
-mutable struct DamageState <: AbstractDamageState
-    D::Float64                     # 等效损伤 D_eq
-    D_visc::Float64                # 粘性有效损伤（用于牵引和切线）
-    δ_max_n::Float64              # 历史最大法向分离
-    δ_max_t::Float64              # 历史最大切向分离
-    δ_max_eff::Float64            # 历史最大等效分离
-    fractured::Bool               # 是否断裂
-    accumulated_damage::Float64   # 累积损伤（循环）
-
-    # 默认构造函数
-    DamageState() = new(0.0, 0.0, 0.0, 0.0, 0.0, false, 0.0)
-end
+# DamageState 定义已前移至 CouplingState.jl（2026-08-30：MechState 字段需要它在
+# include 顺序中更早可用）。
 
 # ========================================================================
 # 2. 系统组装
@@ -47,10 +22,10 @@ end
 双重再缩放（重设计 v2 §3）：模量字段在 NormaliseParam 中以 scale.E_coat 归一，
 而 CZM 牵引-分离律以 scale.σ_czm 归一。体刚度与内聚力刚度装配到同一残差，
 必须共享应力参考，故此处乘 `scale.E_coat / scale.σ_czm` 转到 σ_czm 空间
-（与 CzmInterfaceParams.E_eff 的构造一致）。
+（与逐层 bulk 本构和界面牵引共享应力参考的契约一致）。
 
 注意：α 已从此函数移除（I2-a 修复）。两个调用者均不使用 α，且
-SP/PCC/NCC.alphaT 字段在 Jellyroll.jl 中未设置，silently 取 0 易踩坑。
+Jellyroll 参数集已显式设置 SP/PCC/NCC.alphaT；不允许靠默认零隐藏缺参。
 如未来热-化学载荷需要 α，应显式新建 ``alpha_of(param, mt)`` helper。
 """
 function moduli_of(param, mt::Symbol)
@@ -128,10 +103,11 @@ end
 
 
 """
-    assemble_czm_system(czm_mesh, u, param_cache; damage_states=nothing, ...)
+    assemble_czm_system(czm_mesh, u, param; damage_states=nothing, czm_model="model1", ...)
 
 组装内聚力单元的全局刚度矩阵和内力向量。
-按 cohesive 单元 `interface_type` 从 `param_cache.by_interface` 取 `CzmInterfaceParams`。
+按 cohesive 单元 `interface_type` 直读界面参数宿主（:PE_PCC→`param.PCC`、
+:NE_NCC→`param.NCC`，2026-08-30 重构）；Λ 使用点内联 `param.scale.L/δ_czm`。
 
 # 返回
 - `K_coh`: 内聚力刚度矩阵 (ndof × ndof)
@@ -142,16 +118,17 @@ end
 function assemble_czm_system(
     czm_mesh::CohesiveMesh,
     u::Vector{Float64},
-    param_cache::CzmParamCache;
+    param::Params;
     damage_states=nothing,
     geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,
     ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,
-    visc_beta::Float64=1.0
+    visc_beta::Float64=1.0,
+    czm_model::String="model1"
 )
     nnode = czm_mesh.nnode
     ndof = 2 * nnode
     n_coh = czm_mesh.n_cohesive
-    states = damage_states === nothing ? czm_mesh.damage_states : damage_states
+    states = damage_states === nothing ? error("assemble_czm_system: damage_states 必须传入（2026-08-30 重构后不再挂网格）") : damage_states
 
     # 使用或创建工作区
     if ws === nothing
@@ -193,15 +170,16 @@ function assemble_czm_system(
     # 清零 nonzero 值（O(nnz)，无分配）
     fill!(nonzeros(K_coh), 0.0)
 
+    # Λ：位移空间（L 归一）→ 分离空间（δ_czm 归一）换算因子（重设计 v2 §5）。
+    # 虚功一致性：δ̃ = Λ·B·ũ；内力 f = ∫BᵀT̃ dΓ 不乘 Λ；切线刚度乘一次 Λ。
+    Λ = param.scale.L / param.scale.δ_czm
+
     @inbounds for i in 1:n_coh
         damage_state = states[i]
 
-        # 按 interface_type 从 param_cache 取本构参数（spec §7.1）
+        # 按 interface_type 直读界面参数宿主（:PE_PCC→PCC、:NE_NCC→NCC）
         iface = czm_mesh.cohesive_elements[i].interface_type
-        params = param_cache.by_interface[iface]
-        # Λ：位移空间（L 归一）→ 分离空间（δ_czm 归一）换算因子（重设计 v2 §5）。
-        # 虚功一致性：δ̃ = Λ·B·ũ；内力 f = ∫BᵀT̃ dΓ 不乘 Λ；切线刚度乘一次 Λ。
-        Λ = params.Λ
+        ip = iface === :PE_PCC ? param.PCC : param.NCC
 
         fill!(ws.K_e, 0.0)
         fill!(ws.f_int_e, 0.0)
@@ -255,8 +233,8 @@ function assemble_czm_system(
                 δ_n = Λ * ws.δ_local[1]
                 δ_t = Λ * ws.δ_local[2]
 
-                T_n, T_t, _, _ = bilinear_traction_state(δ_n, δ_t, damage_state, params; visc_beta=visc_beta)
-                dT_dδ = bilinear_tangent(δ_n, δ_t, damage_state, params; visc_beta=visc_beta)
+                T_n, T_t, _, _ = bilinear_traction_state(δ_n, δ_t, damage_state, ip, czm_model; visc_beta=visc_beta)
+                dT_dδ = bilinear_tangent(δ_n, δ_t, damage_state, ip, czm_model; visc_beta=visc_beta)
 
                 J = L / 2.0
                 wJ = w * J
@@ -312,7 +290,7 @@ function assemble_czm_system(
 end
 
 """
-    assemble_bulk_stiffness(czm_mesh, param_cache)
+    assemble_bulk_stiffness(czm_mesh, param)
 
 组装固体单元（Q4）的刚度矩阵。按 `czm_submesh.material_type` 分组取
 体模量（PE/NE 用 E_coat，SP/PCC/NCC 用连续层 E），不再使用全栈均一模量。
@@ -320,10 +298,9 @@ end
 # 返回
 - `K_bulk`: 固体刚度矩阵 (ndof × ndof)
 """
-function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, param_cache::CzmParamCache)
+function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, param::Params)
     nnode = czm_mesh.nnode
     ndof = 2 * nnode
-    param = param_cache.param_ref
     submesh = czm_mesh.czm_submesh
     submesh === nothing && error(
         "assemble_bulk_stiffness: czm_submesh is nothing " *
@@ -490,7 +467,7 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
 end
 
 """
-    assemble_bulk_residual_tangent(czm_mesh, u, param_cache, mech_state=nothing;
+    assemble_bulk_residual_tangent(czm_mesh, u, param, mech_state=nothing;
                                   geo_nl=false, plasticity=false, K_bulk_cached=nothing,
                                   eigenstrain=nothing)
         -> (f_int_bulk, K_tangent)
@@ -517,7 +494,7 @@ bulk 残差/切线的统一入口（spec 2026-08-20-core-collapse-mechanics-desi
 function assemble_bulk_residual_tangent(
     czm_mesh::CohesiveMesh,
     u::Vector{Float64},
-    param_cache::CzmParamCache,
+    param::Params,
     mech_state=nothing;
     geo_nl::Bool=false,
     plasticity::Bool=false,
@@ -563,7 +540,6 @@ function assemble_bulk_residual_tangent(
         dT_el = eigenstrain === nothing ? nothing : eigenstrain.dT
         Δsn   = eigenstrain === nothing ? nothing : eigenstrain.Δsn
         Δsp   = eigenstrain === nothing ? nothing : eigenstrain.Δsp
-        param = param_cache.param_ref
         submesh = czm_mesh.czm_submesh
         element = czm_mesh.bulk_element
         node = czm_mesh.node
@@ -653,14 +629,14 @@ function assemble_bulk_residual_tangent(
         return f_gl, sparse(I_idx, J_idx, K_vals, ndof, ndof)
     else
         K_tangent = K_bulk_cached !== nothing ? K_bulk_cached :
-                    assemble_bulk_stiffness(czm_mesh, param_cache)
+                    assemble_bulk_stiffness(czm_mesh, param)
         f_int_bulk = K_tangent * u
         return f_int_bulk, K_tangent
     end
 end
 
 """
-    assemble_thermal_chemical_load(czm_mesh, param_cache, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+    assemble_thermal_chemical_load(czm_mesh, param, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
 
 组装热-化学载荷向量。ε₀ 按 `czm_submesh.material_type` 逐层计算
 （`eigenstrain_of`：alphaT(mt)·dT + Ω(mt)/3·Δsoc(mt)），模量按材料查表
@@ -668,12 +644,11 @@ end
 """
 function assemble_thermal_chemical_load(
     czm_mesh::CohesiveMesh,
-    param_cache::CzmParamCache,
+    param::Params,
     dT_elem::Vector{Float64}, Δsoc_n_elem::Vector{Float64}, Δsoc_p_elem::Vector{Float64}
 )
     nnode = czm_mesh.nnode
     ndof = 2 * nnode
-    param = param_cache.param_ref
     submesh = czm_mesh.czm_submesh
     submesh === nothing && error(
         "assemble_thermal_chemical_load: czm_submesh is nothing " *
@@ -731,135 +706,17 @@ function assemble_thermal_chemical_load(
     return F_thermo_chem
 end
 
-# ========================================================================
-# CZM Assembly Cache Builder
-# ========================================================================
 
 """
-    build_czm_cache(czm_mesh, param_cache; fix_inner=true)
+    assemble_coupled_system(czm_mesh, u, param; F_ext=nothing, ...)
 
-构建 CZM 装配缓存，包括 K_bulk、cohesive 几何、边界条件。
-
-失效判据由 `czm_mesh_id = objectid(czm_mesh)` 与 `param_cache_id = param_cache.id`
-共同决定（见 `ensure_czm_cache`），整个缓存可在多次 Newton 迭代中复用，
-只要 mesh 对象与 param_cache 对象不变。
-
-# 参数
-- `czm_mesh::CohesiveMesh`: CZM 网格
-- `param_cache::CzmParamCache`: per-interface 参数缓存（提供 `param_ref` 给
-  `assemble_bulk_stiffness` 与 `identify_bc_nodes_czm`）
-- `fix_inner::Bool=true`: 是否固定内圈节点（影响 BC 构造）
-
-# 返回
-- `CZMAssemblyCache`: 填充好的缓存，挂载到 `case.czm_cache` 上跨步复用
-"""
-function build_czm_cache(czm_mesh::CohesiveMesh, param_cache::CzmParamCache; fix_inner::Bool=true)
-    param = param_cache.param_ref
-    cache = CZMAssemblyCache()
-
-    # 1. 缓存 K_bulk（最高 ROI：消除 ~60 次/更新 的冗余 bulk 重组）
-    cache.K_bulk = assemble_bulk_stiffness(czm_mesh, param_cache)
-
-    # 2. 缓存 bulk DOF 映射
-    element = czm_mesh.bulk_element
-    ne = size(element, 1)
-    cache.bulk_dofs = Vector{Vector{Int64}}(undef, ne)
-    for e in 1:ne
-        elem_nodes = element[e, :]
-        dofs = Vector{Int64}(undef, 8)
-        for (i, n) in enumerate(elem_nodes)
-            dofs[2*i - 1] = 2*n - 1
-            dofs[2*i]     = 2*n
-        end
-        cache.bulk_dofs[e] = dofs
-    end
-
-    # 3. 缓存 cohesive 单元几何
-    n_coh = czm_mesh.n_cohesive
-    cache.cohesive_geom = Vector{CohesiveElementGeom}(undef, n_coh)
-    for (i, elem) in enumerate(czm_mesh.cohesive_elements)
-        n1, n2 = elem.nodes_bottom
-        n4, n3 = elem.nodes_top
-        L, n_vec, t_vec, R = cohesive_local_frame(czm_mesh, elem)
-
-        dofs = [2*n1-1, 2*n1, 2*n2-1, 2*n2, 2*n3-1, 2*n3, 2*n4-1, 2*n4]
-
-        order = czm_mesh.bulk_mesh.gs.order
-        wts, pts = NCweight(order)
-
-        cache.cohesive_geom[i] = CohesiveElementGeom(
-            L, n_vec, t_vec, R, dofs,
-            [n1, n2], [n4, n3],
-            wts, pts
-        )
-    end
-
-    # 4. 缓存边界条件
-    bc_nodes, _, _ = identify_bc_nodes_czm(czm_mesh, param; fix_inner=fix_inner)
-    bc_dofs = Int64[]
-    bc_vals = Float64[]
-    for (node, bc_type) in bc_nodes
-        if bc_type == :fixed_xy
-            push!(bc_dofs, 2 * node - 1); push!(bc_vals, 0.0)
-            push!(bc_dofs, 2 * node);     push!(bc_vals, 0.0)
-        elseif bc_type == :fixed_x
-            push!(bc_dofs, 2 * node - 1); push!(bc_vals, 0.0)
-        elseif bc_type == :fixed_y
-            push!(bc_dofs, 2 * node);     push!(bc_vals, 0.0)
-        end
-    end
-    cache.bc_dofs = bc_dofs
-    cache.bc_vals = bc_vals
-
-    # 5. 失效判据标记
-    cache.fix_inner = fix_inner
-    cache.czm_mesh_id = objectid(czm_mesh)
-    cache.param_cache_id = param_cache.id
-
-    # 6. 创建可复用工作区（ndof × n_coh，跨时间步复用）
-    ndof = 2 * czm_mesh.nnode
-    cache.ws = CZMAssemblyWorkspace(ndof, n_coh)
-
-    cache.valid = true
-
-    return cache
-end
-
-"""
-    ensure_czm_cache(case, czm_mesh, param_cache; fix_inner=true)
-
-确保 `case.czm_cache` 可用且未过期。失效条件（任一触发即重建）：
-1. `cache === nothing` 或 `!cache.valid`
-2. `cache.czm_mesh_id != objectid(czm_mesh)`：mesh 对象变了
-3. `cache.param_cache_id != param_cache.id`：param_cache 对象变了
-4. `cache.fix_inner != fix_inner`：BC 配置切换
-
-判据：`czm_mesh_id` 用 `objectid(czm_mesh)` 检测网格对象替换；`param_cache_id` 用
-`param_cache.id`（`compute_czm_params_per_interface` 计算的内容哈希）检测参数内容变化。
-内容修改后重新调用 `compute_czm_params_per_interface` 拿到新对象即可触发失效。
-"""
-function ensure_czm_cache(case::Case, czm_mesh::CohesiveMesh, param_cache::CzmParamCache; fix_inner::Bool=true)
-    cache = case.czm_cache
-    if cache === nothing || !cache.valid ||
-       cache.czm_mesh_id != objectid(czm_mesh) ||
-       cache.param_cache_id != param_cache.id ||
-       cache.fix_inner != fix_inner
-        cache = build_czm_cache(czm_mesh, param_cache; fix_inner=fix_inner)
-        case.czm_cache = cache
-    end
-    return cache
-end
-
-"""
-    assemble_coupled_system(czm_mesh, u, param_cache; F_ext=nothing, ...)
-
-组装耦合系统（体刚度 + 内聚力）。签名按 spec v2 §7.1 改为接受 `param_cache`，
+组装耦合系统（体刚度 + 内聚力）。签名按 spec v2 §7.1 改为接受 `param`，
 体内刚度按 `czm_submesh.material_type` 分组取模量。
 """
 function assemble_coupled_system(
     czm_mesh::CohesiveMesh,
     u::Vector{Float64},
-    param_cache::CzmParamCache;
+    param::Params;
     F_ext::Union{Vector{Float64}, Nothing}=nothing,
     F_thermo_chem::Union{Vector{Float64}, Nothing}=nothing,
     damage_states=nothing,
@@ -867,6 +724,7 @@ function assemble_coupled_system(
     geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,
     ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,
     visc_beta::Float64=1.0,
+    czm_model::String="model1",
     geo_nl::Bool=false,
     eigenstrain=nothing,
     plasticity::Bool=false,
@@ -881,15 +739,15 @@ function assemble_coupled_system(
     # plasticity=true 时 PCC/NCC 用物理箔 J2（Batch 3，D-B3-0）；
     # prestress 叠加卷绕预应力 σ₀ 进残差与 K_G（Batch 2'，D-B2'-1/2）。
     f_int_bulk, K_bulk = assemble_bulk_residual_tangent(
-        czm_mesh, u, param_cache, mech_state; K_bulk_cached=K_bulk_cached,
+        czm_mesh, u, param, mech_state; K_bulk_cached=K_bulk_cached,
         geo_nl=geo_nl, eigenstrain=eigenstrain,
         plasticity=plasticity, commit_plastic=commit_plastic,
         prestress=prestress)
 
-    # 内聚力刚度和内力（使用几何缓存和工作区，透传 param_cache）
+    # 内聚力刚度和内力（使用几何缓存和工作区，透传 param）
     K_coh, f_int_coh, separations, tractions = assemble_czm_system(
-        czm_mesh, u, param_cache; damage_states=damage_states,
-        geom_cache=geom_cache, ws=ws, visc_beta=visc_beta)
+        czm_mesh, u, param; damage_states=damage_states,
+        geom_cache=geom_cache, ws=ws, visc_beta=visc_beta, czm_model=czm_model)
 
     # 总刚度矩阵
     K_total = K_bulk + K_coh
@@ -901,34 +759,35 @@ function assemble_coupled_system(
 end
 
 """
-    assemble_coupled_system_full(czm_mesh, u, param_cache, dT_elem, ...; kwargs...)
+    assemble_coupled_system_full(czm_mesh, u, param, dT_elem, ...; kwargs...)
 
-耦合系统组装 + 热-化学载荷 + 残差计算。按 spec v2 §7.1 改为接受 `param_cache`，
+耦合系统组装 + 热-化学载荷 + 残差计算。按 spec v2 §7.1 改为接受 `param`，
 透传给 `assemble_coupled_system` 与 `assemble_thermal_chemical_load`。
 """
 function assemble_coupled_system_full(
     czm_mesh::CohesiveMesh,
     u::Vector{Float64},
-    param_cache::CzmParamCache,
+    param::Params,
     dT_elem::Vector{Float64}, Δsoc_n_elem::Vector{Float64}, Δsoc_p_elem::Vector{Float64};
     F_ext::Union{Vector{Float64}, Nothing}=nothing,
     damage_states=nothing,
     K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,
     geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,
     ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,
-    visc_beta::Float64=1.0
+    visc_beta::Float64=1.0,
+    czm_model::String="model1"
 )
     ndof = 2 * czm_mesh.nnode
 
-    # 组装基本系统（透传 param_cache）
+    # 组装基本系统（透传 param）
     K_total, f_int_total, separations, tractions = assemble_coupled_system(
-        czm_mesh, u, param_cache;
+        czm_mesh, u, param;
         damage_states=damage_states, K_bulk_cached=K_bulk_cached,
         geom_cache=geom_cache, ws=ws, visc_beta=visc_beta)
 
-    # 热-化学载荷（透传 param_cache）
+    # 热-化学载荷（透传 param）
     F_thermo_chem = assemble_thermal_chemical_load(
-        czm_mesh, param_cache, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+        czm_mesh, param, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
 
     # 外部载荷
     F_external = F_ext === nothing ? zeros(Float64, ndof) : F_ext
@@ -937,4 +796,71 @@ function assemble_coupled_system_full(
     R = F_external + F_thermo_chem - f_int_total
 
     return K_total, R, F_thermo_chem, separations, tractions
+end
+
+# ========================================================================
+# 网格惰性装配缓存（2026-08-30 重构：缓存随网格生灭，对象身份即失效判据）
+# ========================================================================
+
+"""
+    collector_params(param, iface) -> CurrentCollector
+
+界面符号 → 参数宿主：`:PE_PCC → param.PCC`、`:NE_NCC → param.NCC`。
+"""
+function collector_params(param::Params, iface::Symbol)
+    iface === :PE_PCC && return param.PCC
+    iface === :NE_NCC && return param.NCC
+    error("collector_params: unknown interface_type $iface")
+end
+
+"""
+    build_cohesive_geometry(czm_mesh) -> Vector{CohesiveElementGeom}
+
+预计算全部 cohesive 单元的局部标架/DOF/积分表（纯几何派生，gs 同款）。
+"""
+function build_cohesive_geometry(czm_mesh::CohesiveMesh)
+    n_coh = czm_mesh.n_cohesive
+    geom = Vector{CohesiveElementGeom}(undef, n_coh)
+    order = czm_mesh.bulk_mesh.gs.order
+    for (i, elem) in enumerate(czm_mesh.cohesive_elements)
+        n1, n2 = elem.nodes_bottom
+        n4, n3 = elem.nodes_top
+        L, n_vec, t_vec, R = cohesive_local_frame(czm_mesh, elem)
+        dofs = [2*n1-1, 2*n1, 2*n2-1, 2*n2, 2*n3-1, 2*n3, 2*n4-1, 2*n4]
+        wts, pts = NCweight(order)
+        geom[i] = CohesiveElementGeom(L, n_vec, t_vec, R, dofs,
+                                      [n1, n2], [n4, n3], wts, pts)
+    end
+    return geom
+end
+
+"""
+    bulk_stiffness(czm_mesh, param) -> SparseMatrixCSC
+
+体刚度惰性访问器：首次调用构建并挂到 `czm_mesh.K_bulk`，此后跨步只读。
+仅线弹性路径消费（geo_nl/塑性路径切线依赖 u，不走此缓存）。
+"""
+function bulk_stiffness(czm_mesh::CohesiveMesh, param::Params)
+    czm_mesh.K_bulk === nothing && (czm_mesh.K_bulk = assemble_bulk_stiffness(czm_mesh, param))
+    return czm_mesh.K_bulk::SparseMatrixCSC{Float64, Int64}
+end
+
+"""
+    cohesive_geometry(czm_mesh) -> Vector{CohesiveElementGeom}
+
+cohesive 标架惰性访问器：首次调用构建并挂到 `czm_mesh.cohesive_geom`。
+"""
+function cohesive_geometry(czm_mesh::CohesiveMesh)
+    czm_mesh.cohesive_geom === nothing && (czm_mesh.cohesive_geom = build_cohesive_geometry(czm_mesh))
+    return czm_mesh.cohesive_geom::Vector{CohesiveElementGeom}
+end
+
+"""
+    assembly_workspace(czm_mesh) -> CZMAssemblyWorkspace
+
+装配工作区惰性访问器：首次调用分配并挂到 `czm_mesh.ws`（预分配复用，值每轮重写）。
+"""
+function assembly_workspace(czm_mesh::CohesiveMesh)
+    czm_mesh.ws === nothing && (czm_mesh.ws = CZMAssemblyWorkspace(2 * czm_mesh.nnode, czm_mesh.n_cohesive))
+    return czm_mesh.ws::CZMAssemblyWorkspace
 end

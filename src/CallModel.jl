@@ -1,16 +1,17 @@
 """
-	map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, ne_thermal::Int) -> Vector{Float64}
+	map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, damage_states, ne_thermal::Int) -> Vector{Float64}
 
 按 spec v2 §5.2 把 cohesive 单元损伤 max 归约到粗热单元粒度。
 对每个粗热单元 e_thermal，扫描所有 cohesive_to_thermal[e_coh] == e_thermal 的 cohesive 单元，
 取 damage_states[e_coh].D 的最大值；无 cohesive 覆盖则取 0。
+（2026-08-30 重构：damage_states 来自 MechState，显式传入。）
 """
-function map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, ne_thermal::Int)
+function map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, damage_states::AbstractVector{<:AbstractDamageState}, ne_thermal::Int)
 	D_per_thermal = zeros(ne_thermal)
 	for e_coh in 1:czm_mesh.n_cohesive
 		e_thermal = czm_mesh.cohesive_to_thermal[e_coh]
 		if 1 <= e_thermal <= ne_thermal
-			D = czm_mesh.damage_states[e_coh].D
+			D = damage_states[e_coh].D
 			if D > D_per_thermal[e_thermal]
 				D_per_thermal[e_thermal] = D
 			end
@@ -77,8 +78,8 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
 
     # 获取CZM失效单元列表（仅在启用CZM时）
     # 当CZM单元损伤D >= 0.95时，对应热单元电流归零，总电流重分配
-    if case.opt.czm_enabled && case.czm_mesh !== nothing
-        fractured_czm = get_fractured_elements(case.czm_mesh)
+    if case.opt.czm.enabled && case.czm_mesh !== nothing
+        fractured_czm = get_fractured_elements(case.mech.damage_states)
         deactivated_elements = Int64[]
         geom = case.geometry
         for e in 1:ne
@@ -95,13 +96,13 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
 
     # 计算渐进式面积损失的 D 映射（仅在启用时）
     D_elem_area_loss = nothing
-    if case.opt.czm_area_loss_enabled && case.czm_mesh !== nothing && case.czm_mesh.cohesive_to_thermal !== nothing
-        D_elem_area_loss = map_czm_damage_to_thermal(case.czm_mesh, ne)
+    if case.opt.czm.area_loss_enabled && case.czm_mesh !== nothing && case.czm_mesh.cohesive_to_thermal !== nothing
+        D_elem_area_loss = map_czm_damage_to_thermal(case.czm_mesh, case.mech.damage_states, ne)
         # 调试：输出 D 映射统计
-        D_above = filter(d -> d > case.opt.czm_area_loss_threshold, D_elem_area_loss)
+        D_above = filter(d -> d > case.opt.czm.area_loss_threshold, D_elem_area_loss)
         if !isempty(D_above) && case.opt.debug_coupling
             t_phys = round(t * case.param.scale.t0, digits=1)
-            println("  [AreaLoss] t=$(t_phys)s | D_max=$(round(maximum(D_elem_area_loss), digits=4)) | 超阈值单元=$(length(D_above))/$(ne) | threshold=$(case.opt.czm_area_loss_threshold)")
+            println("  [AreaLoss] t=$(t_phys)s | D_max=$(round(maximum(D_elem_area_loss), digits=4)) | 超阈值单元=$(length(D_above))/$(ne) | threshold=$(case.opt.czm.area_loss_threshold)")
         end
     end
 
@@ -140,18 +141,18 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 6) 计算逐单元热源（调用 ThermalDistributed.jl 中的统一函数)
     t_thermal_ns = time_ns()
     t_czm_model_s = 0.0
-    if case.opt.czm_enabled == true && case.czm_mesh !== nothing
+    if case.opt.czm.enabled == true && case.czm_mesh !== nothing
         t_czm_ns = time_ns()
         variables = compute_heat_sources_with_czm(case, variables, variables_elems, I_e, Te_prev, areas, case.czm_mesh, mesh_th)
         t_czm_model_s = (time_ns() - t_czm_ns) * 1e-9
         # 记录 CZM 摘要统计
-        stats = get_damage_statistics(case.czm_mesh)
+        stats = get_damage_statistics(case.mech.damage_states)
         variables["czm D_max"] = [stats.max_D]
-        if case.opt.czm_winding_prestress
+        if case.opt.czm.winding_prestress
             variables["winding prestress"] = [1.0]   # 浮点历史标记；最终结果再解释为功能开启
         end
         variables["czm D_mean"] = [stats.mean_D]
-        δ_max_n_vals = [s.δ_max_n for s in case.czm_mesh.damage_states]
+        δ_max_n_vals = [s.δ_max_n for s in case.mech.damage_states]
         variables["czm δ_max_n"] = [maximum(δ_max_n_vals)]
         variables["czm δ_mean_n"] = [mean(δ_max_n_vals)]
         variables["czm n_fractured"] = [Float64(stats.n_fractured)]

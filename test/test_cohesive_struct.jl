@@ -3,58 +3,35 @@ using Test
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
 
-@testset "Cohesive struct per-interface fields" begin
-    coh = JuBat.Cohesive()
+@testset "CurrentCollector interface fields" begin
+    # 2026-08-30 重构：Cohesive 已删除，界面字段挂 CurrentCollector（PCC/NCC 实例）
+    cc = JuBat.CurrentCollector()
 
-    # PE-PCC Mode I
-    @test hasproperty(coh, :σ_max_pe_pcc)
-    @test hasproperty(coh, :K_n_pe_pcc)
-    @test hasproperty(coh, :δ_0_pe_pcc)
-    @test hasproperty(coh, :G_c_pe_pcc)
-    @test hasproperty(coh, :δ_c_pe_pcc)
+    # Mode I
+    @test hasproperty(cc, :σ_max)
+    @test hasproperty(cc, :K_n)
+    @test hasproperty(cc, :δ_0)
+    @test hasproperty(cc, :G_c)
+    @test hasproperty(cc, :δ_c)
 
-    # PE-PCC Mode II
-    @test hasproperty(coh, :τ_max_pe_pcc)
-    @test hasproperty(coh, :K_t_pe_pcc)
-    @test hasproperty(coh, :δ_0_pe_pcc_t)
-    @test hasproperty(coh, :G_c_pe_pcc_t)
-    @test hasproperty(coh, :δ_c_pe_pcc_t)
+    # Mode II
+    @test hasproperty(cc, :τ_max)
+    @test hasproperty(cc, :K_t)
+    @test hasproperty(cc, :δ_0_t)
+    @test hasproperty(cc, :G_c_t)
+    @test hasproperty(cc, :δ_c_t)
 
-    # NE-NCC Mode I
-    @test hasproperty(coh, :σ_max_ne_ncc)
-    @test hasproperty(coh, :K_n_ne_ncc)
-    @test hasproperty(coh, :δ_0_ne_ncc)
-    @test hasproperty(coh, :G_c_ne_ncc)
-    @test hasproperty(coh, :δ_c_ne_ncc)
+    # BK 指数与界面热阻
+    @test hasproperty(cc, :eta)
+    @test hasproperty(cc, :h_c0)
+    @test hasproperty(cc, :k_air)
+    @test hasproperty(cc, :lambda_m)
+    @test hasproperty(cc, :beta)
+    @test hasproperty(cc, :threshold)
 
-    # NE-NCC Mode II
-    @test hasproperty(coh, :τ_max_ne_ncc)
-    @test hasproperty(coh, :K_t_ne_ncc)
-    @test hasproperty(coh, :δ_0_ne_ncc_t)
-    @test hasproperty(coh, :G_c_ne_ncc_t)
-    @test hasproperty(coh, :δ_c_ne_ncc_t)
-
-    # 旧字段已移除
-    @test !hasproperty(coh, :σ_max_n)
-    @test !hasproperty(coh, :K_n)
-    @test !hasproperty(coh, :δ_0_n)
-    @test !hasproperty(coh, :G_c_n)
-    @test !hasproperty(coh, :δ_c_n)
-    @test !hasproperty(coh, :τ_max_t)
-    @test !hasproperty(coh, :K_t)
-    @test !hasproperty(coh, :δ_0_t)
-    @test !hasproperty(coh, :G_c_t)
-    @test !hasproperty(coh, :δ_c_t)
-
-    # 保留字段（界面热阻、粘性、BK eta、czm_model）
-    @test hasproperty(coh, :eta)
-    @test hasproperty(coh, :czm_model)
-    @test hasproperty(coh, :h_c0)
-    @test hasproperty(coh, :k_air)
-    @test hasproperty(coh, :lambda_m)
-    @test hasproperty(coh, :beta)
-    @test hasproperty(coh, :threshold)
-    @test hasproperty(coh, :tau_visc)
+    # Params 不再有 cohesive 字段；Cohesive 类型已删除
+    @test !isdefined(JuBat, :Cohesive)
+    @test isdefined(JuBat, :CurrentCollector)
 end
 
 @testset "CohesiveElement interface_type + host elems" begin
@@ -91,43 +68,14 @@ end
     @test !hasproperty(elem, :layer_idx)
 end
 
-@testset "CzmInterfaceParams and CzmParamCache" begin
-    params_pe_pcc = JuBat.CzmInterfaceParams(;
-        E_eff = 1.0e3,
-        ν = 0.3,
-        α = 2.0e-6,
-        σ_max = 50e6,
-        K_n = 1.0e17,
-        δ_0_n = 1.0e-9,
-        δ_c_n = 5.0e-7,
-        G_c = 25.0,
-        τ_max = 50e6,
-        K_t = 1.0e17,
-        δ_0_t = 1.0e-9,
-        δ_c_t = 5.0e-7,
-        G_c_t = 25.0,
-        η = 1.45,
-        czm_model = "model1",
-        h_c0 = 1e7,
-        k_air = 0.026,
-        lambda_m = 70e-9,
-        beta = 1.0,
-        threshold = 70e-9,
-    )
-    @test params_pe_pcc.σ_max == 50e6
-    @test params_pe_pcc.czm_model == "model1"
-    @test params_pe_pcc.threshold == 70e-9
-
-    # CzmParamCache 含 param_ref 与 id 字段（spec §3.5.2）
-    # Task 4.4 fix：id 现为内容哈希（hash(CzmInterfaceParams)）而非 objectid(param)。
-    # 此处手工构造，仅检查字段存取；id 取 hash(params_pe_pcc) 以反映新语义。
-    param_dim = JuBat.ChooseCell("Jellyroll")
-    param = JuBat.NormaliseParam(param_dim)
-    content_id = hash(params_pe_pcc)
-    cache = JuBat.CzmParamCache(Dict(:PE_PCC => params_pe_pcc), param, content_id)
-    @test haskey(cache.by_interface, :PE_PCC)
-    @test cache.by_interface[:PE_PCC].E_eff == 1.0e3
-    @test cache.id == content_id
+@testset "MechState fields" begin
+    # 2026-08-30 重构：CzmInterfaceParams/CzmParamCache 已删除，演化状态聚合 MechState
+    @test !isdefined(JuBat, :CzmInterfaceParams)
+    @test !isdefined(JuBat, :CzmParamCache)
+    mesh = JuBat.CohesiveMesh()
+    @test !hasproperty(mesh, :damage_states)   # 损伤态已迁至 MechState
+    # MechState 需要真实网格构造（字段长度依网格）——字段检查在 delta_core/c4lite 覆盖
+    @test isdefined(JuBat, :MechState)
 end
 
 @testset "CzmSubmesh struct" begin

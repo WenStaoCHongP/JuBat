@@ -96,9 +96,9 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
         result["thermal2D nearest_cutoff_ocv"] = variables["thermal2D nearest_cutoff_ocv"][1, 1:v]
         result["thermal2D margin_to_cutoff"] = variables["thermal2D margin_to_cutoff"][1, 1:v]
     end
-    if case.opt.czm_enabled == true
+    if case.opt.czm.enabled == true
         result["collapse_approx"] = "phi_perfect_bond"
-        if case.opt.czm_winding_prestress
+        if case.opt.czm.winding_prestress
             result["winding prestress"] = vec(variables["winding prestress"][1, 1:v])
         end
         result["czm D_max"] = vec(variables["czm D_max"][1, 1:v])

@@ -38,14 +38,14 @@ end
 @testset "绑定对位移恒等（装配级）" begin
     case, _ = merge_fixture(nθ=8)
     cm = case.czm_mesh
-    pc = JuBat.compute_czm_params_per_interface(case)
+    case.mech = JuBat.MechState(case.czm_mesh)
     ndof = 2 * cm.nnode
     u = zeros(ndof)
     for n in 1:cm.nnode
         u[2*n-1] = 1e-4 * sin(0.3 * cm.node[n, 1] + 1.0)
         u[2*n] = 1e-4 * cos(0.2 * cm.node[n, 2])
     end
-    K, f = JuBat.assemble_coupled_system(cm, u, pc)
+    K, f = JuBat.assemble_coupled_system(cm, u, case.param; damage_states=case.mech.damage_states)
     # 合并节点在 K 中表现为同一自由度行/列（无重复索引）——用 f 有限性与 K 对称近似性作烟雾断言
     @test all(isfinite, f) && all(isfinite, K)
     @test norm(Array(K) - Array(K)') ≤ 1e-9 * norm(Array(K))

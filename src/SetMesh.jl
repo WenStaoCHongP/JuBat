@@ -66,9 +66,11 @@ mutable struct CohesiveMesh
     n_layers::Int64                           # 遗留字段名：实际保存 cohesive 本构/材料类型数（2），不是物理层数、真实面数或单元数
     node_map::Dict{Int64, Vector{Int64}}      # 原节点 → [分层后的节点们]
     interface_nodes::Vector{Vector{Tuple{Int64,Int64}}} # 每个界面的节点对
-    damage_states::Vector{AbstractDamageState} # 损伤状态
     czm_submesh::Union{Nothing, CzmSubmesh}                       # v5 新增：细化 CZM 子网格
     cohesive_to_thermal::Union{Nothing, Vector{Int}}              # v5 新增：CZM 单元 → 粗热单元 id 反向映射
+    K_bulk::Union{Nothing, SparseMatrixCSC}                       # 惰性装配缓存（弹性路径；具体型由 bulk_stiffness 访问器断言）
+    cohesive_geom::Union{Nothing, Vector}                         # 纯几何标架缓存（gs 同款；具体型由 cohesive_geometry 断言）
+    ws::Any                                                       # 预分配装配工作区（具体型由 assembly_workspace 断言）
 
     # 内部构造函数（空初始化）
     function CohesiveMesh()
@@ -76,8 +78,8 @@ mutable struct CohesiveMesh
             GaussPoint(zeros(0,2), zeros(0,2), zeros(0), zeros(0), zeros(Int64,0), zeros(0,4), zeros(0,8), 2)),
             zeros(0, 2), 0, zeros(Int64, 0, 4),
             AbstractCohesiveElement[], 0, 0, Dict{Int64, Vector{Int64}}(),
-            Vector{Vector{Tuple{Int64,Int64}}}(), AbstractDamageState[],
-            nothing, nothing)
+            Vector{Vector{Tuple{Int64,Int64}}}(),
+            nothing, nothing, nothing, nothing, nothing)
     end
 end
 

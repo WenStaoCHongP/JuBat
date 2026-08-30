@@ -109,7 +109,7 @@ function main()
     opt.cool_method = "surface"
     opt.per_element_spme = true
 
-    opt.czm_enabled = false        # ← 关键差异：在线 CZM 关闭，仅按需调用固体力学工具函数
+    opt.czm.enabled = false        # ← 关键差异：在线 CZM 关闭，仅按需调用固体力学工具函数
 
     println("OK: 参数设置完成")
     @printf("  电流: %.2f A (%.2f C)\n", i, Crates)
@@ -128,7 +128,7 @@ function main()
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
 
-    # opt.czm_enabled 保持 false：在线 CZM 路径不运行；
+    # opt.czm.enabled 保持 false：在线 CZM 路径不运行；
     # 仅构建力学子网格供热力学工具函数 thermal_diffusion_stress_2D 按需使用
     case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th, case.param)
     mesh_mech = case.czm_mesh.czm_submesh.mesh_bonded

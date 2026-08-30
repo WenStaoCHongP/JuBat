@@ -177,9 +177,9 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
 
     # CZM 与宏观应力状态。latest_macro_stress 只在实际力学求解后刷新，
     # 其间的输出列保持最近一次有效解，禁止把预分配零当作应力结果。
-    czm_active = case.opt.czm_enabled && case.czm_mesh !== nothing
-    if czm_active && case.czm_layout === nothing
-        case.czm_layout = CzmLayout(case.czm_mesh)
+    czm_active = case.opt.czm.enabled && case.czm_mesh !== nothing
+    if czm_active && case.mech === nothing
+        case.mech = MechState(case.czm_mesh)
     end
     macro_stress_active = czm_active && haskey(variables_hist, "diffusion stress xx")
     latest_macro_stress = macro_stress_active ?
@@ -242,7 +242,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             # 对应历史列记录的同一时刻。非更新步保留 latest_macro_stress。
             if czm_active
                 czm_step_count += 1
-                if czm_step_count % case.opt.czm_update_interval == 0
+                if czm_step_count % case.opt.czm.update_interval == 0
                     t_czm_ns = time_ns()
                     try
                         czm_result = update_czm_damage!(case, variables, T_nodes_czm_current)
@@ -261,7 +261,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
                                 czm_result.converged,
                                 czm_result.iterations,
                                 czm_result.residual_norm,
-                                case.opt.czm_iter_method
+                                case.opt.czm.iter_method
                             ))
                         end
                     finally

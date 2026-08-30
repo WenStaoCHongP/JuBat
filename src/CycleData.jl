@@ -30,7 +30,7 @@ struct CycleExportData
 end
 
 function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, V_limit::Float64, initial_state::Union{Nothing, Dict};czm_mesh=nothing, czm_params=nothing,dt_range::Vector{Float64}=[1.0, 10.0],export_interval::Int=1)
-    if case.opt.czm_enabled || czm_mesh !== nothing || czm_params !== nothing
+    if case.opt.czm.enabled || czm_mesh !== nothing || czm_params !== nothing
         throw(ArgumentError(
             "solve_phase_with_export does not implement CZM damage evolution; use solve_phase or solve_cycling for CZM simulations"
         ))

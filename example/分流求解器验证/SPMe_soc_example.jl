@@ -67,7 +67,7 @@ function main()
     opt.thermalmodel = "distributed2D"
     opt.thermal_dim = "2D"
     opt.cool_method = "tab"
-    opt.czm_enabled = false
+    opt.czm.enabled = false
     
     # ✨ 关键：启用多SPMe并行模式
     opt.per_element_spme = true

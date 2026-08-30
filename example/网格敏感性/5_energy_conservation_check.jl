@@ -50,11 +50,11 @@ function main()
     opt.cool_method = "surface"
     opt.per_element_spme = true
 
-    opt.czm_enabled = true
+    opt.czm.enabled = true
     opt.mechanicalmodel = "full"
-    opt.czm_iter_method = "basic"
-    opt.czm_load_steps = 10
-    opt.czm_tol = 1e-3
+    opt.czm.iter_method = "basic"
+    opt.czm.load_steps = 10
+    opt.czm.tol = 1e-3
 
     I1C = param_dim.cell.I1C
     opt.Current = x -> I1C

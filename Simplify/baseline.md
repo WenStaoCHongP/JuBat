@@ -32,6 +32,7 @@ $env:JULIA_NUM_THREADS = '1'
 
 | 日期 | 批次 | 生产代码变化 | 局部验证 | 强制基线 | 结果 |
 |---|---|---:|---|---|---|
+| 2026-08-30 | 四层力学结构体重构（spec `2026-08-30-mechanics-struct-refactor`）：界面参数挂 CurrentCollector（Cohesive/CzmInterfaceParams/CzmParamCache/内容哈希全删）、`opt.czm::CzmOptions` 嵌套收敛 20 字段、装配缓存惰性挂 CohesiveMesh（K_bulk/标架/ws）+ BC 现算、MechState 聚合演化状态（damage_states 迁出网格、克隆链删除、收敛原位提交）、Λ 内联 scale.L/δ_czm、`solve_czm_step(czm_mesh, ms, param, F_ext, czm_opt)` 终态签名 | 14 个 src 文件重构 + 16 测试适配 + 3 示例适配 | 全套 32/32（8m04s）；单步 A/B 探针与父提交 66c718e 17 位逐位一致；中途门×2 绿；顺带修复 bilinear_tangent 混合模式 4 处裸 K_n/K_t（model2 崩溃级） | **相对父提交 66c718e 全指标逐位一致**（分离 9.6486e-13 m、环向 −1.3954~+3.8603 MPa、三张 PNG 哈希不变 `540fe42f/9726a7c8/b3b43d7c`，用户核验）；基线数值零漂移，仅刷新源码清单（46 文件）与脚本哈希 | PASS（v8 基线沿用） |
 | 2026-08-05 | ThermalDistributed D3：保留原函数名并直接采用原位变体、删除 `!` 变体 | `+6/-133`，净删 127 行 | `smoke_thermal_bc.jl` 18/18 | 所有科学指标及 PNG SHA-256 完全一致 | PASS |
 | 2026-08-05 | CouplingState 六参数 CZM 兼容入口清理 | `-17` 行 | CZM 定向测试通过（4+9 assertions，1 项既有 broken；smoke OK） | 所有科学指标及 PNG SHA-256 完全一致 | PASS |
 | 2026-08-05 | Solve 最终热数据 silent catch 清理 | `-4` 行 | 热边界 smoke 18/18（最终结构） | 所有科学指标及 PNG SHA-256 完全一致 | PASS |

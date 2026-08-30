@@ -191,7 +191,7 @@ end
 """
     compute_macro_stress(case, variables, T_nodes)
 
-以当前已收敛 `case.czm_layout.u_prev` 和同一时间层载荷恢复四个层分辨应力分量。
+以当前已收敛 `case.mech.u_prev` 和同一时间层载荷恢复四个层分辨应力分量。
 返回归一化到 `scale.σ_czm` 的 NamedTuple；调用方负责决定历史记录时刻。
 """
 function compute_macro_stress(case, variables, T_nodes)
@@ -199,7 +199,7 @@ function compute_macro_stress(case, variables, T_nodes)
     ε0 = macro_eigenstrain(case, variables, T_nodes)
     sigma_xx, sigma_yy, sigma_xy, sigma_vm = recover_bulk_stress(
         czm_mesh.node, czm_mesh.bulk_element, czm_mesh.czm_submesh.material_type,
-        case.czm_layout.u_prev, ε0, case.param)
+        case.mech.u_prev, ε0, case.param)
     return (xx=sigma_xx, yy=sigma_yy, xy=sigma_xy, vonMises=sigma_vm)
 end
 
@@ -219,7 +219,7 @@ end
 非线性路径不分配历史键，此处按既有门控原样返回。
 """
 function export_macro_stress(case, variables, variables_hist, v, T_nodes)
-    (case.opt.czm_enabled && case.czm_mesh !== nothing) || return variables_hist
+    (case.opt.czm.enabled && case.czm_mesh !== nothing) || return variables_hist
     haskey(variables_hist, "diffusion stress xx") || return variables_hist
     stress = compute_macro_stress(case, variables, T_nodes)
     write_macro_stress!(variables_hist, v, stress)
@@ -229,16 +229,16 @@ end
 """
     thermal_diffusion_stress_2D(case, variables)
 
-仅固体力学流程（opt.czm_enabled=false）的层分辨宏观应力工具函数：在
+仅固体力学流程（opt.czm.enabled=false）的层分辨宏观应力工具函数：在
 `czm_submesh.mesh_bonded`（Φ 合并、无内聚力单元）上按逐层刚度（`moduli_of`）
 与逐层特征应变求解线性弹性静力平衡，返回有量纲结果。
 
 # 输入
 - `case.czm_mesh`：需由 `jellyroll_collector_seed_mesh(czm_enabled=true)` +
-  `create_czm_mesh` 构建（`opt.czm_enabled` 可保持 false，在线 CZM 路径不受影响）
+  `create_czm_mesh` 构建（`opt.czm.enabled` 可保持 false，在线 CZM 路径不受影响）
 - `variables["T_nodes"]`：归一化节点温度（T/T_ref；向量或历史矩阵取末列）
 - `variables["thermal2D element soc_n/soc_p"]`：归一化化学计量比
-- 边界：外圈固定；内圈按 `opt.czm_fix_inner`（默认 true = 内外均固定）
+- 边界：外圈固定；内圈按 `opt.czm.fix_inner`（默认 true = 内外均固定）
 
 # 输出（返回 copy(variables) 增键，均为有量纲）
 - `"diffusion stress xx/yy/xy/vonMises [Pa]"`（σ_czm 空间恢复后 ×scale.σ_czm）
@@ -309,11 +309,11 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     end
     F_mech = Assemble1D(Vi_u, dNdx, coeff_u, ndof) + Assemble1D(Vi_v, dNdy, coeff_v, ndof)
 
-    # 边界：外圈固定；内圈按 opt.czm_fix_inner（默认 true = 内外均固定），相对罚
+    # 边界：外圈固定；内圈按 opt.czm.fix_inner（默认 true = 内外均固定），相对罚
     is_inner, is_outer = identify_boundary_nodes(mesh, param, case.opt)
     penalty = 1e6 * maximum(abs, diag(K_mech))
     @inbounds for i in 1:nnode
-        if is_outer[i] || (case.opt.czm_fix_inner && is_inner[i])
+        if is_outer[i] || (case.opt.czm.fix_inner && is_inner[i])
             K_mech[2 * i - 1, 2 * i - 1] += penalty
             K_mech[2 * i, 2 * i] += penalty
             F_mech[2 * i - 1] = 0.0

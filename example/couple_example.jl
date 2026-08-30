@@ -130,18 +130,18 @@ function main()
 
     opt.debug_coupling = true
     opt.debug_log_path = joinpath(@__DIR__, "..", "output", "couple_example", "simple_coupling_debug.log")
-    opt.czm_enabled = true
-    opt.czm_fix_inner = false
-    opt.czm_iter_method = "basic"
-    opt.czm_load_steps = 10
-    opt.czm_tol = 1e-3
+    opt.czm.enabled = true
+    opt.czm.fix_inner = false
+    opt.czm.iter_method = "basic"
+    opt.czm.load_steps = 10
+    opt.czm.tol = 1e-3
 
     println("OK: 参数设置完成")
     @printf("  电流: %.2f A (%.2f C)\n", i, Crates)
     @printf("  仿真时间: %.1f 秒\n", opt.time[end])
     @printf("  模式: 多SPMe并行\n")
-    @printf("  CZM迭代法: %s\n", opt.czm_iter_method)
-    @printf("  CZM载荷子步数: %d\n", opt.czm_load_steps)
+    @printf("  CZM迭代法: %s\n", opt.czm.iter_method)
+    @printf("  CZM载荷子步数: %d\n", opt.czm.load_steps)
 
     # ========================================================================
     # 2. 创建案例和网格
@@ -155,9 +155,10 @@ function main()
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
 
-    # 创建 CZM 网格（czm_enabled = true 时必须）
-    if opt.czm_enabled
+    # 创建 CZM 网格与演化状态（czm_enabled = true 时必须）
+    if opt.czm.enabled
         case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
+        case.mech = JuBat.MechState(case.czm_mesh)
     end
 
     ne = size(mesh_th.element, 1)

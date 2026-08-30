@@ -95,6 +95,23 @@ end
     # Batch 3：箔塑性参数（模量沿用 E/nu；用户参数修正后不重复定义）；sigma_y=0 视为未设置
     sigma_y::Float64 = 0      # 屈服应力 [Pa]
     H::Float64 = 0            # 各向同性硬化模量 [Pa]（0=理想塑性）
+    # 界面本构（该集流体与其相邻涂层之间的 COH 界面；法向无后缀、切向 _t；2026-08-30 重构迁入）
+    σ_max::Float64 = 0.0    # 最大法向牵引 [Pa]
+    K_n::Float64 = 0.0      # 法向初始刚度 [Pa/m]
+    δ_0::Float64 = 0.0      # 法向损伤起始位移 [m]
+    G_c::Float64 = 0.0      # 法向断裂能 [J/m²]
+    δ_c::Float64 = 0.0      # 法向临界位移 [m]
+    τ_max::Float64 = 0.0    # Mode II 最大切向牵引 [Pa]
+    K_t::Float64 = 0.0
+    δ_0_t::Float64 = 0.0
+    G_c_t::Float64 = 0.0
+    δ_c_t::Float64 = 0.0
+    eta::Float64 = 1.0      # BK 混合模式指数 [-]
+    h_c0::Float64 = 1e7     # 界面热阻（md/07）
+    k_air::Float64 = 0.026
+    lambda_m::Float64 = 70e-9
+    beta::Float64 = 1.0
+    threshold::Float64 = 70e-9
 end
 
 @with_kw mutable struct Electrolyte
@@ -158,44 +175,6 @@ end
     rho::Float64 = 0
 end
 
-@with_kw mutable struct Cohesive
-    # === PE-PCC 界面（电极涂层-正极集流体）===
-    σ_max_pe_pcc::Float64 = 0.0    # 最大法向牵引力 [Pa]
-    K_n_pe_pcc::Float64 = 0.0      # 法向初始刚度 [Pa/m]
-    δ_0_pe_pcc::Float64 = 0.0      # 法向损伤起始位移 [m]
-    G_c_pe_pcc::Float64 = 0.0      # 法向断裂能 [J/m²]
-    δ_c_pe_pcc::Float64 = 0.0      # 法向临界位移 [m]
-    τ_max_pe_pcc::Float64 = 0.0    # Mode II 最大切向牵引 [Pa]
-    K_t_pe_pcc::Float64 = 0.0
-    δ_0_pe_pcc_t::Float64 = 0.0
-    G_c_pe_pcc_t::Float64 = 0.0
-    δ_c_pe_pcc_t::Float64 = 0.0
-
-    # === NE-NCC 界面（电极涂层-负极集流体）===
-    σ_max_ne_ncc::Float64 = 0.0
-    K_n_ne_ncc::Float64 = 0.0
-    δ_0_ne_ncc::Float64 = 0.0
-    G_c_ne_ncc::Float64 = 0.0
-    δ_c_ne_ncc::Float64 = 0.0
-    τ_max_ne_ncc::Float64 = 0.0
-    K_t_ne_ncc::Float64 = 0.0
-    δ_0_ne_ncc_t::Float64 = 0.0
-    G_c_ne_ncc_t::Float64 = 0.0
-    δ_c_ne_ncc_t::Float64 = 0.0
-
-    # === 共用 ===
-    czm_model::String = "model1"   # 模型选择（"model1" / "mix"）
-    eta::Float64 = 1.0             # BK 准则指数 [-]
-
-    # Interface thermal resistance
-    h_c0::Float64 = 1e7
-    k_air::Float64 = 0.026
-    lambda_m::Float64 = 70e-9
-    beta::Float64 = 1.0
-    threshold::Float64 = 70e-9
-
-    tau_visc::Float64 = 0.0
-end
 @with_kw mutable struct Scale
     L::Float64 = 1e-6
     r0::Float64 = 1e-6
@@ -231,8 +210,8 @@ end
     q::Float64 = 0               # 热源尺度参数 P_ref/L^3 [W/m³]
     h::Float64 = 0               # Biot 数 = h_cell*L/lambda_r (边界条件)
     # --- Cohesive zone model scaling ---
-    σ_czm::Float64 = 0         # reference cohesive traction [Pa] = σ_max_pe_pcc（自锚点）
-    δ_czm::Float64 = 0         # reference separation [m] = 2·G_c_pe_pcc/σ_max_pe_pcc（锚定界面 δ_c* ≡ 1）
+    σ_czm::Float64 = 0         # reference cohesive traction [Pa] = PCC.σ_max（PE-PCC 自锚点）
+    δ_czm::Float64 = 0         # reference separation [m] = 2·PCC.G_c/PCC.σ_max（锚定界面 δ_c* ≡ 1）
     G_czm::Float64 = 0         # reference fracture energy [J/m²] = σ_czm·δ_czm（锚定界面 G_c* ≡ 1/2）
     K_czm::Float64 = 0         # reference cohesive stiffness [Pa/m] = σ_czm/δ_czm（锚定界面 K_n* = δ_c/δ_0）
 end
@@ -248,7 +227,6 @@ end
     tab::Tab
     binder::Binder
     scale::Scale
-    cohesive::Cohesive = Cohesive()  # 内聚力模型参数（可选）
 end
 
 function ChooseCell(CellType::String="LG M50")
@@ -339,15 +317,15 @@ function ChooseCell(CellType::String="LG M50")
     param_dim.scale.lambda = param_dim.scale.P_ref / (param_dim.scale.L * param_dim.scale.T_ref)
     param_dim.scale.h = param_dim.cell.h * param_dim.scale.L / param_dim.cell.lambda_r  # Biot 数
     param_dim.scale.q = param_dim.scale.P_ref / param_dim.scale.L^3
-    if param_dim.cohesive.σ_max_pe_pcc == 0 || param_dim.cohesive.G_c_pe_pcc == 0
-        @warn "[ChooseCell] cohesive.σ_max_pe_pcc 或 G_c_pe_pcc = 0; scale.σ_czm/δ_czm/G_czm/K_czm 无法锚定，CZM 归一化会产生 Inf/NaN。请补全 cohesive 字段后再启用 czm_enabled=true。"
+    if param_dim.PCC.σ_max == 0 || param_dim.PCC.G_c == 0
+        @warn "[ChooseCell] PCC.σ_max 或 PCC.G_c = 0; scale.σ_czm/δ_czm/G_czm/K_czm 无法锚定，CZM 归一化会产生 Inf/NaN。请补全集流体界面字段后再启用 opt.czm.enabled=true。"
     end
-    param_dim.scale.σ_czm = param_dim.cohesive.σ_max_pe_pcc  # PE-PCC 界面作为归一化锚点
+    param_dim.scale.σ_czm = param_dim.PCC.σ_max  # PE-PCC 界面（=PCC）作为归一化锚点
     # δ 锚点：断裂能定义的临界分离 δ_c = 2G_c/σ_max（双线性），使锚定界面 δ_c* ≡ 1。
     # 见 docs/planning-with-files/14_力学模块修改/宏观力学模块无量纲化重设计.md §2。
-    # cohesive 数据缺失时回退到 scale.L（保持非 CZM 参数集的旧行为，Λ = 1）。
-    if param_dim.cohesive.σ_max_pe_pcc > 0 && param_dim.cohesive.G_c_pe_pcc > 0
-        param_dim.scale.δ_czm = 2 * param_dim.cohesive.G_c_pe_pcc / param_dim.cohesive.σ_max_pe_pcc
+    # 界面数据缺失时回退到 scale.L（保持非 CZM 参数集的旧行为，Λ = 1）。
+    if param_dim.PCC.σ_max > 0 && param_dim.PCC.G_c > 0
+        param_dim.scale.δ_czm = 2 * param_dim.PCC.G_c / param_dim.PCC.σ_max
     else
         param_dim.scale.δ_czm = param_dim.scale.L
     end
@@ -427,7 +405,7 @@ function NormaliseParam(param_dim::Params)
     param.SP.lambda = param_dim.SP.lambda / param.scale.lambda
     param.SP.rho = param_dim.SP.rho / param.scale.rho
     param.SP.heat_Q = param_dim.SP.heat_Q * param.scale.rho * param.scale.L^3 * param.scale.T_ref / (param.scale.t0 * param.scale.phi * param.scale.I_typ)
-    # 力学模量归一化（统一到 scale.E_coat 供 compute_czm_params_per_interface 使用）
+    # 力学模量归一化（统一到 scale.E_coat，供 moduli_of/CZM bulk 装配直读）
     if param.scale.E_coat > 0
         param.SP.E = param_dim.SP.E / param.scale.E_coat
     else
@@ -498,40 +476,48 @@ function NormaliseParam(param_dim::Params)
     param.tab.area = param_dim.tab.area / param.scale.L^2
     param.tab.h = param_dim.tab.h * param_dim.scale.L / param_dim.cell.lambda_r
     
-    # cohesive zone model — per-interface 归一化
-    # PE-PCC 界面（电极涂层-正极集流体）
-    param.cohesive.σ_max_pe_pcc = param_dim.cohesive.σ_max_pe_pcc / param_dim.scale.σ_czm
-    param.cohesive.δ_0_pe_pcc = param_dim.cohesive.δ_0_pe_pcc / param_dim.scale.δ_czm
-    param.cohesive.δ_c_pe_pcc = param_dim.cohesive.δ_c_pe_pcc / param_dim.scale.δ_czm
-    param.cohesive.G_c_pe_pcc = param_dim.cohesive.G_c_pe_pcc / param_dim.scale.G_czm
-    param.cohesive.K_n_pe_pcc = param_dim.cohesive.K_n_pe_pcc / param_dim.scale.K_czm
-    param.cohesive.τ_max_pe_pcc = param_dim.cohesive.τ_max_pe_pcc / param_dim.scale.σ_czm
-    param.cohesive.δ_0_pe_pcc_t = param_dim.cohesive.δ_0_pe_pcc_t / param_dim.scale.δ_czm
-    param.cohesive.δ_c_pe_pcc_t = param_dim.cohesive.δ_c_pe_pcc_t / param_dim.scale.δ_czm
-    param.cohesive.G_c_pe_pcc_t = param_dim.cohesive.G_c_pe_pcc_t / param_dim.scale.G_czm
-    param.cohesive.K_t_pe_pcc = param_dim.cohesive.K_t_pe_pcc / param_dim.scale.K_czm
-    # NE-NCC 界面（电极涂层-负极集流体）
-    param.cohesive.σ_max_ne_ncc = param_dim.cohesive.σ_max_ne_ncc / param_dim.scale.σ_czm
-    param.cohesive.δ_0_ne_ncc = param_dim.cohesive.δ_0_ne_ncc / param_dim.scale.δ_czm
-    param.cohesive.δ_c_ne_ncc = param_dim.cohesive.δ_c_ne_ncc / param_dim.scale.δ_czm
-    param.cohesive.G_c_ne_ncc = param_dim.cohesive.G_c_ne_ncc / param_dim.scale.G_czm
-    param.cohesive.K_n_ne_ncc = param_dim.cohesive.K_n_ne_ncc / param_dim.scale.K_czm
-    param.cohesive.τ_max_ne_ncc = param_dim.cohesive.τ_max_ne_ncc / param_dim.scale.σ_czm
-    param.cohesive.δ_0_ne_ncc_t = param_dim.cohesive.δ_0_ne_ncc_t / param_dim.scale.δ_czm
-    param.cohesive.δ_c_ne_ncc_t = param_dim.cohesive.δ_c_ne_ncc_t / param_dim.scale.δ_czm
-    param.cohesive.G_c_ne_ncc_t = param_dim.cohesive.G_c_ne_ncc_t / param_dim.scale.G_czm
-    param.cohesive.K_t_ne_ncc = param_dim.cohesive.K_t_ne_ncc / param_dim.scale.K_czm
-    # 共用（无量纲 passthrough）
-    param.cohesive.czm_model = param_dim.cohesive.czm_model
-    param.cohesive.eta = param_dim.cohesive.eta
+    # CZM 界面字段归一化（PE-PCC 界面 = PCC，NE-NCC 界面 = NCC；2026-08-30 重构）
+    # PCC（PE-PCC 界面）
+    param.PCC.σ_max = param_dim.PCC.σ_max / param_dim.scale.σ_czm
+    param.PCC.τ_max = param_dim.PCC.τ_max / param_dim.scale.σ_czm
+    param.PCC.K_n = param_dim.PCC.K_n / param_dim.scale.K_czm
+    param.PCC.K_t = param_dim.PCC.K_t / param_dim.scale.K_czm
+    param.PCC.δ_0 = param_dim.PCC.δ_0 / param_dim.scale.δ_czm
+    param.PCC.δ_c = param_dim.PCC.δ_c / param_dim.scale.δ_czm
+    param.PCC.δ_0_t = param_dim.PCC.δ_0_t / param_dim.scale.δ_czm
+    param.PCC.δ_c_t = param_dim.PCC.δ_c_t / param_dim.scale.δ_czm
+    param.PCC.G_c = param_dim.PCC.G_c / param_dim.scale.G_czm
+    param.PCC.G_c_t = param_dim.PCC.G_c_t / param_dim.scale.G_czm
+    param.PCC.eta = param_dim.PCC.eta
+    param.PCC.h_c0 = param_dim.PCC.h_c0 * param_dim.scale.L / param_dim.scale.lambda
+    param.PCC.k_air = param_dim.PCC.k_air / param_dim.scale.lambda
+    param.PCC.lambda_m = param_dim.PCC.lambda_m / param_dim.scale.L
+    param.PCC.beta = param_dim.PCC.beta
+    param.PCC.threshold = param_dim.PCC.threshold / param_dim.scale.L
+    # NCC（NE-NCC 界面）
+    param.NCC.σ_max = param_dim.NCC.σ_max / param_dim.scale.σ_czm
+    param.NCC.τ_max = param_dim.NCC.τ_max / param_dim.scale.σ_czm
+    param.NCC.K_n = param_dim.NCC.K_n / param_dim.scale.K_czm
+    param.NCC.K_t = param_dim.NCC.K_t / param_dim.scale.K_czm
+    param.NCC.δ_0 = param_dim.NCC.δ_0 / param_dim.scale.δ_czm
+    param.NCC.δ_c = param_dim.NCC.δ_c / param_dim.scale.δ_czm
+    param.NCC.δ_0_t = param_dim.NCC.δ_0_t / param_dim.scale.δ_czm
+    param.NCC.δ_c_t = param_dim.NCC.δ_c_t / param_dim.scale.δ_czm
+    param.NCC.G_c = param_dim.NCC.G_c / param_dim.scale.G_czm
+    param.NCC.G_c_t = param_dim.NCC.G_c_t / param_dim.scale.G_czm
+    param.NCC.eta = param_dim.NCC.eta
+    param.NCC.h_c0 = param_dim.NCC.h_c0 * param_dim.scale.L / param_dim.scale.lambda
+    param.NCC.k_air = param_dim.NCC.k_air / param_dim.scale.lambda
+    param.NCC.lambda_m = param_dim.NCC.lambda_m / param_dim.scale.L
+    param.NCC.beta = param_dim.NCC.beta
+    param.NCC.threshold = param_dim.NCC.threshold / param_dim.scale.L
 
-    # interface thermal resistance parameters (dimensionless，沿用旧逻辑)
-    param.cohesive.h_c0 = param_dim.cohesive.h_c0 * param_dim.scale.L / param_dim.scale.lambda
-    param.cohesive.k_air = param_dim.cohesive.k_air / param_dim.scale.lambda
-    param.cohesive.lambda_m = param_dim.cohesive.lambda_m / param_dim.scale.L
-    param.cohesive.beta = param_dim.cohesive.beta
-    param.cohesive.threshold = param_dim.cohesive.threshold / param_dim.scale.L
-    
+    # K_0 下界判据（重设计 v2 §6）：δ_0* ≤ 0.1（即 K_0* ≥ 10），否则损伤起始点
+    # 贴近临界分离，本构在归一化空间不可分辨。
+    if param.PCC.δ_0 > 0.1 || param.NCC.δ_0 > 0.1
+        @warn "CZM 初始刚度过软：δ_0* > 0.1（PE-PCC=$(round(param.PCC.δ_0; sigdigits=3)), NE-NCC=$(round(param.NCC.δ_0; sigdigits=3))）。建议 K_0 ≥ 10·σ_max/δ_c。" maxlog=1
+    end
+
     return param
 end
 

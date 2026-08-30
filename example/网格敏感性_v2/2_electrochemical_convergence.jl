@@ -42,7 +42,7 @@ function run_echem_case(param_dim, Nn, Ns, Np)
 
     opt.per_element_spme = false
     opt.mechanicalmodel = "none"
-    opt.czm_enabled = false
+    opt.czm.enabled = false
 
     I1C = param_dim.cell.I1C
     opt.Current = x -> I1C

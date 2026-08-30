@@ -167,16 +167,17 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64)
     # 原代码：按 CZM 损伤状态 D 与分离 δ_n 调整界面传热系数 h_eff，修改 K 矩阵。
     # 禁用原因：CZM 损伤场与温度场双向耦合会让参数空间与收敛行为同时变化，
     #          难以独立验证 CZM 本构是否解决 δ_sim 过小问题。
-    # 恢复方式：取消本块注释（同时恢复 setup_thermal2D_mesh 的 use_merged 自动逻辑）。
+    # 恢复前提：恢复未合并热网格拓扑，启用本块，并重新验证双向耦合与收敛行为。
     # =========================================================================================
-    # if case.opt.czm_enabled
+    # if case.opt.czm.enabled
     #     czm_mesh = case.czm_mesh
     #     param = case.param
     #     for (elem_idx, czm_elem) in enumerate(czm_mesh.cohesive_elements)
-    #         state = czm_mesh.damage_states[elem_idx]
+    #         state = case.mech.damage_states[elem_idx]
     #         D = state.D
     #         δ_n = state.δ_max_n
-    #         h_eff_nd = compute_gap_conductance(D, δ_n, param.cohesive)
+    #         ip = collector_params(param, czm_elem.interface_type)
+    #         h_eff_nd = compute_gap_conductance(D, δ_n, ip, param)
     #         coeff = h_eff_nd * czm_elem.length
     #         n_bot = czm_elem.nodes_bottom
     #         n_top = czm_elem.nodes_top
@@ -391,7 +392,7 @@ function compute_heat_sources_with_czm(case::Case, variables::Dict,variables_ele
     # 先计算所有单元的热源
     variables = compute_heat_sources(case, variables, variables_elems, I_e, T_e, areas; per_element_spme=true)
 
-    active_elements = get_active_elements(czm_mesh, case.geometry)
+    active_elements = get_active_elements(czm_mesh, case.mech.damage_states, case.geometry)
     ne = length(variables["heat_source_fields"])
 
     # 创建活跃掩码

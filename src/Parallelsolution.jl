@@ -358,13 +358,13 @@ end
 function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, yt::Array{Float64}, t::Float64, I_total::Float64, areas::Vector{Float64}, Te_prev::Vector{Float64}, x_prev::Union{Nothing,Vector{Float64}}=nothing; deactivated_elements::Union{Nothing,Vector{Int64}}=nothing, D_elem::Union{Nothing,Vector{Float64}}=nothing)
 	ne = length(areas)
 	# 渐进式有效面积损失：损伤调制权重
-	if case.opt.czm_area_loss_enabled && D_elem !== nothing
-		A_eff = areas .* effective_area_factor.(D_elem, case.opt.czm_area_loss_threshold)
+	if case.opt.czm.area_loss_enabled && D_elem !== nothing
+		A_eff = areas .* effective_area_factor.(D_elem, case.opt.czm.area_loss_threshold)
 		w = A_eff ./ sum(A_eff)
 		# 调试：输出面积损失权重变化
-		loss_idx = findall(d -> d > case.opt.czm_area_loss_threshold, D_elem)
+		loss_idx = findall(d -> d > case.opt.czm.area_loss_threshold, D_elem)
 		if !isempty(loss_idx) && case.opt.debug_coupling
-			factors = effective_area_factor.(D_elem[loss_idx], case.opt.czm_area_loss_threshold)
+			factors = effective_area_factor.(D_elem[loss_idx], case.opt.czm.area_loss_threshold)
 			println("  [AreaLoss][Weight] 超阈值=$(length(loss_idx))单元 | D=$(round.(D_elem[loss_idx], digits=3)) | factor=$(round.(factors, digits=4)) | w∈[$(round(minimum(w), digits=4)), $(round(maximum(w), digits=4))]")
 		end
 	else

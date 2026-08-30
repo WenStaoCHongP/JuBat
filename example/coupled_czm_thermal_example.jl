@@ -53,32 +53,32 @@ opt.cool_method = "tab"
 opt.per_element_spme = true
 
 # CZM选项
-opt.czm_enabled = true
-opt.czm_model = "model1"              # 只考虑法向脱粘
-opt.czm_update_interval = 1             # 每步更新损伤
-opt.czm_soh_threshold = 0.8             # SOH终止阈值 80%
-opt.czm_inner_exit_only = true          # 仅内圈单元在断裂时退出
-opt.czm_fix_inner = false               # 力学边界：内圈自由，外圈固定
-opt.czm_iter_method = "basic"     # 使用弧长法处理后峰软化（配合粘性正则化）
-opt.czm_load_steps = 10                 # 载荷子步数
+opt.czm.enabled = true
+opt.czm.model = "model1"              # 只考虑法向脱粘
+opt.czm.update_interval = 1             # 每步更新损伤
+opt.czm.soh_threshold = 0.8             # SOH终止阈值 80%
+opt.czm.inner_exit_only = true          # 仅内圈单元在断裂时退出
+opt.czm.fix_inner = false               # 力学边界：内圈自由，外圈固定
+opt.czm.iter_method = "basic"     # 使用弧长法处理后峰软化（配合粘性正则化）
+opt.czm.load_steps = 10                 # 载荷子步数
 opt.debug_coupling = false               # 打印 CZM 每步诊断
-opt.czm_area_loss_enabled = false        # 启用渐进式有效面积损失
-opt.czm_area_loss_threshold = 0.83      # 面积开始缩减的 D 阈值
+opt.czm.area_loss_enabled = false        # 启用渐进式有效面积损失
+opt.czm.area_loss_threshold = 0.83      # 面积开始缩减的 D 阈值
 # 粘性正则化（推荐配合 load_substep 或 arc_length 使用）
-opt.czm_viscous_enabled = false         # 关闭粘性正则化（回归测试）
-opt.czm_visc_tau = 0                  # 松弛时间
+opt.czm.viscous_enabled = false         # 关闭粘性正则化（回归测试）
+opt.czm.viscous_tau = 0                  # 松弛时间
 
 println("  CZM选项:")
-println("    czm_enabled = $(opt.czm_enabled)")
-println("    czm_model = $(opt.czm_model)")
-println("    czm_soh_threshold = $(opt.czm_soh_threshold)")
-println("    czm_iter_method = $(opt.czm_iter_method)")
-println("    czm_viscous_enabled = $(opt.czm_viscous_enabled)")
-println("    czm_fix_inner = $(opt.czm_fix_inner) (边界条件: 内圈$(opt.czm_fix_inner ? "固定" : "自由"), 外圈固定)")
-println("    czm_area_loss_enabled = $(opt.czm_area_loss_enabled)")
-println("    czm_area_loss_threshold = $(opt.czm_area_loss_threshold)")
-if opt.czm_viscous_enabled
-    println("    czm_visc_tau = $(opt.czm_visc_tau) s")
+println("    czm_enabled = $(opt.czm.enabled)")
+println("    czm_model = $(opt.czm.model)")
+println("    czm_soh_threshold = $(opt.czm.soh_threshold)")
+println("    czm_iter_method = $(opt.czm.iter_method)")
+println("    czm_viscous_enabled = $(opt.czm.viscous_enabled)")
+println("    czm_fix_inner = $(opt.czm.fix_inner) (边界条件: 内圈$(opt.czm.fix_inner ? "固定" : "自由"), 外圈固定)")
+println("    czm_area_loss_enabled = $(opt.czm.area_loss_enabled)")
+println("    czm_area_loss_threshold = $(opt.czm.area_loss_threshold)")
+if opt.czm.viscous_enabled
+    println("    czm_visc_tau = $(opt.czm.viscous_tau) s")
 end
 
 # ========================================================================
@@ -114,6 +114,8 @@ mesh_th = case.mesh["thermal2D"]
 println("\n[5] 创建CZM网格...")
 
 czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th, case.param)
+case.czm_mesh = czm_mesh
+case.mech = JuBat.MechState(czm_mesh)
 
 println("  内聚力单元数: $(czm_mesh.n_cohesive)")
 println("  层数: $(czm_mesh.n_layers)")
@@ -148,7 +150,7 @@ println("  充电电流: $(cycle_opt.I_charge)A")
 # ========================================================================
 println("\n[7] 运行循环仿真...")
 
-result = JuBat.solve_cycling(case, cycle_opt, czm_mesh; verbose=true, save_detailed=true)
+result = JuBat.solve_cycling(case, cycle_opt, case.mech; verbose=true, save_detailed=true)
 
 # ========================================================================
 # 7.5. CSV 导出
@@ -237,11 +239,10 @@ println("  结果图已保存到: $(joinpath(output_dir, "coupled_czm_thermal_re
 # ========================================================================
 println("\n[9] 间隙导热分析...")
 
-# 计算所有内聚力单元的有效换热系数（按界面类型取 per-interface 参数）
-czm_param_cache = case.czm_param_cache !== nothing ? case.czm_param_cache :
-    JuBat.compute_czm_params_per_interface(case)
-h_eff_all = [JuBat.compute_element_gap_conductance(czm_mesh, i,
-    czm_param_cache.by_interface[czm_mesh.cohesive_elements[i].interface_type])
+# 计算所有内聚力单元的有效换热系数（界面参数直读 param.PCC/NCC，2026-08-30 重构）
+h_eff_all = [JuBat.compute_element_gap_conductance(case.mech.damage_states, i,
+    JuBat.collector_params(case.param, czm_mesh.cohesive_elements[i].interface_type),
+    case.param)
     for i in 1:czm_mesh.n_cohesive]
 
 println("  有效换热系数统计:")
@@ -250,7 +251,7 @@ println("    最大值: $(maximum(h_eff_all)) W/(m^2 K)")
 println("    平均值: $(mean(h_eff_all)) W/(m^2 K)")
 
 # 断裂单元
-fractured = JuBat.get_fractured_elements(czm_mesh)
+fractured = JuBat.get_fractured_elements(case.mech.damage_states)
 println("  断裂单元数: $(length(fractured))")
 
 # 活跃热单元

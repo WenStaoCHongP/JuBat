@@ -46,8 +46,7 @@ export Mesh1D, Mesh2D, GetGS, LagrangeBasis, GSweight, ShapeFunction1D, Normalis
 export SPM, Solve, SPMe, SPMe_element, ModelInitialisation
 export ModelInitialisation_MultiSPMe, extract_element_state, get_thermal_dofs
 export update_state
-export MultiSPMeLayout, MeshGeometry, CohesiveElementGeom, CZMAssemblyCache, CZMAssemblyWorkspace
-export CzmInterfaceParams, CzmParamCache
+export MultiSPMeLayout, MeshGeometry, CohesiveElementGeom, CZMAssemblyWorkspace
 export Arrhenius, IntV, IntQ4
 export jellyroll_collector_seed_mesh, jellyroll_element_properties
 export jellyroll_tab_node_indices, edge_boundary
@@ -61,7 +60,6 @@ export ThermalPolar2D_Ring
 export identify_boundary_nodes, apply_convection_bc, apply_cool_method
 export compute_heat_sources, compute_heat_sources_with_czm, solve_branch_currents
 export thermal_diffusion_stress_2D
-export compute_czm_params_per_interface
 # CZM exports
 export CohesiveElement, CohesiveMesh, DamageState, CZMResult
 export CzmSubmesh
@@ -71,8 +69,8 @@ export assemble_czm_system, assemble_coupled_system, assemble_bulk_stiffness
 export assemble_thermal_chemical_load, assemble_coupled_system_full
 export apply_bc_czm, identify_bc_nodes_czm
 export newton_raphson_czm, solve_czm_step, solve_czm_basic_step, solve_czm_arc_length_step
-export build_czm_cache, ensure_czm_cache
-export get_damage_statistics, check_fracture_criterion, reset_damage_states, accumulate_cycle_damage
+export collector_params, bulk_stiffness, cohesive_geometry, assembly_workspace
+export get_damage_statistics, check_fracture_criterion, reset_damage_states!, accumulate_cycle_damage!
 export czm_output_to_variables
 # CZM gap conductance exports
 export compute_gap_conductance, compute_element_gap_conductance

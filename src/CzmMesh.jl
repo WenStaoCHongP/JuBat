@@ -153,9 +153,7 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)
     # 裁剪 extended_node
     extended_node = extended_node[1:new_node_count, :]
 
-    # Step 4: 组装 CohesiveMesh
-    damage_states = [DamageState() for _ in 1:n_cohesive]
-
+    # Step 4: 组装 CohesiveMesh（损伤状态自 2026-08-30 重构起存于 MechState，不在网格上）
     czm_mesh = CohesiveMesh()
     czm_mesh.bulk_mesh = sub_mesh
     czm_mesh.node = extended_node
@@ -166,7 +164,6 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)
     czm_mesh.n_layers = 2   # 遗留字段：N_type^coh=2；真实面数/重复单元=4，总离散数=4*n_segments
     czm_mesh.node_map = Dict(n => [n, c] for (n, c) in node_copy)
     czm_mesh.interface_nodes = [[]]   # 旧字段，保留兼容
-    czm_mesh.damage_states = damage_states
     czm_mesh.czm_submesh = czm_submesh
     czm_mesh.cohesive_to_thermal = cohesive_to_thermal
 

@@ -22,3 +22,22 @@ COUPLE_EXAMPLE_OUTPUT:
 output/couple_example/final_temperature_field.png	210436	2026-08-30T17:28:54+0800	540fe42f1039cb4446046a6da96f1ecf18d162b643bc40a40a099ca2b93f978c	(unchanged)
 output/couple_example/final_hoop_stress_field.png	295117	2026-08-30T17:28:55+0800	9726a7c84cf59a932a2cf45346770c6c046a6a81a7ca36f951714339e558050d
 output/couple_example/final_tangential_shear_stress_field.png	264362	2026-08-30T17:28:56+0800	b3b43d7cee67ed2a6fca33e0fcffee899629b84998852ba05aeb08fdaa105445
+# ----------------------------------------------------------------------
+# 2026-08-30 四层力学结构体重构追加记录（用户指令：不重跑，直接以最后一次运行结果归档）
+# ----------------------------------------------------------------------
+BATCH=four-layer mechanics struct refactor (spec 2026-08-30-mechanics-struct-refactor-design.md)
+BATCH_VERIFICATION_REFERENCE=parent commit 66c718e (user-selected option A)
+BATCH_HEAD=e78604fd3b0b7563a3511129eccee84042f64cdd (refactor uncommitted on top)
+BATCH_SCRIPT_SHA256=704d55363f823313fd45c4ec98c1fd37d2258c15e47bdaac075f6ac3a2f029c6
+BATCH_COUPLE_EXAMPLE_SHA256=a6005e3b5e6274fd5a4b7e72ebfe1a63017c78824343f8d6dc3d161cf90f0fab
+BATCH_SOURCE_MANIFEST_TSV_SHA256=4865ba0e04568f41f8c6a4e518d55d3eae64f9a90236c63c3405328ab564cc84
+BATCH_SOURCE_MANIFEST_FILE_SHA256=c6bb7eac278fe85c78d4c72fe3c3cdb9ee99b981f7eb04d6dad9acf5d912271d
+BATCH_SOURCE_FILE_COUNT=46
+BATCH_EVIDENCE:
+A/B single-step probe vs 66c718e: bit-identical at 17 significant digits;
+full testexample: all printed metrics identical (9.6486e-13 m, -1.3954~3.8603 MPa,
+-0.3743~0.3955 MPa, exit 0); three PNG hashes identical to v8 (user-verified);
+full test suite 32/32 (8m04s); mid-arc gates green x2; incidental production fix:
+bilinear_tangent mixed-mode branch 4 bare K_n/K_t (model2 crash) caught by tests
+BATCH_BASELINE_ACTION:
+values unchanged -> v8 baseline retained; source manifest and script hashes refreshed

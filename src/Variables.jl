@@ -124,7 +124,7 @@ function StandardVariables(case::Case, num::Int64)
         variables["thermal2D margin_to_cutoff"] = zeros(Float64, 1, num)
         variables["total heat source"] = zeros(Float64, 1, num)
     end
-    if case.opt.czm_enabled == true
+    if case.opt.czm.enabled == true
         variables["negative electrode cohesive zone damage"] = zeros(Float64, Nn, num)
         variables["positive electrode cohesive zone damage"] = zeros(Float64, Np, num)
         variables["czm D_max"] = zeros(Float64, 1, num)
@@ -132,7 +132,7 @@ function StandardVariables(case::Case, num::Int64)
         variables["czm δ_max_n"] = zeros(Float64, 1, num)
         variables["czm δ_mean_n"] = zeros(Float64, 1, num)
         variables["czm n_fractured"] = zeros(Float64, 1, num)
-        if case.opt.czm_winding_prestress
+        if case.opt.czm.winding_prestress
             variables["winding prestress"] = zeros(Float64, 1, num)
         end
         if case.czm_mesh !== nothing
@@ -145,7 +145,7 @@ function StandardVariables(case::Case, num::Int64)
             variables["czm traction tangent"] = zeros(Float64, n_coh, num)
             variables["czm separation normal"] = zeros(Float64, n_coh, num)
             variables["czm separation tangent"] = zeros(Float64, n_coh, num)
-            if !(case.opt.czm_geo_nonlinear || case.opt.czm_j2_plasticity || case.opt.czm_winding_prestress)
+            if !(case.opt.czm.geo_nonlinear || case.opt.czm.j2_plasticity || case.opt.czm.winding_prestress)
                 ne_czm = size(case.czm_mesh.bulk_element, 1)
                 variables["diffusion stress xx"] = zeros(Float64, ne_czm, num)
                 variables["diffusion stress yy"] = zeros(Float64, ne_czm, num)
@@ -231,7 +231,7 @@ function create_element_workspace(case::Case)
     end
 
     # ── CZM 键（条件）──
-    if case.opt.czm_enabled
+    if case.opt.czm.enabled
         ws["negative electrode cohesive zone damage"] = zeros(Float64, Nn, 1)
         ws["positive electrode cohesive zone damage"] = zeros(Float64, Np, 1)
         ws["czm D_max"] = 0.0

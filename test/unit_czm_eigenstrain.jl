@@ -101,37 +101,44 @@ end
     case = JuBat.SetCase(param_dim, opt)
     param = case.param
     czm_mesh, meta = JuBat.create_unit_czm_strip(param; y0=1.0)
-    cache = JuBat.compute_czm_params_per_interface(case)
+    param = case.param
     # Δsoc=0.8 + E_coat=500MPa：体太软，原 σ_max 下 δ/δ0≪1。
     # 调整：降低 σ_max（更易起裂），并设定 δc/δ0（控制软化陡峭度，利于收敛）。
     # 物理对应：NE 界面 σ_max ≈ 0.1×92 MPa ≈ 9 MPa；δc 不变则 G_c 同比下降。
-    function retune_czm_for_damage!(cache; σ_scale::Float64, δc_over_δ0::Float64)
-        for key in (:PE_PCC, :NE_NCC)
-            ip = cache.by_interface[key]
-            σ = ip.σ_max * σ_scale
-            τ = ip.τ_max * σ_scale
-            δc = ip.δ_c_n
-            δ0 = δc / δc_over_δ0
-            Kn = σ / δ0
-            δc_t = ip.δ_c_t
-            δ0_t = δc_t / δc_over_δ0
-            Kt = τ / δ0_t
-            cache.by_interface[key] = JuBat.CzmInterfaceParams(
-                E_eff=ip.E_eff, ν=ip.ν, α=ip.α, Λ=ip.Λ,
-                E_star=ip.E_star, L_ch=ip.L_ch,
-                σ_max=σ, K_n=Kn, δ_0_n=δ0, δ_c_n=δc, G_c=0.5 * σ * δc,
-                τ_max=τ, K_t=Kt, δ_0_t=δ0_t, δ_c_t=δc_t, G_c_t=0.5 * τ * δc_t,
-                η=ip.η, czm_model=ip.czm_model,
-                h_c0=ip.h_c0, k_air=ip.k_air, lambda_m=ip.lambda_m,
-                beta=ip.beta, threshold=ip.threshold,
-            )
-        end
+    # 测试内调谐归一化 param 实例（生产路径参数冻结契约不适用于测试调参）
+    function retune_czm_for_damage!(param; σ_scale::Float64, δc_over_δ0::Float64)
+        # PCC（PE-PCC 界面）
+        σ_pcc = param.PCC.σ_max * σ_scale
+        τ_pcc = param.PCC.τ_max * σ_scale
+        δ0_pcc = param.PCC.δ_c / δc_over_δ0
+        δ0_pcc_t = param.PCC.δ_c_t / δc_over_δ0
+        param.PCC.σ_max = σ_pcc
+        param.PCC.K_n = σ_pcc / δ0_pcc
+        param.PCC.δ_0 = δ0_pcc
+        param.PCC.G_c = 0.5 * σ_pcc * param.PCC.δ_c
+        param.PCC.τ_max = τ_pcc
+        param.PCC.K_t = τ_pcc / δ0_pcc_t
+        param.PCC.δ_0_t = δ0_pcc_t
+        param.PCC.G_c_t = 0.5 * τ_pcc * param.PCC.δ_c_t
+        # NCC（NE-NCC 界面）
+        σ_ncc = param.NCC.σ_max * σ_scale
+        τ_ncc = param.NCC.τ_max * σ_scale
+        δ0_ncc = param.NCC.δ_c / δc_over_δ0
+        δ0_ncc_t = param.NCC.δ_c_t / δc_over_δ0
+        param.NCC.σ_max = σ_ncc
+        param.NCC.K_n = σ_ncc / δ0_ncc
+        param.NCC.δ_0 = δ0_ncc
+        param.NCC.G_c = 0.5 * σ_ncc * param.NCC.δ_c
+        param.NCC.τ_max = τ_ncc
+        param.NCC.K_t = τ_ncc / δ0_ncc_t
+        param.NCC.δ_0_t = δ0_ncc_t
+        param.NCC.G_c_t = 0.5 * τ_ncc * param.NCC.δ_c_t
     end
     σ_scale = 0.10
     δc_over_δ0 = 50.0
-    retune_czm_for_damage!(cache; σ_scale=σ_scale, δc_over_δ0=δc_over_δ0)
+    retune_czm_for_damage!(param; σ_scale=σ_scale, δc_over_δ0=δc_over_δ0)
 
-    czm_mesh.damage_states = [JuBat.DamageState() for _ in 1:4]
+    ms = JuBat.MechState(czm_mesh)
 
     α_pe = param.PE.alphaT
     α_ne = param.NE.alphaT
@@ -148,8 +155,8 @@ end
     n_steps = 40
     n_hold = 10
     u = zeros(2 * czm_mesh.nnode)
-    δ0_pe = cache.by_interface[:PE_PCC].δ_0_n
-    δ0_ne = cache.by_interface[:NE_NCC].δ_0_n
+    δ0_pe = param.PCC.δ_0
+    δ0_ne = param.NCC.δ_0
     δ_abs_max_over_steps = 0.0
     D_max_last = 0.0
     u_pe1_bot_last = 0.0
@@ -160,7 +167,7 @@ end
     @printf("[eigenstrain] BC: fix PCC+NCC+top (uy=0); all nodes ux=0\n")
     @printf("[eigenstrain] E_coat PE/NE = 500 MPa; Δsoc=%.2f\n", Δsoc_frac)
     @printf("[eigenstrain] CZM retune: σ_max×%.2f, δc/δ0=%.0f  (σ*_NE=%.3e, δ0_NE=%.3e)\n",
-            σ_scale, δc_over_δ0, cache.by_interface[:NE_NCC].σ_max, δ0_ne)
+            σ_scale, δc_over_δ0, param.NCC.σ_max, δ0_ne)
     @printf("[eigenstrain] load: ΔT=%.1f K (ΔT*=%.6f)\n", ΔT_phys, ΔT_end)
 
     function bc_fix_collectors_top_all_ux(meta, nnode)
@@ -193,15 +200,16 @@ end
         end
 
         F_tc = JuBat.assemble_thermal_chemical_load(
-            czm_mesh, cache, dT, Δsoc_n, Δsoc_p)
+            czm_mesh, param, dT, Δsoc_n, Δsoc_p)
         bc_dofs, bc_vals = bc_fix_collectors_top_all_ux(meta, czm_mesh.nnode)
-        u, seps, tracts, ok, Rn = unit_czm_newton_step!(
-            czm_mesh, u, cache; bc_dofs=bc_dofs, bc_vals=bc_vals,
-            F_thermo_chem=F_tc, max_iter=200, tol=1e-7, visc_beta=0.3)
+        u, seps, tracts, ok, Rn, states_out = unit_czm_newton_step!(
+            czm_mesh, u, param, ms.damage_states; bc_dofs=bc_dofs, bc_vals=bc_vals,
+            F_thermo_chem=F_tc, max_iter=200, tol=1e-7, visc_beta=0.3, czm_model="model1")
+        ok && (ms.damage_states = states_out)   # 收敛提交到 ms（跨步累积）
         if !ok
             @printf("[eigenstrain] FAIL step %d/%d frac=%.3f Rn=%.3e Dmax=%.3e\n",
                     s, total_steps, frac, Rn,
-                    maximum(st.D for st in czm_mesh.damage_states))
+                    maximum(st.D for st in ms.damage_states))
         end
         @test ok
 
@@ -214,7 +222,7 @@ end
         for i in 1:4
             δ_abs_max_over_steps = max(δ_abs_max_over_steps, abs(seps[i][1]))
         end
-        D_max_last = maximum(st.D for st in czm_mesh.damage_states)
+        D_max_last = maximum(st.D for st in ms.damage_states)
         u_pe1_bot_last = u_pe1_bot
         u_pe1_ana_last = u_pe1_ana
         seps_last = seps
@@ -258,7 +266,7 @@ end
                 Tn, _ = tracts[i]
                 @printf("  coh%d %-7s  δ_n=%.6e  δ/δ0=%.4e  T_n=%.6e  D=%.6e\n",
                         i, iface, seps[i][1], seps[i][1] / δ0_i, Tn,
-                        czm_mesh.damage_states[i].D)
+                        ms.damage_states[i].D)
             end
             @printf("[eigenstrain] D: max=%.6e\n", D_max_last)
             @test u_pcc < 1e-10
@@ -274,7 +282,7 @@ end
     @test abs(u_pe1_ana_last) > 1e-10
     @test u_pe1_bot_last ≈ u_pe1_ana_last rtol=0.35 atol=1e-10
     @test D_max_last > 0.0
-    @test any(czm_mesh.damage_states[i].D > 0 && seps_last[i][1] > 0 for i in 1:4)
+    @test any(ms.damage_states[i].D > 0 && seps_last[i][1] > 0 for i in 1:4)
 
     out_dir = joinpath(@__DIR__, "../output", "unit_czm_eigenstrain")
     out_png = joinpath(out_dir, "unit_czm_eigenstrain_deformed.png")

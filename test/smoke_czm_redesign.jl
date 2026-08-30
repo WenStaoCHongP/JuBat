@@ -25,16 +25,17 @@ opt.thermalmodel = "distributed2D"
 opt.thermal_dim = "2D"
 opt.cool_method = "surface"
 opt.per_element_spme = true
-opt.czm_enabled = true
-opt.czm_fix_inner = false
-opt.czm_iter_method = "basic"
-opt.czm_load_steps = 10
-opt.czm_tol = 1e-3
+opt.czm.enabled = true
+opt.czm.fix_inner = false
+opt.czm.iter_method = "basic"
+opt.czm.load_steps = 10
+opt.czm.tol = 1e-3
 
 case = JuBat.SetCase(param_dim, opt)
 mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=60, czm_enabled=true, gsorder=2)
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
+case.mech = JuBat.MechState(case.czm_mesh)
 
 result = JuBat.Solve(case)
 

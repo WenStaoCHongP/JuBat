@@ -1,0 +1,52 @@
+# 调研记录
+
+- 已读取 `planning-with-files` 技能；本任务必须维护 `task_plan.md`、`findings.md`、`progress.md`，并在阶段间更新。
+- 按项目 `AGENTS.md`，规划文件位于 `docs/planning-with-files/<中文任务名>/`，最终需同步 `docs/planning-with-files/index.md`。
+- 记忆注册表按 `mechanics struct`、`Task 10`、`CzmOptions`、`MechState`、`参数冻结` 检索无命中，因此 Task 10 的当前计划文件与工作区代码将作为事实来源。
+- 主计划明确：Task 2–8 是已完成的连续 break-fix 弧，Task 9 是全量验证门，Task 10 是文档阶段；用户仅授权完成 Task 10。
+- 工作区包含大量已修改的 `src/`、`test/`、`example/`、`md/`、基线与输出文件，且主计划/设计 spec 仍未跟踪。这些均视为前序任务或用户工作，不能整体重写、回退或清理。
+- 首次并行读取主计划、索引和状态时，合并输出因主计划较长被截断；已记录为读取方式问题，下一步按 Task 标题定位并读取 Task 10 精确区间。
+- Task 10 的文档范围是：`AGENTS.md` §5.3/§9.4、`md/01`、`md/06`、`md/07`、`md/15`、`md/对照/06_CZM对照.md`、七篇源码函数索引（czm/CzmSolve/CouplingState/CzmMesh/Mechanical/SetParams/Option），以及 `src/parameters/Jellyroll.jl` 顶部注释（仅在仍提及 cohesive 块时）。
+- Task 10 的核心文档语义必须同时覆盖：界面属性挂 `CurrentCollector`；`SetCase` 后参数冻结；装配缓存随 `CohesiveMesh`；演化状态归 `MechState`；`Λ = scale.L / scale.δ_czm` 在消费处内联。
+- Task 10 的提交步骤需要用户逐次授权。当前请求“完成 task10”足以授权文档修改，但不把计划文档中的 commit 命令本身视为用户直接授权；先完成并验证文档，提交另行处理。
+- 设计 spec §4–§6 已核对：PCC 对应 `:PE_PCC`、NCC 对应 `:NE_NCC`；BC 每次求解入口现算；缓存以 mesh 对象身份失效；失败不得修改 `MechState`；`visc_beta` 从 `opt.czm.viscous_tau` 计算。
+- 源码函数索引中的装配文档实际文件名为 `Czm.md`（首字母大写），Task 10 所称“czm 七篇”对应 `Czm.md` 加另外六篇。
+- 残留扫描显示 Task 10 尚未完成：`AGENTS.md` 快速示例仍用 `opt.czm_enabled`；`md/07` 仍以 `Cohesive/CzmInterfaceParams/case.czm_param_cache/czm_mesh.damage_states` 为现行接口；`md/对照/06` 和 `Czm.md`、`CzmSolve.md`、`CouplingState.md`、`Mechanical.md`、`SetParams.md`、`Option.md` 多处仍描述已删除符号。
+- `md/01`、`md/06`、`md/15` 与 `AGENTS.md` 已有部分前序 Task 10 编辑，必须增量修正，不能覆盖这些现有改动。
+- 目标文档中仅 `AGENTS.md`、`md/01`、`md/06`、`md/07`、`md/15` 和 `Jellyroll.jl` 当前有 diff；对照文档与七篇源码索引尚未修改。
+- 当前源码定义锚点：`CzmOptions` 在 `Option.jl:35`，`CurrentCollector` 在 `SetParams.jl:86`，`MechState` 在 `CouplingState.jl:201`，`solve_czm_step` 在 `CzmSolve.jl:943`，装配缓存访问器 `bulk_stiffness/cohesive_geometry/assembly_workspace` 在 `czm.jl:843/853/863`。
+- `CohesiveMesh` 实际定义在 `SetMesh.jl:59`，`CzmMesh.jl` 负责构造；其 `K_bulk/cohesive_geom/ws` 字段在 `SetMesh.jl:71-73`，文档需明确跨文件定义边界。
+- 七篇源码索引存在大面积行号和接口漂移：`Czm.md` 仍列已删除缓存构建器；`CzmSolve.md` 仍列 mesh 克隆与双返回值；`CouplingState.md` 仍列三种已删除缓存/布局类型；`Mechanical.md` 仍用平铺选项和 `case.czm_layout`；`SetParams.md` 仍计入 `Cohesive`；`Option.md` 尚未分离 `CzmOptions`。
+- `AGENTS.md` §5.3 与 §9.4 已基本正确；需把快速示例和 §9.3 的 `czm_enabled` 改为 `opt.czm.enabled`（网格生成关键字 `czm_enabled` 仍保留）。
+- `md/01` §7.4 已是新参数结构，但 §9 代码映射仍声称 `Cohesive` 存在，需修正为 `CurrentCollector`。
+- `md/07` 仅局部插入一句新架构说明，前后仍以旧参数缓存为主。必须重写参数存储、辅助接口、使用示例与损伤状态来源，并保留“界面热阻装配当前禁用”的既有能力边界。
+- 当前间隙导热接口是 `compute_gap_conductance(D, δ_n, ip::CurrentCollector, param)`、`compute_element_gap_conductance(damage_states, elem_idx, ip, param)`、`compute_all_gap_conductances(damage_states, ip, param)`；批量函数不接 `czm_mesh`。
+- `src/parameters/Jellyroll.jl` 仅顶部参数块标题仍写 “Cohesive zone model parameters”；字段本身已经迁到 `PCC/NCC`，应把标题改为集流体承载的 CZM 界面参数，保留参数数值与 TODO 不动。
+- `md/对照/06_CZM对照.md` 约 47 KB，旧结构引用密集；需要基于当前实现重写与 Task 10 相关的映射/锚点/缓存/状态条目，而不是机械保留已删除源码行号。
+- `collector_params`、三种间隙导热函数均由 `JuBat.jl` 导出，因此 `md/07` 的诊断示例可直接按每个 cohesive element 的 `interface_type` 分派 `PCC/NCC`。
+- `Czm.jl` 当前 866 行、无 struct，共 15 个函数；旧索引的 `DamageState` 已迁出，`build_czm_cache/ensure_czm_cache` 已删除，新增 `collector_params` 与三个 mesh 缓存访问器。
+- `CzmSolve.jl` 当前 989 行；统一入口签名是 `solve_czm_step(czm_mesh, ms, param, F_ext, czm_opt; ...) -> CZMResult`。basic/load-substep/arc-length 都从 `ms` 克隆试探状态，只在收敛后提交 `ms.damage_states/ms.u_prev`；BC 每次入口现算。
+- `solve_czm_step` 从 `CzmOptions` 展开模型、容差、载荷步、弧长、粘性、BC 和非线性开关；粘性 `visc_beta = delta_s / (tau_visc/t0 + delta_s)`，不再从材料参数读取。
+- `CouplingState.jl` 当前保留 8 个状态/几何结构：`MultiSPMeLayout`、`BoundaryEdgeCache`、`MeshGeometry`、`CohesiveElementGeom`、`CZMAssemblyWorkspace`、`DamageState`、`MechState`、`CZMSnapshot`；旧三种参数/缓存/布局结构全部不存在。
+- `MechState` 字段为 `u_prev/damage_states/plastic_states/winding_prestress/node_ref/contact`；`update_czm_damage!` 直接把 `case.czm_mesh/case.mech/case.param/case.opt.czm` 送入统一入口并对非有限或不收敛结果硬失败。
+- `CouplingState.jl` 的 `update_czm_damage!` docstring 仍写 `case.param.cohesive` 和 `czm_layout`，属于源内文档残留；Task 10 应一并更正，代码行为不变。
+- `CzmMesh.jl` 当前 178 行，构造 `CohesiveMesh` 时不再初始化损伤；只设置拓扑/映射，三个缓存字段由 `CohesiveMesh()` 保持 `nothing`，随后由访问器惰性建立。旧索引的“初始化 DamageState”错误。
+- `Mechanical.jl` 当前 339 行、7 个函数；新增 `compute_macro_stress` 与 `write_macro_stress!`。耦合路径使用 `case.opt.czm.enabled` 和 `case.mech.u_prev`，固体工具使用 `case.opt.czm.fix_inner`，且已移除零位移失败回退。
+- `CohesiveMesh`/`CzmSubmesh` 定义在 `SetMesh.jl`；`CzmMesh.md` 需记录这一跨文件边界和 `K_bulk/cohesive_geom/ws` 字段，避免误称 mesh 持有损伤。
+- `SetParams.jl` 当前 9 个参数 struct + 2 个函数；`CurrentCollector` 已含连续层、塑性、16 个界面本构/热阻字段，`Params` 不再含 `cohesive`。旧索引仍按 10 struct 描述，需重写。
+- `ChooseCell` 以 `PCC.σ_max/G_c` 锚定 `scale.σ_czm/δ_czm/G_czm/K_czm`；`NormaliseParam` 把 PCC/NCC 界面字段分别归一化并保留两份 eta/热阻字段。
+- `SetParams.jl` 源内仍有少量旧注释（如“供 compute_czm_params_per_interface 使用”、旧后缀锚点名），应在 Task 10 作为注释同步修正，不动数值逻辑。
+- `md/对照/06_CZM对照.md` 是 2026-08-02 生成的 500+ 行快照，当前仍把 `DamageState` 放在 czm.jl、把参数/装配缓存和 `CzmLayout` 当作现行实现，并且末尾函数边界与一致性统计整体失效。
+- 对照文档逐行修补会保留大量互相矛盾的历史断言。Task 10 采用紧凑的当前实现对照表重写：保留理论-实现关系、字段迁移、接口/状态/缓存契约与能力边界，不再维护脆弱的全文件行号统计。
+- 重写后的残留扫描仅命中“已删除/旧位置”历史说明，未发现目标文档仍把旧缓存或平铺选项当作现行接口。
+- `md/15` 仍有三处实质性旧描述：`scale.σ_czm` 仍指向旧 `cohesive.*`；历史段把已删除参数缓存描述为现行演进终点；防御机制仍列已删除的 `compute_czm_params_per_interface`。
+- 当前 `moduli_of` 没有显式 E_coat 有限/正值判断；`ChooseCell` 会告警，PE/NE 归一化会让缺失尺度显式产生非法值，`thermal_diffusion_stress_2D` 有入口断言，耦合路径最终有非有限结果硬门。AGENTS 中“moduli_of 入口拦截”的文字高于当前源码事实，需按 Task 10 文档同步修正，不能把不存在的检查写成已实现。
+- 源内注释残留：`czm.jl` 仍提已删除 `CzmInterfaceParams.E_eff`，`CouplingState.jl` include-order 注释仍提 `ensure_czm_cache`；均可作为文档注释更正，不改变运行行为。
+- Markdown 围栏检查通过（13 个目标文档均为偶数围栏）。首次全工作区 `git diff --check` 发现 Task 10 新文档自身 2 处行尾双空格与 7 个末尾空行；同时还暴露多处前序脏树已有空白错误，不能越界批量格式化。
+- Task 10 路径级 `git diff --check` 已通过（仅 Git 的 LF→CRLF 提示）。
+- 全 `src/*.jl` 旧符号扫描仅余 `CouplingState` 中明确的历史迁移注释，以及 `ThermalDistributed.jl` 已禁用界面热阻注释块中的旧 API。后者会让 md/07 所称“恢复方式”不可执行，需同步为新状态/参数接口并注明恢复仍需重新验证。
+- Julia 加载门通过：`Option().czm.iter_method == "basic"`，`CzmOptions` 恰有 20 字段。
+- 快速行为门退出码 0；当前冻结基线是 v8 `testexample-20260830T172856+0800`（已 supersede 主计划文字所列 v7）。本次结果与 v8 记录精度完全一致：19 步、4.0367→3.9438 V、0.0833 Ah、298.15~299.00 K、D=0、分离 9.6486e-13 m、环向 -1.3954~3.8603 MPa、切向 -0.3743~0.3955 MPa。
+- 主计划 Task 9 段的 v7 数字和 34/34 已被当前冻结基线/Task 9 记录 supersede；本次 Task 10 不改治理计划本身，只按仓库现行 v8 门验证，并在交付中说明。
+- 当前 HEAD `e78604f` 后存在完整四层重构的大批未提交 tracked 变更，同时混有 `.mimosa/.zcode`、输出、旧 topology spec、md16 和探针等未跟踪/无关项。Task 10 计划的 `git add -A` 会把这些无关项一并提交，不可直接执行。
+- 计划自身明确要求 commit 守卫逐次授权；用户本轮只要求“完成 Task 10”且特别要求区分文档指令与用户请求，未直接说“提交”。因此只完成 Step 1 与验证，Step 2 停在明确授权边界；后续应按 refactor 逻辑文件集定向暂存，不能 `git add -A`。

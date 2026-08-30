@@ -7,8 +7,6 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
 
     param = NormaliseParam(param_dim)
 
-    # Viscous regularization: normalize tau_visc (τ_v* = τ_v / t0)
-    param.cohesive.tau_visc = opt.czm_visc_tau / param.scale.t0
     # |--negative--|--separator--|--positive--|
     if opt.model == "SPM" || opt.model == "SPMe"
         # negative particle
@@ -106,12 +104,10 @@ mutable struct Case
     layout::Union{Nothing, MultiSPMeLayout}   # 布局索引（初始化后不变）
     geometry::Union{Nothing, MeshGeometry}   # 几何拓扑（构建后不变）
     czm_mesh::Union{Nothing, CohesiveMesh}   # CZM 网格（演化但类型明确）
-    czm_cache::Union{Nothing, CZMAssemblyCache}  # CZM 装配缓存（E/ν 变化时重建）
-    czm_layout::Union{Nothing, CzmLayout}      # CZM 布局+u_prev（跨时间步）
-    czm_param_cache::Union{Nothing, CzmParamCache}  # v5 新增：per-interface 参数缓存
+    mech::Union{Nothing, MechState}      # CZM 布局+u_prev（跨时间步）
 end
 
 # 5 参数兼容构造器
 function Case(param_dim, param, opt, mesh, index)
-    Case(param_dim, param, opt, mesh, index, nothing, nothing, nothing, nothing, nothing, nothing)
+    Case(param_dim, param, opt, mesh, index, nothing, nothing, nothing, nothing)
 end

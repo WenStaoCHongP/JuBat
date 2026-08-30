@@ -75,7 +75,7 @@ opt.model = "SPMe"
 opt.thermal_enabled = true
 opt.thermalmodel = "distributed2D"
 opt.per_element_spme = true
-opt.czm_enabled = true
+opt.czm.enabled = true
 opt.mechanicalmodel = "full"
 
 # 3. 创建案例
@@ -186,16 +186,30 @@ CZM (内聚力模型)
 | `cool_method` | "surface" | 冷却方式: "surface" 或 "tab" |
 | `per_element_spme` | false | 启用逐单元 SPMe |
 
-### 5.3 机械/CZM 选项
+### 5.3 机械/CZM 选项（opt.czm 嵌套子结构，2026-08-30 重构）
 
-| 字段 | 默认值 | 说明 |
+`Option` 上的 CZM 选项收敛为 `opt.czm::CzmOptions` 嵌套结构（20 字段，同名去 `czm_` 前缀）：
+
+| 字段（`opt.czm.X`） | 默认值 | 说明 |
 |------|--------|------|
-| `mechanicalmodel` | "none" | 机械模型，用 "full" |
-| `czm_enabled` | false | 启用 CZM |
-| `czm_update_interval` | 1 | 损伤更新间隔 |
-| `czm_iter_method` | "basic" | CZM 迭代方法 |
-| `czm_area_loss_enabled` | false | 启用渐进式有效面积损失（D > threshold 时缩减面积） |
-| `czm_area_loss_threshold` | 0.83 | 面积开始缩减的 D 阈值 |
+| `mechanicalmodel`（顶层） | "none" | 机械模型，用 "full" |
+| `czm.enabled` | false | 启用 CZM |
+| `czm.model` | "model1" | 本构选择（"model1"/"mix"） |
+| `czm.update_interval` | 1 | 损伤更新间隔 |
+| `czm.iter_method` | "basic" | CZM 迭代方法（"basic"/"load_substep"/"arc_length"） |
+| `czm.max_iter` / `czm.tol` | 100 / 1e-4 | Newton 迭代上限与容差 |
+| `czm.load_steps` | 2 | 载荷子步数 |
+| `czm.arc_length_alpha` | 1.0 | 弧长法系数 |
+| `czm.viscous_enabled` / `czm.viscous_tau` | false / 0.0 | 粘性正则化开关与松弛时间 [s] |
+| `czm.geo_nonlinear` | false | 完全 GL/TL 残差 + 初应力 K_G |
+| `czm.winding_prestress` | false | 卷绕预应力 σ₀ |
+| `czm.j2_plasticity` | false | PCC/NCC J2 塑性 |
+| `czm.area_loss_enabled` / `czm.area_loss_threshold` | false / 0.83 | 渐进式有效面积损失 |
+| `czm.fix_inner` | true | 边界：内外圈均固定 |
+| `czm.soh_threshold` | 0.8 | SOH 终止阈值 |
+| `czm.friction_mu` | 0.10 | SP Coulomb 摩擦（Batch 8 预留） |
+
+其余字段（`inner_exit_only`、`continuous_feedback` 等）见 `src/Option.jl` 的 `CzmOptions` 定义。
 
 ---
 
@@ -363,7 +377,7 @@ opt.debug_log_path = "output/debug.log"
 ### 9.3 网格分辨率
 
 - `nθ` 同时控制热网格与分层力学/CZM 网格的周向分辨率 (典型值 80-200)；力学网格必须直接继承热网格的实际角节点，不得另设 `nθ_czm` 或独立角度数组
-- CZM 子网格用 `czm_enabled=true` 启用；`thermal_elem_map` 必须由共享角段的父子拓扑直接构造
+- CZM 求解选项用 `opt.czm.enabled=true` 启用；网格生成器的对应关键字仍为 `czm_enabled=true`。`thermal_elem_map` 必须由共享角段的父子拓扑直接构造
 - `CzmSubmesh.phi_pairs` 保存 `(outer_node_at_θ, inner_node_at_θ+2π)` 力学匝间配对，供后续接触/约束装配使用
 - cohesive 计数统一为：2 种本构/材料类型（`:PE_PCC`、`:NE_NCC`），每个 8 层卷绕重复单元 4 个真实箔–涂层面，完整离散单元数 `4 * (length(theta)-1)`；`phi_pairs` 不参与该计数
 - `gsorder` 控制积分精度 (2-3)
@@ -381,9 +395,11 @@ JuBat 区分两个尺度的弹性模量，**不可混用**：
 | `scale.E_p` / `scale.E_n` | 颗粒扩散应力归一化尺度 | cs_max·R·T_ref | 颗粒应力无量纲化 |
 | `scale.E_coat` | 极片宏观模量参考（全叠合厚度加权） | — | CZM/宏观应力无量纲化 |
 
-**CZM/二维宏观应力统一入口**：`compute_czm_params_per_interface(case)`（`src/CouplingState.jl:302`）→ 返回 `CzmParamCache`，按界面（`:PE_PCC` / `:NE_NCC`）提供 `CzmInterfaceParams`。**E_eff 按界面直接取涂层模量（PE-PCC 用 `PE.E_coat`、NE-NCC 用 `NE.E_coat`），不做全叠合厚度加权**；全叠合厚度加权仅保留在参考尺度 `scale.E_coat` 的定义中。
+**CZM/二维宏观应力统一入口（2026-08-30 重构后）**：装配函数直读 `param::Params`——热路径分派 `ip = iface === :PE_PCC ? param.PCC : param.NCC`（`collector_params` 助手），界面本构/热阻字段挂 `CurrentCollector`（`Cohesive`/`CzmInterfaceParams`/`CzmParamCache` 已删除）。逐层模量经 `moduli_of(param, mt)`。**E_eff 概念已消亡**：bulk 刚度按材料类型直读 `E_coat`/连续层 `E`，不做全叠合厚度加权；全叠合厚度加权仅保留在参考尺度 `scale.E_coat` 的定义中。锚点：`scale.σ_czm = PCC.σ_max`（量纲阶段）、`scale.δ_czm = 2·PCC.G_c/PCC.σ_max`。
 
-**防御**：缺失 `E_coat` 时 `ChooseCell` 触发 `@warn`，`compute_czm_params_per_interface`（`src/CouplingState.jl:307-313`）与 `thermal_diffusion_stress_2D` 入口（`src/Mechanical.jl:235`）处 `@assert` 拦截。宏观应力已层分辨：耦合流程（czm_enabled=true）由 `export_macro_stress` 在求解过程中在线收割导出 `diffusion stress xx/yy/xy/vonMises [Pa]`；czm-off 走按需调用的固体力学工具函数 `thermal_diffusion_stress_2D`（mesh_bonded 域，输出同组 [Pa] 键）。
+**契约（2026-08-30 起）**：① **参数冻结**——`SetCase` 归一化后不得修改 `param` 任何字段，装配缓存（`CohesiveMesh.K_bulk/标架/ws`，惰性挂载、对象身份即失效判据）的新鲜度由此保证（电化学 `M_d` 同款敞口）；② **状态归属**——演化状态（u_prev/damage_states/plastic_states/prestress/node_ref）聚合在 `case.mech::MechState`，求解器收敛后原位提交、失败不触碰；③ BC 每次求解入口现算，不缓存。缺失 `E_coat` 时 `ChooseCell` 触发 `@warn`，归一化不补零，耦合结果有限性门与 `thermal_diffusion_stress_2D` 入口检查阻止非法状态成为有效输出。宏观应力已层分辨：耦合流程由 `export_macro_stress` 在线收割导出 `diffusion stress xx/yy/xy/vonMises [Pa]`；czm-off 走 `thermal_diffusion_stress_2D`（mesh_bonded 域）。
+
+CZM 求解统一入口：`solve_czm_step(czm_mesh, case.mech, param, F_ext, opt.czm; dT_elem=…, Δsoc_n_elem=…, Δsoc_p_elem=…) -> CZMResult`。
 
 详见 `md/15_颗粒与极片模量区分.md`。
 

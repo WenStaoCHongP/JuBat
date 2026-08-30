@@ -133,5 +133,4 @@ binder = Binder()
 scale = Scale()
 
 # assemble to "param_dim"
-cohesive = Cohesive()
-param_dim = Params(PE, NE, EL, SP, cell, NCC, PCC, tab, binder, scale, cohesive)
+param_dim = Params(PE, NE, EL, SP, cell, NCC, PCC, tab, binder, scale)

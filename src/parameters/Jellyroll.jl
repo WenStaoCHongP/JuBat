@@ -162,47 +162,44 @@ cell.T_amb = cell.T0
 binder = Binder()
 # binder.rho = 
 
-# === Cohesive zone model parameters ===
-# 按界面类型分组：PE-PCC（正极涂层-正极集流体）与 NE-NCC（负极涂层-负极集流体）
-# 占位值待替换：以下数值沿用旧单一参数，待用户提供实测 PE-PCC / NE-NCC 界面值后替换
-cohesive = Cohesive()
-
-# --- PE-PCC 界面（Mode I + Mode II）---
+# === CZM interface parameters on current collectors ===
+# --- PCC：PE-PCC 界面参数（Mode I + Mode II）---
 # TODO 用户提供实测值（以下为占位，参考旧单一值 σ_max=82e6, G_c=25.3, K=2.4e17）
-cohesive.σ_max_pe_pcc = 82e6       # [Pa] TODO 用户提供实测值
-cohesive.K_n_pe_pcc   = 2.4e17     # [Pa/m] TODO 用户提供实测值
-cohesive.δ_0_pe_pcc   = cohesive.σ_max_pe_pcc / cohesive.K_n_pe_pcc
-cohesive.G_c_pe_pcc   = 25.3       # [J/m²] TODO 用户提供实测值
-cohesive.δ_c_pe_pcc   = 2.0 * cohesive.G_c_pe_pcc / cohesive.σ_max_pe_pcc
+PCC.σ_max = 82e6       # [Pa] TODO 用户提供实测值
+PCC.K_n   = 2.4e17     # [Pa/m] TODO 用户提供实测值
+PCC.δ_0   = PCC.σ_max / PCC.K_n
+PCC.G_c   = 25.3       # [J/m²] TODO 用户提供实测值
+PCC.δ_c   = 2.0 * PCC.G_c / PCC.σ_max
 # Mode II（若无独立测量，沿用 Mode I）
-cohesive.τ_max_pe_pcc     = cohesive.σ_max_pe_pcc
-cohesive.K_t_pe_pcc       = cohesive.K_n_pe_pcc
-cohesive.δ_0_pe_pcc_t     = cohesive.τ_max_pe_pcc / cohesive.K_t_pe_pcc
-cohesive.G_c_pe_pcc_t     = cohesive.G_c_pe_pcc
-cohesive.δ_c_pe_pcc_t     = 2.0 * cohesive.G_c_pe_pcc_t / cohesive.τ_max_pe_pcc
+PCC.τ_max = PCC.σ_max
+PCC.K_t   = PCC.K_n
+PCC.δ_0_t = PCC.τ_max / PCC.K_t
+PCC.G_c_t = PCC.G_c
+PCC.δ_c_t = 2.0 * PCC.G_c_t / PCC.τ_max
+PCC.eta = 1.45                 # BK 准则指数 [-]
+PCC.h_c0 = 1e7                 # 界面热阻（沿用旧值）
+PCC.k_air = 0.026
+PCC.lambda_m = 70e-9
+PCC.beta = 1.0
+PCC.threshold = 70e-9
 
-# --- NE-NCC 界面（Mode I + Mode II）---
-cohesive.σ_max_ne_ncc = 92e6       # [Pa] TODO 用户提供实测值
-cohesive.K_n_ne_ncc   = 1.2e17     # [Pa/m] TODO 用户提供实测值
-cohesive.δ_0_ne_ncc   = cohesive.σ_max_ne_ncc / cohesive.K_n_ne_ncc
-cohesive.G_c_ne_ncc   = 6.2       # [J/m²] TODO 用户提供实测值
-cohesive.δ_c_ne_ncc   = 2.0 * cohesive.G_c_ne_ncc / cohesive.σ_max_ne_ncc
-cohesive.τ_max_ne_ncc     = cohesive.σ_max_ne_ncc
-cohesive.K_t_ne_ncc       = cohesive.K_n_ne_ncc
-cohesive.δ_0_ne_ncc_t     = cohesive.τ_max_ne_ncc / cohesive.K_t_ne_ncc
-cohesive.G_c_ne_ncc_t     = cohesive.G_c_ne_ncc
-cohesive.δ_c_ne_ncc_t     = 2.0 * cohesive.G_c_ne_ncc_t / cohesive.τ_max_ne_ncc
-
-# --- 共用参数 ---
-cohesive.czm_model = "model1"
-cohesive.eta = 1.45                 # BK 准则指数 [-]
-
-# 界面热阻（沿用旧值）
-cohesive.h_c0 = 1e7
-cohesive.k_air = 0.026
-cohesive.lambda_m = 70e-9
-cohesive.beta = 1.0
-cohesive.threshold = 70e-9
+# --- NCC：NE-NCC 界面参数（Mode I + Mode II）---
+NCC.σ_max = 92e6       # [Pa] TODO 用户提供实测值
+NCC.K_n   = 1.2e17     # [Pa/m] TODO 用户提供实测值
+NCC.δ_0   = NCC.σ_max / NCC.K_n
+NCC.G_c   = 6.2        # [J/m²] TODO 用户提供实测值
+NCC.δ_c   = 2.0 * NCC.G_c / NCC.σ_max
+NCC.τ_max = NCC.σ_max
+NCC.K_t   = NCC.K_n
+NCC.δ_0_t = NCC.τ_max / NCC.K_t
+NCC.G_c_t = NCC.G_c
+NCC.δ_c_t = 2.0 * NCC.G_c_t / NCC.τ_max
+NCC.eta = 1.45                 # BK 准则指数（与 PCC 同值）
+NCC.h_c0 = 1e7                 # 界面热阻（与 PCC 同值）
+NCC.k_air = 0.026
+NCC.lambda_m = 70e-9
+NCC.beta = 1.0
+NCC.threshold = 70e-9
 cell.lambda_r = (2 * NE.thickness + 2 * SP.thickness + 2 * PE.thickness + PCC.thickness + NCC.thickness) /(2 * NE.thickness/NE.lambda + 2 * SP.thickness/SP.lambda + 2 * PE.thickness/PE.lambda + PCC.thickness/PCC.lambda + NCC.thickness/NCC.lambda)
 cell.lambda_t = (2 * NE.thickness*NE.lambda + 2 * SP.thickness*SP.lambda + 2 * PE.thickness*PE.lambda + PCC.thickness*PCC.lambda + NCC.thickness*NCC.lambda) /(2 * NE.thickness + 2 * SP.thickness + 2 * PE.thickness + PCC.thickness + NCC.thickness)
 
@@ -210,4 +207,4 @@ cell.lambda_t = (2 * NE.thickness*NE.lambda + 2 * SP.thickness*SP.lambda + 2 * P
 scale = Scale()
 
 # assemble to "param_dim"
-param_dim = Params(PE, NE, EL, SP, cell, PCC, NCC, tab, binder, scale, cohesive)
+param_dim = Params(PE, NE, EL, SP, cell, PCC, NCC, tab, binder, scale)

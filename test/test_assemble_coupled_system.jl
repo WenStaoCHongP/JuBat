@@ -3,9 +3,8 @@ using Test
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
 
-# Task 4.4 完成：ensure_czm_cache 已改为 (case, czm_mesh, param_cache) 签名，
-# 失效判据基于 objectid(czm_mesh) + param_cache.id。移除 @test_broken 包装。
-@testset "assemble_coupled_system with CzmParamCache" begin
+# 2026-08-30 重构：界面参数直读 param.PCC/param.NCC；装配缓存为 czm_mesh 惰性字段。
+@testset "assemble_coupled_system with direct param" begin
     param_dim = JuBat.ChooseCell("Jellyroll")
     opt = JuBat.Option()
     opt.thermal_enabled = true
@@ -17,26 +16,18 @@ using .JuBat
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     submesh = mesh_data.czm_submesh
     case.czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)
+    case.mech = JuBat.MechState(case.czm_mesh)
 
-    param_cache = JuBat.compute_czm_params_per_interface(case)
-    @test param_cache isa JuBat.CzmParamCache
-    @test haskey(param_cache.by_interface, :PE_PCC)
-    @test haskey(param_cache.by_interface, :NE_NCC)
-
-    pe = param_cache.by_interface[:PE_PCC]
-    ne = param_cache.by_interface[:NE_NCC]
-    # Double rescaling: E_coat is [Pa] in param_dim; ×E_coat_scale converts to
-    # σ_czm-normalized; ÷σ_czm converts to czm-internal. Do not simplify.
-    @test pe.E_eff ≈ case.param.PE.E_coat * case.param.scale.E_coat / case.param.scale.σ_czm
-    @test ne.E_eff ≈ case.param.NE.E_coat * case.param.scale.E_coat / case.param.scale.σ_czm
+    # 归一化后界面参数就位（σ*、K*、δ* 与锚点一致）
+    @test case.param.PCC.σ_max ≈ 1.0 atol=1e-12          # PE-PCC 为锚定界面（σ_czm = PCC.σ_max_dim）
+    @test case.param.PCC.δ_c ≈ 1.0 atol=1e-12            # 锚定界面 δ_c* ≡ 1
+    @test case.param.NCC.σ_max > 0
+    @test case.param.NCC.δ_0 > 0
 
     u = zeros(2 * case.czm_mesh.nnode)
-    cache = JuBat.ensure_czm_cache(case, case.czm_mesh, param_cache)
-    K, f, seps, tracts = JuBat.assemble_coupled_system(case.czm_mesh, u, param_cache;
-                                                       damage_states=case.czm_mesh.damage_states,
-                                                       K_bulk_cached=cache.K_bulk,
-                                                       geom_cache=cache.cohesive_geom,
-                                                       ws=cache.ws)
+    K, f, seps, tracts = JuBat.assemble_coupled_system(case.czm_mesh, u, case.param;
+                                                       damage_states=case.mech.damage_states,
+                                                       K_bulk_cached=JuBat.bulk_stiffness(case.czm_mesh, case.param))
     @test size(K, 1) == length(f) == 2 * case.czm_mesh.nnode
     @test !any(isnan, K)
     @test !any(isnan, f)
@@ -49,7 +40,7 @@ end
     opt = JuBat.Option()
     opt.thermal_enabled = true
     opt.thermalmodel = "distributed2D"
-    opt.czm_enabled = true
+    opt.czm.enabled = true
     case = JuBat.SetCase(param_dim, opt)
 
     mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=40, gsorder=2)

@@ -1,139 +1,89 @@
 # CzmSolve.jl
 
-- **源文件**: `src/CzmSolve.jl`
-- **行数**: 675 行
-- **函数/struct 计数**: 1 个 struct + 12 个独立函数
-- **职责**: CZM Newton-Raphson 求解器——`CZMResult` 结果对象、损伤状态克隆、按界面分批更新损伤、回溯线搜索、basic / load-substep / arc-length 三套求解策略、统一入口 `solve_czm_step`
-- **相关技术文档**: `md/06_内聚力模型_CZM.md`、`md/14_粘性正则化.md`、`md/09_分流求解器.md`
+- **源文件**：`src/CzmSolve.jl`
+- **行数**：989 行
+- **函数/struct 计数**：1 个 struct + 14 个函数
+- **职责**：CZM Newton-Raphson、载荷子步与弧长求解；边界条件现算；试探状态回滚；收敛后向 `MechState` 原位提交。
+- **相关技术文档**：`md/06_内聚力模型_CZM.md`、`md/14_粘性正则化.md`、`md/09_分流求解器.md`
 
 ## 数据结构
 
 ### `mutable struct CZMResult` — L1-L15
 
-CZM 单步求解结果容器。
+单步结果容器：位移、损伤、法/切向牵引与分离、`converged`、迭代数和残差范数。默认构造令 `converged=false`、`residual_norm=Inf`。
 
-- 字段：`displacement`、`damage`、`traction_n/t`、`separation_n/t`、`converged::Bool`、`iterations::Int64`、`residual_norm::Float64`
-- 默认构造 `CZMResult(ndof, n_coh)`：`residual_norm` 初始化为 `Inf`（L14），`converged=false`
+## 状态与缓存契约
+
+- 入口接收 `ms::MechState`；各策略先复制 `ms.u_prev` 与 `ms.damage_states` 作为试探态。
+- 只有收敛才写回 `ms.u_prev/ms.damage_states`（以及启用塑性时的收敛塑性状态）；失败丢弃试探态，不触碰 `ms`。
+- 求解器只返回 `CZMResult`，不克隆或返回新的 `CohesiveMesh`。
+- BC 由 `extract_bc_dofs` 每次入口现算。线性 bulk 刚度、cohesive 几何和工作区通过 mesh 访问器惰性获取。
 
 ## 函数清单
 
-### `clone_damage_states(damage_states) -> Vector{DamageState}` — L17-L29
+### `clone_damage_states(damage_states)` — L17-L29
 
-深拷贝损伤状态向量（用于 Newton 回滚、循环累积）。
+深拷贝损伤历史，供试探/回滚使用。
 
-### `clone_czm_mesh_with_damage(czm_mesh, damage_states) -> CohesiveMesh` — L31-L44
+### `update_damage_per_interface(czm_mesh, damage_states, separations, param, czm_model; visc_beta)` — L38-L56
 
-构建新的 `CohesiveMesh`（共享 bulk_mesh/node/etc. 引用，仅替换 `damage_states`）。
+按 cohesive `interface_type` 分组，分别用 `collector_params(param, iface)` 调用 `update_damage`，保持原始单元顺序。
 
-### `update_damage_per_interface(czm_mesh, damage_states, separations, param_cache; visc_beta) -> new_states` — L52-L71
+### `extract_bc_dofs(czm_mesh, param; fix_inner)` — L64-L79
 
-按 `interface_type` 分组调 `update_damage`，保持原始顺序。
+调用 `identify_bc_nodes_czm` 现算 Dirichlet DOF/值；BC 不进入缓存。
 
-- 按 `keys(param_cache.by_interface)` 分批；空批跳过
-- 跨文件依赖：`update_damage`（在 `Materialmatrix.jl`）
+### `backtrack_line_search!(...)` — L89-L111
 
-### `extract_bc_dofs(czm_mesh, param; cache, fix_inner) -> (bc_dofs, bc_vals)` — L79-L97
+basic 路径的回溯线搜索；试验位移上重装残差，返回 `(u_new, R_new_norm, accepted, α_used)`。
 
-提取 Dirichlet BC 自由度列表与对应值。
+### `apply_czm_dirichlet!(u, bc_dofs, bc_vals)` — L113-L118
 
-- 优先返回 `cache.bc_dofs` / `cache.bc_vals`（L80-L82）
-- 否则调 `identify_bc_nodes_czm` 现场计算
+原位写入 Dirichlet 位移。
 
-### `backtrack_line_search!(u, Δu, czm_mesh, param_cache, damage_states, F_ext, F_thermo_chem, R_norm_current, bc_dofs, bc_vals, K_bulk_cached, geom_cache, ws; max_halvings, visc_beta) -> (u_new, R_new_norm, accepted, α_used)` — L107-L128
+### `zero_czm_bc_entries!(v, bc_dofs)` — L120-L125
 
-回溯线搜索（零化式 BC 残差），仅用于 `solve_czm_basic_step`。
+原位清零受约束条目。
 
-- 迭代 `α ← α/2`，最多 `max_halvings=8` 次（L109）
-- 接受判据：`R_trial_norm < R_norm_current && !isnan`（L121）
-- accepted 时 `u_new` 已含 BC 赋值；未 accepted 时返回原始 `u`（未修改）
-- 注：函数名带 `!` 但实际不原位修改 `u`，语义上"原位"指返回值会替代调用方 `u`
+### `fill_czm_result!(result, u, damage_states, separations, tractions)` — L127-L137
 
-### `apply_czm_dirichlet!(u, bc_dofs, bc_vals) -> u` — L130-L135
+把已验收状态写入结果容器。
 
-原位强制 Dirichlet 值（`u[dof] = val`）。
+### `build_arc_length_augmented_matrix(...)` — L139-L149
 
-### `zero_czm_bc_entries!(v, bc_dofs) -> v` — L137-L142
+构造弧长法增广矩阵。
 
-原位将 `bc_dofs` 位置置零（用于增量载荷向量）。
+### `spherical_arc_length_correction(...)` — L151-L173
 
-### `fill_czm_result!(result, u, damage_states, separations, tractions) -> result` — L144-L154
+计算球形弧长约束修正；维度、半径、系数或结果非法时显式失败。
 
-原位填充 `CZMResult` 各字段（位移、损伤、分离、牵引）。
+### `solve_czm_basic_step(czm_mesh, F_ext, param, ms; ...) -> CZMResult` — L175-L277
 
-### `build_arc_length_augmented_matrix(K_bc, load_vector, delta_u, delta_lambda, arc_length_alpha) -> A` — L156-L166
+单步 Newton + 回溯。冻结损伤求位移，收敛后更新损伤并提交 `ms`；失败返回 `converged=false` 且不修改 `ms`。
 
-构造弧长法增广矩阵（spec §Crisfield cylindrical arc-length）。
+### `solve_czm_arc_length_step(czm_mesh, F_ext, param, ms; ...) -> CZMResult` — L280-L483
 
-- `A[1:ndof, 1:ndof] = K_bc`；`A[i, ndof+1] = -load_vector[i]`；`A[ndof+1, i] = 2·delta_u[i]`
-- 末对角 `A[ndof+1, ndof+1] = 2·α²·delta_lambda`
+线性几何路径的弧长增量求解；自适应缩小步长，最终收敛后提交状态。
 
-### `solve_czm_basic_step(czm_mesh, F_ext, param_cache, param, u_prev; dT_elem, Δsoc_n_elem, Δsoc_p_elem, max_iter, tol, cache, visc_beta) -> (result, new_czm_mesh)` — L168-L263
+### `newton_raphson_czm(czm_mesh, F_ext, param, ms; ...) -> CZMResult` — L498-L667
 
-基础 Newton-Raphson 单步求解（无载荷子步）。
+自适应载荷子步 Newton 路径；子步试探可回滚，达到完整载荷且通过最终残差门后才提交。
 
-- 每轮（L194-L235）：装配 `K_total, f_int_total` → 残差 `R = F_ext + F_thermo_chem - f_int_total` → BC 零化 → `K_bc \ R_bc` → 线搜索
-- 收敛判据（L211）：`R_norm < tol` 或 `rel_norm < tol`（`rel_norm = R_norm / R_norm_0`）
-- 失败回滚：未收敛时恢复 `u_start` / `damage_start`（L237-L240）
-- 收敛后才更新损伤（L214，与 `newton_raphson_czm` 一致：冻结损伤求解位移，收敛后更新）
-- 跨文件依赖：`assemble_coupled_system`、`assemble_thermal_chemical_load`、`apply_bc_czm`、`backtrack_line_search!`、`update_damage_per_interface`、`clone_damage_states`、`clone_czm_mesh_with_damage`
+### `solve_czm_arc_geo_step(czm_mesh, F_ext, param, ms; ...) -> CZMResult` — L679-L935
 
-### `solve_czm_arc_length_step(czm_mesh, F_ext, param_cache, param, u_prev; dT_elem, Δsoc_n_elem, Δsoc_p_elem, max_iter, tol, n_load_steps, arc_length_alpha, cache, visc_beta) -> (result, new_czm_mesh)` — L265-L466
+几何非线性弧长路径；以热/化学本征应变作为载荷参数化对象，先求参考平衡态，再推进到 `λ=1`，验收后提交。
 
-Crisfield 圆柱弧长法单步求解。
+### `solve_czm_step(czm_mesh, ms, param, F_ext, czm_opt; ...) -> CZMResult` — L943-L989
 
-- 外层 `while load_progress < 1 - 1e-12`（L297）：逐步增加 `load_progress`
-- 切线预测（L319-L333）：`tangent = K_bc \ F_load_bc` → `delta_u_pred = tangent · delta_lambda_pred`
-- 内层 Newton 修正（L344-L421）：解两个线性系统 `K_bc \ R_bc` 与 `K_bc \ F_load_bc`，二次方程选根（L391-L410）
-- 失败时 `step_size /= 2`，小于 `step_size_min` 触发 `@warn`（L430）
-- 跨文件依赖：同 `solve_czm_basic_step` + `build_arc_length_augmented_matrix`
+统一入口。直接从 `CzmOptions` 展开 `model/iter_method/max_iter/tol/load_steps/arc_length_alpha/viscous_enabled/viscous_tau/fix_inner/geo_nonlinear/j2_plasticity` 并分派：
 
-### `newton_raphson_czm(czm_mesh, F_ext, param_cache, param; dT_elem, Δsoc_n_elem, Δsoc_p_elem, max_iter, tol, u0, n_load_steps, cache, visc_beta) -> (result, new_czm_mesh)` — L481-L644
+- `basic` → `solve_czm_basic_step`
+- `load_substep` → `newton_raphson_czm`
+- `arc_length` 且 `geo_nonlinear=false` → `solve_czm_arc_length_step`
+- `arc_length` 且 `geo_nonlinear=true` → `solve_czm_arc_geo_step`
 
-Newton-Raphson + 自适应载荷子步（iter_method="load_substep"）。
+粘性系数由 `opt.czm.viscous_tau / param.scale.t0` 与载荷步长现场计算；未知方法直接报错。
 
-- 增量载荷参考（L502）：`F_delta = F_target - f_int_ref`，`f_int_ref = f_int(u_prev)`（u_prev 近似在上一步平衡态）
-- 外层 `while load_progress < 1 - 1e-12`（L516）；子步容差 `substep_tol = tol * 10.0`（L543）
-- 内层 Newton（L527-L595）：每轮含 8 次线搜索（L561-L584）
-- 收敛后批量更新损伤（L629-L631）
-- 收敛判据（L623）：`load_progress >= 1 - 1e-12 && R_norm < final_tol`（`final_tol = tol * 100.0`）
-- 失败时 `step_size *= 0.5`，小于 `step_size_min` 触发 `@warn`（L602-L603）
+## 已删除接口
 
-### `solve_czm_step(czm_mesh, F_ext, param_cache, param, u_prev; iter_method, ...) -> (result, new_czm_mesh)` — L651-L675
-
-CZM 单步求解统一入口，按 `iter_method` 分派。
-
-- `"load_substep"`（默认）→ `newton_raphson_czm`
-- `"basic"` → `solve_czm_basic_step`
-- `"arc_length"` / `"arclength"` / `"arc-length"` → `solve_czm_arc_length_step`
-- 未知方法 `error(...)`（L673）
-
-## 省略项
-
-无。所有函数与 struct 均独立列出。
-
-### [DEBUG]
-
-无。本文件无 `println` / `@show` / 调试用途的 `@info`；`@debug`（L434, L607）是 Julia 结构化日志宏，按 S3 规则不计入；`@warn`（L430, L603）为求解器停滞告警，属于运行时状态而非调试输出。
-
-### [PLACEHOLDER]
-
-| 行号 | 内容 | 风险 |
-|------|------|------|
-| L121 | `if !isnan(R_trial_norm) && R_trial_norm < R_norm_current`（NaN 防御性检查，回溯线搜索接受判据） | 静默丢弃 NaN 试验步，可能掩盖求解器数值不稳定；非占位而是数值防御 |
-| L226 | `if any(isnan, Δu) \|\| any(isinf, Δu)`（basic step 失败检测，静默 break） | 静默退出循环，外部通过 `converged=false` 判定失败；可考虑加 `@warn` 报告原因 |
-| L325 | `if tangent === nothing \|\| any(isnan, tangent) \|\| any(isinf, tangent)`（arc-length 切线失败，静默 break） | 同 L226：静默失败，外部 `converged=load_progress >= ...` 判定；建议加诊断信息 |
-| L377 | `if delta_u_R === nothing \|\| any(isnan, delta_u_R) \|\| any(isinf, delta_u_R)`（arc-length 修正步失败） | 同 L325 |
-| L386 | `if delta_u_F === nothing \|\| any(isnan, delta_u_F) \|\| any(isinf, delta_u_F)`（arc-length 修正步失败） | 同 L325 |
-| L514 | `converged_substep = false`（子步初始化，配合 `last_R_norm = Inf`） | 初始值合理，非占位 |
-
-### [COMPLEX-CHECK]
-
-| 行号 | 内容 | 简化建议 |
-|------|------|------|
-| L107 | `backtrack_line_search!` 函数签名（14 个位置参数 + 2 个关键字参数，单行 ~150 字符） | 拆为 `(czm_mesh, param_cache, bc, loading, u_state)` 五个语义对象，或将 `bc_dofs/bc_vals/geom_cache/ws/K_bulk_cached` 包进 `cache::CZMAssemblyCache` 直接传 |
-| L211 | `if R_norm < tol \|\| rel_norm < tol`（双判据，2 个 `\|\|`） | 简单判据，可保留 |
-| L325 | `if tangent === nothing \|\| any(isnan, tangent) \|\| any(isinf, tangent)`（3 个 `\|\|`，配合 `any` 谓词） | 抽出 `is_finite_solution(x) = x !== nothing && all(isfinite, x)` 谓词函数，统一用于 L325/L377/L386 |
-| L377 | `if delta_u_R === nothing \|\| any(isnan, delta_u_R) \|\| any(isinf, delta_u_R)` | 同 L325，可共用谓词 |
-| L386 | `if delta_u_F === nothing \|\| any(isnan, delta_u_F) \|\| any(isinf, delta_u_F)` | 同 L325，可共用谓词 |
-| L555 | `if any(isnan, Δu) \|\| any(isinf, Δu)`（load_substep 内层 Newton 失败检测） | 与 L325 同类，可共用 `is_finite_solution` 谓词 |
-| L651 | `solve_czm_step` 函数签名（4 位置 + 15 关键字，单行 ~250 字符） | 拆为 `CzmSolveOptions` struct 收纳 α/β/tol/n_load_steps/iter_method 等 |
+`clone_czm_mesh_with_damage`、`param_cache` 参数、`cache` 参数和 `(result, updated_czm_mesh)` 双返回值均已删除。调用方应持有同一 `case.czm_mesh`，并从 `case.mech` 读取已提交状态。

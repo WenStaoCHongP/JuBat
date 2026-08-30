@@ -17,13 +17,13 @@ function build_wp_fixture(; nθ::Int=8)
     mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
-    param_cache = JuBat.compute_czm_params_per_interface(case)
-    cache = JuBat.ensure_czm_cache(case, case.czm_mesh, param_cache)
-    return case, param_cache, cache
+    case.mech = JuBat.MechState(case.czm_mesh)
+
+    return case
 end
 
 @testset "σ₀ 场解析对照（独立编码公式互核）" begin
-    case, param_cache, _ = build_wp_fixture()
+    case = build_wp_fixture()
     czm_mesh = case.czm_mesh
     p = case.param
     σ0 = JuBat.winding_prestress_field(czm_mesh, p)
@@ -64,7 +64,7 @@ end
 end
 
 @testset "量级校验（§10.4.1 工艺区间，换算有量纲）" begin
-    case, _, _ = build_wp_fixture()
+    case = build_wp_fixture()
     czm_mesh = case.czm_mesh
     p = case.param
     σ0 = JuBat.winding_prestress_field(czm_mesh, p)
@@ -82,7 +82,7 @@ end
 end
 
 @testset "缺参/非法即 error（AGENTS 9.4/9.7）" begin
-    case, _, _ = build_wp_fixture()
+    case = build_wp_fixture()
     czm_mesh = case.czm_mesh
     p = case.param
     tne, tpe = p.cell.winding_T_ne, p.cell.winding_T_pe
@@ -95,28 +95,28 @@ end
 end
 
 @testset "默认关逐位不变（D-B2'-3 零值旁路）" begin
-    case, param_cache, cache = build_wp_fixture()
+    case = build_wp_fixture()
     czm_mesh = case.czm_mesh
     ne = size(czm_mesh.bulk_element, 1)
     ndof = 2 * czm_mesh.nnode
     eig = (dT=fill(1e-4, ne), Δsn=zeros(ne), Δsp=zeros(ne))
     u = fill(1e-4, ndof)
-    f1, K1 = JuBat.assemble_coupled_system(czm_mesh, u, param_cache;
-        geo_nl=true, eigenstrain=eig)
-    f2, K2 = JuBat.assemble_coupled_system(czm_mesh, u, param_cache;
-        geo_nl=true, eigenstrain=eig, prestress=nothing)
+    f1, K1 = JuBat.assemble_coupled_system(czm_mesh, u, case.param;
+        damage_states=case.mech.damage_states, geo_nl=true, eigenstrain=eig)
+    f2, K2 = JuBat.assemble_coupled_system(czm_mesh, u, case.param;
+        damage_states=case.mech.damage_states, geo_nl=true, eigenstrain=eig, prestress=nothing)
     @test f1 == f2 && K1 == K2   # 逐位（零值旁路，无 +0.0 路径）
 end
 
 @testset "切线含 σ₀ + 符号结构 + K_G 方向性" begin
-    case, param_cache, _ = build_wp_fixture()
+    case = build_wp_fixture()
     czm_mesh = case.czm_mesh
     ne = size(czm_mesh.bulk_element, 1)
     ndof = 2 * czm_mesh.nnode
     σ0 = JuBat.winding_prestress_field(czm_mesh, case.param)
     u0 = zeros(ndof)
-    _, K0 = JuBat.assemble_bulk_residual_tangent(czm_mesh, u0, param_cache; geo_nl=true)
-    _, Kp = JuBat.assemble_bulk_residual_tangent(czm_mesh, u0, param_cache; geo_nl=true, prestress=σ0)
+    _, K0 = JuBat.assemble_bulk_residual_tangent(czm_mesh, u0, case.param; geo_nl=true)
+    _, Kp = JuBat.assemble_bulk_residual_tangent(czm_mesh, u0, case.param; geo_nl=true, prestress=σ0)
     @test Kp != K0                                   # σ₀ 进入 K_G
     # (a) 符号结构（新参数下）：等应变分担使刚性箔 σ_t=T·E_f/Ē(~41 MPa) >> 累积压力
     #     p_core(~3.2 MPa) ⟹ 全场环向为拉；压力梯度使内层张力 < 外层张力（单调）。
@@ -151,7 +151,7 @@ end
         r = radii[e]; c, sn = x/r, y/r; tx, ty, nx, ny = -sn, c, c, sn
         σ0c[e] = (-q*tx*tx, -q*ty*ty, -q*tx*ty)
     end
-    _, Kc = JuBat.assemble_bulk_residual_tangent(czm_mesh, u0, param_cache; geo_nl=true, prestress=σ0c)
+    _, Kc = JuBat.assemble_bulk_residual_tangent(czm_mesh, u0, case.param; geo_nl=true, prestress=σ0c)
     d = zeros(ndof)                                  # n=2 椭圆化场
     for n in 1:czm_mesh.nnode
         x, y = czm_mesh.node[n,1], czm_mesh.node[n,2]
@@ -163,7 +163,7 @@ end
 end
 
 @testset "求解链路 + 持久化/缺参拦截" begin
-    case, param_cache, cache = build_wp_fixture()
+    case = build_wp_fixture()
     czm_mesh = case.czm_mesh
     ndof = 2 * czm_mesh.nnode
     σ0_full = JuBat.winding_prestress_field(czm_mesh, case.param)
@@ -173,14 +173,18 @@ end
     # 零本征应变首平衡：σ₀ 非平衡残差由约束反力平衡（D-B2'-4）
     # basic（生产默认）：8 步收敛至 1.3e-9；load_substep 软收敛至 ~7e-8（低于其子步容差
     # 1e-7、高于严格 tol 1e-8——线搜索特性，非预应力路径缺陷，切线 FD 已证一致）
-    r, _ = JuBat.solve_czm_step(czm_mesh, zeros(ndof), param_cache, case.param, zeros(ndof);
-        max_iter=200, tol=1e-8, iter_method="basic", cache=cache,
-        geo_nl=true, eigenstrain=nothing, prestress=σ0)
+    ms = JuBat.MechState(czm_mesh)
+    case.opt.czm.iter_method = "basic"
+    case.opt.czm.max_iter = 200
+    case.opt.czm.tol = 1e-8
+    case.opt.czm.geo_nonlinear = true
+    r = JuBat.solve_czm_step(czm_mesh, ms, case.param, zeros(ndof), case.opt.czm;
+        prestress=σ0)
     @test r.converged
     @test all(isfinite, r.displacement)
     @test maximum(abs.(r.displacement)) > 0.0        # 重分布变形发生
-    # 布局持久化语义：caching after first call stays（此处直接验证字段类型）
-    @test (case.czm_layout === nothing) || (case.czm_layout.winding_prestress === nothing)  # 求解级调用不触碰布局（生产路径才写；夹具未建布局）
+    # 状态持久化语义：求解级调用不触碰 ms.winding_prestress（生产路径才写；夹具未设）
+    @test ms.winding_prestress === nothing
 end
 
 @testset "MultiSPMe 生产路径标记类型与最终结果元数据" begin
@@ -190,13 +194,14 @@ end
     opt.thermal_enabled = true
     opt.thermalmodel = "distributed2D"
     opt.per_element_spme = true
-    opt.czm_enabled = true
-    opt.czm_geo_nonlinear = true
-    opt.czm_winding_prestress = true
+    opt.czm.enabled = true
+    opt.czm.geo_nonlinear = true
+    opt.czm.winding_prestress = true
     case = JuBat.SetCase(param_dim, opt)
     mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=8, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
+    case.mech = JuBat.MechState(case.czm_mesh)
 
     y0 = JuBat.ModelInitialisation_MultiSPMe(case)
     out = JuBat.CallModel_MultiSPMe(case, y0, 0.0; jacobi="update")

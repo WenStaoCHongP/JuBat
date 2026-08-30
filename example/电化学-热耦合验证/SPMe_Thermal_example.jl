@@ -152,7 +152,7 @@ function run_case(param_dim, crate, t_end; ntheta=80)
 
     opt.per_element_spme = true
     opt.mechanicalmodel = "none"
-    opt.czm_enabled = false
+    opt.czm.enabled = false
 
     I1C = param_dim.cell.I1C
     I = I1C * crate

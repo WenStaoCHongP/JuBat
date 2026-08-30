@@ -67,7 +67,7 @@ function main()
     opt.thermal_dim = "2D"
     opt.cool_method = "tab"
     opt.per_element_spme = true
-    opt.czm_enabled = false
+    opt.czm.enabled = false
     
     println("  ✓ 参数设置完成")
     

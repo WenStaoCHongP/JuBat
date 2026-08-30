@@ -3,81 +3,6 @@
 
 using Parameters: @with_kw
 
-# ========================================================================
-# CzmInterfaceParams & CzmParamCache (spec §3.5.1 v3 / §3.5.2)
-# 按界面类型分组的 CZM 本构参数缓存，供 Chunk 2/4/6 使用。
-# ========================================================================
-
-"""
-    CzmInterfaceParams
-
-单一界面类型（如 :PE_PCC 或 :NE_NCC）的 CZM 本构参数（归一化后）。
-按 spec §3.5.1 v3 定义 20 个字段，覆盖 Materialmatrix.jl 实际读取的全部字段。
-
-所有字段都已通过 NormaliseParam 归一化：
-- E_eff, σ_max, τ_max: / scale.σ_czm
-- δ_0_n, δ_c_n, δ_0_t, δ_c_t: / scale.δ_czm（δ_czm = 2·G_c_pe_pcc/σ_max_pe_pcc，锚定界面 δ_c* ≡ 1）
-- G_c, G_c_t: / scale.G_czm
-- K_n, K_t: / scale.K_czm
-- η, czm_model, h_c0, k_air, lambda_m, beta, threshold: 沿用原 Cohesive 归一化（无因次或已有尺度）
-
-派生量（宏观力学无量纲化重设计 v2，见 docs/planning-with-files/14_力学模块修改/宏观力学模块无量纲化重设计.md）：
-- Λ = scale.L / scale.δ_czm：位移空间（L 归一）→ 分离空间（δ_czm 归一）换算因子。
-  装配时 δ̃ = Λ·B·ũ，切线刚度乘一次 Λ，内力不乘（虚功一致性，设计文档 §5）。
-- E_star：界面双材料等效模量（调和平均），/ scale.σ_czm，用于 L_ch 与数值判据
-- L_ch：界面内禀长度 E*·G_c/σ_max²，/ scale.L，用于网格分辨率判据
-"""
-@with_kw struct CzmInterfaceParams
-    # ---- 体模量与热化学载荷（assemble_bulk_stiffness、assemble_thermal_chemical_load 用）----
-    E_eff::Float64 = 0.0       # 涂层模量（PE.E_coat 或 NE.E_coat），非全栈均一化
-    ν::Float64 = 0.0           # 涂层泊松比
-    α::Float64 = 0.0           # 涂层热膨胀系数（归一化）
-
-    # ---- 无量纲化派生量（重设计 v2）----
-    Λ::Float64 = 1.0           # 位移→分离换算因子 scale.L/scale.δ_czm（旧方案 δ_czm=L 时为 1）
-    E_star::Float64 = 0.0      # 双材料等效模量（调和平均，/ scale.σ_czm），诊断用
-    L_ch::Float64 = 0.0        # 内禀长度 E*·G_c/σ_max²（/ scale.L），诊断用
-
-    # ---- Mode I（法向）---- bilinear_* 与 compute_gap_conductance 用
-    σ_max::Float64 = 0.0       # 最大法向牵引
-    K_n::Float64 = 0.0         # 法向初始刚度
-    δ_0_n::Float64 = 0.0       # 法向损伤起始位移
-    δ_c_n::Float64 = 0.0       # 法向临界位移
-    G_c::Float64 = 0.0         # Mode I 断裂能
-
-    # ---- Mode II（切向）---- bilinear_* 用
-    τ_max::Float64 = 0.0       # 最大切向牵引
-    K_t::Float64 = 0.0         # 切向初始刚度
-    δ_0_t::Float64 = 0.0       # 切向损伤起始位移
-    δ_c_t::Float64 = 0.0       # 切向临界位移
-    G_c_t::Float64 = 0.0       # Mode II 断裂能
-
-    # ---- BK 混合模式 + 本构选择 ----
-    η::Float64 = 1.45          # BK 准则指数（来自 Cohesive.eta）
-    czm_model::String = "model1"   # 本构模型标识
-
-    # ---- 界面热阻（compute_gap_conductance 用）----
-    h_c0::Float64 = 1e7        # 完全接触界面传热系数
-    k_air::Float64 = 0.026     # 空气导热系数
-    lambda_m::Float64 = 70e-9  # 界面微观粗糙度尺度
-    beta::Float64 = 1.0        # 粗糙度指数
-    threshold::Float64 = 70e-9 # 间隙阈值
-end
-
-"""
-    CzmParamCache
-
-按界面类型分组的 CZM 参数缓存（spec §3.5.2）。
-- param_ref: 保留 param 引用，供 assemble_bulk_stiffness 读 PE/NE.E_coat 等
-- id: 内容哈希 hash((hash(pe_pcc), hash(ne_ncc)))，用于 ensure_czm_cache 快速失效判定。
-  Task 4.4 fix：原为 objectid(param)，但原位修改 param 字段不改变 objectid，导致漏检。
-  改为内容哈希后，任何 CzmInterfaceParams 字段值变化都能触发失效。
-"""
-struct CzmParamCache
-    by_interface::Dict{Symbol, CzmInterfaceParams}
-    param_ref::Params
-    id::UInt64
-end
 
 """
     MultiSPMeLayout
@@ -238,52 +163,56 @@ mutable struct CZMAssemblyWorkspace
 end
 
 """
-    CZMAssemblyCache
+    DamageState - 内聚力单元的损伤状态
 
-CZM 求解器的静态/准静态缓存。失效判据基于 `czm_mesh_id`（=`objectid(czm_mesh)`）
-与 `param_cache_id`（=`param_cache.id`）——任一变化或 `fix_inner` 切换即重建。
+存储每个内聚力单元（或高斯点）的损伤历史。
+（2026-08-30 重构自 czm.jl 前移至此：MechState 字段需要它在 include 顺序中
+早于本文件可用。）
 
-挂载在 `Case.czm_cache` 上，跨时间步复用。
+# 字段
+- `D`: 等效损伤 D_eq [0, 1]，由当前双线性律计算
+- `D_visc`: 粘性有效损伤，用于牵引力和切线（粘性正则化关闭时 D_visc = D）
+- `δ_max_n`: 历史最大法向分离位移
+- `δ_max_t`: 历史最大切向分离位移
+- `δ_max_eff`: 历史最大等效分离位移
+- `fractured`: 是否已完全断裂
+- `accumulated_damage`: 累积损伤（用于循环加载）
 """
-mutable struct CZMAssemblyCache
-    K_bulk::SparseMatrixCSC{Float64, Int64}     # bulk 刚度矩阵
-    bulk_dofs::Vector{Vector{Int64}}            # 每个 bulk 元素的 DOF 映射
-    cohesive_geom::Vector{CohesiveElementGeom}  # 预计算的 cohesive 单元几何
-    bc_dofs::Vector{Int64}                      # 边界条件 DOF
-    bc_vals::Vector{Float64}                    # 边界条件值
-    ws::CZMAssemblyWorkspace                    # 可复用工作区（跨时间步）
-    fix_inner::Bool                             # 是否固定内圈节点（影响 BC 构造）
-    valid::Bool                                 # 缓存是否有效
-    czm_mesh_id::UInt64                         # objectid(czm_mesh)，mesh 失效判据
-    param_cache_id::UInt64                      # param_cache.id，参数失效判据
+mutable struct DamageState <: AbstractDamageState
+    D::Float64                     # 等效损伤 D_eq
+    D_visc::Float64                # 粘性有效损伤（用于牵引和切线）
+    δ_max_n::Float64              # 历史最大法向分离
+    δ_max_t::Float64              # 历史最大切向分离
+    δ_max_eff::Float64            # 历史最大等效分离
+    fractured::Bool               # 是否断裂
+    accumulated_damage::Float64   # 累积损伤（循环）
 
-    function CZMAssemblyCache()
-        empty_ws = CZMAssemblyWorkspace(0, 0)
-        new(spzeros(0, 0), Vector{Vector{Int64}}(), CohesiveElementGeom[],
-            Int64[], Float64[], empty_ws, true, false,
-            UInt64(0), UInt64(0))
-    end
+    # 默认构造函数
+    DamageState() = new(0.0, 0.0, 0.0, 0.0, 0.0, false, 0.0)
 end
 
 """
-    CzmLayout
+    MechState
 
-CZM 求解的布局信息和跨时间步状态。对标电化学的 MultiSPMeLayout。
+CZM 求解的演化状态聚合（2026-08-30 重构：吸收 CzmLayout；损伤态从 czm_mesh 迁入）。
+缓存随网格（CohesiveMesh.K_bulk/标架/ws），演化状态随求解（本结构）。
+求解器在收敛后原位提交；失败/试探不触碰本结构。
 """
-mutable struct CzmLayout
-    n_coh::Int                    # cohesive 单元数
-    ndof::Int                     # 总位移 DOF 数 (2 * nnode)
-    u_prev::Vector{Float64}       # 上一步位移场（跨时间步持有）
+mutable struct MechState
+    u_prev::Vector{Float64}               # 上一步收敛位移（跨时间步持有）
+    damage_states::Vector{DamageState}    # 逐 cohesive 单元损伤状态（原 czm_mesh.damage_states）
     plastic_states::Union{Nothing, Matrix{PlasticState}}  # PCC/NCC 高斯点塑性状态（Batch 3，[ne,4]；收敛才提交 D-B3-2）
-    winding_prestress::Union{Nothing, Vector{NTuple{3, Float64}}}
-    node_ref::Union{Nothing, Matrix{Float64}}          # 初始螺旋节点快照（Δ_core 基准，永不重置）  # 卷绕预应力 σ₀ 场（Batch 2'，逐单元全局三分量；几何固定一次计算持久持有）
+    winding_prestress::Union{Nothing, Vector{NTuple{3, Float64}}}  # 卷绕预应力 σ₀（Batch 2'；几何固定一次计算持久持有）
+    node_ref::Union{Nothing, Matrix{Float64}}   # 初始螺旋节点快照（Δ_core 基准，永不重置）
+    contact::Nothing                      # SP–涂层接触预留位（AGENTS §9.8）
 end
 
 """便捷构造器：从 czm_mesh 初始化"""
-function CzmLayout(czm_mesh::CohesiveMesh)
-    n_coh = czm_mesh.n_cohesive
+function MechState(czm_mesh::CohesiveMesh)
     ndof = 2 * czm_mesh.nnode
-    CzmLayout(n_coh, ndof, zeros(Float64, ndof), nothing, nothing, nothing)
+    MechState(zeros(Float64, ndof),
+              [DamageState() for _ in 1:czm_mesh.n_cohesive],
+              nothing, nothing, nothing, nothing)
 end
 
 """
@@ -292,10 +221,10 @@ end
 初始螺旋节点快照（惰性建立、永不重置）：Δ_core 始终相对初始完美螺旋计算（spec §3.5）。
 """
 function ensure_node_ref!(case)
-    if case.czm_layout.node_ref === nothing
-        case.czm_layout.node_ref = copy(case.czm_mesh.node)
+    if case.mech.node_ref === nothing
+        case.mech.node_ref = copy(case.czm_mesh.node)
     end
-    return case.czm_layout.node_ref
+    return case.mech.node_ref
 end
 
 """
@@ -331,117 +260,9 @@ end
 # ========================================================================
 # 参数计算、应变输入、损伤更新入口。
 # 从 CzmSolve.jl 迁移至此，保持 CouplingState.jl 作为"状态+耦合"的统一归属点。
-# 函数调用 solve_czm_step / ensure_czm_cache 等在运行时解析，无需调整 include 顺序。
+# 函数调用 solve_czm_step 及 mesh 缓存访问器在运行时解析，无需调整 include 顺序。
 # ========================================================================
 
-"""
-    compute_czm_params_per_interface(case) -> CzmParamCache
-
-按界面类型计算 CZM 参数。E_eff 用涂层模量（PE.E_coat / NE.E_coat），
-不再做全栈均一化。
-
-返回 `CzmParamCache`，包含 `:PE_PCC` 与 `:NE_NCC` 两个条目。
-"""
-function compute_czm_params_per_interface(case)
-    param = case.param
-    scale = case.param_dim.scale
-
-    # 入口断言（统一使用归一化 param；positivity 与尺度无关）
-    @assert param.PE.E_coat > 0 && param.NE.E_coat > 0 "CZM 应变驱动需要 PE/NE.E_coat > 0"
-    @assert scale.σ_czm > 0 "scale.σ_czm = 0; must populate cohesive.σ_max_pe_pcc (Task 2.1) before enabling CZM"
-    @assert scale.E_coat > 0 "scale.E_coat = 0; ChooseCell 检测到 PE/NE.E_coat 缺失，宏观力学分析不可用"
-    @assert param.cohesive.σ_max_pe_pcc > 0 "cohesive.σ_max_pe_pcc 必须为正"
-    @assert param.cohesive.σ_max_ne_ncc > 0 "cohesive.σ_max_ne_ncc 必须为正"
-    @assert param.cohesive.G_c_pe_pcc > 0 && param.cohesive.G_c_ne_ncc > 0 "G_c_pe_pcc / G_c_ne_ncc 必须为正"
-    @assert param.cohesive.K_n_pe_pcc > 0 && param.cohesive.K_n_ne_ncc > 0 "K_n_pe_pcc / K_n_ne_ncc 必须为正"
-
-    # E_eff: 用涂层模量（非全栈均一化）
-    E_eff_pe = param.PE.E_coat * scale.E_coat / scale.σ_czm
-    E_eff_ne = param.NE.E_coat * scale.E_coat / scale.σ_czm
-
-    # ---- 无量纲化派生量（重设计 v2 §2.2）----
-    # Λ：位移空间（L 归一）→ 分离空间（δ_czm 归一）换算因子
-    @assert scale.δ_czm > 0 "scale.δ_czm = 0; ChooseCell 未能锚定 δ_czm（检查 cohesive.σ_max_pe_pcc / G_c_pe_pcc）"
-    Λ = scale.L / scale.δ_czm
-
-    # E*：界面双材料等效模量（调和平均，量纲 Pa → / σ_czm）；L_ch：内禀长度（→ / L）
-    coh_dim = case.param_dim.cohesive
-    E_pe_dim  = case.param_dim.PE.E_coat
-    E_ne_dim  = case.param_dim.NE.E_coat
-    E_pcc_dim = case.param_dim.PCC.E
-    E_ncc_dim = case.param_dim.NCC.E
-    E_star_pe_dim = 2 * E_pe_dim * E_pcc_dim / (E_pe_dim + E_pcc_dim)
-    E_star_ne_dim = 2 * E_ne_dim * E_ncc_dim / (E_ne_dim + E_ncc_dim)
-    L_ch_pe = E_star_pe_dim * coh_dim.G_c_pe_pcc / coh_dim.σ_max_pe_pcc^2 / scale.L
-    L_ch_ne = E_star_ne_dim * coh_dim.G_c_ne_ncc / coh_dim.σ_max_ne_ncc^2 / scale.L
-
-    coh = param.cohesive
-
-    # K_0 下界判据（重设计 v2 §6）：δ_0* ≤ 0.1（即 K_0* ≥ 10），否则损伤起始点
-    # 贴近临界分离，本构在归一化空间不可分辨。
-    if coh.δ_0_pe_pcc > 0.1 || coh.δ_0_ne_ncc > 0.1
-        @warn "CZM 初始刚度过软：δ_0* > 0.1（PE-PCC=$(round(coh.δ_0_pe_pcc; sigdigits=3)), NE-NCC=$(round(coh.δ_0_ne_ncc; sigdigits=3))）。建议 K_0 ≥ 10·σ_max/δ_c。" maxlog=1
-    end
-
-    pe_pcc = CzmInterfaceParams(
-        E_eff = E_eff_pe,
-        Λ = Λ,
-        E_star = E_star_pe_dim / scale.σ_czm,
-        L_ch = L_ch_pe,
-        ν = param.PE.nu_coat,
-        α = param.PE.alphaT,
-        σ_max = coh.σ_max_pe_pcc,
-        K_n = coh.K_n_pe_pcc,
-        δ_0_n = coh.δ_0_pe_pcc,
-        δ_c_n = coh.δ_c_pe_pcc,
-        G_c = coh.G_c_pe_pcc,
-        τ_max = coh.τ_max_pe_pcc,
-        K_t = coh.K_t_pe_pcc,
-        δ_0_t = coh.δ_0_pe_pcc_t,
-        δ_c_t = coh.δ_c_pe_pcc_t,
-        G_c_t = coh.G_c_pe_pcc_t,
-        η = coh.eta,
-        czm_model = coh.czm_model,
-        h_c0 = coh.h_c0,
-        k_air = coh.k_air,
-        lambda_m = coh.lambda_m,
-        beta = coh.beta,
-        threshold = coh.threshold,
-    )
-
-    ne_ncc = CzmInterfaceParams(
-        E_eff = E_eff_ne,
-        Λ = Λ,
-        E_star = E_star_ne_dim / scale.σ_czm,
-        L_ch = L_ch_ne,
-        ν = param.NE.nu_coat,
-        α = param.NE.alphaT,
-        σ_max = coh.σ_max_ne_ncc,
-        K_n = coh.K_n_ne_ncc,
-        δ_0_n = coh.δ_0_ne_ncc,
-        δ_c_n = coh.δ_c_ne_ncc,
-        G_c = coh.G_c_ne_ncc,
-        τ_max = coh.τ_max_ne_ncc,
-        K_t = coh.K_t_ne_ncc,
-        δ_0_t = coh.δ_0_ne_ncc_t,
-        δ_c_t = coh.δ_c_ne_ncc_t,
-        G_c_t = coh.G_c_ne_ncc_t,
-        η = coh.eta,
-        czm_model = coh.czm_model,
-        h_c0 = coh.h_c0,
-        k_air = coh.k_air,
-        lambda_m = coh.lambda_m,
-        beta = coh.beta,
-        threshold = coh.threshold,
-    )
-
-    # spec §3.5.2 + Task 4.4 reviewer fix：id 用内容哈希（hash(pe_pcc), hash(ne_ncc)），
-    # 而非 objectid(param)。原位修改 param 字段（mutating case.param.cohesive.σ_max_*）
-    # 不改变 objectid，会导致缓存失效漏检。CzmInterfaceParams 是 @with_kw 不可变 struct，
-    # 字段均为 Float64 / String，Julia 内置 hash 可直接处理。
-    content_hash = hash((hash(pe_pcc), hash(ne_ncc)))
-    return CzmParamCache(Dict(:PE_PCC => pe_pcc, :NE_NCC => ne_ncc), param, content_hash)
-end
 
 """
     compute_czm_strain_inputs(case, variables, T_nodes) -> NamedTuple
@@ -554,10 +375,10 @@ end
 更新 CZM 网格的损伤状态。
 
 使用牛顿-拉弗森迭代求解力学平衡方程，通过载荷子步法处理软化收敛问题。
-从 case.czm_mesh、case.param.cohesive、case.czm_layout 获取内部状态。
+从 case.czm_mesh、case.param、case.mech 与 case.opt.czm 获取拓扑、参数、演化状态和求解选项。
 
 # 参数
-- `case`: Case 对象（需已设置 czm_mesh 和 czm_layout）
+- `case`: Case 对象（需已设置 czm_mesh 和 mech）
 - `variables`: 当前时间步的变量字典
 - `T_nodes_carry`: 当前温度场
 
@@ -568,20 +389,8 @@ end
 """
 function update_czm_damage!(case, variables, T_nodes_carry)
     czm_mesh = case.czm_mesh
-    czm_params = case.param.cohesive
-    param_dim = case.param_dim
     param = case.param
-
-    # 同步CZM模型选项（model1 or mix）
-    czm_params.czm_model = case.opt.czm_model
-
-    # 计算有效材料参数（per-interface，见 spec §3.5.2）
-    czm_param_cache = compute_czm_params_per_interface(case)
-    # 缓存到 case 供后续 solve_czm_basic_step 等调用点复用
-    case.czm_param_cache === nothing && (case.czm_param_cache = czm_param_cache)
-
-    # 构建或复用 CZM 缓存（失效判据：objectid(czm_mesh) + param_cache.id + fix_inner）
-    cache = ensure_czm_cache(case, czm_mesh, czm_param_cache; fix_inner=case.opt.czm_fix_inner)
+    czm_opt = case.opt.czm
 
     # 计算应变输入
     strain_in = compute_czm_strain_inputs(case, variables, T_nodes_carry)
@@ -600,78 +409,36 @@ function update_czm_damage!(case, variables, T_nodes_carry)
     all(isfinite, Δsoc_n_elem) || throw(ArgumentError("CZM negative-electrode SOC increment contains non-finite values"))
     all(isfinite, Δsoc_p_elem) || throw(ArgumentError("CZM positive-electrode SOC increment contains non-finite values"))
 
-    # 初始化位移（从 czm_layout 获取上一步值）
-    u_czm_prev = case.czm_layout.u_prev
-
-    # 调用 CZM 求解器（可选迭代方式）
-    iter_method = case.opt.czm_iter_method
-    max_iter = case.opt.czm_max_iter
-    tol = case.opt.czm_tol
-    n_load_steps = case.opt.czm_load_steps
-    arc_length_alpha = case.opt.czm_arc_length_alpha
-
-    # Viscous regularization: compute visc_beta
-    # β = Δs / (τ_v* + Δs), where Δs = 1/n_load_steps for load_substep, 1.0 for basic
-    visc_beta = 1.0  # default: no regularization
-    if case.opt.czm_viscous_enabled && czm_params.tau_visc > 0.0
-        delta_s = if lowercase(iter_method) == "basic"
-            1.0
-        elseif lowercase(iter_method) in ("arc_length", "arclength", "arc-length")
-            1.0 / max(1, n_load_steps)  # approximate; actual delta_lambda varies per substep
-        else  # load_substep
-            1.0 / max(1, n_load_steps)
-        end
-        visc_beta = delta_s / (czm_params.tau_visc + delta_s)
-    end
-
-    geo_nl = case.opt.czm_geo_nonlinear
+    # 初始化位移与配置由 ms/czm_opt 携带；visc_beta 在 solve_czm_step 内从 czm_opt 计算
+    geo_nl = czm_opt.geo_nonlinear
     eig = geo_nl ? (dT=dT_elem, Δsn=Δsoc_n_elem, Δsp=Δsoc_p_elem) : nothing
     prestress = nothing
-    if case.opt.czm_winding_prestress
-        geo_nl || error("update_czm_damage!: czm_winding_prestress=true 需要 czm_geo_nonlinear=true（D-B2'-2）。")
+    if czm_opt.winding_prestress
+        geo_nl || error("update_czm_damage!: winding_prestress=true 需要 geo_nonlinear=true（D-B2'-2）。")
         (param.cell.winding_T_ne > 0.0 || param.cell.winding_T_pe > 0.0) || error(
-            "update_czm_damage!: czm_winding_prestress=true 但 cell.winding_T_ne/pe 均为 0（未设置）。缺参即拦截（AGENTS 9.4/9.7）。")
-        if case.czm_layout.winding_prestress === nothing
-            case.czm_layout.winding_prestress = winding_prestress_field(czm_mesh, param)
+            "update_czm_damage!: winding_prestress=true 但 cell.winding_T_ne/pe 均为 0（未设置）。缺参即拦截（AGENTS 9.4/9.7）。")
+        if case.mech.winding_prestress === nothing
+            case.mech.winding_prestress = winding_prestress_field(czm_mesh, param)
         end
-        prestress = case.czm_layout.winding_prestress
+        prestress = case.mech.winding_prestress
     end
-    plastic_on = case.opt.czm_j2_plasticity
     mech_state = nothing
-    if plastic_on
-        geo_nl || error("update_czm_damage!: czm_j2_plasticity=true 需要 czm_geo_nonlinear=true（D-B3-1）。")
+    if czm_opt.j2_plasticity
+        geo_nl || error("update_czm_damage!: j2_plasticity=true 需要 geo_nonlinear=true（D-B3-1）。")
         (param.PCC.sigma_y > 0.0 && param.NCC.sigma_y > 0.0) || error(
-            "update_czm_damage!: czm_j2_plasticity=true 但 PCC/NCC 的 sigma_y ≤ 0（未设置）。缺参即拦截，不默认、不置零（AGENTS 9.4/9.7）。")
-        if case.czm_layout.plastic_states === nothing
-            case.czm_layout.plastic_states = [PlasticState() for _ in 1:size(czm_mesh.bulk_element, 1), _ in 1:4]
+            "update_czm_damage!: j2_plasticity=true 但 PCC/NCC 的 sigma_y ≤ 0（未设置）。缺参即拦截，不默认、不置零（AGENTS 9.4/9.7）。")
+        if case.mech.plastic_states === nothing
+            case.mech.plastic_states = [PlasticState() for _ in 1:size(czm_mesh.bulk_element, 1), _ in 1:4]
         end
-        mech_state = case.czm_layout.plastic_states
+        mech_state = case.mech.plastic_states
     end
 
-    result, updated_czm_mesh = solve_czm_step(
-        czm_mesh, F_ext, czm_param_cache, param, u_czm_prev;
+    # 求解器收敛后在 case.mech 上原位提交损伤/位移（失败不触碰）
+    result = solve_czm_step(
+        czm_mesh, case.mech, param, F_ext, czm_opt;
         dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
-        max_iter=max_iter, tol=tol, n_load_steps=n_load_steps, arc_length_alpha=arc_length_alpha, iter_method=iter_method,
-        cache=cache, visc_beta=visc_beta,
-        geo_nl=geo_nl, eigenstrain=eig,
-        plasticity=plastic_on, mech_state=mech_state, prestress=prestress
+        eigenstrain=eig, mech_state=mech_state, prestress=prestress
     )
-
-    if case.opt.debug_coupling
-        pre_stats = get_damage_statistics(czm_mesh)
-        trial_stats = get_damage_statistics(updated_czm_mesh)
-        max_delta_n = isempty(result.separation_n) ? 0.0 : maximum(result.separation_n)
-        max_delta_eff = 0.0
-        for (δ_n, δ_t) in zip(result.separation_n, result.separation_t)
-            if czm_params.czm_model == "model1"
-                max_delta_eff = max(max_delta_eff, max(δ_n, 0.0))
-            else
-                max_delta_eff = max(max_delta_eff, sqrt(max(δ_n, 0.0)^2 + δ_t^2))
-            end
-        end
-        D_visc_max_trial = isempty(updated_czm_mesh.damage_states) ? 0.0 : maximum(ds.D_visc for ds in updated_czm_mesh.damage_states)
-        println("[CZM-Debug] max(δ_n)=$(round(max_delta_n; digits=6)), max(δ_eff)=$(round(max_delta_eff; digits=6)), converged=$(result.converged), β=$(round(visc_beta; digits=4)), D_max(before)=$(round(pre_stats.max_D; digits=6)), D_max(trial)=$(round(trial_stats.max_D; digits=6)), D_visc_max(trrial)=$(round(D_visc_max_trial; digits=6)), D_max(commit)=$(result.converged ? round(trial_stats.max_D; digits=6) : round(pre_stats.max_D; digits=6))")
-    end
 
     all(isfinite, result.displacement) || error("CZM solve returned non-finite displacement")
     all(isfinite, result.damage) || error("CZM solve returned non-finite damage")
@@ -682,13 +449,28 @@ function update_czm_damage!(case, variables, T_nodes_carry)
     isfinite(result.residual_norm) || error("CZM solve returned a non-finite residual norm")
     result.converged || error("CZM solve did not converge after $(result.iterations) iterations (residual=$(result.residual_norm))")
 
-    czm_mesh.damage_states = updated_czm_mesh.damage_states
-    if plastic_on
-        assemble_coupled_system(czm_mesh, result.displacement, czm_param_cache;
+    if czm_opt.j2_plasticity
+        assemble_coupled_system(czm_mesh, result.displacement, param;
+            damage_states=case.mech.damage_states,
             geo_nl=true, eigenstrain=eig, plasticity=true, mech_state=mech_state,
+            czm_model=czm_opt.model,
             commit_plastic=true)
     end
-    case.czm_layout.u_prev = result.displacement
+
+    if case.opt.debug_coupling
+        stats = get_damage_statistics(case.mech.damage_states)
+        max_delta_n = isempty(result.separation_n) ? 0.0 : maximum(result.separation_n)
+        max_delta_eff = 0.0
+        for (δ_n, δ_t) in zip(result.separation_n, result.separation_t)
+            if czm_opt.model == "model1"
+                max_delta_eff = max(max_delta_eff, max(δ_n, 0.0))
+            else
+                max_delta_eff = max(max_delta_eff, sqrt(max(δ_n, 0.0)^2 + δ_t^2))
+            end
+        end
+        D_visc_max = isempty(case.mech.damage_states) ? 0.0 : maximum(ds.D_visc for ds in case.mech.damage_states)
+        println("[CZM-Debug] max(δ_n)=$(round(max_delta_n; digits=6)), max(δ_eff)=$(round(max_delta_eff; digits=6)), converged=$(result.converged), D_max(commit)=$(round(stats.max_D; digits=6)), D_visc_max=$(round(D_visc_max; digits=6))")
+    end
 
     return result
 end

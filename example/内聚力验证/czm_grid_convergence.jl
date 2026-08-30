@@ -22,9 +22,9 @@ for nθ in [40, 80, 160]
     opt.thermal_enabled = true
     opt.thermalmodel = "distributed2D"
     opt.per_element_spme = true
-    opt.czm_enabled = true
+    opt.czm.enabled = true
     opt.mechanicalmodel = "full"
-    opt.czm_model = "model1"
+    opt.czm.model = "model1"
     opt.solveType = "Crank-Nicolson"
     opt.time = [0, 100.0]
     opt.dt = [1e-6, 1.0]

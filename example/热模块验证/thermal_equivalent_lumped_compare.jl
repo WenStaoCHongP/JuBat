@@ -92,7 +92,7 @@ function build_option(; thermalmodel::String="distributed2D")
     opt.cool_method = "surface"
     opt.per_element_spme = true
     opt.debug_coupling = false
-    opt.czm_enabled = false
+    opt.czm.enabled = false
     return opt
 end
 

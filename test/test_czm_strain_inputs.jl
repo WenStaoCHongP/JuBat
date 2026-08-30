@@ -15,7 +15,7 @@ using .JuBat
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     submesh = mesh_data.czm_submesh
     case.czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)
-    case.czm_param_cache = JuBat.compute_czm_params_per_interface(case)
+    case.mech = JuBat.MechState(case.czm_mesh)
 
     ne_czm = size(submesh.mesh.element, 1)
     ne_thermal = size(case.mesh["thermal2D"].element, 1)

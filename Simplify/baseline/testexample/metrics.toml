@@ -6,18 +6,22 @@ refreeze_mode = "fresh_rerun_authorized_change"
 refreeze_authorization = "User-authorized stress-history alignment/zero-column fix and scatter removal; alphaT remains zero (2026-08-30)"
 exit_code = 0
 command = "D:/Julia-1.11.2/bin/julia.exe --startup-file=no --project=. example/testexample.jl"
-git_head = "a7fecc6bf514ae58ad74b745c720d59c2654c348"
-script_sha256 = "78bcc4e937ddda10aea4961a1a7972e45220a090c344bcd5bbaaf6caa7e4e22c"
-couple_example_sha256 = "ae48eeeb6f6c6a62c3bbd8da8b9404e3ee3ae3de264599cd689b0ef2718ee404"
-source_manifest_tsv_sha256 = "ff9655fdfb7e3f9f1d9b26bceae95b4aacdf9cd2839d8e206bd7ea77689e7e0b"
-source_manifest_file_sha256 = "5d92a6e3c13b6ec374b528de3f7dec373f91f04f79fa49af2e7af28258060df0"
-source_file_count = 47
+git_head = "e78604fd3b0b7563a3511129eccee84042f64cdd"
+script_sha256 = "704d55363f823313fd45c4ec98c1fd37d2258c15e47bdaac075f6ac3a2f029c6"
+couple_example_sha256 = "a6005e3b5e6274fd5a4b7e72ebfe1a63017c78824343f8d6dc3d161cf90f0fab"
+source_manifest_tsv_sha256 = "4865ba0e04568f41f8c6a4e518d55d3eae64f9a90236c63c3405328ab564cc84"
+source_manifest_file_sha256 = "c6bb7eac278fe85c78d4c72fe3c3cdb9ee99b981f7eb04d6dad9acf5d912271d"
+source_file_count = 46
 julia_version = "1.11.2"
 plots_version = "1.40.9"
 julia_threads = 1
 gkswstype = "100"
 artifact_written = "2026-08-30T17:28:56+0800"
 solver_wall_seconds = 54.665
+# 2026-08-30 四层力学结构体重构（spec 2026-08-30-mechanics-struct-refactor）：
+# 界面参数挂 CurrentCollector、opt.czm 嵌套、缓存随网格、MechState 聚合。
+# 验证（参照=父提交 66c718e）：单步 A/B 探针 17 位全同；testexample 全指标逐位一致；
+# 三张 PNG 哈希不变（用户核验）；全套测试 32/32。基线数值零漂移——仅刷新源码清单与脚本哈希。
 
 [mesh]
 theta_elements = 80

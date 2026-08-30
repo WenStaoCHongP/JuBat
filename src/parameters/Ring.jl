@@ -33,13 +33,7 @@ NCC = CurrentCollector()
 
 tab = Tab()
 binder = Binder()
-cohesive = Cohesive()
-
-cohesive.h_c0 = 1e7
-cohesive.k_air = 0.026
-cohesive.lambda_m = 70e-9
-cohesive.beta = 1.0
-cohesive.threshold = 70e-9
+# 界面热阻默认值（h_c0=1e7 等）已内置于 CurrentCollector 字段默认值（2026-08-30 重构）
 scale = Scale()
 
 cell = Cell()
@@ -62,4 +56,4 @@ cell.capacity = 5.0
 cell.area = cell.width * cell.length * 1
 cell.no_layers = 1
 
-param_dim = Params(PE, NE, EL, SP, cell, PCC, NCC, tab, binder, scale, cohesive)
+param_dim = Params(PE, NE, EL, SP, cell, PCC, NCC, tab, binder, scale)

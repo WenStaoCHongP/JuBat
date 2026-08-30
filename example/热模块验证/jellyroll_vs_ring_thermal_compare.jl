@@ -101,7 +101,7 @@ function run_jellyroll_simulation()
     opt.thermal_enabled = true
     opt.thermalmodel, opt.thermal_dim = "distributed2D", "2D"
     opt.cool_method = "none"
-    opt.per_element_spme, opt.debug_coupling, opt.czm_enabled = true, false, false
+    opt.per_element_spme, opt.debug_coupling, opt.czm.enabled = true, false, false
 
     # 创建案例和网格
     case = JuBat.SetCase(param_dim, opt)

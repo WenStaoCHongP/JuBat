@@ -16,12 +16,13 @@ function layer_stress_fixture(; nθ::Int=8, czm_enabled::Bool=false, fix_inner::
     opt.thermal_enabled = true
     opt.thermalmodel = "distributed2D"
     opt.per_element_spme = true
-    opt.czm_enabled = czm_enabled
-    opt.czm_fix_inner = fix_inner
+    opt.czm.enabled = czm_enabled
+    opt.czm.fix_inner = fix_inner
     case = JuBat.SetCase(param_dim, opt)
     md = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, md)
     case.czm_mesh = JuBat.create_czm_mesh(md.czm_submesh, case.mesh["thermal2D"], case.param)
+    case.mech = JuBat.MechState(case.czm_mesh)
     return case
 end
 
@@ -49,13 +50,14 @@ function interval_history_case()
     opt.thermal_enabled = true
     opt.thermalmodel = "distributed2D"
     opt.per_element_spme = true
-    opt.czm_enabled = true
-    opt.czm_fix_inner = false
-    opt.czm_update_interval = 2
+    opt.czm.enabled = true
+    opt.czm.fix_inner = false
+    opt.czm.update_interval = 2
     case = JuBat.SetCase(param_dim, opt)
     md = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=8, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, md)
     case.czm_mesh = JuBat.create_czm_mesh(md.czm_submesh, case.mesh["thermal2D"], case.param)
+    case.mech = JuBat.MechState(case.czm_mesh)
     return case
 end
 
@@ -88,7 +90,7 @@ end
 
 @testset "耦合收割：export_macro_stress 写入历史列" begin
     case = layer_stress_fixture(; czm_enabled=true, fix_inner=false)
-    case.czm_layout = JuBat.CzmLayout(case.czm_mesh)
+    case.mech = JuBat.MechState(case.czm_mesh)
     vars = discharge_variables(case)
     T_nodes = vars["T_nodes"]
     JuBat.update_czm_damage!(case, vars, T_nodes)

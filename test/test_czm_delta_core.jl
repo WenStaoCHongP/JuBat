@@ -10,7 +10,7 @@ function dc_fixture(; nθ::Int=8)
     param_dim = JuBat.ChooseCell("Jellyroll")
     opt = JuBat.Option()
     opt.thermal_enabled = true; opt.thermalmodel = "distributed2D"; opt.per_element_spme = true
-    opt.czm_enabled = true
+    opt.czm.enabled = true
     case = JuBat.SetCase(param_dim, opt)
     md = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, md)
@@ -49,7 +49,7 @@ end
 @testset "基准恒定：两次计算相对同一初始螺旋（node_ref 持久）" begin
     case = dc_fixture()
     cm = case.czm_mesh
-    case.czm_layout = JuBat.CzmLayout(cm)
+    case.mech = JuBat.MechState(cm)
     u1 = fill(1e-5, 2 * cm.nnode)
     w1, _ = JuBat.core_ovalization(cm, u1, JuBat.ensure_node_ref!(case))
     u2 = 2 .* u1
@@ -60,10 +60,10 @@ end
 @testset "持久化审计：u_prev/damage 跨相位连续（不重置）" begin
     case = dc_fixture()
     cm = case.czm_mesh
-    layout = JuBat.CzmLayout(cm)
+    ms = JuBat.MechState(cm)
     u_end = fill(2e-5, 2 * cm.nnode)
-    layout.u_prev = u_end
-    cm.damage_states[1].D = 0.3
-    @test layout.u_prev === u_end
-    @test cm.damage_states[1].D == 0.3
+    ms.u_prev = u_end
+    ms.damage_states[1].D = 0.3
+    @test ms.u_prev === u_end
+    @test ms.damage_states[1].D == 0.3
 end

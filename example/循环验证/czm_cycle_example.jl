@@ -77,9 +77,9 @@ function main()
     opt.cool_method = "tab"
     opt.per_element_spme = true
     # 裂纹模式选择："model1" 仅法向；"mix" 混合模式
-    opt.czm_enabled = true
-    opt.czm_model = "model1"
-    @printf("  CZM 模式: %s\n", opt.czm_model)
+    opt.czm.enabled = true
+    opt.czm.model = "model1"
+    @printf("  CZM 模式: %s\n", opt.czm.model)
     
     println("OK: 参数设置完成")
     
@@ -104,7 +104,7 @@ function main()
 
     # CZM网格（v3 两步式：从 czm_submesh + thermal2D 构造）
     czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th, case.param)
-    case.czm_param_cache = JuBat.compute_czm_params_per_interface(case)
+    case.mech = JuBat.MechState(czm_mesh)
     
     println("OK: CZM网格创建完成")
     @printf("  内聚力单元数: %d\n", czm_mesh.n_cohesive)
@@ -147,7 +147,7 @@ function main()
     
     result = nothing
     try
-        result = JuBat.solve_cycling(case, cycle_opt, czm_mesh; verbose=true, save_detailed=true)
+        result = JuBat.solve_cycling(case, cycle_opt, case.mech; verbose=true, save_detailed=true)
         println("\nOK: 循环仿真完成")
     catch e
         println("\nERROR: 仿真失败: $e")

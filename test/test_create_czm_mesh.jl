@@ -10,7 +10,7 @@ using .JuBat
     opt.thermal_enabled = true
     opt.thermalmodel = "distributed2D"
     opt.per_element_spme = true
-    opt.czm_enabled = true                   # 选择未合并热网格
+    opt.czm.enabled = true                   # 选择未合并热网格
     case = JuBat.SetCase(param_dim, opt)
 
     mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, czm_enabled=true, gsorder=2)
@@ -78,9 +78,9 @@ end
 
     mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-    czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
-    param_cache = JuBat.compute_czm_params_per_interface(case)
-    cache = JuBat.build_czm_cache(czm_mesh, param_cache; fix_inner=false)
+    case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
+    czm_mesh = case.czm_mesh
+    case.mech = JuBat.MechState(case.czm_mesh)
 
     # 副本节点坐标与原节点一致（top 与 bottom 几何重合），
     # 因此 cohesive 法向由拓扑（host_inner 在内、host_outer 在外）决定，而非节点几何。
@@ -100,7 +100,7 @@ end
         # cohesive 正法向必须从 host_inner 指向 host_outer；否则物理张开会被
         # 双线性律当作受压，D 将被结构性锁死为 0。
         outward = [cx_outer - cx_inner, cy_outer - cy_inner]
-        push!(normal_orientations, dot(cache.cohesive_geom[i].n_vec, outward))
+        push!(normal_orientations, dot(JuBat.cohesive_geometry(case.czm_mesh)[i].n_vec, outward))
 
         # 进一步验证：lo/hi 两节点 id 相差 1（同一螺旋上的相邻 segment 节点）
         # 这正是 C1 修复所依赖的前提——id 顺序等价于 θ 顺序。

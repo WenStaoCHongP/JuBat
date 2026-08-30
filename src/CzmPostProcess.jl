@@ -3,23 +3,24 @@
 # ========================================================================
 # 从 CzmSolve.jl 拆分出来的后处理、统计和损伤管理函数。
 # 这些函数无状态、纯计算，独立于求解器主循环。
-# 注: Statistics 已在 JuBat.jl module 级别 using，此处无需重复。
+# 损伤状态自 2026-08-30 重构起存于 MechState.damage_states——
+# 本文件函数直接接收 damage_states 向量（不再从 czm_mesh 读取）。
 # ========================================================================
 
 """
-    get_damage_statistics(czm_mesh)
+    get_damage_statistics(damage_states)
 """
-function get_damage_statistics(czm_mesh::CohesiveMesh)
-    n = czm_mesh.n_cohesive
+function get_damage_statistics(damage_states::AbstractVector{<:AbstractDamageState})
+    n = length(damage_states)
 
     if n == 0
         return (max_D=0.0, mean_D=0.0, min_D=0.0, n_fractured=0, fraction_damaged=0.0, total_accumulated=0.0)
     end
 
-    D_vals = [s.D for s in czm_mesh.damage_states]
-    n_fractured = count(s -> s.fractured, czm_mesh.damage_states)
+    D_vals = [s.D for s in damage_states]
+    n_fractured = count(s -> s.fractured, damage_states)
     n_damaged = count(d -> d > 0.01, D_vals)
-    accumulated = [s.accumulated_damage for s in czm_mesh.damage_states]
+    accumulated = [s.accumulated_damage for s in damage_states]
 
     return (
         max_D = maximum(D_vals),
@@ -32,13 +33,13 @@ function get_damage_statistics(czm_mesh::CohesiveMesh)
 end
 
 """
-    check_fracture_criterion(czm_mesh; threshold=0.99)
+    check_fracture_criterion(damage_states; threshold=0.99)
 """
-function check_fracture_criterion(czm_mesh::CohesiveMesh; threshold::Float64=0.99)
-    stats = get_damage_statistics(czm_mesh)
+function check_fracture_criterion(damage_states::AbstractVector{<:AbstractDamageState}; threshold::Float64=0.99)
+    stats = get_damage_statistics(damage_states)
 
     is_fractured_avg = stats.mean_D >= threshold
-    is_fractured_count = (stats.n_fractured / max(1, czm_mesh.n_cohesive)) > 0.5
+    is_fractured_count = (stats.n_fractured / max(1, length(damage_states))) > 0.5
 
     is_fractured = is_fractured_avg || is_fractured_count
 
@@ -52,26 +53,26 @@ function check_fracture_criterion(czm_mesh::CohesiveMesh; threshold::Float64=0.9
 end
 
 """
-    reset_damage_states(czm_mesh)
+    reset_damage_states!(ms)
 
-Return new CZM mesh with reset damage states.
+原位重置 MechState 上的损伤状态。
 """
-function reset_damage_states(czm_mesh::CohesiveMesh)
-    new_damage_states = [DamageState() for _ in 1:czm_mesh.n_cohesive]
-    new_czm_mesh = clone_czm_mesh_with_damage(czm_mesh, new_damage_states)
-    return new_czm_mesh
+function reset_damage_states!(ms::MechState)
+    ms.damage_states = [DamageState() for _ in 1:length(ms.damage_states)]
+    return ms
 end
 
 """
-    accumulate_cycle_damage(czm_mesh, cycle_damage_increment)
+    accumulate_cycle_damage!(ms, cycle_damage_increment)
 
-Return new CZM mesh with accumulated damage.
+原位累积循环损伤（未断裂单元 accumulated_damage += 增量；累积到 1 判断裂）。
 """
-function accumulate_cycle_damage(czm_mesh::CohesiveMesh, cycle_damage_increment::Float64)
-    new_damage_states = Vector{DamageState}(undef, czm_mesh.n_cohesive)
-    for (i, state) in enumerate(czm_mesh.damage_states)
+function accumulate_cycle_damage!(ms::MechState, cycle_damage_increment::Float64)
+    new_damage_states = Vector{DamageState}(undef, length(ms.damage_states))
+    for (i, state) in enumerate(ms.damage_states)
         new_state = DamageState()
         new_state.D = state.D
+        new_state.D_visc = state.D_visc
         new_state.δ_max_n = state.δ_max_n
         new_state.δ_max_t = state.δ_max_t
         new_state.δ_max_eff = state.δ_max_eff
@@ -88,15 +89,14 @@ function accumulate_cycle_damage(czm_mesh::CohesiveMesh, cycle_damage_increment:
 
         new_damage_states[i] = new_state
     end
-
-    new_czm_mesh = clone_czm_mesh_with_damage(czm_mesh, new_damage_states)
-    return new_czm_mesh
+    ms.damage_states = new_damage_states
+    return ms
 end
 
 """
-    czm_output_to_variables(czm_mesh, result, variables)
+    czm_output_to_variables(result, variables)
 """
-function czm_output_to_variables(czm_mesh::CohesiveMesh, result::CZMResult, variables::Dict{String, Union{Array{Float64}, Float64}})
+function czm_output_to_variables(result::CZMResult, variables::Dict{String, Union{Array{Float64}, Float64}})
     new_variables = copy(variables)
     u_x = result.displacement[1:2:end]
     u_y = result.displacement[2:2:end]
@@ -108,10 +108,9 @@ function czm_output_to_variables(czm_mesh::CohesiveMesh, result::CZMResult, vari
     new_variables["czm separation normal"] = result.separation_n
     new_variables["czm separation tangent"] = result.separation_t
 
-    stats = get_damage_statistics(czm_mesh)
-    new_variables["czm D_max"] = stats.max_D
-    new_variables["czm D_mean"] = stats.mean_D
-    new_variables["czm n_fractured"] = Float64(stats.n_fractured)
+    new_variables["czm D_max"] = maximum(result.damage)
+    new_variables["czm D_mean"] = mean(result.damage)
+    new_variables["czm n_fractured"] = Float64(count(d -> d >= 0.99, result.damage))
 
     return new_variables
 end

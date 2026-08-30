@@ -45,7 +45,7 @@ function state_concentration_variance(case::Case, y_state)
     return var(cs_n), var(cs_p)
 end
 
-function postprocess_phase_result(case::Case, phase_type::PhaseType, solve_result::Dict, initial_state::Union{Dict{String,Any},Nothing},I_current::Float64, t_start::Float64,D_max_init::Float64, D_mean_init::Float64, czm_mesh)
+function postprocess_phase_result(case::Case, phase_type::PhaseType, solve_result::Dict, initial_state::Union{Dict{String,Any},Nothing},I_current::Float64, t_start::Float64,D_max_init::Float64, D_mean_init::Float64, ms)
     time_hist = solve_result["time [s]"]
     voltage_hist = solve_result["cell voltage [V]"]
     isempty(time_hist) && error("postprocess_phase_result requires a non-empty time history")
@@ -76,8 +76,8 @@ function postprocess_phase_result(case::Case, phase_type::PhaseType, solve_resul
 
     D_max_end = D_max_init
     D_mean_end = D_mean_init
-    if czm_mesh !== nothing
-        stats = get_damage_statistics(czm_mesh)
+    if ms !== nothing
+        stats = get_damage_statistics(ms.damage_states)
         D_max_end = stats.max_D
         D_mean_end = stats.mean_D
     end
@@ -114,14 +114,14 @@ function postprocess_phase_result(case::Case, phase_type::PhaseType, solve_resul
     )
 end
 
-function postprocess_cycle_result!(cycle_result, charge_result, discharge_result, rest1_result, rest2_result, czm_mesh)
+function postprocess_cycle_result!(cycle_result, charge_result, discharge_result, rest1_result, rest2_result, ms)
     cycle_result.capacity_charge = charge_result.capacity
     cycle_result.capacity_discharge = discharge_result.capacity
     cycle_result.capacity_charge > 0 || throw(DomainError(cycle_result.capacity_charge, "charge capacity must be positive before computing coulombic efficiency"))
     cycle_result.coulombic_efficiency = 100.0 * cycle_result.capacity_discharge / cycle_result.capacity_charge
 
-    if czm_mesh !== nothing
-        stats = get_damage_statistics(czm_mesh)
+    if ms !== nothing
+        stats = get_damage_statistics(ms.damage_states)
         cycle_result.D_max_end = stats.max_D
         cycle_result.D_mean_end = stats.mean_D
         cycle_result.n_fractured = stats.n_fractured
@@ -168,7 +168,7 @@ function print_cycle_summary(cycle::Int, cycle_result, current_soh::Float64)
             cycle_result.coulombic_efficiency, cycle_result.D_max_end * 100, current_soh * 100)
 end
 
-function check_cycle_termination(cycle::Int, cycle_result, czm_mesh, current_soh::Float64, soh_threshold::Float64; verbose::Bool=true)
+function check_cycle_termination(cycle::Int, cycle_result, ms, current_soh::Float64, soh_threshold::Float64; verbose::Bool=true)
     soh_terminated = false
 
     if current_soh <= soh_threshold && cycle > 1
@@ -179,7 +179,7 @@ function check_cycle_termination(cycle::Int, cycle_result, czm_mesh, current_soh
         return true, soh_terminated
     end
 
-    if czm_mesh !== nothing && cycle_result.n_fractured > 0.5 * czm_mesh.n_cohesive
+    if ms !== nothing && cycle_result.n_fractured > 0.5 * length(ms.damage_states)
         if verbose
             @warn "超过50%的内聚力单元断裂，提前终止循环"
         end

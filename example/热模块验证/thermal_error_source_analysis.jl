@@ -113,7 +113,7 @@ function main()
     opt.cool_method = "surface"
     opt.per_element_spme = true
     opt.debug_coupling = false
-    opt.czm_enabled = false
+    opt.czm.enabled = false
 
     case = JuBat.SetCase(param_dim, opt)
     mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=80, gsorder=2)

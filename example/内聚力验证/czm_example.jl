@@ -57,7 +57,7 @@ function create_czm_test_params()
     # cohesive.K_t = cohesive.τ_max_t / cohesive.δ_0_t  # 初始刚度 [Pa/m]        # TODO Chunk 2 Task 2.1
     
     # BK准则指数（Benzeggagh-Kenane）
-    cohesive.czm_model = "mix"
+    cohesive.czm.model = "mix"
     cohesive.eta = 1.45
     
     return cohesive

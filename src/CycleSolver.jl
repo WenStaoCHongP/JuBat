@@ -92,7 +92,7 @@ mutable struct CyclingResult
     czm_snapshots::Vector{CZMSnapshot}
 
     # 最终状态
-    final_czm_mesh::Any                 # 最终的CZM网格（包含损伤状态）
+    final_mech::Any                     # 最终的 MechState（包含损伤/位移状态）
     initial_capacity::Float64           # 初始容量（第一个循环的放电容量）
     soh_terminated::Bool                # 是否因SOH低于阈值终止
 end
@@ -104,7 +104,7 @@ function CyclingResult(n_cycles::Int)
         Float64[], Float64[], Int[], Float64[], Float64[],
         CycleResult[],
         CZMSnapshot[],    # czm_snapshots
-        nothing,          # final_czm_mesh
+        nothing,          # final_mech
         0.0,              # initial_capacity
         false             # soh_terminated
     )
@@ -115,7 +115,7 @@ end
 # 2. 单阶段求解器
 # ========================================================================
 
-function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, V_limit::Float64, initial_state::Union{Dict{String,Any},Nothing}; czm_mesh=nothing, czm_params=nothing, dt_range::Vector{Float64}=[1.0, 10.0], czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing, czm_cycle::Int=1)
+function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, V_limit::Float64, initial_state::Union{Dict{String,Any},Nothing}; ms=nothing, dt_range::Vector{Float64}=[1.0, 10.0], czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing, czm_cycle::Int=1)
     result = PhaseResult()
     result.phase_type = phase_type
     result.t_start = initial_state === nothing ? 0.0 : initial_state["t_global"]
@@ -124,9 +124,9 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_curren
         I_current = 0.0
     end
 
-    # 记录阶段开始损伤
-    D_max_init = czm_mesh !== nothing ? maximum(s.D for s in czm_mesh.damage_states) : 0.0
-    D_mean_init = czm_mesh !== nothing ? mean(s.D for s in czm_mesh.damage_states) : 0.0
+    # 记录阶段开始损伤（2026-08-30 重构：状态在 ms 上跨循环携带）
+    D_max_init = ms !== nothing ? maximum(s.D for s in ms.damage_states) : 0.0
+    D_mean_init = ms !== nothing ? mean(s.D for s in ms.damage_states) : 0.0
 
     # 配置本阶段求解参数
     case.opt.Current = _ -> I_current
@@ -136,9 +136,9 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_curren
     old_v_l = case.param.cell.v_l
     old_v_h = case.param.cell.v_h
     try
-        # 将 CZM 网格挂载到 case 上，以便 CallModel 能访问
-        if czm_mesh !== nothing
-            case.czm_mesh = czm_mesh
+        # 将跨循环力学状态挂载到 case 上，以便求解循环访问
+        if ms !== nothing
+            case.mech = ms
         end
 
         if phase_type == PHASE_DISCHARGE
@@ -164,7 +164,7 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_curren
         phase_data = postprocess_phase_result(
             case, phase_type, solve_result, initial_state,
             I_current, result.t_start,
-            D_max_init, D_mean_init, czm_mesh
+            D_max_init, D_mean_init, ms
         )
 
         result.t_end = result.t_start + phase_data["duration"]
@@ -194,25 +194,25 @@ end
 # ========================================================================
 
 """
-    solve_cycling(case, cycle_opt, czm_mesh; verbose=true)
+    solve_cycling(case, cycle_opt, ms; verbose=true)
 
 执行完整的充放电循环仿真。
 
 # 参数
 - `case`: JuBat Case对象
 - `cycle_opt`: CycleOption 循环参数
-- `czm_mesh`: CohesiveMesh 内聚力网格（可选）
+- `ms`: MechState 跨循环力学状态（可选）
 
 # 返回
 - `CyclingResult`: 循环结果汇总
 """
-function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verbose::Bool=true, save_detailed::Bool=false)
+function solve_cycling(case::Case, cycle_opt::CycleOption, ms=nothing;verbose::Bool=true, save_detailed::Bool=false)
     
     n_cycles = cycle_opt.n_cycles
     result = CyclingResult(n_cycles)
 
     # CZM snapshots vector (shared across all phases)
-    czm_snaps = save_detailed && czm_mesh !== nothing ? CZMSnapshot[] : nothing
+    czm_snaps = save_detailed && ms !== nothing ? CZMSnapshot[] : nothing
 
     # 应用初始SOC设置
     soc_init = cycle_opt.SOC_init
@@ -241,11 +241,9 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
     # 初始状态
     current_state = nothing
     
-    # CZM参数
-    czm_params = case.param.cohesive
     
     # SOH监控参数
-    soh_threshold = case.opt.czm_soh_threshold
+    soh_threshold = case.opt.czm.soh_threshold
     initial_capacity = 0.0  # 初始放电容量（第一个循环结束后设置）
     soh_terminated = false  # SOH终止标志
 
@@ -286,8 +284,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
             cycle_opt.I_discharge,  # 正电流表示放电
             cycle_opt.V_lower,
             current_state;
-            czm_mesh=czm_mesh,
-            czm_params=czm_params,
+            ms=ms,
             dt_range=cycle_opt.dt_cycle,
             czm_snapshots=czm_snaps, czm_cycle=cycle
         )
@@ -315,8 +312,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
                 0.0,  # 零电流：仅进行锂扩散
                 0.0,  # 无电压限制
                 current_state;  # 继承上一步状态
-                czm_mesh=czm_mesh,
-                czm_params=czm_params,
+                ms=ms,
                 dt_range=cycle_opt.dt_cycle,
                 czm_snapshots=czm_snaps, czm_cycle=cycle
             )
@@ -354,8 +350,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
             -cycle_opt.I_charge,  # 负电流表示充电
             cycle_opt.V_upper,
             current_state;
-            czm_mesh=czm_mesh,
-            czm_params=czm_params,
+            ms=ms,
             dt_range=cycle_opt.dt_cycle,
             czm_snapshots=czm_snaps, czm_cycle=cycle
         )
@@ -382,8 +377,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
                 0.0,  # 零电流：仅进行锂扩散
                 0.0,
                 current_state;  # 继承上一步状态
-                czm_mesh=czm_mesh,
-                czm_params=czm_params,
+                ms=ms,
                 dt_range=cycle_opt.dt_cycle,
                 czm_snapshots=czm_snaps, czm_cycle=cycle
             )
@@ -402,7 +396,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
         
         # ============ 循环汇总与后处理 ============
         postprocess_cycle_result!(cycle_result, charge_result, discharge_result,
-                                  cycle_result.rest1, cycle_result.rest2, czm_mesh)
+                                  cycle_result.rest1, cycle_result.rest2, ms)
         append_cycle_result!(result, cycle, cycle_result; save_detailed=save_detailed)
         initial_capacity, current_soh = update_soh_and_capacity!(result, cycle, cycle_result, initial_capacity)
 
@@ -410,7 +404,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
             print_cycle_summary(cycle, cycle_result, current_soh)
         end
 
-        should_stop, soh_hit = check_cycle_termination(cycle, cycle_result, czm_mesh, current_soh, soh_threshold; verbose=verbose)
+        should_stop, soh_hit = check_cycle_termination(cycle, cycle_result, ms, current_soh, soh_threshold; verbose=verbose)
         if soh_hit
             soh_terminated = true
             result.soh_terminated = true
@@ -425,7 +419,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, czm_mesh=nothing;verb
         result.czm_snapshots = czm_snaps
     end
 
-    result.final_czm_mesh = czm_mesh
+    result.final_mech = ms
     if verbose
         print_cycling_summary(result, initial_capacity, soh_terminated)
     end

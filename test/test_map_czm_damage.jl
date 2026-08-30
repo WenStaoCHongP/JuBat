@@ -15,15 +15,16 @@ using .JuBat
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     submesh = mesh_data.czm_submesh
     case.czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)
+    case.mech = JuBat.MechState(case.czm_mesh)
     ne_thermal = size(case.mesh["thermal2D"].element, 1)
 
     # 手动设置部分 damage_states 验证 max 归约
     n_coh = case.czm_mesh.n_cohesive
-    for i in 1:min(n_coh, length(case.czm_mesh.damage_states))
-        case.czm_mesh.damage_states[i].D = (i % 5) / 4.0   # 0, 0.25, 0.5, 0.75, 1.0 循环
+    for i in 1:min(n_coh, length(case.mech.damage_states))
+        case.mech.damage_states[i].D = (i % 5) / 4.0   # 0, 0.25, 0.5, 0.75, 1.0 循环
     end
 
-    D_per_thermal = JuBat.map_czm_damage_to_thermal(case.czm_mesh, ne_thermal)
+    D_per_thermal = JuBat.map_czm_damage_to_thermal(case.czm_mesh, case.mech.damage_states, ne_thermal)
     @test length(D_per_thermal) == ne_thermal
     @test all(0 .<= D_per_thermal .<= 1.0)
 
@@ -31,21 +32,21 @@ using .JuBat
     czm_mesh_synthetic = case.czm_mesh
     # 把前 3 个 cohesive 单元强制映射到粗热单元 1
     czm_mesh_synthetic.cohesive_to_thermal[1:3] .= 1
-    for i in eachindex(czm_mesh_synthetic.damage_states)
+    for i in eachindex(case.mech.damage_states)
         if czm_mesh_synthetic.cohesive_to_thermal[i] == 1
-            czm_mesh_synthetic.damage_states[i].D = 0.0
+            case.mech.damage_states[i].D = 0.0
         end
     end
-    czm_mesh_synthetic.damage_states[1].D = 0.3
-    czm_mesh_synthetic.damage_states[2].D = 0.7
-    czm_mesh_synthetic.damage_states[3].D = 0.1
+    case.mech.damage_states[1].D = 0.3
+    case.mech.damage_states[2].D = 0.7
+    case.mech.damage_states[3].D = 0.1
 
-    D2 = JuBat.map_czm_damage_to_thermal(czm_mesh_synthetic, ne_thermal)
+    D2 = JuBat.map_czm_damage_to_thermal(czm_mesh_synthetic, case.mech.damage_states, ne_thermal)
     @test D2[1] ≈ 0.7   # max(0.3, 0.7, 0.1)
 
     # 完全断裂值
-    czm_mesh_synthetic.damage_states[1].D = 1.0
-    D3 = JuBat.map_czm_damage_to_thermal(czm_mesh_synthetic, ne_thermal)
+    case.mech.damage_states[1].D = 1.0
+    D3 = JuBat.map_czm_damage_to_thermal(czm_mesh_synthetic, case.mech.damage_states, ne_thermal)
     @test D3[1] ≈ 1.0
 
     # 未覆盖 CZM 的粗热单元应返回 0

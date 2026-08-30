@@ -3,27 +3,28 @@ using Test
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
 
-@testset "Jellyroll cohesive per-interface params" begin
-    param_dim = JuBat.ChooseCell("Jellyroll")
-    coh = param_dim.cohesive
+# 2026-08-30 重构：界面参数挂 CurrentCollector（PCC=PE-PCC 界面，NCC=NE-NCC 界面）
 
-    # PE-PCC 必须有非零值
-    @test coh.σ_max_pe_pcc > 0
-    @test coh.G_c_pe_pcc > 0
-    @test coh.K_n_pe_pcc > 0
-    @test coh.δ_0_pe_pcc > 0
-    @test coh.δ_c_pe_pcc > 0
-    @test coh.τ_max_pe_pcc > 0
-    @test coh.K_t_pe_pcc > 0
+@testset "Jellyroll per-interface params on collectors" begin
+    param_dim = JuBat.ChooseCell("Jellyroll")
+
+    # PE-PCC 界面（PCC）必须有非零值
+    @test param_dim.PCC.σ_max > 0
+    @test param_dim.PCC.G_c > 0
+    @test param_dim.PCC.K_n > 0
+    @test param_dim.PCC.δ_0 > 0
+    @test param_dim.PCC.δ_c > 0
+    @test param_dim.PCC.τ_max > 0
+    @test param_dim.PCC.K_t > 0
 
     # δ_c = 2G_c/σ_max 一致性
-    @test coh.δ_c_pe_pcc ≈ 2 * coh.G_c_pe_pcc / coh.σ_max_pe_pcc rtol=1e-6
-    @test coh.δ_0_pe_pcc ≈ coh.σ_max_pe_pcc / coh.K_n_pe_pcc rtol=1e-6
+    @test param_dim.PCC.δ_c ≈ 2 * param_dim.PCC.G_c / param_dim.PCC.σ_max rtol=1e-6
+    @test param_dim.PCC.δ_0 ≈ param_dim.PCC.σ_max / param_dim.PCC.K_n rtol=1e-6
 
-    # NE-NCC 同上
-    @test coh.σ_max_ne_ncc > 0
-    @test coh.G_c_ne_ncc > 0
-    @test coh.K_n_ne_ncc > 0
-    @test coh.δ_c_ne_ncc ≈ 2 * coh.G_c_ne_ncc / coh.σ_max_ne_ncc rtol=1e-6
-    @test coh.δ_0_ne_ncc ≈ coh.σ_max_ne_ncc / coh.K_n_ne_ncc rtol=1e-6
+    # NE-NCC 界面（NCC）同上
+    @test param_dim.NCC.σ_max > 0
+    @test param_dim.NCC.G_c > 0
+    @test param_dim.NCC.K_n > 0
+    @test param_dim.NCC.δ_c ≈ 2 * param_dim.NCC.G_c / param_dim.NCC.σ_max rtol=1e-6
+    @test param_dim.NCC.δ_0 ≈ param_dim.NCC.σ_max / param_dim.NCC.K_n rtol=1e-6
 end

@@ -16,13 +16,13 @@ function subdiv_fixture(; nθ::Int=8, thin_subdiv::Int=1)
                                                     thin_subdiv=thin_subdiv)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
-    param_cache = JuBat.compute_czm_params_per_interface(case)
-    return case, param_cache
+    case.mech = JuBat.MechState(case.czm_mesh)
+    return case
 end
 
 @testset "thin_subdiv=3 拓扑：子层单元/材料继承/cohesive 恒量/Φ 重合" begin
-    case1, _ = subdiv_fixture(nθ=8, thin_subdiv=1)
-    case3, _ = subdiv_fixture(nθ=8, thin_subdiv=3)
+    case1 = subdiv_fixture(nθ=8, thin_subdiv=1)
+    case3 = subdiv_fixture(nθ=8, thin_subdiv=3)
     nseg = 8 * 21  # nθ=8 的分段数（由默认网格实测校验）
     ne1 = size(case1.czm_mesh.bulk_element, 1)
     ne3 = size(case3.czm_mesh.bulk_element, 1)
@@ -57,12 +57,12 @@ end
 end
 
 @testset "split_KG：K_mat+K_G ≈ K_total 且稀疏模式一致（geo 路径）" begin
-    case, pc = subdiv_fixture(nθ=8)
+    case = subdiv_fixture(nθ=8)
     cm = case.czm_mesh
     u = zeros(2 * cm.nnode)
     σ0 = JuBat.winding_prestress_field(cm, case.param)
-    _, K = JuBat.assemble_bulk_residual_tangent(cm, u, pc; geo_nl=true, prestress=σ0)
-    _, Kmat, KG = JuBat.assemble_bulk_residual_tangent(cm, u, pc; geo_nl=true, prestress=σ0, split_KG=true)
+    _, K = JuBat.assemble_bulk_residual_tangent(cm, u, case.param; geo_nl=true, prestress=σ0)
+    _, Kmat, KG = JuBat.assemble_bulk_residual_tangent(cm, u, case.param; geo_nl=true, prestress=σ0, split_KG=true)
     # 跨求和次序差异 → rtol 1e-12（计划偏差：geo 路径无位级冻结契约，冻结门禁全在线性路径）
     @test isapprox(Array(K), Array(Kmat) + Array(KG); rtol=1e-12)
     @test nnz(K) == nnz(Kmat) == nnz(KG) || nnz(K) ≥ nnz(Kmat)
@@ -70,8 +70,8 @@ end
 end
 
 @testset "非法组合：线弹性路径 split_KG=true → error" begin
-    case, pc = subdiv_fixture(nθ=8)
+    case = subdiv_fixture(nθ=8)
     cm = case.czm_mesh
     @test_throws ErrorException JuBat.assemble_bulk_residual_tangent(
-        cm, zeros(2 * cm.nnode), pc; split_KG=true)
+        cm, zeros(2 * cm.nnode), case.param; split_KG=true)
 end

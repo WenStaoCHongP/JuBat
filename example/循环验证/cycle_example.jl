@@ -64,7 +64,7 @@ function main()
     opt.thermalmodel = "distributed2D"
     opt.thermal_dim = "2D"
     opt.cool_method = "tab"
-    opt.czm_enabled = false
+    opt.czm.enabled = false
     # 当 thermalmodel = "distributed2D" 时自动启用多SPMe并行模式
     
     println("OK: 参数设置完成")

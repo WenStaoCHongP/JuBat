@@ -5,6 +5,8 @@ include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
 
 # Batch 5 Task 2：Crisfield 柱面弧长 geo 路径（Theory §6.10，λ 缩放本征应变增量）
+# 2026-08-30 重构适配：solve_czm_step(czm_mesh, ms, param, F_ext, czm_opt; 载荷/状态)，
+# 求解配置写在 case.opt.czm 上，演化状态挂在 ms（每 testset 新建夹具互不串扰）。
 
 function arc_fixture(; nθ::Int=8)
     param_dim = JuBat.ChooseCell("Jellyroll")
@@ -14,83 +16,95 @@ function arc_fixture(; nθ::Int=8)
     md = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, md)
     case.czm_mesh = JuBat.create_czm_mesh(md.czm_submesh, case.mesh["thermal2D"], case.param)
-    pc = JuBat.compute_czm_params_per_interface(case)
-    cache = JuBat.ensure_czm_cache(case, case.czm_mesh, pc)
-    return case, pc, cache
+    ms = JuBat.MechState(case.czm_mesh)
+    return case, ms
 end
 
 @testset "弧长 geo 弹性区与 basic 一致且 λ 达 1" begin
-    case, pc, cache = arc_fixture()
+    case, ms = arc_fixture()
     cm = case.czm_mesh
     ne = size(cm.bulk_element, 1)
-    ndof = 2 * cm.nnode
     eig = (dT = fill(1e-6, ne), Δsn = zeros(ne), Δsp = zeros(ne))
-    kw = (dT_elem = eig.dT, Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp)
-    r_basic, _ = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, zeros(ndof);
-        kw..., max_iter = 100, tol = 1e-10, iter_method = "basic", cache = cache,
-        geo_nl = true, eigenstrain = eig)
-    r_arc, _ = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, zeros(ndof);
-        kw..., max_iter = 100, tol = 1e-8, n_load_steps = 10, iter_method = "arc_length",
-        cache = cache, geo_nl = true, eigenstrain = eig)
+    case.opt.czm.geo_nonlinear = true
+    case.opt.czm.iter_method = "basic"
+    case.opt.czm.max_iter = 100
+    case.opt.czm.tol = 1e-10
+    r_basic = JuBat.solve_czm_step(cm, ms, case.param, zeros(2 * cm.nnode), case.opt.czm;
+        dT_elem = eig.dT, Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp, eigenstrain = eig)
+    # 第二次求解从已提交 ms 出发（零载荷增量近似），改走弧长
+    ms.u_prev .= 0.0
+    case.opt.czm.iter_method = "arc_length"
+    case.opt.czm.tol = 1e-8
+    case.opt.czm.load_steps = 10
+    r_arc = JuBat.solve_czm_step(cm, ms, case.param, zeros(2 * cm.nnode), case.opt.czm;
+        dT_elem = eig.dT, Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp, eigenstrain = eig)
     @test r_basic.converged && r_arc.converged
     @test isfinite(r_arc.residual_norm) && r_arc.residual_norm < 1e-6
     @test isapprox(r_arc.displacement, r_basic.displacement; rtol = 1e-6, atol = 1e-12)
 end
 
 @testset "geo 弧长系数进入约束且非法值显式失败" begin
-    case, pc, cache = arc_fixture()
+    case, ms = arc_fixture()
     cm = case.czm_mesh
     ne = size(cm.bulk_element, 1)
-    ndof = 2 * cm.nnode
     eig = (dT = fill(1e-6, ne), Δsn = zeros(ne), Δsp = zeros(ne))
-    kw = (dT_elem = eig.dT, Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp,
-          max_iter = 100, tol = 1e-8, n_load_steps = 10, iter_method = "arc_length",
-          cache = cache, geo_nl = true, eigenstrain = eig)
-    r_half, _ = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, zeros(ndof);
-        kw..., arc_length_alpha = 0.5)
+    case.opt.czm.geo_nonlinear = true
+    case.opt.czm.iter_method = "arc_length"
+    case.opt.czm.max_iter = 100
+    case.opt.czm.tol = 1e-8
+    case.opt.czm.load_steps = 10
+    r_half = JuBat.solve_czm_step(cm, ms, case.param, zeros(2 * cm.nnode), case.opt.czm;
+        dT_elem = eig.dT, Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp,
+        eigenstrain = eig)
     @test r_half.converged
+    # arc_length_alpha 非法值仍由 solve_czm_arc_geo_step 显式拦截
+    opt_bad = JuBat.CzmOptions(case.opt.czm)
+    opt_bad.arc_length_alpha = 0.0
     @test_throws ArgumentError JuBat.solve_czm_step(
-        cm, zeros(ndof), pc, case.param, zeros(ndof);
-        kw..., arc_length_alpha = 0.0)
+        cm, ms, case.param, zeros(2 * cm.nnode), opt_bad;
+        dT_elem = eig.dT, Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp, eigenstrain = eig)
 end
 
 @testset "geo 弧长先迭代平衡自由芯部卷绕预应力参考态" begin
-    case, pc, _ = arc_fixture()
+    case, ms = arc_fixture()
     cm = case.czm_mesh
     ne = size(cm.bulk_element, 1)
-    ndof = 2 * cm.nnode
-    cache = JuBat.ensure_czm_cache(case, cm, pc; fix_inner=false)
     prestress_full = JuBat.winding_prestress_field(cm, case.param)
     prestress = [(0.2a, 0.2b, 0.2c) for (a, b, c) in prestress_full]
     eig = (dT = fill(1e-6, ne), Δsn = zeros(ne), Δsp = zeros(ne))
-
-    result, _ = JuBat.solve_czm_step(
-        cm, zeros(ndof), pc, case.param, zeros(ndof);
+    case.opt.czm.geo_nonlinear = true
+    case.opt.czm.iter_method = "arc_length"
+    case.opt.czm.max_iter = 100
+    case.opt.czm.tol = 1e-8
+    case.opt.czm.load_steps = 10
+    case.opt.czm.fix_inner = false   # 自由芯部
+    result = JuBat.solve_czm_step(
+        cm, ms, case.param, zeros(2 * cm.nnode), case.opt.czm;
         dT_elem = eig.dT, Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp,
-        max_iter = 100, tol = 1e-8, n_load_steps = 10, iter_method = "arc_length",
-        cache = cache, geo_nl = true, eigenstrain = eig, prestress = prestress)
+        eigenstrain = eig, prestress = prestress)
     @test result.converged
     @test result.residual_norm <= 1e-8
 end
 
 @testset "geo_nl=false + arc_length 行为不变（回归锚）" begin
-    case, pc, cache = arc_fixture()
+    case, _ = arc_fixture()
     cm = case.czm_mesh
     ne = size(cm.bulk_element, 1)
-    ndof = 2 * cm.nnode
     dT = fill(1e-4, ne)
-    r1, _ = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, zeros(ndof);
+    ms1 = JuBat.MechState(cm)
+    ms2 = JuBat.MechState(cm)
+    case.opt.czm.iter_method = "arc_length"
+    case.opt.czm.max_iter = 100
+    case.opt.czm.tol = 1e-10
+    case.opt.czm.load_steps = 10
+    r1 = JuBat.solve_czm_step(cm, ms1, case.param, zeros(2 * cm.nnode), case.opt.czm;
         dT_elem = dT,
-        Δsoc_n_elem = zeros(ne), Δsoc_p_elem = zeros(ne),
-        max_iter = 100, tol = 1e-10, n_load_steps = 10, iter_method = "arc_length",
-        cache = cache)
-    r2, _ = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, zeros(ndof);
+        Δsoc_n_elem = zeros(ne), Δsoc_p_elem = zeros(ne))
+    r2 = JuBat.solve_czm_step(cm, ms2, case.param, zeros(2 * cm.nnode), case.opt.czm;
         dT_elem = dT,
-        Δsoc_n_elem = zeros(ne), Δsoc_p_elem = zeros(ne),
-        max_iter = 100, tol = 1e-10, n_load_steps = 10, iter_method = "arc_length",
-        cache = cache, geo_nl = false)
+        Δsoc_n_elem = zeros(ne), Δsoc_p_elem = zeros(ne))
     @test r1.converged == r2.converged
-    @test r1.displacement == r2.displacement   # 逐位（geo_nl=false 路径零漂移）
+    @test r1.displacement == r2.displacement   # 逐位（同配置同初态零漂移）
 end
 
 @testset "球面弧长修正跨越合成极限点" begin
