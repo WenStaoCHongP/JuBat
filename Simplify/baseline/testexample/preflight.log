@@ -1,10 +1,24 @@
-HEAD=df8aab3e278243fa9efe0759b666f4e386628276
-SCRIPT_SHA256=8c19e11619444bac6954f01845eed676d281ec22b7aa40e2a88b7e367f06b9e9
-SOURCE_MANIFEST_SHA256=1cf823c5c77e23f85a8353b0af0e34a3ecdb2d6c21866f2334266a287bd867de
-SOURCE_MANIFEST_TSV_SHA256=77cc5df31b1d1ce21c6329052546db8b12bb9f2cc3b6e74df7e1d76e36b9a0df
-SOURCE_FILE_COUNT=46
+REFREEZE_MODE=fresh_rerun_authorized_change
+REFREEZE_AUTHORIZATION=user_explicit (stress-history alignment, non-update hold, scatter removal; alphaT remains zero)
+SOURCE_RUN_ARTIFACT_WRITTEN=2026-08-30T17:28:56+0800
+HEAD=a7fecc6bf514ae58ad74b745c720d59c2654c348
+SCRIPT_SHA256=78bcc4e937ddda10aea4961a1a7972e45220a090c344bcd5bbaaf6caa7e4e22c
+COUPLE_EXAMPLE_SHA256=ae48eeeb6f6c6a62c3bbd8da8b9404e3ee3ae3de264599cd689b0ef2718ee404
+SOURCE_MANIFEST_TSV_SHA256=cbc96a2d665d498a458a51b558e87c6568014e73e1c9cf688f89f6aff34bab3a
+SOURCE_MANIFEST_FILE_SHA256=3e3fc6009159c614f30645b78a6912572e0a09e17782974f210521b8618e73ee
+SOURCE_FILE_COUNT=47
 JULIA_VERSION:
 julia version 1.11.2
-PREEXISTING_OUTPUTS:
-output\testexample_results.png`t96438`t2026-08-15T01:00:48.8355710-06:00`t4ba6207c3ccf92da5e37349ee335cf21a10a50b46a14cda13de95eefa6cae932
-output\simple_coupling_debug.log`tMISSING
+ACCEPTED_OUTPUT:
+text-only quick gate (output/testexample/simple_coupling_debug.log not a gate)
+PHYSICS_CHANGE_SUMMARY:
+electro/thermal metrics unchanged; CZM and macro stress now use the recorded time layer;
+non-update outputs hold the latest solved stress instead of preallocated zeros;
+alphaT remains zero; hoop -1.3954~3.8603 MPa; separation 9.6486e-13 m
+TESTS:
+test/test_layer_resolved_stress.jl 20/20 PASS (new interval/time regression 8/8);
+testexample.jl and couple_example.jl exit 0
+COUPLE_EXAMPLE_OUTPUT:
+output/couple_example/final_temperature_field.png	210436	2026-08-30T17:28:54+0800	540fe42f1039cb4446046a6da96f1ecf18d162b643bc40a40a099ca2b93f978c	(unchanged)
+output/couple_example/final_hoop_stress_field.png	295117	2026-08-30T17:28:55+0800	9726a7c84cf59a932a2cf45346770c6c046a6a81a7ca36f951714339e558050d
+output/couple_example/final_tangential_shear_stress_field.png	264362	2026-08-30T17:28:56+0800	b3b43d7cee67ed2a6fca33e0fcffee899629b84998852ba05aeb08fdaa105445

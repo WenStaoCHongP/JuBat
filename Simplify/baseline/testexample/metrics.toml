@@ -1,22 +1,23 @@
-baseline_id = "testexample-20260815T011730-0600"
-supersedes = "testexample-20260806T031217-0600"
-baseline_reason = "Adopt shared thermal/mechanical circumferential topology and strict cycle-state contracts as the current behavior baseline"
+baseline_id = "testexample-20260830T172856+0800"
+supersedes = "testexample-20260830T005629+0800"
+baseline_reason = "Align CZM/macro-stress recovery with the recorded time layer; hold the latest solved stress on non-update outputs; remove the radial scatter plot and keep three final cloud PNGs"
 status = "pass"
+refreeze_mode = "fresh_rerun_authorized_change"
+refreeze_authorization = "User-authorized stress-history alignment/zero-column fix and scatter removal; alphaT remains zero (2026-08-30)"
 exit_code = 0
-command = "D:/Julia-1.11.2/bin/julia.exe --startup-file=no example/testexample.jl"
-git_head = "df8aab3e278243fa9efe0759b666f4e386628276"
-script_sha256 = "8c19e11619444bac6954f01845eed676d281ec22b7aa40e2a88b7e367f06b9e9"
-source_manifest_sha256 = "1cf823c5c77e23f85a8353b0af0e34a3ecdb2d6c21866f2334266a287bd867de"
-source_manifest_tsv_sha256 = "77cc5df31b1d1ce21c6329052546db8b12bb9f2cc3b6e74df7e1d76e36b9a0df"
-source_file_count = 46
+command = "D:/Julia-1.11.2/bin/julia.exe --startup-file=no --project=. example/testexample.jl"
+git_head = "a7fecc6bf514ae58ad74b745c720d59c2654c348"
+script_sha256 = "78bcc4e937ddda10aea4961a1a7972e45220a090c344bcd5bbaaf6caa7e4e22c"
+couple_example_sha256 = "ae48eeeb6f6c6a62c3bbd8da8b9404e3ee3ae3de264599cd689b0ef2718ee404"
+source_manifest_tsv_sha256 = "ff9655fdfb7e3f9f1d9b26bceae95b4aacdf9cd2839d8e206bd7ea77689e7e0b"
+source_manifest_file_sha256 = "5d92a6e3c13b6ec374b528de3f7dec373f91f04f79fa49af2e7af28258060df0"
+source_file_count = 47
 julia_version = "1.11.2"
 plots_version = "1.40.9"
 julia_threads = 1
 gkswstype = "100"
-run_started = "2026-08-15T01:17:30.2179465-06:00"
-run_ended = "2026-08-15T01:19:40.4830495-06:00"
-outer_wall_seconds = 130.265
-solver_wall_seconds = 114.422
+artifact_written = "2026-08-30T17:28:56+0800"
+solver_wall_seconds = 54.665
 
 [mesh]
 theta_elements = 80
@@ -34,20 +35,26 @@ temperature_min_k = 298.15
 temperature_max_k = 299.00
 czm_d_max_percent = 0.0
 czm_d_mean_percent = 0.0
-czm_max_normal_separation_m = 6.6820e-15  # v3 2026-08-22 Φ 粘结（v2 参数修正 1.2572e-13，v1 1.2557e-14）
+czm_max_normal_separation_m = 9.6486e-13  # CZM 与历史列改为同时间层输入
 czm_fractured_elements = 0
 czm_updates = 19
 czm_converged_updates = 19
+hoop_stress_min_mpa = -1.3954
+hoop_stress_max_mpa = 3.8603
+tangential_shear_min_mpa = -0.3743
+tangential_shear_max_mpa = 0.3955
 
 [artifact]
-# 2026-08-21: testexample.jl 输出迁移至 output/testexample/（AGENTS.md §9.9）；PNG 内容与 SHA 未变，路径随脚本同步更新
-result_png_path = "output/testexample/testexample_results.png"
-result_png_bytes = 92775  # v3 2026-08-22 Φ 粘结；README 与重复运行均一致
-result_png_sha256 = "272402bb33d5b2869bfa2e33fde15fb8bdcdd0e27b74cffc4e34e77ad86dd386"
+# v6 起 testexample.jl 不再产出图片（纯文字快速门）
+# 全套绘图由 example/couple_example.jl 产出至 output/couple_example/；仅保留三张云图：
+# png1: final_temperature_field.png  bytes=210436  sha256=540fe42f1039cb4446046a6da96f1ecf18d162b643bc40a40a099ca2b93f978c  (不变)
+# png2: final_hoop_stress_field.png  bytes=295117  sha256=9726a7c84cf59a932a2cf45346770c6c046a6a81a7ca36f951714339e558050d
+# png3: final_tangential_shear_stress_field.png  bytes=264362  sha256=b3b43d7cee67ed2a6fca33e0fcffee899629b84998852ba05aeb08fdaa105445
 debug_log_produced = false
 
 [comparison]
-scientific_metrics_exact_at_printed_precision = true
+scientific_metrics_exact_at_printed_precision = true  # v8 已重冻结；后续运行须与本表记录精度严格一致
 mesh_and_step_counts_exact = true
-result_png_sha256_exact = true
+result_png_gate_active = false
+result_png_note = "PNG gate moved to couple_example.jl; run when plotting-related code changes"
 timing_exact = false

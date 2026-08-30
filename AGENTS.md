@@ -383,7 +383,7 @@ JuBat 区分两个尺度的弹性模量，**不可混用**：
 
 **CZM/二维宏观应力统一入口**：`compute_czm_params_per_interface(case)`（`src/CouplingState.jl:302`）→ 返回 `CzmParamCache`，按界面（`:PE_PCC` / `:NE_NCC`）提供 `CzmInterfaceParams`。**E_eff 按界面直接取涂层模量（PE-PCC 用 `PE.E_coat`、NE-NCC 用 `NE.E_coat`），不做全叠合厚度加权**；全叠合厚度加权仅保留在参考尺度 `scale.E_coat` 的定义中。
 
-**防御**：缺失 `E_coat` 时 `ChooseCell` 触发 `@warn`，`compute_czm_params_per_interface`（`src/CouplingState.jl:307-313`）与 `thermal_diffusion_stress_2D` 入口（`src/Mechanical.jl:166-167`）处 `@assert` 拦截。
+**防御**：缺失 `E_coat` 时 `ChooseCell` 触发 `@warn`，`compute_czm_params_per_interface`（`src/CouplingState.jl:307-313`）与 `thermal_diffusion_stress_2D` 入口（`src/Mechanical.jl:235`）处 `@assert` 拦截。宏观应力已层分辨：耦合流程（czm_enabled=true）由 `export_macro_stress` 在求解过程中在线收割导出 `diffusion stress xx/yy/xy/vonMises [Pa]`；czm-off 走按需调用的固体力学工具函数 `thermal_diffusion_stress_2D`（mesh_bonded 域，输出同组 [Pa] 键）。
 
 详见 `md/15_颗粒与极片模量区分.md`。
 
@@ -394,12 +394,13 @@ JuBat 区分两个尺度的弹性模量，**不可混用**：
 - 不得将这三个文件直接创建在项目根目录；若误建，应迁移到对应任务子目录，并避免覆盖已有任务记录。
 - `docs/planning-with-files/index.md` 是规划文件总索引；新增、迁移或删除任务目录/文件后，须同步更新任务说明、时间、Git 修改次数与跟踪状态。
 
-### 9.6 代码简化基线约定
+### 9.6 代码简化基线约定（两级验证，2026-08-29 减负）
 
-- `example/testexample.jl` 是 `src/` 代码简化的强制行为基线，基线档案位于 `Simplify/baseline/testexample/`，总入口为 `Simplify/baseline.md`。
-- 每个简化批次前后均须以 Julia 1.11.2、单线程、`GKSwstype=100` 和 `--startup-file=no` 运行同一入口与参数。
-- 退出码、网格/步数、`metrics.toml` 中的科学结果（按记录精度）以及结果 PNG SHA-256 必须与基线一致；运行耗时仅供参考，不作严格判定。
-- 任一强制指标不一致时，停止后续简化并定位或回退该批次，不得以“数值接近”代替基线一致。
+- `example/testexample.jl`（纯文字结果输出，60 s）是 `src/` 代码修改的快速行为基线；基线档案位于 `Simplify/baseline/testexample/`，总入口为 `Simplify/baseline.md`。全套绘图代码在 `example/couple_example.jl`（输出 `output/couple_example/`）。
+- 常规修改不必跑全套验证，只需：① 运行受影响部分的验证（相关 `test/` 文件与示例脚本）；② 以 Julia 1.11.2、单线程、`GKSwstype=100`、`--startup-file=no` 跑一次 60 秒 `testexample.jl`。
+- 快速门判定：退出码、网格/步数、`metrics.toml` 中的科学结果（含应力范围文字指标）按记录精度一致；运行耗时仅供参考。
+- 仅当修改涉及绘图/后处理代码时，另跑 `example/couple_example.jl` 并核对三张 final PNG SHA-256。
+- 任一强制指标不一致时，停止后续修改并定位或回退该批次，不得以“数值接近”代替基线一致。
 
 ### 9.7 严格契约判断的后续简化计划
 
@@ -430,5 +431,6 @@ JuBat 区分两个尺度的弹性模量，**不可混用**：
 | `example/minimal_example.jl` | 基础仿真 |
 | `example/SPMe_Thermal_example.jl` | 电化学-热耦合 |
 | `example/czm_cycle_example.jl` | CZM 循环仿真 |
-| `example/testexample.jl` | 全耦合仿真 |
+| `example/testexample.jl` | 全耦合仿真（纯文字快速基线，60 s） |
+| `example/couple_example.jl` | 全耦合仿真 + 三张最终场云图（温度、环向应力、切向剪应力） |
 | `example/jellyroll_stress_displacement.jl` | 二维应力/位移场后处理（无 CZM） |

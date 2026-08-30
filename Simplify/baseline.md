@@ -4,14 +4,14 @@
 
 | 基线 | 入口 | 状态 | 关键判定 | 档案 |
 |---|---|---|---|---|
-| `testexample-20260815T011730-0600` | `example/testexample.jl` | PASS | exit code、网格/步数、科学结果、CZM 收敛与 PNG SHA-256 完全一致；耗时除外 | [详细记录](baseline/testexample/README.md) |
+| `testexample-20260830T172856+0800` | `example/testexample.jl`（纯文字快速门，60 s） | PASS | 应力历史同时间层、非更新列保持最近有效解、SP/PCC/NCC.alphaT=0；电/热不变；三张 final 云图由 `example/couple_example.jl` 按需验证 | [详细记录](baseline/testexample/README.md) |
 
 ## 固定运行环境
 
 ```powershell
 $env:GKSwstype = '100'
 $env:JULIA_NUM_THREADS = '1'
-& 'D:\Julia-1.11.2\bin\julia.exe' --startup-file=no example\testexample.jl
+& 'D:\Julia-1.11.2\bin\julia.exe' --startup-file=no --project=. example\testexample.jl
 ```
 
 结构化期望值见 [`baseline/testexample/metrics.toml`](baseline/testexample/metrics.toml)，完整控制台输出见 [`baseline/testexample/run.log`](baseline/testexample/run.log)。
@@ -20,7 +20,12 @@ $env:JULIA_NUM_THREADS = '1'
 
 | 日期 | 原因 | 旧基线 | 新基线 | 关键变化 |
 |---|---|---|---|---|
+| 2026-08-30 | 用户授权：修复 CZM/应力历史时间错位与非更新步伪零，删除额外径向散点图；alphaT 保持 0 | `testexample-20260830T005629+0800` | `testexample-20260830T172856+0800` | 电/热、网格、19 步、零损伤不变；分离 9.4407e-13→9.6486e-13 m；环向/切向应力小幅更新；绘图收敛为三张 Q4 云图 |
+| 2026-08-30 | 用户授权：α/β 同批分层化——`eigenstrain_of(param, mt)` 取代跨层均匀 α_eff/β_n/β_p，电极膨胀只作用于本层涂层，SP/PCC/NCC.alphaT 显式置零；α_eff/β 死参链删除 | `testexample-20260829T231308+0800` | `testexample-20260830T005629+0800` | 电/热指标、网格、步数、零损伤、19/19 收敛**逐位不变**；separation 7.0037e-13→9.4407e-13 m；环向应力 −1.7766~+3.9971→−1.3952~+3.8570 MPa；温度 PNG 哈希不变、三张应力 PNG 更新（`ecdc9f58/2c29e35b/5124dec3`）；47 文件清单重建；j2 测试按分层物理重标定（箔屈服驱动 0.3→1.0） |
+| 2026-08-29 | 验证入口拆分（减负）：testexample.jl 改纯文字 60 s 快速门，全部代码移至新建 couple_example.jl；常规修改仅跑受影响验证 + 快速门 | `testexample-20260829T224907+0800` | `testexample-20260829T231308+0800` | 求解指标与 v5 全同；新增应力范围文字指标；四张 PNG 由 couple_example 产出且哈希与 v5 一致；源码清单 47 文件（+couple_example.jl） |
+| 2026-08-29 | 用户授权：PE.Omega 由 −7.28e-7 更正为 +7.88e-7（嵌锂膨胀，原值为 placeholder）；宏观应力层分辨化并耦合在线导出 | `testexample-20260824T043411-0600` | `testexample-20260829T224907+0800` | 电/热指标、网格、步数、零损伤、19/19 收敛全部不变；`maximum normal separation` 更新为 `7.0037e-13 m`；绘图产物改为四张 final PNG（层分辨环向应力 −1.78~+4.00 MPa，NE 拉/PE 压交替）；46 文件源码清单同步重建；J2 积分测试载荷按新 Ω 符号重标定 |
 | 2026-08-15 | 力学周向离散改为直接继承热网格角段，并纳入已审阅的严格循环状态契约 | `testexample-20260806T031217-0600` | `testexample-20260815T011730-0600` | 力学周向段数与 1682 个父热单元严格对应；最大法向分离更新为 `1.2557e-14 m`；PNG 与 46 文件源码清单同步重建 |
+| 2026-08-24 | 接受 cohesive 法向 host-inner→host-outer 定向，并收敛热—力温度路径 | `testexample-20260815T011730-0600`（含 v2/v3 修订） | `testexample-20260824T043411-0600` | 用户要求不重跑，直接复用已完成运行；分离更新为 `1.5174e-12 m`，PNG SHA 更新为 `0946646a...`，46 文件源码清单同步刷新 |
 | 2026-08-06 | 修复 CZM 插值矩阵绑定未合并候选网格、而温度状态来自活动合并网格的尺寸错误 | `testexample-20260805T031305-0600` | `testexample-20260806T031217-0600` | CZM 19 次更新实际执行并全部收敛；最大法向分离由错误路径的 0 更新为 `1.3527e-14 m`；PNG 基线同步更新 |
 
 ## 简化批次记录
@@ -36,6 +41,7 @@ $env:JULIA_NUM_THREADS = '1'
 | 2026-08-21 | 堆芯塌陷 Batch 3：PCC/NCC 平面应力一致 J2 塑性（物理箔本构 D-B3-0、mech_state 消费、收敛提交 D-B3-2） | `+246/-39`（CzmPlasticity 新建 +101） | `unit_czm_j2.jl` 5/5（含一致切线 FD）、`test_czm_j2_integration.jl` 4/4（C2-lite 屈服/回归锚/不可逆/报错）；全套 28/28；`verify_czm_standalone.jl` 快照逐位一致 | 所有科学指标及 PNG SHA-256 完全一致（塑性默认关） | PASS |
 | 2026-08-22 | 堆芯塌陷 Batch 2'：卷绕预应力 σ₀（等应变卷入张力 + 对数累积压力，D-B2'-1）+ 用户宏观参数修正（PCC 70GPa/NCC 110GPa/E_coat 1GPa/SP 750MPa）→ **基线重冻结 v2** | `+165/-52`（链路 5 文件 + Jellyroll/SetParams 参数） | `test_czm_winding_prestress.jl` 6/6；全套 29/29 | **参数刻意变更，基线 v2 重冻结**：testexample 电/热指标不变、分离 1.2557e-14→1.2572e-13 m、PNG SHA→`b31ffb49…`；探针景观移动（basic 8/8 D=0.55、load_sub/arc 6/8）——v1/v2 档案同存 | PASS（v2 基线） |
 | 2026-08-22 | 堆芯塌陷 Batch 2''：D13 网格探针（厚涂层细分 + split_KG + μ_crit 二分/主模态/单匝 DFT，八组双参考态） | `+302`（mesh/czm/probe/test） | `test_czm_thin_subdiv.jl` 4/4；全套 30/30；探针 Summary 与 v2 逐位 | 所有科学指标及 PNG SHA-256 与 v2 一致（细分/分离默认关） | PASS |
+| 2026-08-24 | cohesive 法向定向 + 删除细力学节点温度插值场 | 当前脏工作区窄批次 | 温度/CZM 专项通过；全套 33/33；`testexample` exit 0、19/19 CZM 收敛 | 用户接受当前结果并直接重冻结；未在重冻结阶段再次运行 | PASS（v4 基线） |
 
 本轮 36 个顶层 `src/*.jl` 的 PowerShell 物理行统计由 10,027 降至 9,889，净减 138 行。
 

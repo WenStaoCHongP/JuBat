@@ -12,12 +12,12 @@ println("="^60)
 
 param_dim = JuBat.ChooseCell("Jellyroll")
 
-@assert param_dim.SP.E   == 1e9   "SP.E 应为 1e9，实际 $(param_dim.SP.E)"
-@assert param_dim.SP.nu  == 0.3   "SP.nu 应为 0.3，实际 $(param_dim.SP.nu)"
-@assert param_dim.PCC.E  == 70e9  "PCC.E 应为 70e9，实际 $(param_dim.PCC.E)"
-@assert param_dim.PCC.nu == 0.3   "PCC.nu 应为 0.3，实际 $(param_dim.PCC.nu)"
-@assert param_dim.NCC.E  == 69e9  "NCC.E 应为 69e9，实际 $(param_dim.NCC.E)"
-@assert param_dim.NCC.nu == 0.3   "NCC.nu 应为 0.3，实际 $(param_dim.NCC.nu)"
+@assert param_dim.SP.E   == 750e6  "SP.E 应为 750e6，实际 $(param_dim.SP.E)"
+@assert param_dim.SP.nu  == 0.35   "SP.nu 应为 0.35，实际 $(param_dim.SP.nu)"
+@assert param_dim.PCC.E  == 7e10   "PCC.E 应为 7e10，实际 $(param_dim.PCC.E)"
+@assert param_dim.PCC.nu == 0.33   "PCC.nu 应为 0.33，实际 $(param_dim.PCC.nu)"
+@assert param_dim.NCC.E  == 1.1e11 "NCC.E 应为 1.1e11，实际 $(param_dim.NCC.E)"
+@assert param_dim.NCC.nu == 0.34   "NCC.nu 应为 0.34，实际 $(param_dim.NCC.nu)"
 
 @assert hasproperty(param_dim.SP, :alphaT)  "SP 缺少 alphaT 字段"
 @assert hasproperty(param_dim.PCC, :alphaT) "PCC 缺少 alphaT 字段"
@@ -48,13 +48,15 @@ println("TEST 3: scale.E_coat 计算正确性 + NaN 防御")
 println("="^60)
 
 p = param_dim
+# 全叠合厚度加权（8 层重复单元：2×PE 涂层 + PCC + 2×NE 涂层 + NCC + 2×SP）
 expected_E_coat = (
-    p.PE.E_coat * p.PE.thickness +
-    p.NE.E_coat * p.NE.thickness +
-    p.SP.E      * p.SP.thickness  +
+    p.PE.E_coat * p.PE.thickness * 2 +
+    p.NE.E_coat * p.NE.thickness * 2 +
+    p.SP.E      * p.SP.thickness * 2 +
     p.PCC.E     * p.PCC.thickness +
     p.NCC.E     * p.NCC.thickness
-) / (p.PE.thickness + p.NE.thickness + p.SP.thickness + p.PCC.thickness + p.NCC.thickness)
+) / (p.PE.thickness * 2 + p.NE.thickness * 2 + p.SP.thickness * 2 +
+    p.PCC.thickness + p.NCC.thickness)
 
 @assert abs(param_dim.scale.E_coat - expected_E_coat) / expected_E_coat < 1e-12 "scale.E_coat 与手算不一致：$(param_dim.scale.E_coat) vs $expected_E_coat"
 
@@ -104,8 +106,9 @@ println("\n" * "="^60)
 println("TEST 7: thermal_diffusion_stress_2D 使用极片模量（@assert 防御）")
 println("="^60)
 
-mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=20, gsorder=2)
+mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=20, czm_enabled=true, gsorder=2)
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
+case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
 
 variables = Dict{String, Union{Array{Float64},Float64}}()
 thermal_mesh = case.mesh["thermal2D"]
@@ -119,12 +122,12 @@ variables["thermal2D element soc_p"] = fill(case.param.PE.cs0, nelems)
 
 new_vars = JuBat.thermal_diffusion_stress_2D(case, variables)
 
-@assert haskey(new_vars, "diffusion stress vonMises") "thermal_diffusion_stress_2D 未输出 vonMises"
-@assert haskey(new_vars, "displacement x") "thermal_diffusion_stress_2D 未输出 displacement"
-@printf("  max vonMises = %.3e Pa\n", maximum(new_vars["diffusion stress vonMises"]))
-@printf("  max disp_x   = %.3e m\n",  maximum(abs.(new_vars["displacement x"])))
+@assert haskey(new_vars, "diffusion stress vonMises [Pa]") "thermal_diffusion_stress_2D 未输出 vonMises"
+@assert haskey(new_vars, "displacement x [m]") "thermal_diffusion_stress_2D 未输出 displacement"
+@printf("  max vonMises = %.3e Pa\n", maximum(new_vars["diffusion stress vonMises [Pa]"]))
+@printf("  max disp_x   = %.3e m\n",  maximum(abs.(new_vars["displacement x [m]"])))
 
-@assert maximum(abs.(new_vars["diffusion stress vonMises"])) < 1e-3 "零扰动情景应力应≈0"
+@assert maximum(abs.(new_vars["diffusion stress vonMises [Pa]"])) < 1e-3 "零扰动情景应力应≈0"
 
 println("  PASS: thermal_diffusion_stress_2D 正常运行，零扰动情景应力≈0")
 

@@ -19,17 +19,17 @@ function StandardVariables(case::Case, num::Int64)
         "negative particle averaged lithium concentration" => zeros(Float64, Nn, num),
         "positive particle averaged lithium concentration" => zeros(Float64, Np, num),
         "negative particle surface lithium concentration" => zeros(Float64, Nn, num),
-        "positive particle surface lithium concentration" => zeros(Float64, Np, num),    
+        "positive particle surface lithium concentration" => zeros(Float64, Np, num),
         "negative electrode porosity" => zeros(Float64, Nn, num),
         "positive electrode porosity" => zeros(Float64, Np, num),
         "negative electrode temperature" => zeros(Float64, Nn, num),
-        "positive electrode temperature" => zeros(Float64, Np, num),  
+        "positive electrode temperature" => zeros(Float64, Np, num),
         "negative electrode exchange current density" => zeros(Float64, Nn, num),
-        "positive electrode exchange current density" => zeros(Float64, Np, num), 
+        "positive electrode exchange current density" => zeros(Float64, Np, num),
         "negative electrode interfacial current density" => zeros(Float64, Nn, num),
-        "positive electrode interfacial current density" => zeros(Float64, Np, num), 
+        "positive electrode interfacial current density" => zeros(Float64, Np, num),
         "negative electrode overpotential" => zeros(Float64, Nn, num),
-        "positive electrode overpotential" => zeros(Float64, Np, num), 
+        "positive electrode overpotential" => zeros(Float64, Np, num),
         "negative electrode open circuit potential" => zeros(Float64, Nn, num),
         "positive electrode open circuit potential" => zeros(Float64, Np, num),
         "negative particle center radial stress" => zeros(Float64, Nn, num),
@@ -45,8 +45,8 @@ function StandardVariables(case::Case, num::Int64)
         "negative particle stress coupling diffusion coefficient" => zeros(Float64, Nn, num),
         "positive particle stress coupling diffusion coefficient" => zeros(Float64, Np, num),
         "cell voltage" => zeros(Float64, 1, num),
-        "time" => zeros(Float64, 1, num),      
-        "cell current" => zeros(Float64, 1, num),      
+        "time" => zeros(Float64, 1, num),
+        "cell current" => zeros(Float64, 1, num),
     )
     # additional variables for SPMe and P2D
     if case.opt.model == "SPMe" || case.opt.model == "P2D"
@@ -86,7 +86,7 @@ function StandardVariables(case::Case, num::Int64)
     end
 
     variables["temperature"] = zeros(Float64, 1, num)
-    
+
     if case.opt.thermalmodel == "lumped"
         variables["thermal lumped internal heat"] = zeros(Float64, 1, num)
     end
@@ -145,6 +145,15 @@ function StandardVariables(case::Case, num::Int64)
             variables["czm traction tangent"] = zeros(Float64, n_coh, num)
             variables["czm separation normal"] = zeros(Float64, n_coh, num)
             variables["czm separation tangent"] = zeros(Float64, n_coh, num)
+            if !(case.opt.czm_geo_nonlinear || case.opt.czm_j2_plasticity || case.opt.czm_winding_prestress)
+                ne_czm = size(case.czm_mesh.bulk_element, 1)
+                variables["diffusion stress xx"] = zeros(Float64, ne_czm, num)
+                variables["diffusion stress yy"] = zeros(Float64, ne_czm, num)
+                variables["diffusion stress xy"] = zeros(Float64, ne_czm, num)
+                variables["diffusion stress vonMises"] = zeros(Float64, ne_czm, num)
+            else
+                @warn "层分辨应力恢复与几何非线性/J2/预应力路径不相容，本运行不导出 diffusion stress 历史" maxlog=1
+            end
         end
     end
     return variables
@@ -251,7 +260,7 @@ function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Floa
             end
         end
     end
-    
+
     hist_keys = Set(keys(variables_hist))
     for (k, val) in pairs(variables)
         k in hist_keys || continue

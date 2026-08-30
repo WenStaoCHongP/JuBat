@@ -1,9 +1,9 @@
 # Mechanical.jl
 
 - **源文件**: `src/Mechanical.jl`
-- **行数**: 360 行
-- **函数/struct 计数**: 3 个独立函数
-- **职责**: 颗粒扩散应力（粒子尺度）与宏观热-扩散应力（极片尺度，2D 平面应力 FEM）计算；输出应力/位移/耦合扩散系数到 `variables`
+- **行数**: 325 行
+- **函数/struct 计数**: 6 个独立函数
+- **职责**: 颗粒扩散应力（粒子尺度）；层分辨宏观热-扩散应力（极片尺度，2D 平面应力）：共享恢复核、特征应变、耦合在线收割、固体按需求解
 - **相关技术文档**: `md/06_内聚力模型_CZM.md`、`md/15_颗粒与极片模量区分.md`（CLAUDE.md §9.4）
 
 ## 数据结构
@@ -40,21 +40,44 @@
 - 应力-扩散耦合系数：`theta_M = 2·E·Ω² / (T·9·(1-ν))`（L137）
 - 跨文件依赖：`IntV`
 
-### `thermal_diffusion_stress_2D(case, variables) -> new_variables` — L165-L360
+### `recover_bulk_stress(node, element, material_type, u, ε0, param)` — L151-L179
 
-宏观 2D 平面应力 FEM 求解热 + 扩散应力（极片尺度，CLAUDE.md §9.4：涂层模量 `E_coat`）。
+共享应力恢复核：逐 Q4 单元 `q4_center_gradients` 求 ε(B·u)，逐层平面应力
+`σ = D·(ε − ε₀[1,1,0])`（D 由 `moduli_of(param, material_type[e])` 给出，σ_czm 归一空间），
+返回 σ_xx/σ_yy/σ_xy/σ_vm。耦合收割与固体工具两流程共用，单一应力定义。
 
-- **入口断言**（L167）：`PE.E_coat > 0 && NE.E_coat > 0`，缺失 `E_coat` 时阻断宏观力学分析
-- **模量来源**（L184-L187）：`compute_czm_params_per_interface(case)` 取 `:PE_PCC` 界面的 `(E_eff, ν_eff, α_eff)`——非 CZM 路径暂用 PE_PCC 占位（注释 L183），per-interface 化由 CZM 路径负责
-- **温度/SOC 提取**（L177-L203）：从 `variables["T_nodes"]`、`variables["thermal2D element soc_n/p"]` 计算每单元 `dT_elem` 与 `Δsoc_n/p_elem`
-- **本构**（L215-L217）：平面应力 D 矩阵 `D11/12/33 = E_eff / (1-ν²) · [...]`
-- **刚度装配**（L236-L241）：`K_uu + K_vv + K_uv + K_vu`，使用 `Assemble`
-- **载荷装配**（L258-L260）：`F_u + F_v`，初始应变 `ε_0 = α·dT + β_n·Δsoc_n + β_p·Δsoc_p`（L246）
-- **边界条件**（L263-L291）：内/外圈节点固定（`:fixed_xy`），相对罚方法 `penalty = 1e6·max(|diag(K)|)`（L273）
-- **求解**（L294-L299）：`K_mech \ F_mech`，失败时静默回退零位移并 `@warn`（L297）
-- **应力恢复**（L302-L345）：单元中心梯度 `q4_center_gradients`，按比例分热应力 / 扩散应力（L336-L340）
-- **输出**（L348-L358）：转换为有量纲 `·L_ref`，写入键 "displacement x/y"、"diffusion stress xx/yy/xy/vonMises"、"thermal stress vonMises"、"diffusion stress vonMises only"
-- 跨文件依赖：`compute_czm_params_per_interface`、`element_nodal_mean`、`Assemble`、`Assemble1D`、`identify_boundary_nodes`、`q4_center_gradients`
+### `macro_eigenstrain(case, variables, T_nodes)` — L182-L192
+
+逐力学体单元特征应变（与在线 CZM 热化学载荷同源，`eigenstrain_of(param, mt)` 分层
+计算：α=该层 `alphaT`、β=该层 `Ω/3`；dT 按父热单元，Δsoc 经 `compute_czm_strain_inputs`，
+电极膨胀只作用于本层涂层，集流体/隔膜仅热应变）。2026-08-29 α/β 分层化后不再依赖
+`czm_param_cache`，旧 PE_PCC 占位与跨界面统一 α_eff 已消除。
+
+### `export_macro_stress(case, variables, variables_hist, v, T_nodes)` — L200-L212
+
+耦合流程（opt.czm_enabled=true）求解中收割：以 `case.czm_layout.u_prev`（本步 CZM
+收敛位移）与当步载荷恢复层分辨应力，直写第 v 步历史列
+`"diffusion stress xx/yy/xy/vonMises"`；`Solve.jl` 在 CZM 更新块内调用，
+`PostProcessing` 导出 `result["diffusion stress xx/yy/xy/vonMises [Pa]"]`（×scale.σ_czm）。
+
+### `thermal_diffusion_stress_2D(case, variables) -> new_variables` — L233-L325
+
+仅固体力学流程（opt.czm_enabled=false）的层分辨宏观应力工具函数：在
+`czm_submesh.mesh_bonded`（Φ 合并、无内聚力单元）上按逐层刚度与逐层特征应变
+求解线性弹性静力平衡；仅显式调用时求解，不在正常求解流程中。
+
+- **入口断言**（L235）：`PE.E_coat > 0 && NE.E_coat > 0`，缺失 `E_coat` 时阻断宏观力学分析
+- **域**（L238-L240）：`czm_submesh.mesh_bonded`（自带 gs）；载荷经 `macro_eigenstrain`
+- **本构/装配**（L251-L289）：逐高斯点材料 `moduli_of(material_type[ele_of_gp[g]])`
+  → D11/D12/D33；`Assemble×4` 装配 K、`Assemble1D×2` 装配 F（系数含 ε₀·(1+ν)·wJ）
+- **边界条件**（L292-L302）：外圈固定；内圈按 `opt.czm_fix_inner`（默认 true=内外均固定），
+  相对罚 `penalty = 1e6·max(|diag(K)|)`
+- **求解**（L305）：`U = K_mech \ F_mech`
+- **应力恢复**（L307-L309）：共享核 `recover_bulk_stress`
+- **输出**（L311-L321）：有量纲键 "diffusion stress xx/yy/xy/vonMises [Pa]"（×scale.σ_czm）、
+  "displacement x/y [m]"（×scale.L）；不再产出 "thermal stress vonMises" 等死键
+- 跨文件依赖：`compute_czm_strain_inputs`、`compute_czm_params_per_interface`、`moduli_of`、
+  `Assemble`、`Assemble1D`、`identify_boundary_nodes`、`q4_center_gradients`
 
 ## 省略项
 
@@ -68,7 +91,6 @@
 
 | 行号 | 内容 | 风险 |
 |------|------|------|
-| L183 | `# 获取材料参数：非 CZM 路径暂用 PE_PCC 占位（per-interface 化由 CZM 路径负责）`（注释明示 PE_PCC 占位） | 显式占位：非 CZM 路径下所有单元使用 PE_PCC 界面的 `(E_eff, ν_eff, α_eff)`，不区分 NE_NCC；当前简化但物理上可疑（NE 侧热膨胀与 PE 不同），恢复需逐单元查表 |
 | L273 | `penalty = dmax_bc > 0 ? 1e6 * dmax_bc : 1e12`（矩阵全零时回退 1e12） | 与 `czm.jl` L823 同模式：相对罚正常路径，回退固定值 1e12 主导条件数；正常路径不会触发 |
 | L297 | `@warn "Mechanical solve failed, using zero displacement" e`（求解失败静默回退零位移） | 失败被静默吃掉：用户得到零位移场但 `variables` 仍写入，下游分析无法区分"零应力"与"求解失败"；建议返回 `converged` 标志或写入诊断键 |
 

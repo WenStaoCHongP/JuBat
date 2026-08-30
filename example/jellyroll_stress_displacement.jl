@@ -7,9 +7,9 @@
 - 输出一张大图：行 = 场分量（σ_xx/σ_yy/σ_xy/σ_vm/|U|），列 = 时间节点
 
 ⚠️ 尺度说明：本脚本输出的是 **极片/电极尺度（coating-scale, 二维平面应力）** 的场，
-   由全叠合厚度加权有效模量 E_eff（~5e8 Pa 量级）计算；
+   在 CZM 力学子网格（mesh_bonded，8 层卷绕重复单元逐层分辨）上求解；
    与颗粒尺度 Calstressdisp（颗粒 E ~1e10 Pa）不同，二者不可混用。
-   注意：thermal_diffusion_stress_2D 返回 σ 为归一化值，本脚本乘 case.param_dim.scale.E_coat 还原为 Pa。
+   thermal_diffusion_stress_2D 直接返回有量纲结果（应力 [Pa]、位移 [m]）。
 
 日期：2026-06-30
 """
@@ -109,7 +109,7 @@ function main()
     opt.cool_method = "surface"
     opt.per_element_spme = true
 
-    opt.czm_enabled = false        # ← 关键差异：关闭 CZM，仅传统固体力学
+    opt.czm_enabled = false        # ← 关键差异：在线 CZM 关闭，仅按需调用固体力学工具函数
 
     println("OK: 参数设置完成")
     @printf("  电流: %.2f A (%.2f C)\n", i, Crates)
@@ -124,11 +124,16 @@ function main()
     case = JuBat.SetCase(param_dim, opt)
 
     n_theta = 360
-    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, gsorder=2)
+    mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
 
-    # czm_enabled=false：不创建 case.czm_mesh
+    # opt.czm_enabled 保持 false：在线 CZM 路径不运行；
+    # 仅构建力学子网格供热力学工具函数 thermal_diffusion_stress_2D 按需使用
+    case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th, case.param)
+    mesh_mech = case.czm_mesh.czm_submesh.mesh_bonded
+    ne_mech = size(mesh_mech.element, 1)
+    nlen_mech = mesh_mech.nlen
 
     ne   = size(mesh_th.element, 1)
     nlen = mesh_th.nlen
@@ -195,7 +200,8 @@ function main()
     Umag_global_max = 0.0
     for ti in ti_list
         variables_ti = Dict{String, Union{Array{Float64},Float64}}(
-            "T_nodes"                 => result["thermal2D temperature at nodes [K]"][:, ti],
+            # thermal_diffusion_stress_2D 契约：T_nodes 为归一化温度（T/T_ref）
+            "T_nodes"                 => result["thermal2D temperature at nodes [K]"][:, ti] ./ case.param.scale.T_ref,
             "thermal2D element soc_n" => result["thermal2D element soc_n"][:, ti],
             "thermal2D element soc_p" => result["thermal2D element soc_p"][:, ti],
         )
@@ -203,18 +209,14 @@ function main()
         @assert length(variables_ti["thermal2D element soc_n"]) == ne
 
         vars_out = JuBat.thermal_diffusion_stress_2D(case, variables_ti)
-        # thermal_diffusion_stress_2D 返回的 σ 为归一化值（E_eff 通过 scale.E_coat 归一化，
-        # 见 src/CouplingState.jl:220-223 compute_effective_coating_modulus docstring）；
-        # 乘 scale.E_coat (~5e8 Pa) 还原为物理 Pa。位移字段函数内已 × L_ref，无需再缩放。
-        E_coat_scale = case.param_dim.scale.E_coat
-        σ_xx = vars_out["diffusion stress xx"]      .* E_coat_scale
-        σ_yy = vars_out["diffusion stress yy"]      .* E_coat_scale
-        σ_xy = vars_out["diffusion stress xy"]      .* E_coat_scale
-        σ_vm = vars_out["diffusion stress vonMises"] .* E_coat_scale
-        U_x  = vars_out["displacement x"]
-        U_y  = vars_out["displacement y"]
-        @assert length(σ_vm) == ne
-        @assert length(U_x) == nlen
+        σ_xx = vars_out["diffusion stress xx [Pa]"]
+        σ_yy = vars_out["diffusion stress yy [Pa]"]
+        σ_xy = vars_out["diffusion stress xy [Pa]"]
+        σ_vm = vars_out["diffusion stress vonMises [Pa]"]
+        U_x  = vars_out["displacement x [m]"]
+        U_y  = vars_out["displacement y [m]"]
+        @assert length(σ_vm) == ne_mech
+        @assert length(U_x) == nlen_mech
 
         Umag = sqrt.(U_x.^2 .+ U_y.^2)
         σ_vm_global_max = max(σ_vm_global_max, maximum(σ_vm))
@@ -235,7 +237,7 @@ function main()
     @printf("  sanity: param_dim.NE.cs0=%.1f [mol/m3]  (物理浓度, 仅对比)\n", case.param_dim.NE.cs0)
     @printf("  sanity: soc_n range=[%.4f, %.4f]  (期望 [0,1])\n",
             minimum(soc_n_last), maximum(soc_n_last))
-    @printf("  sanity: σ_vm_global_max=%.3e Pa（电极尺度；典型 1e9–1e11，被集流体主导）\n",
+    @printf("  sanity: σ_vm_global_max=%.3e Pa（电极尺度；层分辨，被刚性集流体主导）\n",
             σ_vm_global_max)
     @printf("  sanity: scale.E_coat=%.3e Pa（厚度加权有效模量；PE/NE.E_coat=%.2e/%.2e，PCC/NCC.E=%.2e/%.2e）\n",
             case.param_dim.scale.E_coat,
@@ -243,7 +245,7 @@ function main()
             case.param_dim.PCC.E, case.param_dim.NCC.E)
 
     # 若所有节点位移为零，疑似力学求解失败
-    @assert Umag_global_max > 0 "所有节点位移均为零，疑似力学求解失败（K_mech\\F_mech 异常），请检查 src/Mechanical.jl:289 catch 分支是否触发"
+    @assert Umag_global_max > 0 "所有节点位移均为零，疑似力学求解失败"
 
     # 自适应变形放大系数：使最大变形 ≈ 5% L_ref
     DEF_SCALE = 0.05 * L_ref / Umag_global_max
@@ -262,16 +264,16 @@ function main()
     nrow = length(row_labels)
     subplots = Plots.Plot[]
 
-    xs0, ys0 = q4_element_polygons(mesh_th)
+    xs0, ys0 = q4_element_polygons(mesh_mech)
 
     for col in 1:nT
         pack = fields_per_ti[col]
         Umag = sqrt.(pack.U_x.^2 .+ pack.U_y.^2)
         # 节点量 |U| 映射到单元常数场（4 角点平均）
-        Umag_elem = zeros(ne)
-        for e in 1:ne
-            n1, n2, n3, n4 = mesh_th.element[e, 1], mesh_th.element[e, 2],
-                             mesh_th.element[e, 3], mesh_th.element[e, 4]
+        Umag_elem = zeros(ne_mech)
+        for e in 1:ne_mech
+            n1, n2, n3, n4 = mesh_mech.element[e, 1], mesh_mech.element[e, 2],
+                             mesh_mech.element[e, 3], mesh_mech.element[e, 4]
             Umag_elem[e] = 0.25 * (Umag[n1] + Umag[n2] + Umag[n3] + Umag[n4])
         end
         # 单位换算到 MPa / μm
@@ -281,12 +283,12 @@ function main()
             p = plot(legend=false)
             if row < 5
                 clim = (minimum(col_fields[row]), maximum(col_fields[row]))
-                plot_q4_field!(p, mesh_th, col_fields[row], xs0, ys0;
+                plot_q4_field!(p, mesh_mech, col_fields[row], xs0, ys0;
                     title=(@sprintf("t=%.0f s, %s", pack.t, row_labels[row])),
                     cmap=:RdBu, clim=clim)
             else
                 clim = (minimum(col_fields[row]), maximum(col_fields[row]))
-                plot_q4_field!(p, mesh_th, col_fields[row], xs0, ys0;
+                plot_q4_field!(p, mesh_mech, col_fields[row], xs0, ys0;
                     title=(@sprintf("t=%.0f s, %s (def ×%.0f)", pack.t, row_labels[row], DEF_SCALE)),
                     cmap=:viridis, clim=clim,
                     deform_xy=(pack.U_x, pack.U_y), def_scale=DEF_SCALE)

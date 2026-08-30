@@ -74,12 +74,12 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             return result
         end
         # Electrochemical time still scaled by t0
-        dt_min = case.opt.dt[1] / case.param.scale.t0 
-        dt_max = case.opt.dt[2] / case.param.scale.t0 
-        RunTime = case.opt.time / case.param.scale.t0 
-        t0 = RunTime[1] 
+        dt_min = case.opt.dt[1] / case.param.scale.t0
+        dt_max = case.opt.dt[2] / case.param.scale.t0
+        RunTime = case.opt.time / case.param.scale.t0
+        t0 = RunTime[1]
         t_end = RunTime[end]
-    
+
     # 判断是否启用多SPMe模式：与 CallModel 保持一致，由 per_element_spme 控制
     multi_spme_enabled = case.opt.per_element_spme
 
@@ -117,13 +117,13 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         end
     end
     if case.opt.solveType == "Crank-Nicolson"
-        theta = 0.5 
+        theta = 0.5
     elseif case.opt.solveType == "forward"
-        theta = 0 
+        theta = 0
     elseif case.opt.solveType == "backward"
-        theta = 1 
+        theta = 1
     else
-        error( "Error: $(opt.solve_type) difference scheme has not been implemented!\n ") 
+        error( "Error: $(opt.solve_type) difference scheme has not been implemented!\n ")
     end
 
     dt = dt_min
@@ -134,17 +134,17 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     # 限制最大预分配步数（避免内存溢出）
     max_steps = multi_spme_enabled ? 50000 : 100000
     num = min(num_estimated, max_steps)
-    
+
     if num_estimated > max_steps
         @warn "预期时间步数 $(num_estimated) 超过最大限制 $(max_steps)，将使用动态扩展策略"
         @warn "这可能导致性能下降。建议增大时间步长 dt_min = $(dt*case.param.scale.t0) 秒"
     end
-    
+
     variables_hist = StandardVariables(case, num)
     errors = zeros(num, 1)
 
     t = t0
-    vt = 2  
+    vt = 2
     v = 1
     timing_totals = Dict{String,Float64}("spme" => 0.0,"branch" => 0.0,"thermal" => 0.0,"czm" => 0.0,)
     timing_call_count = 0
@@ -175,18 +175,31 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         Float64[]
     end
 
+    # CZM 与宏观应力状态。latest_macro_stress 只在实际力学求解后刷新，
+    # 其间的输出列保持最近一次有效解，禁止把预分配零当作应力结果。
+    czm_active = case.opt.czm_enabled && case.czm_mesh !== nothing
+    if czm_active && case.czm_layout === nothing
+        case.czm_layout = CzmLayout(case.czm_mesh)
+    end
+    macro_stress_active = czm_active && haskey(variables_hist, "diffusion stress xx")
+    latest_macro_stress = macro_stress_active ?
+        compute_macro_stress(case, variables, T_nodes_carry) : nothing
+    czm_step_count = 0
+
     dt_init = 1e-8
     vc = 1:size(M_old,1)
     y_c = (M_old - K_old * dt_init) \ (M_old * y0[vc] + F_old * dt_init)
     y_old = vcat(y_c, y_phi)
     Variable_update!(variables_hist, variables, v)
-    t += dt 
+    latest_macro_stress === nothing ||
+        write_macro_stress!(variables_hist, v, latest_macro_stress)
+    t += dt
     if case.opt.jacobi == "constant"
-        RecordMatrix!(case, M_old, K_old)    # record system matrix information 
+        RecordMatrix!(case, M_old, K_old)    # record system matrix information
     end
 
     print( "start to solve the problem \n")
-    
+
     # 单元截止追踪变量
     first_cutoff_detected = false
     first_cutoff_time = 0.0
@@ -195,23 +208,19 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     total_cutoff_count = 0
     termination_reason = "time_limit"  # 默认终止原因
 
-    # CZM 损伤演化状态
-    czm_active = case.opt.czm_enabled && case.czm_mesh !== nothing
-    if czm_active && case.czm_layout === nothing
-        case.czm_layout = CzmLayout(case.czm_mesh)
-    end
-    czm_step_count = 0         # CZM 更新步计数器
-    
     # run the model
     while t <= t_end
         # 电化学步
-        M_new, K_new, F_new, variables, y_phi = CallModel(case, y_old, t, jacobi="update") 
+        M_new, K_new, F_new, variables, y_phi = CallModel(case, y_old, t, jacobi="update")
         timing_call_count += 1
         accumulate_callmodel_timing!(timing_totals, variables)
-        Mt = M_new - theta * K_new * dt 
-        Kt = (1 - theta) * K_old * dt + M_new 
-        Ft = theta * F_new * dt + (1 - theta) * F_old * dt 
-        y_c = convert(SparseMatrixCSC{Float64,Int}, Mt) \ (Kt * y_old[vc] + Ft) 
+        # CallModel 返回当前 t 的 SOC 与温度；在求解覆盖活动温度前保留同一时间层。
+        T_nodes_czm_current = multi_spme_enabled ?
+            copy(vec(variables["thermal2D temperature at nodes"])) : T_nodes_carry
+        Mt = M_new - theta * K_new * dt
+        Kt = (1 - theta) * K_old * dt + M_new
+        Ft = theta * F_new * dt + (1 - theta) * F_old * dt
+        y_c = convert(SparseMatrixCSC{Float64,Int}, Mt) \ (Kt * y_old[vc] + Ft)
         y_new = vcat(y_c, y_phi)
 
         # multi-SPMe：求解后提取温度自由度，用于记录/后处理
@@ -222,56 +231,22 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             variables["thermal2D temperature at nodes"] = T_nodes
             T_nodes_carry = T_nodes
         end
-        error_y = ErrorEstimation(case, y_old, y_new, dt_min/dt) 
+        error_y = ErrorEstimation(case, y_old, y_new, dt_min/dt)
         errors[v] = error_y
         if error_y > 2 * case.opt.dtThreshold && case.opt.dtType == "auto" && dt >= dt_min * 4
             # reduce dt to dt/2 and recaculate y_new
             dt = dt  /2
             t -= dt
-        else 
-            # record the results
-            if case.opt.outputType == "auto" || abs(t - RunTime[vt]) < 1e-7
-                v = v + 1 
-                Variable_update!(variables_hist, variables, v) 
-                if abs(t - RunTime[vt]) < 1e-7
-                    vt = min(vt + 1, length(RunTime)) 
-                end
-            end
-            
-            # adjust time incremental step dt
-            if  case.opt.dtType == "auto" && dt_temp_flag == false
-                if error_y < 0.5 * case.opt.dtThreshold
-                    dt = min(dt * 2, dt_max) 
-                elseif error_y >= 1.5 * case.opt.dtThreshold
-                    dt = dt_min
-                elseif error_y > case.opt.dtThreshold
-                    dt = max(dt / 2, dt_min) 
-                end
-            elseif dt_temp_flag
-                dt = dt_temp
-                dt_temp_flag = false
-            end
-            if t + dt > RunTime[vt] && t < RunTime[vt]
-                dt_temp = dt
-                dt = abs(RunTime[vt] - t) 
-                dt_temp_flag = true
-            end
-
-            # update system information
-            y_old = copy(y_new)
-            K_old = copy(K_new)
-            F_old = copy(F_new)
-            t += dt
-
-            # CZM 损伤演化（按间隔更新）
+        else
+            # CZM 在推进 t 前使用当前 CallModel 的 SOC 与当前温度场；应力与快照均
+            # 对应历史列记录的同一时刻。非更新步保留 latest_macro_stress。
             if czm_active
                 czm_step_count += 1
                 if czm_step_count % case.opt.czm_update_interval == 0
                     t_czm_ns = time_ns()
                     try
-                        czm_result = update_czm_damage!(case, variables, T_nodes_carry)
+                        czm_result = update_czm_damage!(case, variables, T_nodes_czm_current)
 
-                        # ── Snapshot collection for CSV export ──
                         if czm_snapshots !== nothing
                             push!(czm_snapshots, CZMSnapshot(
                                 t * case.param.scale.t0,
@@ -292,10 +267,50 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
                     finally
                         timing_totals["czm"] += (time_ns() - t_czm_ns) * 1e-9
                     end
+                    if macro_stress_active
+                        latest_macro_stress = compute_macro_stress(
+                            case, variables, T_nodes_czm_current)
+                    end
                 end
             end
+
+            # record the results
+            if case.opt.outputType == "auto" || abs(t - RunTime[vt]) < 1e-7
+                v = v + 1
+                Variable_update!(variables_hist, variables, v)
+                latest_macro_stress === nothing ||
+                    write_macro_stress!(variables_hist, v, latest_macro_stress)
+                if abs(t - RunTime[vt]) < 1e-7
+                    vt = min(vt + 1, length(RunTime))
+                end
+            end
+
+            # adjust time incremental step dt
+            if  case.opt.dtType == "auto" && dt_temp_flag == false
+                if error_y < 0.5 * case.opt.dtThreshold
+                    dt = min(dt * 2, dt_max)
+                elseif error_y >= 1.5 * case.opt.dtThreshold
+                    dt = dt_min
+                elseif error_y > case.opt.dtThreshold
+                    dt = max(dt / 2, dt_min)
+                end
+            elseif dt_temp_flag
+                dt = dt_temp
+                dt_temp_flag = false
+            end
+            if t + dt > RunTime[vt] && t < RunTime[vt]
+                dt_temp = dt
+                dt = abs(RunTime[vt] - t)
+                dt_temp_flag = true
+            end
+
+            # update system information
+            y_old = copy(y_new)
+            K_old = copy(K_new)
+            F_old = copy(F_new)
+            t += dt
         end
-        
+
         # ====================================================================
         # 精细化截止电压检测（单元级别）
         # ====================================================================
@@ -303,33 +318,33 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         v_l = case.param.cell.v_l
         v_h = case.param.cell.v_h
         t_phys = t * case.param.scale.t0  # 物理时间 (s)
-        
+
         # 检查是否有单元截止
         if multi_spme_enabled
             n_cutoff = Int(variables["thermal2D n_cutoff_elements"])
-            
+
             # 记录首个截止单元信息
             if n_cutoff > 0 && !first_cutoff_detected
                 first_cutoff_detected = true
                 first_cutoff_time = t_phys
-                
+
                 # 获取截止单元详细信息
                 first_cutoff_element = Int(variables["thermal2D cutoff_elements"][1])
                 first_cutoff_ocv = variables["thermal2D cutoff_ocv"][1]
             end
-            
+
             total_cutoff_count = n_cutoff
-            
+
             # 获取总单元数
             ne_total = size(case.mesh["thermal2D"].element, 1)
-            
+
             # 检查是否所有单元都截止
             if ne_total > 0 && n_cutoff >= ne_total
                 termination_reason = "all_elements_cutoff"
                 break
             end
         end
-        
+
         # 整体电压截止检测（备用）
         if V_cell < v_l
             termination_reason = "voltage_cutoff_low"
@@ -339,12 +354,12 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             break
         end
     end
-    
+
     # 记录终止原因和截止信息
     if t >= t_end
         termination_reason = "time_limit"
     end
-    result = PostProcessing(case, variables_hist, v) 
+    result = PostProcessing(case, variables_hist, v)
     # 汇总耗时统计（用于识别主要瓶颈）
     timing_total = timing_totals["spme"] + timing_totals["branch"] + timing_totals["thermal"] + timing_totals["czm"]
     call_count_safe = max(timing_call_count, 1)
@@ -384,7 +399,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         @printf("  CZM model            : %.3f s (%.2f%%), avg %.3f ms/call\n",
             timing_totals["czm"], result["timing CZM model ratio [%]"], result["timing CZM model avg [ms]"])
     end
-    
+
     # 添加截止信息到结果
     result["termination_reason"] = termination_reason
     result["first_cutoff_detected"] = first_cutoff_detected
@@ -394,15 +409,15 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         result["first_cutoff_ocv [V]"] = first_cutoff_ocv
     end
     result["total_cutoff_count"] = total_cutoff_count
-    
+
     # 附加热相关历史数据
     if case.opt.per_element_spme && case.opt.thermalmodel == "distributed2D"
         Tref = case.param_dim.scale.T_ref
         result["thermal2D final temperature at nodes [K]"] = T_nodes_carry .* Tref
         result["thermal2D nodes xy [m]"] = case.mesh["thermal2D"].node
     end
-    print("finish the simulation\n") 
-    errors = errors[1:v] 
+    print("finish the simulation\n")
+    errors = errors[1:v]
     if return_final_state
         V_final = variables["cell voltage"] * case.param.scale.phi
         t_final = max(0.0, t * case.param.scale.t0)
@@ -422,7 +437,7 @@ function RecordMatrix!(case::Case, M::SparseArrays.SparseMatrixCSC{Float64, Int6
     case.param.NE.M_d = M[1:l_np, 1:l_np]
     case.param.NE.K_d = K[1:l_np, 1:l_np]
     case.param.PE.M_d = M[l_np+1:l_np+l_pp, l_np+1:l_np+l_pp]
-    case.param.PE.K_d = K[l_np+1:l_np+l_pp, l_np+1:l_np+l_pp]  
+    case.param.PE.K_d = K[l_np+1:l_np+l_pp, l_np+1:l_np+l_pp]
     return case
 end
 
@@ -444,5 +459,5 @@ function ErrorEstimation(case::Case, y_old::Array{Float64}, y_new::Array{Float64
         end
 
     end
-    return error_y    
+    return error_y
 end

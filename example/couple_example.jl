@@ -1,20 +1,71 @@
 """
-快速文字基线：Jellyroll电池多SPMe并行电化学-热-CZM仿真（仅文字结果，60 秒）
+完整耦合示例：Jellyroll电池多SPMe并行电化学-热-CZM仿真（求解 + 全套绘图）
 
 功能：
 - 多SPMe并行架构 + 二维分布式热模型 + CZM内聚力模型
 - 输出各模块仿真时间占比及总耗时
-- 输出全部求解文字指标（电压/容量/温度/CZM/层分辨应力范围），作为修改后的快速行为基线
+- 输出最终时刻温度场
+- 输出最终时刻层分辨环向应力场和切向剪应力场（求解中在线导出）
 
-说明：本文件不含绘图（AGENTS.md §9.6 快速门）；全套绘图验证入口见
-`example/couple_example.jl`（输出 `output/couple_example/`）。
+说明：本文件为全量验证入口（含绘图产物）；日常修改的快速文字基线见
+`example/testexample.jl`（60 秒，仅文字结果）。输出按 AGENTS.md §9.9 写入
+`output/couple_example/`。
 
-日期：2025-12-31（2026-08-29 拆分为纯文字基线）
+日期：2025-12-31（2026-08-29 自 testexample.jl 拆分）
 """
 
 using Printf
+using Statistics
+using Plots
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
+
+function q4_nodal_to_element_mean(mesh, nodal_field)
+    length(nodal_field) == mesh.nlen ||
+        error("nodal field length must match the thermal node count")
+    ne = size(mesh.element, 1)
+    field_elem = Vector{Float64}(undef, ne)
+    @inbounds for e in 1:ne
+        nodes = mesh.element[e, :]
+        field_elem[e] = sum(nodal_field[nodes]) / 4
+    end
+    return field_elem
+end
+
+function plot_q4_cloud(node, element, field_elem, coordinate_scale;
+                       title, colorbar_title, cmap, clims=nothing)
+    ne = size(element, 1)
+    length(field_elem) == ne || error("field length must match the plotted Q4 element count")
+    all(isfinite, field_elem) || error("spatial field values contain NaN or Inf")
+
+    plt = plot(
+        clims=clims,
+        colorbar=true,
+        colorbar_title=colorbar_title,
+        xlabel="x [m]",
+        ylabel="y [m]",
+        title=title,
+        aspect_ratio=:equal,
+        legend=false,
+        size=(800, 700))
+
+    @inbounds for e in 1:ne
+        nodes = element[e, :]
+        x = node[nodes, 1] .* coordinate_scale
+        y = node[nodes, 2] .* coordinate_scale
+        all(isfinite, x) || error("Q4 element $e has NaN or Inf x coordinates")
+        all(isfinite, y) || error("Q4 element $e has NaN or Inf y coordinates")
+        plot!(plt, Plots.Shape(x, y);
+            fill_z=[field_elem[e]],
+            color=cmap,
+            clims=clims,
+            linealpha=0.0,
+            linewidth=0.0,
+            colorbar_entry=true,
+            label=false)
+    end
+    return plt
+end
 
 function rotate_stress_to_polar(node, element, sigma_xx, sigma_yy, sigma_xy)
     ne = size(element, 1)
@@ -42,7 +93,7 @@ end
 
 function main()
     println("="^80)
-    println("Jellyroll电池多SPMe并行电化学-热耦合仿真（文字基线）")
+    println("Jellyroll电池多SPMe并行电化学-热耦合仿真")
     println("="^80)
 
     # ========================================================================
@@ -78,7 +129,7 @@ function main()
     opt.per_element_spme = true
 
     opt.debug_coupling = true
-    opt.debug_log_path = joinpath(@__DIR__, "..", "output", "testexample", "simple_coupling_debug.log")
+    opt.debug_log_path = joinpath(@__DIR__, "..", "output", "couple_example", "simple_coupling_debug.log")
     opt.czm_enabled = true
     opt.czm_fix_inner = false
     opt.czm_iter_method = "basic"
@@ -176,7 +227,7 @@ function main()
     println("="^80)
 
     # ========================================================================
-    # 5. 结果输出（仅文字）
+    # 5. 结果输出
     # ========================================================================
     println("\n[结果输出]")
 
@@ -207,15 +258,70 @@ function main()
         @printf("  CZM 断裂单元数: %d\n", Int(n_frac[end]))
     end
 
-    # 层分辨应力文字指标（求解中在线导出）
+    # ========================================================================
+    # 6. 绘图
+    # ========================================================================
+    println("\n[绘图]")
+
+    output_dir = joinpath(@__DIR__, "..", "output", "couple_example")
+    mkpath(output_dir)
+
+    T_nodes_final_K = result["thermal2D final temperature at nodes [K]"]
+
+    # 层分辨应力直接取自求解过程中在线导出的结果键（Pa → MPa）
     sigma_xx_MPa = result["diffusion stress xx [Pa]"][:, end] .* 1e-6
     sigma_yy_MPa = result["diffusion stress yy [Pa]"][:, end] .* 1e-6
     sigma_xy_MPa = result["diffusion stress xy [Pa]"][:, end] .* 1e-6
-    sigma_theta_theta_MPa, tau_r_theta_MPa = rotate_stress_to_polar(
-        case.czm_mesh.node,
-        case.czm_mesh.bulk_element,
-        sigma_xx_MPa, sigma_yy_MPa, sigma_xy_MPa)
 
+    mechanical_mesh = case.czm_mesh
+    sigma_theta_theta_MPa, tau_r_theta_MPa = rotate_stress_to_polar(
+        mechanical_mesh.node,
+        mechanical_mesh.bulk_element,
+        sigma_xx_MPa,
+        sigma_yy_MPa,
+        sigma_xy_MPa)
+
+    coordinate_scale = case.param.scale.L
+    T_elem_final_K = q4_nodal_to_element_mean(mesh_th, T_nodes_final_K)
+    final_time_s = t_s[end]
+
+    # 对称色标取 |场| 的 99% 分位：端部应力集中不压扁涂层尺度的层间对比
+    symmetric_p99_clims(field) = begin
+        q = quantile(abs.(field), 0.99)
+        q > 0 ? (-q, q) : nothing
+    end
+    hoop_stress_clims = symmetric_p99_clims(sigma_theta_theta_MPa)
+    tangential_stress_clims = symmetric_p99_clims(tau_r_theta_MPa)
+
+    temperature_plot = plot_q4_cloud(mesh_th.node, mesh_th.element, T_elem_final_K, coordinate_scale;
+        title=@sprintf("Final Temperature Field, t = %.1f s", final_time_s),
+        colorbar_title="T [K]",
+        cmap=:thermal)
+    hoop_stress_plot = plot_q4_cloud(
+        mechanical_mesh.node, mechanical_mesh.bulk_element,
+        sigma_theta_theta_MPa, coordinate_scale;
+        title=@sprintf("Final Hoop Stress Field on Mechanical Submesh, t = %.1f s", final_time_s),
+        colorbar_title="sigma_theta_theta [MPa]",
+        cmap=:RdBu,
+        clims=hoop_stress_clims)
+    tangential_stress_plot = plot_q4_cloud(
+        mechanical_mesh.node, mechanical_mesh.bulk_element,
+        tau_r_theta_MPa, coordinate_scale;
+        title=@sprintf("Final Tangential Shear Stress Field on Mechanical Submesh, t = %.1f s", final_time_s),
+        colorbar_title="tau_r_theta [MPa]",
+        cmap=:RdBu,
+        clims=tangential_stress_clims)
+
+    temperature_path = joinpath(output_dir, "final_temperature_field.png")
+    hoop_stress_path = joinpath(output_dir, "final_hoop_stress_field.png")
+    tangential_stress_path = joinpath(output_dir, "final_tangential_shear_stress_field.png")
+    savefig(temperature_plot, temperature_path)
+    savefig(hoop_stress_plot, hoop_stress_path)
+    savefig(tangential_stress_plot, tangential_stress_path)
+
+    @printf("  最终温度场已保存: %s\n", temperature_path)
+    @printf("  最终环向应力场已保存: %s\n", hoop_stress_path)
+    @printf("  最终切向剪应力场已保存: %s\n", tangential_stress_path)
     @printf("  最终环向应力范围: %.4e ~ %.4e MPa\n",
         minimum(sigma_theta_theta_MPa), maximum(sigma_theta_theta_MPa))
     @printf("  最终切向剪应力范围: %.4e ~ %.4e MPa\n",

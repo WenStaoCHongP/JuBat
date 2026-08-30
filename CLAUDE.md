@@ -380,7 +380,7 @@ JuBat 区分两个尺度的弹性模量，**不可混用**：
 
 **CZM/二维宏观应力统一入口**：`compute_czm_params_per_interface(case)`（`src/CouplingState.jl:302`）→ 返回 `CzmParamCache`，按界面（`:PE_PCC` / `:NE_NCC`）提供 `CzmInterfaceParams`。**E_eff 按界面直接取涂层模量（PE-PCC 用 `PE.E_coat`、NE-NCC 用 `NE.E_coat`），不做全叠合厚度加权**；全叠合厚度加权仅保留在参考尺度 `scale.E_coat` 的定义中。
 
-**防御**：缺失 `E_coat` 时 `ChooseCell` 触发 `@warn`，`compute_czm_params_per_interface`（`src/CouplingState.jl:307-313`）与 `thermal_diffusion_stress_2D` 入口（`src/Mechanical.jl:166-167`）处 `@assert` 拦截。
+**防御**：缺失 `E_coat` 时 `ChooseCell` 触发 `@warn`，`compute_czm_params_per_interface`（`src/CouplingState.jl:307-313`）与 `thermal_diffusion_stress_2D` 入口（`src/Mechanical.jl:235`）处 `@assert` 拦截。宏观应力已层分辨：耦合流程（czm_enabled=true）由 `export_macro_stress` 在求解过程中在线收割导出 `diffusion stress xx/yy/xy/vonMises [Pa]`；czm-off 走按需调用的固体力学工具函数 `thermal_diffusion_stress_2D`（mesh_bonded 域，输出同组 [Pa] 键）。
 
 详见 `md/15_颗粒与极片模量区分.md`。
 
