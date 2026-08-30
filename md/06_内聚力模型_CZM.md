@@ -226,13 +226,16 @@ $$
 ```julia
 result, updated_czm_mesh = solve_czm_step(
     czm_mesh, F_ext, param_cache::CzmParamCache, param, u_prev;
-    α_eff=0.0, β_n=0.0, β_p=0.0,          # 热-化学应变系数
     dT_elem=nothing, Δsoc_n_elem=nothing, Δsoc_p_elem=nothing,
     max_iter=50, tol=1e-8, n_load_steps=10, arc_length_alpha=1.0,
     iter_method="load_substep",             # "basic" | "load_substep" | "arc_length"
     cache=nothing,                          # CZMAssemblyCache 装配缓存
     visc_beta=1.0)
 ```
+
+热-化学应变系数不再逐参量传入：ε₀ 按单元 `material_type` 经
+`eigenstrain_of(param, mt)` 分层计算（α=该层 `alphaT`，β=该层 `Ω/3`，
+2026-08-29 α/β 同批分层化）。
 
 **参数缓存**：重构后求解/装配函数不再逐个接收 `E_eff`、`ν_eff`、`cohesive_params`，
 而是统一接收 `param_cache::CzmParamCache`（`src/CouplingState.jl:76`），其
@@ -355,21 +358,22 @@ $$
 function assemble_thermal_chemical_load(
     czm_mesh::CohesiveMesh,
     param_cache::CzmParamCache,
-    α_eff::Float64,          # 热膨胀系数
-    β_n::Float64,            # 负极化学膨胀系数
-    β_p::Float64,            # 正极化学膨胀系数
     dT_elem::Vector{Float64},
     Δsoc_n_elem::Vector{Float64},
     Δsoc_p_elem::Vector{Float64}
 )
 ```
-（`src/czm.jl:347`；$\alpha_{eff}$、$\beta$ 为逐参量传入，弹性模量经 `param_cache` 获取）
+（`src/czm.jl`；α/β 分层分辨率——由 `eigenstrain_of(param, material_type[e])` 按层取
+`alphaT` 与 `Ω/3`，不再跨层统一传入）
 
-**初始应变公式**：
+**初始应变公式**（逐层，mt 为该单元材料类型）：
 
 $$
-\varepsilon_0 = \alpha \cdot \Delta T + \beta_n \cdot \Delta soc_n + \beta_p \cdot \Delta soc_p
+\varepsilon_0^{(mt)} = \alpha_T^{(mt)} \cdot \Delta T + \tfrac{\Omega^{(mt)}}{3} \cdot \Delta soc^{(mt)}
 $$
+
+电极膨胀只作用于本层涂层（NE→Δsoc_n、PE→Δsoc_p），集流体/隔膜只有热应变
+（Jellyroll 参数集 SP/PCC/NCC.alphaT 显式置零）。
 
 **等效节点力**：
 
@@ -403,7 +407,9 @@ function assemble_coupled_system(
 
 ### 4.7 应变驱动的有效模量（极片层级）
 
-CZM 应变驱动所需的 `E_eff`、`ν_eff`、`α_eff` 必须使用**极片（涂层）宏观弹性模量**，而**非**颗粒层面的 `PE.E`/`NE.E`。两者物理尺度相差约两个数量级（典型值：颗粒 ~1e10 Pa，极片 ~5e8 Pa），错误使用会造成刚度矩阵系统性偏差。
+CZM 应变驱动所需的体模量必须使用**极片（涂层）宏观弹性模量**（经 `moduli_of` 逐层取
+`E_coat`/连续层 `E`），而**非**颗粒层面的 `PE.E`/`NE.E`。两者物理尺度相差约两个数量级
+（典型值：颗粒 ~1e10 Pa，极片 ~5e8 Pa），错误使用会造成刚度矩阵系统性偏差。
 
 **统一计算入口**：`compute_czm_params_per_interface(case)`（`src/CouplingState.jl:302`），
 返回 `CzmParamCache`（含 `:PE_PCC` 与 `:NE_NCC` 两个条目及派生量 Λ、E_star、L_ch）。
@@ -422,14 +428,15 @@ $$
 **参考尺度**（`src/SetParams.jl:320-324`），见 md/15。
 
 **调用路径**：
-- `thermal_diffusion_stress_2D`（`src/Mechanical.jl:165`）：从缓存取 `:PE_PCC` 占位
-  条目的 E_eff/ν_eff/α_eff，用于 2D 宏观应力-位移分析
+- `export_macro_stress` / `thermal_diffusion_stress_2D`（`src/Mechanical.jl`）：
+  层分辨宏观应力——耦合流程求解中收割本步收敛位移，固体流程按需在 mesh_bonded 上
+  求解；逐层模量经 `moduli_of`，特征应变经 `eigenstrain_of` 分层计算
 - `update_czm_damage!`（`src/CouplingState.jl:535`）：经 `ensure_czm_cache` 构建/
   失效重建参数缓存后驱动一次 CZM 求解
 
 **参数来源约束**：若 `PE.E_coat == 0` 或 `NE.E_coat == 0`，`ChooseCell` 会发出 `@warn`；
 `compute_czm_params_per_interface` 入口处的 `@assert`（`src/CouplingState.jl:307-313`）
-与 `thermal_diffusion_stress_2D` 入口断言（`src/Mechanical.jl:166-167`）会拦截
+与 `thermal_diffusion_stress_2D` 入口断言（`src/Mechanical.jl:235`）会拦截
 （防止 `NaN` 传播）。
 
 ### 4.8 无量纲化重设计 v2（2026-07-22）
@@ -540,9 +547,9 @@ $$
 - `solve_phase`（`src/CycleSolver.jl`）不再自行调用损伤更新
 - 循环仿真中可传入 `czm_snapshots::Vector{CZMSnapshot}` 记录归一化量快照
 
-**更新流程**（`update_czm_damage!`，`src/CouplingState.jl:535`）：
+ **更新流程**（`update_czm_damage!`，`src/CouplingState.jl:535`）：
 1. `compute_czm_strain_inputs`（`:419`）由温度场/SOC 变化构造热-化学应变输入
-   （T_czm_nodes 经热→CZM 插值矩阵，dT/Δsoc 经 thermal_elem_map 直查）
+   （粗热 Q4 四节点平均温差与单元 SOC 均经 `thermal_elem_map` 映射到力学 bulk 单元；不生成细力学节点温度场）
 2. `compute_czm_params_per_interface` + `ensure_czm_cache` 构建/复用参数与装配缓存
 3. 调用 `solve_czm_step` 做一次 CZM 求解
 4. `czm_output_to_variables` 回写损伤统计
@@ -620,7 +627,6 @@ function czm_output_to_variables(
 | 弧长增广矩阵 | src/CzmSolve.jl | `build_arc_length_augmented_matrix` (156) |
 | CZM 调度入口 | src/CouplingState.jl | `update_czm_damage!` (535) |
 | 热-化学应变输入 | src/CouplingState.jl | `compute_czm_strain_inputs` (419) |
-| 热→CZM 插值 | src/CouplingState.jl | `build_thermal_to_czm_interp` (677) |
 | 按界面参数/缓存 | src/CouplingState.jl | `compute_czm_params_per_interface` (302), `CzmParamCache` (76) |
 | 本构模型 | src/Materialmatrix.jl | `bilinear_traction_state` (68), `bilinear_tangent` (182), `update_damage` (293) |
 | 内聚力单元装配 | src/czm.jl | `assemble_czm_system` (79) |

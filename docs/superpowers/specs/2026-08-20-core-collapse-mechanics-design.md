@@ -181,7 +181,7 @@ end
 ```
 每 czm_update_interval 时间步:
   CallModel (电-热) → T, soc 场
-      ↓ thermal_to_czm 插值
+      ↓ 父热单元四节点平均温差 / 单元 SOC，经 thermal_elem_map 映射
   CZM 力学步 (Newton/弧长):
       assemble_bulk_residual_tangent   ← u, PlasticState, 参考构型
       + assemble_czm_system            ← DamageState

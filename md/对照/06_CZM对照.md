@@ -9,7 +9,7 @@
 > - `src/czm.jl`（619 行）— DamageState / moduli_of / assemble_czm_system / assemble_bulk_stiffness / assemble_thermal_chemical_load / assemble_coupled_system(_full) / cache
 > - `src/CzmBC.jl`（124 行）— apply_bc_czm / identify_bc_nodes_czm
 > - `src/CzmSolve.jl`（675 行）— CZMResult / solve_czm_basic_step / newton_raphson_czm / solve_czm_arc_length_step / solve_czm_step / backtrack_line_search! / build_arc_length_augmented_matrix
-> - `src/Mechanical.jl`（355 行）— Calstressdisp（颗粒扩散应力）/ thermal_diffusion_stress_2D（2D 宏观热-扩散应力）
+> - `src/Mechanical.jl`（325 行）— Calstressdisp（颗粒扩散应力）/ 层分辨宏观应力（recover_bulk_stress / macro_eigenstrain / export_macro_stress / thermal_diffusion_stress_2D）
 > - `src/CzmPostProcess.jl`（117 行）— get_damage_statistics / check_fracture_criterion / czm_output_to_variables
 > - `src/CouplingState.jl`（750 行）— CzmInterfaceParams / CzmParamCache / compute_czm_params_per_interface / compute_czm_strain_inputs / update_czm_damage!
 > - 辅助：`src/Materialmatrix.jl:60-427`（bilinear_traction_state / bilinear_tangent / update_damage / compute_gap_conductance）；`src/SetParams.jl:156-192`（Cohesive 参数集）
@@ -139,7 +139,7 @@
 
 | 公式编号 | 理论位置 | 代码位置 | 实现摘要 | 一致性 | 备注 |
 |---|---|---|---|---|---|
-| (6.18) | md/06 §4.5 初始应变 `ε_0 = α·ΔT + β_n·Δsoc_n + β_p·Δsoc_p` | `src/Czm.jl:198 (assemble_thermal_chemical_load)` | `epsilon_0_elem[e] = α_eff·dT_elem[e] + β_n·Δsoc_n_elem[e] + β_p·Δsoc_p_elem[e]` | ✅ | md L313；α_eff 跨材料统一（spec §7.1）；β_n/β_p 由 `update_czm_damage!` 传 `param.Omega/3` |
+| (6.18) | md/06 §4.5 初始应变 `ε₀^(mt) = αT(mt)·ΔT + Ω(mt)/3·Δsoc(mt)`（α/β 分层化，2026-08-29） | `src/czm.jl (eigenstrain_of + assemble_thermal_chemical_load)` | `ε₀ = eigenstrain_of(param, material_type[e], dT, Δsn, Δsp)`：α=该层 alphaT、β=该层 Ω/3，电极膨胀只作用本层涂层 | ✅ | 旧跨层统一 α_eff（spec §7.1）已废除；SP/PCC/NCC.alphaT 参数集显式置零 |
 | (6.19) | md/06 §4.5 等效节点力 `F_thermo_chem = ∫ B^T·D·ε_0 dΩ` | `src/Czm.jl:393-404 (assemble_thermal_chemical_load)` | `factor = E/(1−ν²)·ε_0·(1+ν)·w·detJ`；`f_e[2i−1] += dNdx[i]·factor`；`f_e[2i] += dNdy[i]·factor` | ✅ | md L319；平面应力 D 矩阵 + 各向同性 ε_0；代码用 dNdx/dNdy 高斯积分 |
 
 ### §4.6 完整耦合系统组装
@@ -441,7 +441,10 @@
 **src/Mechanical.jl（355 行）函数边界**：
 - `Mechanicaloutput`: 1-110
 - `Calstressdisp`: 112-139
-- `thermal_diffusion_stress_2D`: 165-355
+- `recover_bulk_stress`: 151-179
+- `macro_eigenstrain`: 182-192
+- `export_macro_stress`: 200-212
+- `thermal_diffusion_stress_2D`: 233-325
 
 **src/CzmPostProcess.jl（117 行）函数边界**：
 - `get_damage_statistics`: 12-32

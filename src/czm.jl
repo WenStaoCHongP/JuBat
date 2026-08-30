@@ -63,6 +63,69 @@ function moduli_of(param, mt::Symbol)
     error("moduli_of: unknown material_type $mt")
 end
 
+"""
+    eigenstrain_of(param, mt, dT, Δsn, Δsp) -> ε0
+
+逐层热-化学本征应变（α/β 分层分辨率，2026-08-29）：
+ε0 = alphaT(mt)·dT + Ω(mt)/3·Δsoc(mt)。电极膨胀只作用于本层
+（NE→Ω_n/3·Δsn，PE→Ω_p/3·Δsp），集流体/隔膜只有热应变
+（Jellyroll 参数集 SP/PCC/NCC.alphaT 显式置零）。与 moduli_of 平行查表，
+取代旧的跨层均匀 α_eff/β_n/β_p 施加。
+"""
+function eigenstrain_of(param, mt::Symbol, dT::Real, Δsn::Real, Δsp::Real)
+    if mt === :PE
+        return param.PE.alphaT * dT + (param.PE.Omega / 3.0) * Δsp
+    elseif mt === :NE
+        return param.NE.alphaT * dT + (param.NE.Omega / 3.0) * Δsn
+    elseif mt === :SP
+        return param.SP.alphaT * dT
+    elseif mt === :PCC
+        return param.PCC.alphaT * dT
+    elseif mt === :NCC
+        return param.NCC.alphaT * dT
+    end
+    error("eigenstrain_of: unknown material_type $mt")
+end
+
+"""
+    cohesive_local_frame(czm_mesh, elem) -> (L, n_vec, t_vec, R)
+
+构造 cohesive 局部标架。正法向由 `host_inner_elem → host_outer_elem` 的质心方向
+定向，不能只依赖界面边的节点顺序：Jellyroll 节点沿逆时针 θ 递增时，固定左法向
+指向卷芯内侧，会把物理张开误判为受压。
+"""
+function cohesive_local_frame(czm_mesh::CohesiveMesh, elem::AbstractCohesiveElement)
+    n1, n2 = elem.nodes_bottom
+    x1, y1 = czm_mesh.node[n1, 1], czm_mesh.node[n1, 2]
+    x2, y2 = czm_mesh.node[n2, 1], czm_mesh.node[n2, 2]
+    dx, dy = x2 - x1, y2 - y1
+    L = hypot(dx, dy)
+    L >= 1e-15 || error(
+        "degenerate cohesive element $(elem.id): tangential length is $L")
+
+    t_vec = [dx / L, dy / L]
+    n_vec = [-t_vec[2], t_vec[1]]
+
+    inner_nodes = czm_mesh.bulk_element[elem.host_inner_elem, :]
+    outer_nodes = czm_mesh.bulk_element[elem.host_outer_elem, :]
+    cx_inner = sum(czm_mesh.node[n, 1] for n in inner_nodes) / length(inner_nodes)
+    cy_inner = sum(czm_mesh.node[n, 2] for n in inner_nodes) / length(inner_nodes)
+    cx_outer = sum(czm_mesh.node[n, 1] for n in outer_nodes) / length(outer_nodes)
+    cy_outer = sum(czm_mesh.node[n, 2] for n in outer_nodes) / length(outer_nodes)
+    orientation = n_vec[1] * (cx_outer - cx_inner) +
+                  n_vec[2] * (cy_outer - cy_inner)
+    abs(orientation) > 1e-15 || error(
+        "cohesive element $(elem.id) cannot orient its normal from " *
+        "host_inner_elem=$(elem.host_inner_elem) to " *
+        "host_outer_elem=$(elem.host_outer_elem)")
+    if orientation < 0.0
+        n_vec .*= -1.0
+    end
+
+    R = [n_vec[1] n_vec[2]; t_vec[1] t_vec[2]]
+    return L, n_vec, t_vec, R
+end
+
 
 """
     assemble_czm_system(czm_mesh, u, param_cache; damage_states=nothing, ...)
@@ -161,15 +224,7 @@ function assemble_czm_system(
             elem = czm_mesh.cohesive_elements[i]
             n1, n2 = elem.nodes_bottom
             n4, n3 = elem.nodes_top
-            L = elem.length
-            L >= 1e-15 || error("degenerate cohesive element $i: tangential length is $L")
-
-            x1, y1 = czm_mesh.node[n1, 1], czm_mesh.node[n1, 2]
-            x2, y2 = czm_mesh.node[n2, 1], czm_mesh.node[n2, 2]
-            dx, dy = x2 - x1, y2 - y1
-            t_vec = [dx / L, dy / L]
-            n_vec = [-t_vec[2], t_vec[1]]
-            R = [n_vec[1] n_vec[2]; t_vec[1] t_vec[2]]
+            L, _, _, R = cohesive_local_frame(czm_mesh, elem)
             dofs = [2*n1-1, 2*n1, 2*n2-1, 2*n2, 2*n3-1, 2*n3, 2*n4-1, 2*n4]
             order = czm_mesh.bulk_mesh.gs.order
             wts, pts = NCweight(order)
@@ -449,7 +504,7 @@ bulk 残差/切线的统一入口（spec 2026-08-20-core-collapse-mechanics-desi
 2. **几何非线性**（`geo_nl=true`，Batch 2）：完全 Green-Lagrange 全 Lagrangian——
    `gl_element_residual_tangent` 逐单元装配，S = C:(E_GL − ε₀I)（D-B2-1，ε₀ 与
    `assemble_thermal_chemical_load` 同式）；切线含标准初应力 K_G。切线依赖 u，
-   禁止传 `K_bulk_cached`。`eigenstrain` 为 NamedTuple `(α_eff, β_n, β_p, dT, Δsn, Δsp)`，
+   禁止传 `K_bulk_cached`。`eigenstrain` 为 NamedTuple `(dT, Δsn, Δsp)`，
    `nothing` 表示本次调用无本征应变（ε₀≡0，运动学场景合法状态）。
 3. **J2 塑性**（`plasticity=true`）：PCC/NCC 平面应力一致返回映射，Batch 3；届时经
    `mech_state` 传入 `PlasticState`。
@@ -505,9 +560,6 @@ function assemble_bulk_residual_tangent(
                 "assemble_bulk_residual_tangent: plasticity=true 需要 mech_state::Matrix{PlasticState}（[ne, 4] 高斯点状态），" *
                 "收到 $(typeof(mech_state))。")
         end
-        α_eff = eigenstrain === nothing ? 0.0 : eigenstrain.α_eff
-        β_n   = eigenstrain === nothing ? 0.0 : eigenstrain.β_n
-        β_p   = eigenstrain === nothing ? 0.0 : eigenstrain.β_p
         dT_el = eigenstrain === nothing ? nothing : eigenstrain.dT
         Δsn   = eigenstrain === nothing ? nothing : eigenstrain.Δsn
         Δsp   = eigenstrain === nothing ? nothing : eigenstrain.Δsp
@@ -551,7 +603,7 @@ function assemble_bulk_residual_tangent(
             end
             ε0 = 0.0
             if dT_el !== nothing
-                ε0 = α_eff * dT_el[e] + β_n * Δsn[e] + β_p * Δsp[e]
+                ε0 = eigenstrain_of(param, mt, dT_el[e], Δsn[e], Δsp[e])
             end
             commit_to = (plasticity && commit_plastic && plastic !== nothing) ?
                         Vector{Tuple{NTuple{3,Float64},Float64}}(undef, 4) : nothing
@@ -608,16 +660,15 @@ function assemble_bulk_residual_tangent(
 end
 
 """
-    assemble_thermal_chemical_load(czm_mesh, param_cache, α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+    assemble_thermal_chemical_load(czm_mesh, param_cache, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
 
-组装热-化学载荷向量。按 `czm_submesh.material_type` 分组取 (E, ν)（PE/NE 用
-涂层模量，SP/PCC/NCC 用连续层模量），保留 α_eff / β_n / β_p 为位置参数
-（电化学浓度膨胀系数，跨材料统一）。
+组装热-化学载荷向量。ε₀ 按 `czm_submesh.material_type` 逐层计算
+（`eigenstrain_of`：alphaT(mt)·dT + Ω(mt)/3·Δsoc(mt)），模量按材料查表
+（PE/NE 用涂层模量，SP/PCC/NCC 用连续层模量）。
 """
 function assemble_thermal_chemical_load(
     czm_mesh::CohesiveMesh,
     param_cache::CzmParamCache,
-    α_eff::Float64, β_n::Float64, β_p::Float64,
     dT_elem::Vector{Float64}, Δsoc_n_elem::Vector{Float64}, Δsoc_p_elem::Vector{Float64}
 )
     nnode = czm_mesh.nnode
@@ -631,11 +682,11 @@ function assemble_thermal_chemical_load(
     node = czm_mesh.node
     ne = size(element, 1)
 
-    # 计算每个单元的初始应变
-    # ε_0 = α*ΔT + β_n*Δsoc_n + β_p*Δsoc_p
+    # 计算每个单元的初始应变（α/β 分层分辨率）
     epsilon_0_elem = zeros(Float64, ne)
     @inbounds for e in 1:ne
-        epsilon_0_elem[e] = α_eff * dT_elem[e] + β_n * Δsoc_n_elem[e] + β_p * Δsoc_p_elem[e]
+        epsilon_0_elem[e] = eigenstrain_of(
+            param, submesh.material_type[e], dT_elem[e], Δsoc_n_elem[e], Δsoc_p_elem[e])
     end
 
     gsorder = 2
@@ -729,15 +780,7 @@ function build_czm_cache(czm_mesh::CohesiveMesh, param_cache::CzmParamCache; fix
     for (i, elem) in enumerate(czm_mesh.cohesive_elements)
         n1, n2 = elem.nodes_bottom
         n4, n3 = elem.nodes_top
-        L = elem.length
-        L >= 1e-15 || error("degenerate cohesive element $i: tangential length is $L")
-
-        x1, y1 = czm_mesh.node[n1, 1], czm_mesh.node[n1, 2]
-        x2, y2 = czm_mesh.node[n2, 1], czm_mesh.node[n2, 2]
-        dx, dy = x2 - x1, y2 - y1
-        t_vec = [dx / L, dy / L]
-        n_vec = [-t_vec[2], t_vec[1]]
-        R = [n_vec[1] n_vec[2]; t_vec[1] t_vec[2]]
+        L, n_vec, t_vec, R = cohesive_local_frame(czm_mesh, elem)
 
         dofs = [2*n1-1, 2*n1, 2*n2-1, 2*n2, 2*n3-1, 2*n3, 2*n4-1, 2*n4]
 
@@ -858,7 +901,7 @@ function assemble_coupled_system(
 end
 
 """
-    assemble_coupled_system_full(czm_mesh, u, param_cache, α_eff, β_n, β_p, dT_elem, ...; kwargs...)
+    assemble_coupled_system_full(czm_mesh, u, param_cache, dT_elem, ...; kwargs...)
 
 耦合系统组装 + 热-化学载荷 + 残差计算。按 spec v2 §7.1 改为接受 `param_cache`，
 透传给 `assemble_coupled_system` 与 `assemble_thermal_chemical_load`。
@@ -867,7 +910,6 @@ function assemble_coupled_system_full(
     czm_mesh::CohesiveMesh,
     u::Vector{Float64},
     param_cache::CzmParamCache,
-    α_eff::Float64, β_n::Float64, β_p::Float64,
     dT_elem::Vector{Float64}, Δsoc_n_elem::Vector{Float64}, Δsoc_p_elem::Vector{Float64};
     F_ext::Union{Vector{Float64}, Nothing}=nothing,
     damage_states=nothing,
@@ -886,8 +928,7 @@ function assemble_coupled_system_full(
 
     # 热-化学载荷（透传 param_cache）
     F_thermo_chem = assemble_thermal_chemical_load(
-        czm_mesh, param_cache, α_eff, β_n, β_p,
-        dT_elem, Δsoc_n_elem, Δsoc_p_elem)
+        czm_mesh, param_cache, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
 
     # 外部载荷
     F_external = F_ext === nothing ? zeros(Float64, ndof) : F_ext

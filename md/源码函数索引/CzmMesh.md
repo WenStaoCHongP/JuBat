@@ -27,15 +27,13 @@
 - 每个周向分段识别 PE–PCC/PCC–PE、NE–NCC/NCC–NE 四个真实面，再归入两种 `interface_type`。
 - 按径向质心判定内外层。
 - 复制界面节点并重写外层 bulk 单元连接，确保可产生分离位移。
-- 构造 `cohesive_to_thermal` 与 `thermal_to_czm` 映射。
+- 构造 `cohesive_to_thermal` 映射；温度与 SOC 的 bulk 映射由 `CzmSubmesh.thermal_elem_map` 提供。
 - 初始化每个 cohesive 单元的 `DamageState` 并执行拓扑自检。
 
 ## 跨文件依赖
 
 - `Czm.jl`：`DamageState`
-- `CouplingState.jl`：`CohesiveMesh`、`CzmSubmesh`
 - `SetMesh.jl`：`Mesh`
-- `CouplingState.jl`/映射实现：`build_thermal_to_czm_interp`
 
 ## 省略项
 

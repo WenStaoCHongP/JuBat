@@ -105,17 +105,14 @@ end
     case.czm_mesh = JuBat.create_czm_mesh(submesh, case.mesh["thermal2D"], case.param)
     param_cache = JuBat.compute_czm_params_per_interface(case)
     czm_mesh = case.czm_mesh
+    cache = JuBat.build_czm_cache(czm_mesh, param_cache)
     scale = param_dim.scale
 
     # 选第一个 cohesive 单元，沿其法向对顶面节点施加微小张开位移（弹性段内）
     elem = czm_mesh.cohesive_elements[1]
     n1, n2 = elem.nodes_bottom
     n4, n3 = elem.nodes_top
-    x1, y1 = czm_mesh.node[n1, 1], czm_mesh.node[n1, 2]
-    x2, y2 = czm_mesh.node[n2, 1], czm_mesh.node[n2, 2]
-    Lel = hypot(x2 - x1, y2 - y1)
-    tx, ty = (x2 - x1) / Lel, (y2 - y1) / Lel
-    nx, ny = -ty, tx
+    nx, ny = cache.cohesive_geom[1].n_vec
 
     pe = param_cache.by_interface[elem.interface_type]
     # 位移空间张开量（L 归一），映射到分离空间后远小于 δ_0*（保持弹性）

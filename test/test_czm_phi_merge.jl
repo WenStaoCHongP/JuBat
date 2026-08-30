@@ -33,7 +33,6 @@ end
     @test md.czm_submesh.mesh_bonded.nlen == md.czm_submesh.mesh.nlen - length(pp)
     @test maximum(md.czm_submesh.mesh_bonded.element) == md.czm_submesh.mesh_bonded.nlen
     @test length(md.czm_submesh.phi_keep) == md.czm_submesh.mesh_bonded.nlen
-    @test size(case.czm_mesh.thermal_to_czm, 1) == md.czm_submesh.mesh.nlen  # 插值行数契约（未合并布局）
 end
 
 @testset "绑定对位移恒等（装配级）" begin

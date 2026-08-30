@@ -31,7 +31,7 @@ end
 - `CohesiveMesh`: 内聚力网格对象，bulk_mesh 指向 czm_submesh.mesh
 """
 function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)
-    # v1.5 §3.4：拓扑消费 Φ 合并网格（完美粘结）；插值按 .mesh 未合并布局构造后按 phi_keep 裁剪
+    # v1.5 §3.4：拓扑消费 Φ 合并网格（完美粘结）。
     sub_mesh = czm_submesh.mesh_bonded
     ne_sub = size(sub_mesh.element, 1)
     nnode_sub = sub_mesh.nlen
@@ -168,9 +168,6 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)
     czm_mesh.interface_nodes = [[]]   # 旧字段，保留兼容
     czm_mesh.damage_states = damage_states
     czm_mesh.czm_submesh = czm_submesh
-    # 插值按 .mesh 未合并布局构造（索引算术定位原封不动），行数契约 size(M,1)==mesh.nlen
-    # 维持不变（T_czm_nodes 无下游消费者，未合并行序仅影响该返回值）
-    czm_mesh.thermal_to_czm = build_thermal_to_czm_interp(thermal_mesh, czm_submesh)
     czm_mesh.cohesive_to_thermal = cohesive_to_thermal
 
     # 正确性自检（spec §4.3）

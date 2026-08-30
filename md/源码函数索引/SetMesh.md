@@ -30,16 +30,16 @@ CZM 损伤状态抽象基类，同上 include 顺序考虑。
 
 ### `struct CzmSubmesh` — L43-L48
 
-独立细化的 CZM 机械子网格（径向 8 层/卷绕圈），与粗热网格解耦，通过 `thermal_elem_map` 与 `thermal_to_czm` 矩阵耦合。
+独立细化的 CZM 机械子网格（径向 8 层/卷绕圈），与粗热网格解耦；温度与 SOC 通过 `thermal_elem_map` 按父热单元耦合。
 
 - 字段：`mesh::Mesh`（细化 Q4 网格）、`material_type::Vector{Symbol}`（:PE / :PCC / :SP / :NE / :NCC）、`winding_turn`（卷绕圈号）、`thermal_elem_map`（CZM 单元 → 粗热单元 id）
 - 定义在 SetMesh.jl 而非 czm.jl 的原因：`CohesiveMesh` 引用 `CzmSubmesh`，而 SetMesh.jl 在 czm.jl 之前被 include
 
 ### `mutable struct CohesiveMesh` — L50-L74
 
-CZM 装配网格容器，聚合 bulk 网格 + 内聚力单元 + 节点分层映射 + 损伤状态 + 子网格耦合矩阵。
+CZM 装配网格容器，聚合 bulk 网格 + 内聚力单元 + 节点分层映射 + 损伤状态 + 单元耦合映射。
 
-- 字段：`bulk_mesh`、`node`（扩展后节点）、`nnode`、`bulk_element`（更新后的固体连接）、`cohesive_elements::Vector{AbstractCohesiveElement}`、`n_cohesive`、`n_layers`（遗留字段名，实际为本构/材料类型数 2，不是 4 个真实面或 `4N_seg` 个单元）、`node_map`、`interface_nodes`、`damage_states::Vector{AbstractDamageState}`、`czm_submesh`、`thermal_to_czm`、`cohesive_to_thermal`
+- 字段：`bulk_mesh`、`node`（扩展后节点）、`nnode`、`bulk_element`（更新后的固体连接）、`cohesive_elements::Vector{AbstractCohesiveElement}`、`n_cohesive`、`n_layers`（遗留字段名，实际为本构/材料类型数 2，不是 4 个真实面或 `4N_seg` 个单元）、`node_map`、`interface_nodes`、`damage_states::Vector{AbstractDamageState}`、`czm_submesh`、`cohesive_to_thermal`
 - 内部构造函数 `CohesiveMesh()`（L66-L73）：空初始化，所有数组为 0 维，新字段（v5）默认 `nothing`
 
 ## 函数清单

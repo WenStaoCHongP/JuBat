@@ -35,16 +35,11 @@ using .JuBat
     @test haskey(out, :dT_czm)
     @test haskey(out, :Δsoc_p_czm)
     @test haskey(out, :Δsoc_n_czm)
-    @test haskey(out, :T_czm_nodes)
+    @test !haskey(out, :T_czm_nodes)
 
     @test length(out.dT_czm) == ne_czm
     @test length(out.Δsoc_p_czm) == ne_czm
     @test length(out.Δsoc_n_czm) == ne_czm
-    @test length(out.T_czm_nodes) == submesh.mesh.nlen
-
-    @test minimum(out.T_czm_nodes) >= minimum(T_nodes) - 1e-9
-    @test maximum(out.T_czm_nodes) <= maximum(T_nodes) + 1e-9
-    @test !any(isnan, out.T_czm_nodes)
 
     @test minimum(out.dT_czm) >= -5.5
     @test maximum(out.dT_czm) <=  5.5
@@ -53,6 +48,9 @@ using .JuBat
     for e in 1:ne_czm
         mt = submesh.material_type[e]
         e_thermal = submesh.thermal_elem_map[e]
+        thermal_nodes = case.mesh["thermal2D"].element[e_thermal, :]
+        expected_dT = sum(T_nodes[thermal_nodes]) / 4 - case.param.cell.T0
+        @test out.dT_czm[e] ≈ expected_dT atol=1e-12
         if mt == :PE
             expected = variables["thermal2D element soc_p"][e_thermal] - case.param.PE.cs0
             @test out.Δsoc_p_czm[e] ≈ expected atol=1e-6

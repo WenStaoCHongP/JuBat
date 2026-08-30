@@ -67,7 +67,7 @@ CZM 单步求解结果容器。
 - `A[1:ndof, 1:ndof] = K_bc`；`A[i, ndof+1] = -load_vector[i]`；`A[ndof+1, i] = 2·delta_u[i]`
 - 末对角 `A[ndof+1, ndof+1] = 2·α²·delta_lambda`
 
-### `solve_czm_basic_step(czm_mesh, F_ext, param_cache, param, u_prev; α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem, max_iter, tol, cache, visc_beta) -> (result, new_czm_mesh)` — L168-L263
+### `solve_czm_basic_step(czm_mesh, F_ext, param_cache, param, u_prev; dT_elem, Δsoc_n_elem, Δsoc_p_elem, max_iter, tol, cache, visc_beta) -> (result, new_czm_mesh)` — L168-L263
 
 基础 Newton-Raphson 单步求解（无载荷子步）。
 
@@ -77,7 +77,7 @@ CZM 单步求解结果容器。
 - 收敛后才更新损伤（L214，与 `newton_raphson_czm` 一致：冻结损伤求解位移，收敛后更新）
 - 跨文件依赖：`assemble_coupled_system`、`assemble_thermal_chemical_load`、`apply_bc_czm`、`backtrack_line_search!`、`update_damage_per_interface`、`clone_damage_states`、`clone_czm_mesh_with_damage`
 
-### `solve_czm_arc_length_step(czm_mesh, F_ext, param_cache, param, u_prev; α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem, max_iter, tol, n_load_steps, arc_length_alpha, cache, visc_beta) -> (result, new_czm_mesh)` — L265-L466
+### `solve_czm_arc_length_step(czm_mesh, F_ext, param_cache, param, u_prev; dT_elem, Δsoc_n_elem, Δsoc_p_elem, max_iter, tol, n_load_steps, arc_length_alpha, cache, visc_beta) -> (result, new_czm_mesh)` — L265-L466
 
 Crisfield 圆柱弧长法单步求解。
 
@@ -87,7 +87,7 @@ Crisfield 圆柱弧长法单步求解。
 - 失败时 `step_size /= 2`，小于 `step_size_min` 触发 `@warn`（L430）
 - 跨文件依赖：同 `solve_czm_basic_step` + `build_arc_length_augmented_matrix`
 
-### `newton_raphson_czm(czm_mesh, F_ext, param_cache, param; α_eff, β_n, β_p, dT_elem, Δsoc_n_elem, Δsoc_p_elem, max_iter, tol, u0, n_load_steps, cache, visc_beta) -> (result, new_czm_mesh)` — L481-L644
+### `newton_raphson_czm(czm_mesh, F_ext, param_cache, param; dT_elem, Δsoc_n_elem, Δsoc_p_elem, max_iter, tol, u0, n_load_steps, cache, visc_beta) -> (result, new_czm_mesh)` — L481-L644
 
 Newton-Raphson + 自适应载荷子步（iter_method="load_substep"）。
 

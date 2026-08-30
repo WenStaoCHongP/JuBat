@@ -24,10 +24,8 @@ end
     cm = case.czm_mesh
     ne = size(cm.bulk_element, 1)
     ndof = 2 * cm.nnode
-    eig = (α_eff = 1.0, β_n = 0.0, β_p = 0.0, dT = fill(1e-6, ne),
-           Δsn = zeros(ne), Δsp = zeros(ne))
-    kw = (α_eff = 1.0, β_n = 0.0, β_p = 0.0, dT_elem = eig.dT,
-          Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp)
+    eig = (dT = fill(1e-6, ne), Δsn = zeros(ne), Δsp = zeros(ne))
+    kw = (dT_elem = eig.dT, Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp)
     r_basic, _ = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, zeros(ndof);
         kw..., max_iter = 100, tol = 1e-10, iter_method = "basic", cache = cache,
         geo_nl = true, eigenstrain = eig)
@@ -44,10 +42,8 @@ end
     cm = case.czm_mesh
     ne = size(cm.bulk_element, 1)
     ndof = 2 * cm.nnode
-    eig = (α_eff = 1.0, β_n = 0.0, β_p = 0.0, dT = fill(1e-6, ne),
-           Δsn = zeros(ne), Δsp = zeros(ne))
-    kw = (α_eff = 1.0, β_n = 0.0, β_p = 0.0, dT_elem = eig.dT,
-          Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp,
+    eig = (dT = fill(1e-6, ne), Δsn = zeros(ne), Δsp = zeros(ne))
+    kw = (dT_elem = eig.dT, Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp,
           max_iter = 100, tol = 1e-8, n_load_steps = 10, iter_method = "arc_length",
           cache = cache, geo_nl = true, eigenstrain = eig)
     r_half, _ = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, zeros(ndof);
@@ -58,6 +54,25 @@ end
         kw..., arc_length_alpha = 0.0)
 end
 
+@testset "geo 弧长先迭代平衡自由芯部卷绕预应力参考态" begin
+    case, pc, _ = arc_fixture()
+    cm = case.czm_mesh
+    ne = size(cm.bulk_element, 1)
+    ndof = 2 * cm.nnode
+    cache = JuBat.ensure_czm_cache(case, cm, pc; fix_inner=false)
+    prestress_full = JuBat.winding_prestress_field(cm, case.param)
+    prestress = [(0.2a, 0.2b, 0.2c) for (a, b, c) in prestress_full]
+    eig = (dT = fill(1e-6, ne), Δsn = zeros(ne), Δsp = zeros(ne))
+
+    result, _ = JuBat.solve_czm_step(
+        cm, zeros(ndof), pc, case.param, zeros(ndof);
+        dT_elem = eig.dT, Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp,
+        max_iter = 100, tol = 1e-8, n_load_steps = 10, iter_method = "arc_length",
+        cache = cache, geo_nl = true, eigenstrain = eig, prestress = prestress)
+    @test result.converged
+    @test result.residual_norm <= 1e-8
+end
+
 @testset "geo_nl=false + arc_length 行为不变（回归锚）" begin
     case, pc, cache = arc_fixture()
     cm = case.czm_mesh
@@ -65,12 +80,12 @@ end
     ndof = 2 * cm.nnode
     dT = fill(1e-4, ne)
     r1, _ = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, zeros(ndof);
-        α_eff = 1.0, β_n = 0.0, β_p = 0.0, dT_elem = dT,
+        dT_elem = dT,
         Δsoc_n_elem = zeros(ne), Δsoc_p_elem = zeros(ne),
         max_iter = 100, tol = 1e-10, n_load_steps = 10, iter_method = "arc_length",
         cache = cache)
     r2, _ = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, zeros(ndof);
-        α_eff = 1.0, β_n = 0.0, β_p = 0.0, dT_elem = dT,
+        dT_elem = dT,
         Δsoc_n_elem = zeros(ne), Δsoc_p_elem = zeros(ne),
         max_iter = 100, tol = 1e-10, n_load_steps = 10, iter_method = "arc_length",
         cache = cache, geo_nl = false)

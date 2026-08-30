@@ -133,7 +133,8 @@ end
 
     czm_mesh.damage_states = [JuBat.DamageState() for _ in 1:4]
 
-    α_eff = cache.by_interface[:PE_PCC].α
+    α_pe = param.PE.alphaT
+    α_ne = param.NE.alphaT
     β_n = param.NE.Omega / 3.0
     β_p = param.PE.Omega / 3.0
     _, ν_pe = JuBat.moduli_of(param, :PE)
@@ -192,7 +193,7 @@ end
         end
 
         F_tc = JuBat.assemble_thermal_chemical_load(
-            czm_mesh, cache, α_eff, β_n, β_p, dT, Δsoc_n, Δsoc_p)
+            czm_mesh, cache, dT, Δsoc_n, Δsoc_p)
         bc_dofs, bc_vals = bc_fix_collectors_top_all_ux(meta, czm_mesh.nnode)
         u, seps, tracts, ok, Rn = unit_czm_newton_step!(
             czm_mesh, u, cache; bc_dofs=bc_dofs, bc_vals=bc_vals,
@@ -204,7 +205,8 @@ end
         end
         @test ok
 
-        ε0 = [α_eff * dT[e] + β_n * Δsoc_n[e] + β_p * Δsoc_p[e] for e in 1:8]
+        ε0 = [JuBat.eigenstrain_of(param, meta.layer_materials[e], dT[e], Δsoc_n[e], Δsoc_p[e])
+              for e in 1:8]
         u_pe1_ana = analytic_free_coat_on_fixed_collector(
             meta.heights[1], ε0[1], ν_pe)
         u_pe1_bot = sum(u[2n] for n in meta.bottom_nodes) / length(meta.bottom_nodes)
@@ -235,15 +237,16 @@ end
             u_mid_hi = sum(u[2n] for n in ne5_top) / length(ne5_top)
             @printf("[eigenstrain] end: ΔT_phys=%.1f K  Δsoc=%.2f (frac=%.3f)\n",
                     ΔT_phys, Δsoc, frac)
-            εT = α_eff * ΔT
+            εT_pe = α_pe * ΔT
+            εT_ne = α_ne * ΔT
             εchem_p = β_p * Δsoc
             εchem_n = β_n * Δsoc
             @printf("  strain PE: ε_T*=%.6e  ε_chem*=%.6e  ε0*=%.6e\n",
-                    εT, εchem_p, εT + εchem_p)
+                    εT_pe, εchem_p, εT_pe + εchem_p)
             @printf("  strain NE: ε_T*=%.6e  ε_chem*=%.6e  ε0*=%.6e\n",
-                    εT, εchem_n, εT + εchem_n)
-            @printf("  coeffs: α_eff*=%.6e  β_p*=%.6e  β_n*=%.6e\n",
-                    α_eff, β_p, β_n)
+                    εT_ne, εchem_n, εT_ne + εchem_n)
+            @printf("  coeffs: α_pe*=%.6e  α_ne*=%.6e  β_p*=%.6e  β_n*=%.6e\n",
+                    α_pe, α_ne, β_p, β_n)
             @printf("  max|u|_PCC*=%.3e  max|u|_NCC*=%.3e  max|uy|_top*=%.3e  max|ux|*=%.3e\n",
                     u_pcc, u_ncc, u_top, ux_max)
             @printf("  PE1 bottom uy* FEM=%.6e  ana(-ε0(1+ν)h)=%.6e  (ratio=%.3f)\n",

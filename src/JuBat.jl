@@ -62,7 +62,6 @@ export identify_boundary_nodes, apply_convection_bc, apply_cool_method
 export compute_heat_sources, compute_heat_sources_with_czm, solve_branch_currents
 export thermal_diffusion_stress_2D
 export compute_czm_params_per_interface
-export build_thermal_to_czm_interp
 # CZM exports
 export CohesiveElement, CohesiveMesh, DamageState, CZMResult
 export CzmSubmesh

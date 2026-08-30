@@ -1,5 +1,3 @@
-using SparseArrays: SparseMatrixCSC
-
 mutable struct GaussPoint
     x::Array{Float64}   # physical coordinates
     xi::Array{Float64}  # local coordinates
@@ -29,7 +27,7 @@ abstract type AbstractDamageState end
     CzmSubmesh
 
 径向 8 层的 CZM 机械子网格。周向节点继承粗热网格，
-通过 thermal_elem_map 与 thermal_to_czm 矩阵耦合。
+温度与 SOC 通过 thermal_elem_map 按父热单元耦合。
 
 # 字段
 - `mesh`: 细化 Q4 网格
@@ -47,8 +45,8 @@ struct CzmSubmesh
     winding_turn::Vector{Int}               # 卷绕圈号（从内到外 1, 2, ...）
     thermal_elem_map::Vector{Int}           # 每个 CZM 单元 → 对应的粗热单元 id
     phi_pairs::Vector{Tuple{Int,Int}}        # .mesh 上的真实 (outer_node_at_θ, inner_node_at_θ+2π) 配对
-    mesh_bonded::Mesh                        # v1.5 §3.4：Φ 合并后网格（.mesh 保留未合并布局供插值 mod 定位）
-    phi_keep::Vector{Int}                    # 未合并节点中保留的行（升序原索引），插值矩阵按此裁剪
+    mesh_bonded::Mesh                        # v1.5 §3.4：Φ 合并后网格（.mesh 保留未合并物理身份）
+    phi_keep::Vector{Int}                    # 未合并节点中保留的行（升序原索引），用于 raw→bonded 对应
 end
 
 # 兼容 v1.5 前公开的 5 参数构造方式；旧调用者没有合并拓扑信息时保持原网格。
@@ -70,7 +68,6 @@ mutable struct CohesiveMesh
     interface_nodes::Vector{Vector{Tuple{Int64,Int64}}} # 每个界面的节点对
     damage_states::Vector{AbstractDamageState} # 损伤状态
     czm_submesh::Union{Nothing, CzmSubmesh}                       # v5 新增：细化 CZM 子网格
-    thermal_to_czm::Union{Nothing, SparseMatrixCSC{Float64, Int}} # v5 新增：粗热 → 细 CZM 插值矩阵
     cohesive_to_thermal::Union{Nothing, Vector{Int}}              # v5 新增：CZM 单元 → 粗热单元 id 反向映射
 
     # 内部构造函数（空初始化）
@@ -80,7 +77,7 @@ mutable struct CohesiveMesh
             zeros(0, 2), 0, zeros(Int64, 0, 4),
             AbstractCohesiveElement[], 0, 0, Dict{Int64, Vector{Int64}}(),
             Vector{Vector{Tuple{Int64,Int64}}}(), AbstractDamageState[],
-            nothing, nothing, nothing)  # 新字段默认 nothing
+            nothing, nothing)
     end
 end
 

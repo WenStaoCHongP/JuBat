@@ -1,4 +1,5 @@
 using Test
+using LinearAlgebra
 
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
@@ -36,8 +37,8 @@ using .JuBat
     # czm_submesh 字段已设置
     @test czm_mesh.czm_submesh === submesh
 
-    # thermal_to_czm 字段已设置（在 Chunk 5 中真正填充，此处先 nothing）
-    @test hasfield(JuBat.CohesiveMesh, :thermal_to_czm)
+    # 温度耦合只通过父热单元平均值，不保留细力学节点温度插值字段。
+    @test !hasfield(JuBat.CohesiveMesh, :thermal_to_czm)
 
     # cohesive_to_thermal 长度 = n_cohesive，值合法
     @test length(czm_mesh.cohesive_to_thermal) == czm_mesh.n_cohesive
@@ -78,11 +79,14 @@ end
     mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
+    param_cache = JuBat.compute_czm_params_per_interface(case)
+    cache = JuBat.build_czm_cache(czm_mesh, param_cache; fix_inner=false)
 
     # 副本节点坐标与原节点一致（top 与 bottom 几何重合），
     # 因此 cohesive 法向由拓扑（host_inner 在内、host_outer 在外）决定，而非节点几何。
     # 用相邻 bulk 单元质心方向作为参考外向，验证 host_outer 比 host_inner 更靠外。
-    for coh in czm_mesh.cohesive_elements
+    normal_orientations = Float64[]
+    for (i, coh) in enumerate(czm_mesh.cohesive_elements)
         inner_nodes = czm_mesh.bulk_element[coh.host_inner_elem, :]
         outer_nodes = czm_mesh.bulk_element[coh.host_outer_elem, :]
         cx_inner = sum(czm_mesh.node[n, 1] for n in inner_nodes) / 4
@@ -93,10 +97,15 @@ end
         r_outer = hypot(cx_outer, cy_outer)
         # host_outer 质心应径向更靠外
         @test r_outer > r_inner
+        # cohesive 正法向必须从 host_inner 指向 host_outer；否则物理张开会被
+        # 双线性律当作受压，D 将被结构性锁死为 0。
+        outward = [cx_outer - cx_inner, cy_outer - cy_inner]
+        push!(normal_orientations, dot(cache.cohesive_geom[i].n_vec, outward))
 
         # 进一步验证：lo/hi 两节点 id 相差 1（同一螺旋上的相邻 segment 节点）
         # 这正是 C1 修复所依赖的前提——id 顺序等价于 θ 顺序。
         n_lo, n_hi, n_hi_copy, n_lo_copy = coh.nodes
         @test n_hi - n_lo == 1
     end
+    @test all(>(0.0), normal_orientations)
 end

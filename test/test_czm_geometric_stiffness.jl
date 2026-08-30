@@ -59,13 +59,23 @@ end
     case, param_cache = build_geo_fixture()
     czm_mesh = case.czm_mesh
     ne = size(czm_mesh.bulk_element, 1)
+    param = case.param
     ε₀ = 1e-3
     κ = sqrt(1.0 + 2 * ε₀) - 1.0
     u = uniform_scale_u(czm_mesh.node, κ)
-    eigenstrain = (α_eff=1.0, β_n=0.0, β_p=0.0,
-                   dT=fill(ε₀, ne), Δsn=zeros(ne), Δsp=zeros(ne))
+    # α/β 分层化后（eigenstrain_of），全层均匀 ε₀ 只能由统一 alphaT 构造：
+    # 测试内临时统一五层 alphaT（夹具每次重建，恢复只为本 testset 内卫生）
+    α_backup = (param.PE.alphaT, param.NE.alphaT, param.SP.alphaT,
+                param.PCC.alphaT, param.NCC.alphaT)
+    α_uniform = param.PE.alphaT
+    for layer in (param.PE, param.NE, param.SP, param.PCC, param.NCC)
+        layer.alphaT = α_uniform
+    end
+    eigenstrain = (dT=fill(ε₀ / α_uniform, ne), Δsn=zeros(ne), Δsp=zeros(ne))
     f_int, K_tan = JuBat.assemble_bulk_residual_tangent(
         czm_mesh, u, param_cache; geo_nl=true, eigenstrain=eigenstrain)
+    param.PE.alphaT = α_backup[1]; param.NE.alphaT = α_backup[2]; param.SP.alphaT = α_backup[3]
+    param.PCC.alphaT = α_backup[4]; param.NCC.alphaT = α_backup[5]
     @test norm(f_int) ≤ 1e-10 * norm(K_tan, Inf) * norm(u, Inf)
 end
 

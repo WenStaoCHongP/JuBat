@@ -138,9 +138,8 @@ end
 @testset "CohesiveMesh czm_submesh field" begin
     mesh = JuBat.CohesiveMesh()
     @test hasproperty(mesh, :czm_submesh)
-    @test hasproperty(mesh, :thermal_to_czm)
+    @test !hasproperty(mesh, :thermal_to_czm)
     @test hasproperty(mesh, :cohesive_to_thermal)   # v5 新增：反向映射
     @test isnothing(mesh.czm_submesh)
-    @test isnothing(mesh.thermal_to_czm)
     @test isnothing(mesh.cohesive_to_thermal)
 end

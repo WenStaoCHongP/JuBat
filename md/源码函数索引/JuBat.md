@@ -44,7 +44,7 @@
 | L50-L53 | Jellyroll 几何 | `Arrhenius, IntV, IntQ4, jellyroll_collector_seed_mesh, jellyroll_element_properties, jellyroll_tab_node_indices, edge_boundary, jellyroll_element_centers` |
 | L54-L56 | 网格/温度工具 | `ring_mesh, setup_thermal2D_mesh, thermal2D_volume_average_temperature` |
 | L57-L61 | 热模型 | `ThermalDistributed2D, ThermalDistributed2D_BC, ThermalDistributed2D_Ring, ThermalRing2D_BC, ThermalPolar2D_Ring, identify_boundary_nodes, apply_convection_bc, apply_cool_method, compute_heat_sources, compute_heat_sources_with_czm, solve_branch_currents` |
-| L62-L64 | 力学/CZM 装配 | `thermal_diffusion_stress_2D, compute_czm_params_per_interface, build_thermal_to_czm_interp` |
+| L62-L64 | 力学/CZM 装配 | `thermal_diffusion_stress_2D, compute_czm_params_per_interface` |
 | L66-L80 | CZM 本构/装配/查询 | CZM 网格、本构、装配、求解、统计与间隙导热公开 API |
 | L82-L85 | 循环求解器 | 循环配置、结果类型、求解、绘图和初始 SOC API |
 | L87-L89 | 在线数据导出 | `TimeStepData, CycleExportData, solve_phase_with_export, solve_cycle_with_export, export_cycle_data_to_csv` |

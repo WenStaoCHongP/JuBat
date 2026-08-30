@@ -16,25 +16,31 @@ function c4_fixture(; nθ::Int=8)
     opt.czm_geo_nonlinear = true
     opt.czm_j2_plasticity = true
     opt.czm_winding_prestress = true
+    opt.czm_fix_inner = false
     case = JuBat.SetCase(param_dim, opt)
     md = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, md)
     case.czm_mesh = JuBat.create_czm_mesh(md.czm_submesh, case.mesh["thermal2D"], case.param)
     pc = JuBat.compute_czm_params_per_interface(case)
-    cache = JuBat.ensure_czm_cache(case, case.czm_mesh, pc)
+    cache = JuBat.ensure_czm_cache(case, case.czm_mesh, pc; fix_inner=case.opt.czm_fix_inner)
     case.czm_layout = JuBat.CzmLayout(case.czm_mesh)
     case.czm_layout.plastic_states = [JuBat.PlasticState() for _ in 1:size(case.czm_mesh.bulk_element, 1), _ in 1:4]
     return case, pc, cache
 end
 
-@testset "C4-lite：多相位真实提交状态；对称 D10 工况未触发损伤" begin
+@testset "C4-lite：Γ_in,free 不得被位移边界固定" begin
+    case, _, cache = c4_fixture()
+    wt = case.czm_mesh.czm_submesh.winding_turn
+    nθn = count(==(1), wt[1:count(==(wt[1]), wt)])
+    core_dofs = reduce(vcat, ([2n - 1, 2n] for n in 1:nθn))
+    @test isempty(intersect(cache.bc_dofs, core_dofs))
+end
+
+@testset "C4-lite：自由芯部多相位状态产生不圆度；尚未触发损伤" begin
     case, pc, cache = c4_fixture()
     cm = case.czm_mesh
     ndof = 2 * cm.nnode
     ne = size(cm.bulk_element, 1)
-    α = pc.by_interface[:PE_PCC].α
-    βn = case.param.NE.Omega / 3
-    βp = case.param.PE.Omega / 3
     # 预应力场（Batch 2'，几何固定一次计算持久持有）
     JuBat.ensure_node_ref!(case)
     prestress = JuBat.winding_prestress_field(cm, case.param)
@@ -45,11 +51,10 @@ end
     lvls = [0.15, 0.20, 0.25]
     Δ_hist = Float64[]
     D_hist = Float64[]
+    initiation_ratio_hist = Float64[]
     for (i, lvl) in enumerate(lvls)
-        eig = (α_eff = α, β_n = βn, β_p = βp,
-               dT = zeros(ne), Δsn = fill(-lvl, ne), Δsp = fill(-lvl, ne))
+        eig = (dT = zeros(ne), Δsn = fill(-lvl, ne), Δsp = fill(-lvl, ne))
         r, updated = JuBat.solve_czm_step(cm, zeros(ndof), pc, case.param, case.czm_layout.u_prev;
-            α_eff = α, β_n = βn, β_p = βp,
             dT_elem = eig.dT, Δsoc_n_elem = eig.Δsn, Δsoc_p_elem = eig.Δsp,
             max_iter = 200, tol = 1e-8, n_load_steps = 50, iter_method = "load_substep",
             cache = cache, geo_nl = true, eigenstrain = eig,
@@ -64,10 +69,19 @@ end
         w, Δ = JuBat.core_ovalization(cm, r.displacement, JuBat.ensure_node_ref!(case))
         push!(Δ_hist, Δ)
         push!(D_hist, maximum(s.D for s in cm.damage_states))
-        println("phase $i (Δsoc=$(lvl)): Δ_core=$(round(Δ, sigdigits=4)) D_max=$(round(D_hist[end], sigdigits=4))")
+        initiation_ratio = maximum(
+            max(r.separation_n[j], 0.0) /
+            pc.by_interface[cm.cohesive_elements[j].interface_type].δ_0_n
+            for j in eachindex(r.separation_n))
+        push!(initiation_ratio_hist, initiation_ratio)
+        println("phase $i (Δsoc=$(lvl)): Δ_core=$(round(Δ, sigdigits=4)) " *
+                "D_max=$(round(D_hist[end], sigdigits=4)) " *
+                "δn/δ0=$(round(initiation_ratio, sigdigits=4))")
     end
-    # D10 结论固化（findings 2026-08-23）：Δ_core≡0（对称响应被 D8 滤波正确去除）、D 不激活
-    @test all(iszero, Δ_hist)
+    # 自由芯部使螺旋固有不对称可发展为 n≥2 位移；当前低载三相位仍未激活 CZM 损伤。
+    @test all(>(0.0), Δ_hist)
+    @test all(diff(Δ_hist) .> 0.0)
+    @test all(0.0 .< initiation_ratio_hist .< 1.0)
     @test all(iszero, D_hist)
     @test all(isfinite, Δ_hist)
 end
@@ -84,7 +98,6 @@ end
     updated = JuBat.clone_czm_mesh_with_damage(cm, trial)
     @test maximum(s.D for s in updated.damage_states) > 0.0
     @test updated.czm_submesh === cm.czm_submesh
-    @test updated.thermal_to_czm === cm.thermal_to_czm
     @test updated.cohesive_to_thermal === cm.cohesive_to_thermal
     cm.damage_states = updated.damage_states
     @test maximum(s.D for s in cm.damage_states) > 0.0

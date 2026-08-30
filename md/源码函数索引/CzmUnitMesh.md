@@ -19,7 +19,7 @@
 - **层序**（L8）：自下而上 `PE → PCC → PE → SP → NE → NCC → NE → SP`
 - **几何**（L17-L33）：底边 `y=y0>0`；节点 18 个（9 行 × 2 列），节点 id 沿 x 递增
 - **Q4 连接**（L36-L43）：每单元 `[bl, tl, tr, br]`（逆时针，inner=bottom）
-- **哑热网格**（L52-L61）：单 Q4 覆盖条带 bbox（含 `pad = 1e-6·max(W,H)` 余量），供 `build_thermal_to_czm_interp` 使用
+- **哑热网格**（L52-L61）：单 Q4 覆盖条带 bbox（含 `pad = 1e-6·max(W,H)` 余量），供 `create_czm_mesh` 校验父热单元映射
 - **硬断言**（方案 C，L65-L80）：
   - `czm_mesh.n_cohesive == 4`（L66）
   - PE_PCC × 2 + NE_NCC × 2（L68-L69）

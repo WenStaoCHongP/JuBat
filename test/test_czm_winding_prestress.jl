@@ -99,7 +99,7 @@ end
     czm_mesh = case.czm_mesh
     ne = size(czm_mesh.bulk_element, 1)
     ndof = 2 * czm_mesh.nnode
-    eig = (α_eff=1.0, β_n=0.0, β_p=0.0, dT=fill(1e-4, ne), Δsn=zeros(ne), Δsp=zeros(ne))
+    eig = (dT=fill(1e-4, ne), Δsn=zeros(ne), Δsp=zeros(ne))
     u = fill(1e-4, ndof)
     f1, K1 = JuBat.assemble_coupled_system(czm_mesh, u, param_cache;
         geo_nl=true, eigenstrain=eig)

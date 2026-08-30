@@ -18,6 +18,12 @@
 
 按材料类型返回模量和泊松比，并用 `scale.E_coat / scale.σ_czm` 将体材料模量统一到 CZM 应力空间。
 
+### `eigenstrain_of(param, mt, dT, Δsn, Δsp) -> ε0` — L67-L89
+
+逐层热-化学本征应变（2026-08-29 α/β 分层化）：`alphaT(mt)·dT + Ω(mt)/3·Δsoc(mt)`，
+电极膨胀只作用于本层涂层（NE→Δsn、PE→Δsp），集流体/隔膜仅热应变。取代旧跨层均匀
+`α_eff/β_n/β_p` 施加。
+
 ### `assemble_czm_system(czm_mesh, u, param_cache; ...)` — L80-L262
 
 装配内聚力刚度、内力、分离和牵引；支持稀疏结构、几何和工作区缓存。
@@ -26,9 +32,9 @@
 
 按层材料参数装配 Q4 平面应力 bulk 刚度矩阵。
 
-### `assemble_thermal_chemical_load(...)` — L352-L416
+### `assemble_thermal_chemical_load(czm_mesh, param_cache, dT_elem, Δsoc_n_elem, Δsoc_p_elem)` — L352-L416
 
-根据温度与 SOC 变化装配初始应变等效节点载荷。
+根据温度与 SOC 变化装配初始应变等效节点载荷；ε₀ 经 `eigenstrain_of` 按单元 `material_type` 分层计算。
 
 ### `build_czm_cache(czm_mesh, param_cache; fix_inner=true)` — L440-L523
 

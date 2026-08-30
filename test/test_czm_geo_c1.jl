@@ -30,18 +30,15 @@ end
     F_ext = zeros(ndof)
     u0 = zeros(ndof)
     εtiny = 1e-6
-    eig = (α_eff=1.0, β_n=0.0, β_p=0.0,
-           dT=fill(εtiny, ne), Δsn=zeros(ne), Δsp=zeros(ne))
+    eig = (dT=fill(εtiny, ne), Δsn=zeros(ne), Δsp=zeros(ne))
     # 线性参照：F_tc 显式（Batch 1 冻结路径）
     r_lin, _ = JuBat.solve_czm_step(
         czm_mesh, F_ext, param_cache, case.param, u0;
-        α_eff=eig.α_eff, β_n=eig.β_n, β_p=eig.β_p,
         dT_elem=eig.dT, Δsoc_n_elem=eig.Δsn, Δsoc_p_elem=eig.Δsp,
         max_iter=100, tol=1e-10, iter_method="basic", cache=cache)
     # GL 路径：eigenstrain 内嵌（D-B2-1）
     r_geo, _ = JuBat.solve_czm_step(
         czm_mesh, F_ext, param_cache, case.param, u0;
-        α_eff=eig.α_eff, β_n=eig.β_n, β_p=eig.β_p,
         dT_elem=eig.dT, Δsoc_n_elem=eig.Δsn, Δsoc_p_elem=eig.Δsp,
         max_iter=100, tol=1e-10, iter_method="basic", cache=cache,
         geo_nl=true, eigenstrain=eig)
@@ -54,15 +51,13 @@ end
     czm_mesh = case.czm_mesh
     ne = size(czm_mesh.bulk_element, 1)
     ndof = 2 * czm_mesh.nnode
-    eig = (α_eff=1.0, β_n=0.0, β_p=0.0, dT=fill(1e-4, ne), Δsn=zeros(ne), Δsp=zeros(ne))
+    eig = (dT=fill(1e-4, ne), Δsn=zeros(ne), Δsp=zeros(ne))
     r1, _ = JuBat.solve_czm_step(
         czm_mesh, zeros(ndof), param_cache, case.param, zeros(ndof);
-        α_eff=eig.α_eff, β_n=eig.β_n, β_p=eig.β_p,
         dT_elem=eig.dT, Δsoc_n_elem=eig.Δsn, Δsoc_p_elem=eig.Δsp,
         max_iter=100, tol=1e-10, iter_method="basic", cache=cache)
     r2, _ = JuBat.solve_czm_step(
         czm_mesh, zeros(ndof), param_cache, case.param, zeros(ndof);
-        α_eff=eig.α_eff, β_n=eig.β_n, β_p=eig.β_p,
         dT_elem=eig.dT, Δsoc_n_elem=eig.Δsn, Δsoc_p_elem=eig.Δsp,
         max_iter=100, tol=1e-10, iter_method="basic", cache=cache,
         geo_nl=false)

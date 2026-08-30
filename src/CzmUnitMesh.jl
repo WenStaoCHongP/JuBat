@@ -49,7 +49,7 @@ function create_unit_czm_strip(param; width=nothing, y0::Float64=1.0, gsorder::I
     thermal_elem_map = ones(Int, 8)
     submesh = CzmSubmesh(bulk, material_type, winding_turn, thermal_elem_map, Tuple{Int,Int}[], bulk, collect(1:bulk.nlen))
 
-    # 哑热网格：单 Q4 覆盖条带 bbox（供 build_thermal_to_czm_interp）
+    # 哑热网格：单 Q4 覆盖条带 bbox，供 create_czm_mesh 校验父热单元映射。
     pad = 1e-6 * max(W, H)
     tn = zeros(Float64, 4, 2)
     tn[1, :] = [-pad, y0 - pad]

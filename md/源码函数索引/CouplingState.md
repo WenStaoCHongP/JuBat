@@ -122,10 +122,9 @@ per-step CZM solver state for CSV export。所有物理值以归一化（无量�
 
 ### `compute_czm_strain_inputs(case, variables, T_nodes) -> NamedTuple` — L419-L515
 
-按 spec v2 §5.1 计算 CZM 体单元粒度的 `dT`、`Δsoc_p`、`Δsoc_n`，以及 CZM 节点粒度的 `T_czm_nodes`。
+计算 CZM 体单元粒度的 `dT`、`Δsoc_p`、`Δsoc_n`，不生成或保留细力学节点温度场。
 
-- `T_czm_nodes = M * T_nodes`，`M = czm_mesh.thermal_to_czm`（L426-L428），断言 `M !== nothing`（L427）
-- `dT_thermal[e] = avg(T_nodes[nodes]) - T0`（L435-L438），通过 `thermal_elem_map` 直接取值到 CZM 单元（L440-L446）
+- `dT_thermal[e] = avg(T_nodes[nodes]) - T0`，通过 `thermal_elem_map` 直接取值到 CZM 单元
 - `Δsoc_p/n` 通过 `thermal_elem_map` 直接取值，按 `material_type` 分发（L460-L474）；PCC/NCC/SP 保持 0
 
 ### `update_czm_damage!(case, variables, T_nodes_carry) -> result::CZMResult` — L535-L633
@@ -133,8 +132,8 @@ per-step CZM solver state for CSV export。所有物理值以归一化（无量�
 更新 CZM 网格的损伤状态（牛顿-拉弗森迭代 + 载荷子步法）。**严格契约版本**：输入或结果含非有限值、或求解未收敛时直接抛错，不静默降级。
 
 - 同步 `czm_model` 选项（L542）
-- 计算 per-interface 参数（L545-L546）；`α_eff` 跨界面均匀（L548，spec §7.1）
-- `β_n = NE.Omega/3`、`β_p = PE.Omega/3`（L549-L550）
+- 计算 per-interface 参数（L545-L546）；特征应变系数不再由此提取——ε₀ 按单元材料经
+  `eigenstrain_of(param, mt)` 分层计算（2026-08-29 α/β 分层化，旧 α_eff/β_n/β_p 提取已删除）
 - 构建或复用 CZM 缓存（L553，失效判据：objectid(czm_mesh) + param_cache.id + fix_inner）
 - 应变输入 `compute_czm_strain_inputs`（L556-L559）
 - **输入有限性检查**（L565-L570）：T / soc_n / soc_p / dT / Δsoc_n / Δsoc_p 任一含非有限值即 `throw(ArgumentError)`（早期 @warn 诊断已改为硬失败）
@@ -148,14 +147,6 @@ per-step CZM solver state for CSV export。所有物理值以归一化（无量�
 > 旧 6 参数兼容入口 `update_czm_damage!(czm_mesh, czm_params, case, ...)` 已在
 > b4c0cde 重构中删除，全仓仅剩本 3 参数版本。
 
-### `build_thermal_to_czm_interp(thermal_mesh::Mesh, czm_submesh::CzmSubmesh) -> SparseMatrixCSC` — L677-L750
-
-构造粗热节点 → CZM 节点双线性插值矩阵（`n_czm_node × n_thermal_node`）。每行 ≤4 个非零元，行和 = 1。
-
-- 结构化前置校验（L683-L688）：CZM 节点数必须整除于热网格角节点数，且继承匝数必须为 9，否则 `throw(DimensionMismatch)`
-- 内嵌 `shape_funcs(ξ, η)` 返回 4 节点双线性形函数值（L691-L698）
-- 内嵌 `solve_isoparametric`：Newton 迭代解等参坐标 `(ξ, η) ∈ [-1, 1]²`，max_iter=20，tol=1e-13，退化检测 `abs(detJ) < 1e-20`（L701-L724）
-- 主循环（L730-L747）：按结构化节点列确定唯一父热单元（`angular_node → parent`，L732-L733），仅在该父单元内解等参坐标；**越出父单元即 `error`**（L738-L740，无最近节点回退——早期 nearest-10 候选 + 权重 1 回退的实现已按严格契约替换）
 
 ## 省略项
 

@@ -151,16 +151,12 @@ end
     ne = size(czm_mesh.bulk_element, 1)
 
     cache = JuBat.ensure_czm_cache(case, czm_mesh, param_cache)
-    pe = param_cache.by_interface[:PE_PCC]
-    α_eff = pe.α
-    β_n = case.param.NE.Omega / 3.0
-    β_p = case.param.PE.Omega / 3.0
     dT_elem = fill(1e-4, ne)
     Δsoc_n = fill(1e-4, ne)
     Δsoc_p = fill(1e-4, ne)
 
     K_tot, R, F_tc, _, _ = JuBat.assemble_coupled_system_full(
-        czm_mesh, u, param_cache, α_eff, β_n, β_p, dT_elem, Δsoc_n, Δsoc_p;
+        czm_mesh, u, param_cache, dT_elem, Δsoc_n, Δsoc_p;
         damage_states=czm_mesh.damage_states,
         K_bulk_cached=cache.K_bulk,
         geom_cache=cache.cohesive_geom, ws=cache.ws)

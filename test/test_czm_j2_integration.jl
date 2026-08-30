@@ -27,9 +27,8 @@ end
     czm_mesh = case.czm_mesh
     ne = size(czm_mesh.bulk_element, 1)
     ndof = 2 * czm_mesh.nnode
-    eig = (α_eff=1.0, β_n=0.0, β_p=0.0, dT=fill(1e-6, ne), Δsn=zeros(ne), Δsp=zeros(ne))
-    kw = (α_eff=eig.α_eff, β_n=eig.β_n, β_p=eig.β_p,
-          dT_elem=eig.dT, Δsoc_n_elem=eig.Δsn, Δsoc_p_elem=eig.Δsp,
+    eig = (dT=fill(1e-6, ne), Δsn=zeros(ne), Δsp=zeros(ne))
+    kw = (dT_elem=eig.dT, Δsoc_n_elem=eig.Δsn, Δsoc_p_elem=eig.Δsp,
           max_iter=100, tol=1e-10, iter_method="basic", cache=cache)
     r1, _ = JuBat.solve_czm_step(czm_mesh, zeros(ndof), param_cache, case.param, zeros(ndof); kw...)
     r2, _ = JuBat.solve_czm_step(czm_mesh, zeros(ndof), param_cache, case.param, zeros(ndof);
@@ -43,13 +42,12 @@ end
     czm_mesh = case.czm_mesh
     ne = size(czm_mesh.bulk_element, 1)
     ndof = 2 * czm_mesh.nnode
-    # 层间失配驱动（与 unit_czm_eigenstrain 同机理）：Δsn/Δsp = −0.3 放电方向，
-    # β_n/β_p 反号 ⟹ NE/PE 本征应变差 ~1.5e-2，超 Cu 箔屈服应变 1.8e-3
-    eig = (α_eff=1.0, β_n=case.param.NE.Omega / 3.0, β_p=case.param.PE.Omega / 3.0,
-           dT=zeros(ne), Δsn=fill(-0.3, ne), Δsp=fill(-0.3, ne))
+    # 层间失配驱动（与 unit_czm_eigenstrain 同机理）。α/β 分层化（2026-08-29）后箔
+    # 本征应变归零，±0.3 失配传到硬箔的应力低于屈服，需 Δsoc=−1.0 才超 Cu 箔屈服应变
+    # （合成驱动，非物理 soc 区间；探测：−0.3 → κ=0，−1.0 → κ≈9.4e-3）
+    eig = (dT=zeros(ne), Δsn=fill(-1.0, ne), Δsp=fill(-1.0, ne))
     states = [JuBat.PlasticState() for _ in 1:ne, _ in 1:4]
     r, _ = JuBat.solve_czm_step(czm_mesh, zeros(ndof), param_cache, case.param, zeros(ndof);
-        α_eff=eig.α_eff, β_n=eig.β_n, β_p=eig.β_p,
         dT_elem=eig.dT, Δsoc_n_elem=eig.Δsn, Δsoc_p_elem=eig.Δsp,
         max_iter=200, tol=1e-8, iter_method="load_substep", cache=cache,
         geo_nl=true, eigenstrain=eig, plasticity=true, mech_state=states)
@@ -70,13 +68,12 @@ end
     czm_mesh = case.czm_mesh
     ne = size(czm_mesh.bulk_element, 1)
     ndof = 2 * czm_mesh.nnode
-    # 层间失配驱动（与 unit_czm_eigenstrain 同机理）：Δsn/Δsp = −0.3 放电方向，
-    # β_n/β_p 反号 ⟹ NE/PE 本征应变差 ~1.5e-2，超 Cu 箔屈服应变 1.8e-3
-    eig = (α_eff=1.0, β_n=case.param.NE.Omega / 3.0, β_p=case.param.PE.Omega / 3.0,
-           dT=zeros(ne), Δsn=fill(-0.3, ne), Δsp=fill(-0.3, ne))
+    # 层间失配驱动（与 unit_czm_eigenstrain 同机理）：Δsn=−1.0/Δsp=+1.0 反号放电方向，
+    # NE/PE 涂层本征应变反号、箔零本征应变 ⟹ 层间失配超箔屈服应变
+    # （β 分层化重标定：±0.3 → κ=0，±1.0 → κ≈7e-4）
+    eig = (dT=zeros(ne), Δsn=fill(-1.0, ne), Δsp=fill(1.0, ne))
     states = [JuBat.PlasticState() for _ in 1:ne, _ in 1:4]
-    kw = (α_eff=eig.α_eff, β_n=eig.β_n, β_p=eig.β_p,
-          dT_elem=eig.dT, Δsoc_n_elem=eig.Δsn, Δsoc_p_elem=eig.Δsp,
+    kw = (dT_elem=eig.dT, Δsoc_n_elem=eig.Δsn, Δsoc_p_elem=eig.Δsp,
           max_iter=200, tol=1e-8, iter_method="load_substep", cache=cache,
           geo_nl=true, eigenstrain=eig, plasticity=true, mech_state=states)
     r1, _ = JuBat.solve_czm_step(czm_mesh, zeros(ndof), param_cache, case.param, zeros(ndof); kw...)
@@ -98,7 +95,7 @@ end
     czm_mesh = case.czm_mesh
     ne = size(czm_mesh.bulk_element, 1)
     ndof = 2 * czm_mesh.nnode
-    eig = (α_eff=1.0, β_n=0.0, β_p=0.0, dT=fill(-1e-3, ne), Δsn=zeros(ne), Δsp=zeros(ne))
+    eig = (dT=fill(-1e-3, ne), Δsn=zeros(ne), Δsp=zeros(ne))
     states = [JuBat.PlasticState() for _ in 1:ne, _ in 1:4]
     # plasticity 需 geo_nl
     @test_throws ErrorException JuBat.assemble_coupled_system(
