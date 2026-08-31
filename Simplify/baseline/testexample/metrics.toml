@@ -1,27 +1,30 @@
-baseline_id = "testexample-20260830T172856+0800"
-supersedes = "testexample-20260830T005629+0800"
-baseline_reason = "Align CZM/macro-stress recovery with the recorded time layer; hold the latest solved stress on non-update outputs; remove the radial scatter plot and keep three final cloud PNGs"
+baseline_id = "testexample-20260831T212819+0800"
+supersedes = "testexample-20260830T172856+0800"
+baseline_reason = "User-specified structural-layer thermal expansion coefficients: SP.alphaT 0 -> 30e-6, PCC.alphaT 0 -> 23e-6, NCC.alphaT 0 -> 17e-6 (1/K); layered eigenstrain now carries a thermal term in separator and both current collectors"
 status = "pass"
 refreeze_mode = "fresh_rerun_authorized_change"
-refreeze_authorization = "User-authorized stress-history alignment/zero-column fix and scatter removal; alphaT remains zero (2026-08-30)"
+refreeze_authorization = "User-authorized alphaT change (2026-08-31): PCC 23e-6 / SP 30e-6 / NCC 17e-6"
 exit_code = 0
-command = "D:/Julia-1.11.2/bin/julia.exe --startup-file=no --project=. example/testexample.jl"
-git_head = "e78604fd3b0b7563a3511129eccee84042f64cdd"
-script_sha256 = "704d55363f823313fd45c4ec98c1fd37d2258c15e47bdaac075f6ac3a2f029c6"
+command = "julia --startup-file=no --project=. example/testexample.jl"
+git_head = "696f2aa2b4df4a22c01eb1cf7085e1cf5e53f3a2"
+script_sha256 = "63edef136f21d1df99117d66dacddc845f6ba7587f264dec6967c24dfc3d61eb"
 couple_example_sha256 = "a6005e3b5e6274fd5a4b7e72ebfe1a63017c78824343f8d6dc3d161cf90f0fab"
-source_manifest_tsv_sha256 = "4865ba0e04568f41f8c6a4e518d55d3eae64f9a90236c63c3405328ab564cc84"
-source_manifest_file_sha256 = "c6bb7eac278fe85c78d4c72fe3c3cdb9ee99b981f7eb04d6dad9acf5d912271d"
+source_manifest_tsv_sha256 = "0f015cdff6304715bd9391e3be911e76332b5871bf6a2a017c023ac1c3549de6"
+source_manifest_file_sha256 = "146a9751c630912a957d911243187ba71b1dacb333ea5ccee0bb64cc18289adc"
 source_file_count = 46
 julia_version = "1.11.2"
 plots_version = "1.40.9"
 julia_threads = 1
 gkswstype = "100"
-artifact_written = "2026-08-30T17:28:56+0800"
-solver_wall_seconds = 54.665
-# 2026-08-30 四层力学结构体重构（spec 2026-08-30-mechanics-struct-refactor）：
-# 界面参数挂 CurrentCollector、opt.czm 嵌套、缓存随网格、MechState 聚合。
-# 验证（参照=父提交 66c718e）：单步 A/B 探针 17 位全同；testexample 全指标逐位一致；
-# 三张 PNG 哈希不变（用户核验）；全套测试 32/32。基线数值零漂移——仅刷新源码清单与脚本哈希。
+artifact_written = "2026-08-31T21:28:19+0800"
+solver_wall_seconds = 140.443
+# 2026-08-31 v9 重冻结（用户授权参数变更）：
+# SP/PCC/NCC.alphaT 由显式置零改为物理值（30e-6 / 23e-6 / 17e-6 1/K）。
+# 电化学与热指标逐位不变（alphaT 不进入热残差）；仅力学输出移动：
+# 最大法向分离 9.6486e-13 -> 7.4202e-13 m；环向 -1.3954~3.8603 -> -1.8433~4.1344 MPa；
+# 切向剪 -0.3743~0.3955 -> -0.2618~0.2167 MPa。全套测试 32/32 通过。
+# 本次运行环境为 C 盘 Julia 1.11.2（D 盘路径不可用），版本/线程/GKS 与既往一致。
+# 源码清单同批修正了 8 行陈旧的 LF 归一化哈希，统一为工作树原始字节约定（详见 README v9 节）。
 
 [mesh]
 theta_elements = 80
@@ -39,26 +42,29 @@ temperature_min_k = 298.15
 temperature_max_k = 299.00
 czm_d_max_percent = 0.0
 czm_d_mean_percent = 0.0
-czm_max_normal_separation_m = 9.6486e-13  # CZM 与历史列改为同时间层输入
+czm_max_normal_separation_m = 7.4202e-13  # v9：结构层热应变加入后移动
 czm_fractured_elements = 0
 czm_updates = 19
 czm_converged_updates = 19
-hoop_stress_min_mpa = -1.3954
-hoop_stress_max_mpa = 3.8603
-tangential_shear_min_mpa = -0.3743
-tangential_shear_max_mpa = 0.3955
+hoop_stress_min_mpa = -1.8433
+hoop_stress_max_mpa = 4.1344
+tangential_shear_min_mpa = -0.2618
+tangential_shear_max_mpa = 0.2167
 
 [artifact]
 # v6 起 testexample.jl 不再产出图片（纯文字快速门）
 # 全套绘图由 example/couple_example.jl 产出至 output/couple_example/；仅保留三张云图：
-# png1: final_temperature_field.png  bytes=210436  sha256=540fe42f1039cb4446046a6da96f1ecf18d162b643bc40a40a099ca2b93f978c  (不变)
+# png1: final_temperature_field.png  bytes=210436  sha256=540fe42f1039cb4446046a6da96f1ecf18d162b643bc40a40a099ca2b93f978c
 # png2: final_hoop_stress_field.png  bytes=295117  sha256=9726a7c84cf59a932a2cf45346770c6c046a6a81a7ca36f951714339e558050d
 # png3: final_tangential_shear_stress_field.png  bytes=264362  sha256=b3b43d7cee67ed2a6fca33e0fcffee899629b84998852ba05aeb08fdaa105445
+# v9 未重跑 couple_example.jl（本批未改绘图/后处理代码），但上述应力云图已因 alphaT
+# 变更而失效，三个哈希暂不作为门禁；下次涉及绘图的批次须重跑并刷新。
+png_hashes_stale_since = "v9 (2026-08-31, alphaT change not re-plotted)"
 debug_log_produced = false
 
 [comparison]
-scientific_metrics_exact_at_printed_precision = true  # v8 已重冻结；后续运行须与本表记录精度严格一致
+scientific_metrics_exact_at_printed_precision = true  # v9 已重冻结；后续运行须与本表记录精度严格一致
 mesh_and_step_counts_exact = true
 result_png_gate_active = false
-result_png_note = "PNG gate moved to couple_example.jl; run when plotting-related code changes"
+result_png_note = "PNG gate moved to couple_example.jl; hashes stale since v9 — rerun before relying on them"
 timing_exact = false

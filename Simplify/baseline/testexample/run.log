@@ -1,3 +1,8 @@
+# v9 rebaseline run — 2026-08-31T21:28:19+0800
+# command: GKSwstype=100 JULIA_NUM_THREADS=1 julia --startup-file=no --project=. example/testexample.jl
+# HEAD=696f2aa2b4df4a22c01eb1cf7085e1cf5e53f3a2 (working tree: alphaT change uncommitted at run time)
+# exit code: 0
+#----------------------------------------------------------------------
 ================================================================================
 Jellyroll电池多SPMe并行电化学-热耦合仿真（文字基线）
 ================================================================================
@@ -22,31 +27,31 @@ OK: Jellyroll网格创建完成
 
 [Solve] 初始化完成: V=4.036735800619771 V, t_end=60.0
 start to solve the problem 
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=1.0e-6, max(δ_eff)=1.0e-6, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=1.0e-6, max(δ_eff)=1.0e-6, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=2.0e-6, max(δ_eff)=2.0e-6, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
-[CZM-Debug] max(δ_n)=2.0e-6, max(δ_eff)=2.0e-6, converged=true, β=1.0, D_max(before)=0.0, D_max(trial)=0.0, D_visc_max(trrial)=0.0, D_max(commit)=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=1.0e-6, max(δ_eff)=1.0e-6, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=1.0e-6, max(δ_eff)=1.0e-6, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=1.0e-6, max(δ_eff)=1.0e-6, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=2.0e-6, max(δ_eff)=2.0e-6, converged=true, D_max(commit)=0.0, D_visc_max=0.0
 
 [Solve-Timing] CallModel 阶段累计耗时（用于优化定位）
   calls = 19
-  SPMe solve           : 3.071 s (6.34%), avg 161.641 ms/call
-  Branch solver        : 0.849 s (1.75%), avg 44.691 ms/call
-  Thermal distributed  : 0.844 s (1.74%), avg 44.396 ms/call
-  CZM model            : 43.679 s (90.17%), avg 2298.872 ms/call
+  SPMe solve           : 6.134 s (4.77%), avg 322.848 ms/call
+  Branch solver        : 1.620 s (1.26%), avg 85.254 ms/call
+  Thermal distributed  : 1.618 s (1.26%), avg 85.151 ms/call
+  CZM model            : 119.260 s (92.71%), avg 6276.856 ms/call
 finish the simulation
 OK: 求解成功完成
 
@@ -57,17 +62,17 @@ OK: 求解成功完成
   最终电压: 3.9438 V
   电压降: 0.0929 V
 
-  总仿真耗时 (wall-clock): 54.595 s
+  总仿真耗时 (wall-clock): 140.443 s
 
   各模块耗时分解（CallModel累计）:
     模块                        累计 [s] 占比 [%]  平均 [ms/step]
     --------------------------------------------------------------
-    SPMe 求解                      3.071     6.34         161.641
-    分流求解器                     0.849     1.75          44.691
-    热分布式模型                   0.844     1.74          44.396
-    CZM 模型                      43.679    90.17        2298.872
+    SPMe 求解                      6.134     4.77         322.848
+    分流求解器                     1.620     1.26          85.254
+    热分布式模型                   1.618     1.26          85.151
+    CZM 模型                     119.260    92.71        6276.856
     --------------------------------------------------------------
-    CallModel 合计                48.442
+    CallModel 合计               128.632
 
 ================================================================================
 仿真完成
@@ -78,10 +83,10 @@ OK: 求解成功完成
   温度范围: 298.15 K ~ 299.00 K
   CZM 最终 D_max: 0.0000%
   CZM 最终 D_mean: 0.0000%
-  CZM 最大法向分离位移: 9.6486e-13 m
+  CZM 最大法向分离位移: 7.4202e-13 m
   CZM 断裂单元数: 0
-  最终环向应力范围: -1.3954e+00 ~ 3.8603e+00 MPa
-  最终切向剪应力范围: -3.7425e-01 ~ 3.9548e-01 MPa
+  最终环向应力范围: -1.8433e+00 ~ 4.1344e+00 MPa
+  最终切向剪应力范围: -2.6184e-01 ~ 2.1666e-01 MPa
 
 ================================================================================
 全部完成

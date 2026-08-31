@@ -1,43 +1,48 @@
 REFREEZE_MODE=fresh_rerun_authorized_change
-REFREEZE_AUTHORIZATION=user_explicit (stress-history alignment, non-update hold, scatter removal; alphaT remains zero)
-SOURCE_RUN_ARTIFACT_WRITTEN=2026-08-30T17:28:56+0800
-HEAD=a7fecc6bf514ae58ad74b745c720d59c2654c348
-SCRIPT_SHA256=78bcc4e937ddda10aea4961a1a7972e45220a090c344bcd5bbaaf6caa7e4e22c
-COUPLE_EXAMPLE_SHA256=ae48eeeb6f6c6a62c3bbd8da8b9404e3ee3ae3de264599cd689b0ef2718ee404
-SOURCE_MANIFEST_TSV_SHA256=cbc96a2d665d498a458a51b558e87c6568014e73e1c9cf688f89f6aff34bab3a
-SOURCE_MANIFEST_FILE_SHA256=3e3fc6009159c614f30645b78a6912572e0a09e17782974f210521b8618e73ee
-SOURCE_FILE_COUNT=47
+REFREEZE_AUTHORIZATION=user_explicit (structural-layer alphaT change: PCC 23e-6, SP 30e-6, NCC 17e-6 1/K)
+SOURCE_RUN_ARTIFACT_WRITTEN=2026-08-31T21:28:19+0800
+HEAD=696f2aa2b4df4a22c01eb1cf7085e1cf5e53f3a2
+SCRIPT_SHA256=63edef136f21d1df99117d66dacddc845f6ba7587f264dec6967c24dfc3d61eb
+COUPLE_EXAMPLE_SHA256=a6005e3b5e6274fd5a4b7e72ebfe1a63017c78824343f8d6dc3d161cf90f0fab
+SOURCE_MANIFEST_TSV_SHA256=0f015cdff6304715bd9391e3be911e76332b5871bf6a2a017c023ac1c3549de6
+SOURCE_MANIFEST_FILE_SHA256=146a9751c630912a957d911243187ba71b1dacb333ea5ccee0bb64cc18289adc
+SOURCE_FILE_COUNT=46
 JULIA_VERSION:
 julia version 1.11.2
+JULIA_PATH_NOTE:
+baseline command previously recorded D:/Julia-1.11.2/bin/julia.exe; that drive is not present on the
+current machine. v9 was run with the same Julia 1.11.2 installed at
+C:/Users/19303/AppData/Local/Programs/Julia-1.11.2, single thread, GKSwstype=100, --startup-file=no.
+Project dependencies were instantiated into C:/Users/19303/.julia for this run.
 ACCEPTED_OUTPUT:
-text-only quick gate (output/testexample/simple_coupling_debug.log not a gate)
+text-only quick gate (output/testexample/simple_coupling_debug.log not a gate; not produced this run)
 PHYSICS_CHANGE_SUMMARY:
-electro/thermal metrics unchanged; CZM and macro stress now use the recorded time layer;
-non-update outputs hold the latest solved stress instead of preallocated zeros;
-alphaT remains zero; hoop -1.3954~3.8603 MPa; separation 9.6486e-13 m
+SP/PCC/NCC.alphaT changed from explicit zero to 30e-6 / 23e-6 / 17e-6 1/K (user-specified).
+eigenstrain_of now returns a nonzero thermal term for separator and both current collectors.
+electro/thermal metrics bit-identical to v8 (alphaT does not enter the thermal residual):
+  voltage 4.0367 -> 3.9438 V, drop 0.0929 V, capacity 0.0833 Ah, T 298.15~299.00 K, 19 steps.
+mechanics moved: separation 9.6486e-13 -> 7.4202e-13 m;
+  hoop -1.3954~3.8603 -> -1.8433~4.1344 MPa; tangential shear -0.3743~0.3955 -> -0.2618~0.2167 MPa.
+damage unchanged: D_max = D_mean = 0, fractured = 0, 19/19 CZM updates converged.
+A/B ISOLATION (same process, only SP/PCC/NCC alphaT toggled, per-material stress breakdown):
+  the alphaT=0 arm reproduced the v8 frozen hoop range -1.3954~+3.8603 MPa bit-for-bit,
+  confirming the 696f2aa `opt.czm.model = "mix"` script drift does not move macro stress (D=0).
+  collector peak von Mises: PCC 3.8439 -> 3.9917 MPa, NCC 3.6180 -> 4.1124 MPa;
+  collector mean von Mises: PCC 0.4459 -> 0.8155 MPa, NCC 0.5623 -> 0.9355 MPa.
+  yield utilisation stays low at this operating point: PCC 6.65% of 60 MPa, NCC 2.06% of 200 MPa.
 TESTS:
-test/test_layer_resolved_stress.jl 20/20 PASS (new interval/time regression 8/8);
-testexample.jl and couple_example.jl exit 0
+test/runtests.jl 32/32 isolated test files PASS, 106 testsets, zero Fail/Error/Broken, exit 0 (20m01.7s)
+testexample.jl exit 0
+SOURCE_MANIFEST_NOTE:
+18 rows changed. 2 are this batch's edits (src/parameters/Jellyroll.jl, src/czm.jl);
+7 are source drift accumulated since the v8 freeze that was never re-manifested
+(example/testexample.jl, src/CouplingState.jl, src/CsvExport.jl, src/Initialisation.jl,
+ src/SetParams.jl, src/ThermalDistributed.jl, src/Tools.jl);
+8 were stale LF-normalised hashes left over from an older generation environment and are now
+regenerated under the dominant raw-working-tree-bytes convention (29 of 37 unchanged rows already
+used it). The manifest is internally consistent again. Aggregate rule unchanged and re-verified:
+CR stripped, TAB separated, LF joined, no trailing newline, `# aggregate_sha256` row excluded.
 COUPLE_EXAMPLE_OUTPUT:
-output/couple_example/final_temperature_field.png	210436	2026-08-30T17:28:54+0800	540fe42f1039cb4446046a6da96f1ecf18d162b643bc40a40a099ca2b93f978c	(unchanged)
-output/couple_example/final_hoop_stress_field.png	295117	2026-08-30T17:28:55+0800	9726a7c84cf59a932a2cf45346770c6c046a6a81a7ca36f951714339e558050d
-output/couple_example/final_tangential_shear_stress_field.png	264362	2026-08-30T17:28:56+0800	b3b43d7cee67ed2a6fca33e0fcffee899629b84998852ba05aeb08fdaa105445
-# ----------------------------------------------------------------------
-# 2026-08-30 四层力学结构体重构追加记录（用户指令：不重跑，直接以最后一次运行结果归档）
-# ----------------------------------------------------------------------
-BATCH=four-layer mechanics struct refactor (spec 2026-08-30-mechanics-struct-refactor-design.md)
-BATCH_VERIFICATION_REFERENCE=parent commit 66c718e (user-selected option A)
-BATCH_HEAD=e78604fd3b0b7563a3511129eccee84042f64cdd (refactor uncommitted on top)
-BATCH_SCRIPT_SHA256=704d55363f823313fd45c4ec98c1fd37d2258c15e47bdaac075f6ac3a2f029c6
-BATCH_COUPLE_EXAMPLE_SHA256=a6005e3b5e6274fd5a4b7e72ebfe1a63017c78824343f8d6dc3d161cf90f0fab
-BATCH_SOURCE_MANIFEST_TSV_SHA256=4865ba0e04568f41f8c6a4e518d55d3eae64f9a90236c63c3405328ab564cc84
-BATCH_SOURCE_MANIFEST_FILE_SHA256=c6bb7eac278fe85c78d4c72fe3c3cdb9ee99b981f7eb04d6dad9acf5d912271d
-BATCH_SOURCE_FILE_COUNT=46
-BATCH_EVIDENCE:
-A/B single-step probe vs 66c718e: bit-identical at 17 significant digits;
-full testexample: all printed metrics identical (9.6486e-13 m, -1.3954~3.8603 MPa,
--0.3743~0.3955 MPa, exit 0); three PNG hashes identical to v8 (user-verified);
-full test suite 32/32 (8m04s); mid-arc gates green x2; incidental production fix:
-bilinear_tangent mixed-mode branch 4 bare K_n/K_t (model2 crash) caught by tests
-BATCH_BASELINE_ACTION:
-values unchanged -> v8 baseline retained; source manifest and script hashes refreshed
+not rerun this batch (no plotting/post-processing code changed).
+the three final cloud PNG hashes recorded in metrics.toml [artifact] are STALE as of v9 because the
+stress fields moved; they are not an active gate. Rerun couple_example.jl and refresh before use.

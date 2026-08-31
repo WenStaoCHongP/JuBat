@@ -44,7 +44,8 @@ end
 逐层热-化学本征应变（α/β 分层分辨率，2026-08-29）：
 ε0 = alphaT(mt)·dT + Ω(mt)/3·Δsoc(mt)。电极膨胀只作用于本层
 （NE→Ω_n/3·Δsn，PE→Ω_p/3·Δsp），集流体/隔膜只有热应变
-（Jellyroll 参数集 SP/PCC/NCC.alphaT 显式置零）。与 moduli_of 平行查表，
+（Jellyroll 参数集 2026-08-31 起按用户指定取物理值：PCC 23e-6、SP 30e-6、
+NCC 17e-6 1/K；此前为显式置零）。与 moduli_of 平行查表，
 取代旧的跨层均匀 α_eff/β_n/β_p 施加。
 """
 function eigenstrain_of(param, mt::Symbol, dT::Real, Δsn::Real, Δsp::Real)

@@ -88,7 +88,7 @@ SP.eps_fi = 0.
 SP.brugg = 1.5           # Chen2020 electrolyte Bruggeman for separator
 SP.E = 750e6         # Pa 隔膜的弹性模量
 SP.nu = 0.35          # 隔膜的泊松比
-SP.alphaT = 0.       # 1/K 分层热应变显式置零（PP 隔膜物理值 ~1e-4–2e-4，留待敏感性分析）
+SP.alphaT = 30e-6    # 1/K 隔膜热膨胀系数（2026-08-31 用户指定，解除原显式置零）
 
 # Positive Current Collector 
 PCC = CurrentCollector()
@@ -99,7 +99,7 @@ PCC.heat_Q = 8.76e2      # 比热容 (J/kg/K)
 PCC.sig =3.55e7
 PCC.E = 7e10         # Pa 正极集流体的弹性模量（软等效层，默认路径）
 PCC.nu = 0.33          # 正极集流体的泊松比
-PCC.alphaT = 0.      # 1/K 分层热应变显式置零（Al 箔物理值 2.3e-5，留待敏感性分析）
+PCC.alphaT = 23e-6   # 1/K Al 箔热膨胀系数（2026-08-31 用户指定，解除原显式置零）
 # Batch 3：Al 箔塑性参数（本构模量直接用上面的 PCC.E/nu，用户参数修正后不再单列 foil 字段）
 PCC.sigma_y = 60e6    # Pa（Shi 2026 屈服起始）
 PCC.H = 0.0           # Pa 理想塑性（敏感性扫描 0–2 GPa）
@@ -113,7 +113,7 @@ NCC.heat_Q = 3.83e2      # 比热容 (J/kg/K)
 NCC.sig = 5.96e7
 NCC.E = 1.1e11         # Pa 负极集流体的弹性模量（软等效层，默认路径）
 NCC.nu = 0.34         # 负极集流体的泊松比
-NCC.alphaT = 0.      # 1/K 分层热应变显式置零（Cu 箔物理值 1.7e-5，留待敏感性分析）
+NCC.alphaT = 17e-6   # 1/K Cu 箔热膨胀系数（2026-08-31 用户指定，解除原显式置零）
 # Batch 3：Cu 箔塑性参数（本构模量直接用上面的 NCC.E/nu）
 NCC.sigma_y = 200e6   # Pa（ED Cu 文献区间 108–441 MPa 中值）
 NCC.H = 0.0           # Pa 理想塑性

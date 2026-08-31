@@ -1,17 +1,17 @@
 # example/testexample.jl 代码简化基线
 
-- **Baseline ID**: `testexample-20260830T172856+0800`
+- **Baseline ID**: `testexample-20260831T212819+0800`（v9）
 - **状态**: PASS（exit code 0）
-- **重冻结方式**: 2026-08-30 应力历史时间对齐/非更新步保持修复后完整重跑（testexample.jl 纯文字快速门 + couple_example.jl 三张云图）
+- **重冻结方式**: 2026-08-31 用户授权的结构层热膨胀系数变更后完整重跑（testexample.jl 纯文字快速门；本批未改绘图代码，未跑 couple_example.jl）
 - **入口**: `example/testexample.jl`
-- **命令**: `D:/Julia-1.11.2/bin/julia.exe --startup-file=no --project=. example/testexample.jl`
+- **命令**: `julia --startup-file=no --project=. example/testexample.jl`
 - **环境**: Julia 1.11.2，Plots 1.40.9，1 thread，`GKSwstype=100`
-- **Git HEAD**: `a7fecc6bf514ae58ad74b745c720d59c2654c348`
-- **脚本 SHA-256**: `78bcc4e937ddda10aea4961a1a7972e45220a090c344bcd5bbaaf6caa7e4e22c`
-- **标准 TSV 源码聚合 SHA-256**: `cbc96a2d665d498a458a51b558e87c6568014e73e1c9cf688f89f6aff34bab3a`（TAB 分隔、LF 拼接、末尾无换行；尾行 `# aggregate_sha256` 不计入聚合）
-- **说明**: 基线建立时工作树已有用户修改；因此以脚本哈希和 47 个 Julia 文件的内容清单为准，而不是仅以 HEAD 为准。
+- **Git HEAD**: `696f2aa2b4df4a22c01eb1cf7085e1cf5e53f3a2`（运行时 alphaT 变更尚未提交）
+- **脚本 SHA-256**: `63edef136f21d1df99117d66dacddc845f6ba7587f264dec6967c24dfc3d61eb`
+- **标准 TSV 源码聚合 SHA-256**: `0f015cdff6304715bd9391e3be911e76332b5871bf6a2a017c023ac1c3549de6`（TAB 分隔、LF 拼接、末尾无换行；尾行 `# aggregate_sha256` 不计入聚合）
+- **说明**: 基线建立时工作树已有用户修改；因此以脚本哈希和 46 个 Julia 文件的内容清单为准，而不是仅以 HEAD 为准。
 
-本基线取代 `testexample-20260830T005629+0800`（v7）及更早。当前本征应变仍按材料分层计算，SP/PCC/NCC.alphaT 保持显式零；CZM 与宏观应力现使用历史列同一时间层的温度/SOC，非更新输出列保持最近一次有效力学解。`testexample` 的 19 次 CZM 更新全部实际执行并收敛。
+本基线取代 `testexample-20260830T172856+0800`（v8）及更早。本征应变仍按材料分层计算，但 **SP/PCC/NCC.alphaT 不再为零**（30e-6 / 23e-6 / 17e-6 1/K，用户指定）；CZM 与宏观应力使用历史列同一时间层的温度/SOC，非更新输出列保持最近一次有效力学解。`testexample` 的 19 次 CZM 更新全部实际执行并收敛。
 
 ## 冻结结果
 
@@ -28,11 +28,11 @@
 | maximum temperature | 299.00 K |
 | final CZM D_max | 0.0000% |
 | final CZM D_mean | 0.0000% |
-| maximum normal separation | 9.6486e-13 m |
+| maximum normal separation | 7.4202e-13 m |
 | fractured elements | 0 |
 | CZM converged updates | 19 / 19 |
-| hoop/tangential 应力范围 | −1.3954~+3.8603 / −0.3743~+0.3955 MPa |
-| result PNGs | 已移至 couple_example.jl（本门不含图） |
+| hoop/tangential 应力范围 | −1.8433~+4.1344 / −0.2618~+0.2167 MPa |
+| result PNGs | 已移至 couple_example.jl（本门不含图；哈希自 v9 起失效，见下） |
 
 ## 后续比较规则
 
@@ -50,7 +50,7 @@
 - `metrics.toml`: 机器可读的关键指标与比较策略。
 - `source_manifest.tsv`: 运行时所有 Julia 源文件和入口脚本的 SHA-256。
 - `preflight.log`: 本次直接重冻结的源码与输出身份记录。
-- `run.log`: 2026-08-30 v8 完整重跑的控制台记录与重冻结来源。
+- `run.log`: 2026-08-31 v9 完整重跑的控制台记录与重冻结来源。
 
 ## 基线 v2（2026-08-22 重冻结，用户宏观参数修正）
 
@@ -94,3 +94,15 @@
 - SP/PCC/NCC.alphaT 按用户决定继续保持 0；电化学、热学、网格、19 步、零损伤和断裂数均与 v7 一致。
 - 力学直接影响项更新：最大法向分离 `9.4407e-13 → 9.6486e-13 m`，环向应力 `−1.3952~+3.8570 → −1.3954~+3.8603 MPa`，切向剪应力 `−0.3739~+0.3952 → −0.3743~+0.3955 MPa`。
 - 删除额外径向散点图；`couple_example.jl` 只生成温度、环向应力、切向剪应力三张 Q4 云图。
+
+## 基线 v9（2026-08-31，结构层热膨胀系数由零改为物理值）
+
+- 触发：用户指定 `src/parameters/Jellyroll.jl` 三个结构层的热膨胀系数——`SP.alphaT 0 → 30e-6`、`PCC.alphaT 0 → 23e-6`、`NCC.alphaT 0 → 17e-6`（1/K）。此前 v7/v8 一直按"显式置零、留待敏感性分析"处理，本批解除该置零。`eigenstrain_of` 因此对隔膜与两个集流体返回非零热应变项；求解器代码路径未改（早已是逐层查表），仅同步了 `src/czm.jl` 中已失效的文档串。
+- 电化学、热学、网格（1682/1763）、步数（19）、零损伤（D_max=D_mean=0、断裂 0）与 19/19 CZM 收敛**逐位不变**——alphaT 不进入热残差，无热膨胀反馈回热模型。
+- 力学指标移动：`maximum normal separation 9.6486e-13 → 7.4202e-13 m`；环向应力 `−1.3954~+3.8603 → −1.8433~+4.1344 MPa`；切向剪应力 `−0.3743~+0.3955 → −0.2618~+0.2167 MPa`。
+- **A/B 隔离验证**：同进程内只切换这三个 alphaT 跑两次，`alphaT=0` 一侧**逐位复现 v8 冻结的环向范围 −1.3954~+3.8603 MPa**。这同时证明 `696f2aa` 给脚本加的 `opt.czm.model = "mix"` 对宏观应力无影响（D≡0，混合模式分支未激活），v8 数值在该脚本漂移下仍然有效。
+- 分层实测（集流体屈服评估，一次性诊断）：峰值 von Mises 在箔上而非涂层——PCC `3.8439 → 3.9917 MPa`、NCC `3.6180 → 4.1124 MPa`（峰值 +4~14%）；但平均值近乎翻倍——PCC `0.4459 → 0.8155 MPa`、NCC `0.5623 → 0.9355 MPa`。本工况屈服利用率仍低：PCC 6.65%（σ_y 60 MPa）、NCC 2.06%（σ_y 200 MPa），**不屈服**。注意本工况 ΔT 仅 0.85 K；在 `|ΔT| ≤ 20 °C` 包络下五层 α 失配达 22e-6，热项将成为主导贡献之一。
+- 门禁：`test/runtests.jl` **32/32** 通过（106 testsets，零 Fail/Error/Broken，20m01.7s，exit 0）；`testexample.jl` exit 0。
+- **PNG 哈希自本版起失效**：本批未改绘图/后处理代码，按 AGENTS §9.6 未跑 `couple_example.jl`；但应力场已移动，metrics.toml `[artifact]` 记录的三张云图哈希不再对应当前代码，已标记 `png_hashes_stale_since = "v9"`，暂不作为门禁。下次涉及绘图的批次须重跑并刷新。
+- **运行环境差异**：基线原记录的 `D:/Julia-1.11.2/bin/julia.exe` 在当前机器上不存在；v9 使用同版本 Julia 1.11.2（`C:/Users/19303/AppData/Local/Programs/Julia-1.11.2`），单线程、`GKSwstype=100`、`--startup-file=no` 不变；项目依赖本次 instantiate 到 `C:/Users/19303/.julia`。
+- **源码清单修正（附带）**：`source_manifest.tsv` 共 18 行变化——2 行是本批改动（`src/parameters/Jellyroll.jl`、`src/czm.jl`）；7 行是 v8 冻结后累积但从未重新登记的源码漂移（`example/testexample.jl`、`src/CouplingState.jl`、`src/CsvExport.jl`、`src/Initialisation.jl`、`src/SetParams.jl`、`src/ThermalDistributed.jl`、`src/Tools.jl`）；**8 行是遗留的 LF 归一化哈希**，与其余 29 行的"工作树原始字节"约定不一致，本次统一为后者。清单此前处于两种约定混用状态，现已内部自洽。聚合规则未变并已重新验证（去 CR、TAB 分隔、LF 拼接、末尾无换行、尾行不计入）。

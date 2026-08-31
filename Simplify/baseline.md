@@ -4,7 +4,7 @@
 
 | 基线 | 入口 | 状态 | 关键判定 | 档案 |
 |---|---|---|---|---|
-| `testexample-20260830T172856+0800` | `example/testexample.jl`（纯文字快速门，60 s） | PASS | 应力历史同时间层、非更新列保持最近有效解、SP/PCC/NCC.alphaT=0；电/热不变；三张 final 云图由 `example/couple_example.jl` 按需验证 | [详细记录](baseline/testexample/README.md) |
+| `testexample-20260831T212819+0800` | `example/testexample.jl`（纯文字快速门，60 s） | PASS | 结构层热膨胀系数取物理值（SP 30e-6 / PCC 23e-6 / NCC 17e-6 1/K）；电/热逐位不变，力学输出移动；三张 final 云图哈希自 v9 起失效，须重跑 `example/couple_example.jl` 后方可作为门禁 | [详细记录](baseline/testexample/README.md) |
 
 ## 固定运行环境
 
@@ -14,12 +14,18 @@ $env:JULIA_NUM_THREADS = '1'
 & 'D:\Julia-1.11.2\bin\julia.exe' --startup-file=no --project=. example\testexample.jl
 ```
 
+> v9（2026-08-31）在 `D:` 盘不可用的机器上重跑，改用同版本 Julia 1.11.2
+> （`C:\Users\19303\AppData\Local\Programs\Julia-1.11.2`）；线程数、`GKSwstype`、
+> `--startup-file=no` 与 `--project=.` 均未变。Julia 版本一致即满足门禁环境要求，
+> 路径本身不是判定项。
+
 结构化期望值见 [`baseline/testexample/metrics.toml`](baseline/testexample/metrics.toml)，完整控制台输出见 [`baseline/testexample/run.log`](baseline/testexample/run.log)。
 
 ## 基线重建记录
 
 | 日期 | 原因 | 旧基线 | 新基线 | 关键变化 |
 |---|---|---|---|---|
+| 2026-08-31 | 用户指定：结构层热膨胀系数由显式置零改为物理值（SP.alphaT→30e-6、PCC.alphaT→23e-6、NCC.alphaT→17e-6 1/K） | `testexample-20260830T172856+0800` | `testexample-20260831T212819+0800` | 电/热指标、网格（1682/1763）、19 步、零损伤与 19/19 收敛**逐位不变**（alphaT 不进热残差）；分离 9.6486e-13→7.4202e-13 m；环向应力 −1.3954~+3.8603→−1.8433~+4.1344 MPa；切向剪 −0.3743~+0.3955→−0.2618~+0.2167 MPa。A/B 隔离：alphaT=0 一侧逐位复现 v8 环向范围，同时证明 `mix` 脚本漂移对宏观应力无影响。全量测试 32/32。三张应力 PNG 哈希失效（本批未重跑绘图），已标记非门禁。源码清单 18 行变化，其中 8 行为遗留 LF 归一化哈希的约定统一 |
 | 2026-08-30 | 用户授权：修复 CZM/应力历史时间错位与非更新步伪零，删除额外径向散点图；alphaT 保持 0 | `testexample-20260830T005629+0800` | `testexample-20260830T172856+0800` | 电/热、网格、19 步、零损伤不变；分离 9.4407e-13→9.6486e-13 m；环向/切向应力小幅更新；绘图收敛为三张 Q4 云图 |
 | 2026-08-30 | 用户授权：α/β 同批分层化——`eigenstrain_of(param, mt)` 取代跨层均匀 α_eff/β_n/β_p，电极膨胀只作用于本层涂层，SP/PCC/NCC.alphaT 显式置零；α_eff/β 死参链删除 | `testexample-20260829T231308+0800` | `testexample-20260830T005629+0800` | 电/热指标、网格、步数、零损伤、19/19 收敛**逐位不变**；separation 7.0037e-13→9.4407e-13 m；环向应力 −1.7766~+3.9971→−1.3952~+3.8570 MPa；温度 PNG 哈希不变、三张应力 PNG 更新（`ecdc9f58/2c29e35b/5124dec3`）；47 文件清单重建；j2 测试按分层物理重标定（箔屈服驱动 0.3→1.0） |
 | 2026-08-29 | 验证入口拆分（减负）：testexample.jl 改纯文字 60 s 快速门，全部代码移至新建 couple_example.jl；常规修改仅跑受影响验证 + 快速门 | `testexample-20260829T224907+0800` | `testexample-20260829T231308+0800` | 求解指标与 v5 全同；新增应力范围文字指标；四张 PNG 由 couple_example 产出且哈希与 v5 一致；源码清单 47 文件（+couple_example.jl） |
