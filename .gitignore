@@ -5,3 +5,6 @@
 output/csv/180/
 output/csv/czm_study_2/
 output/mesh_convergence/
+
+# Local agent CLI session data
+.zcode/
