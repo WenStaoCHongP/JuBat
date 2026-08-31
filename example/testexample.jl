@@ -80,6 +80,7 @@ function main()
     opt.debug_coupling = true
     opt.debug_log_path = joinpath(@__DIR__, "..", "output", "testexample", "simple_coupling_debug.log")
     opt.czm.enabled = true
+    opt.czm.model = "mix"
     opt.czm.fix_inner = false
     opt.czm.iter_method = "basic"
     opt.czm.load_steps = 10
