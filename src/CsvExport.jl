@@ -66,7 +66,7 @@ end
 
 """Whether a CZM snapshot at index `snap_idx` should be written."""
 function should_export_snapshot(csv_opt::CsvExportOptions, cycle::Int, snap_idx::Int,
-                                  last_indices::Set{Int})
+                                last_indices::Set{Int})
     cycle in csv_opt.full_output_cycles && return true
     csv_opt.mode == :full && return true
     csv_opt.mode == :phase_ends && return snap_idx in last_indices
@@ -79,7 +79,7 @@ end
 # ========================================================================
 
 function write_csv_guarded!(write_fn::Function, filename::String,
-                             files_written::Vector{String}, files_skipped::Vector{String})
+                            files_written::Vector{String}, files_skipped::Vector{String})
     try
         write_fn()
         push!(files_written, filename)
@@ -225,7 +225,7 @@ end
 # ========================================================================
 
 function write_element_currents_csv(result, case, output_dir::String, overwrite::Bool,
-                                  csv_opt::CsvExportOptions)
+                                    csv_opt::CsvExportOptions)
     filepath = joinpath(output_dir, "element_currents.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -287,7 +287,7 @@ end
 # ========================================================================
 
 function write_node_temperature_csv(result, case, output_dir::String, overwrite::Bool,
-                                  csv_opt::CsvExportOptions)
+                                    csv_opt::CsvExportOptions)
     filepath = joinpath(output_dir, "node_temperature.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -336,8 +336,8 @@ end
 # ========================================================================
 
 function write_cohesive_damage_csv(result, case, czm_mesh,
-                                 output_dir::String, overwrite::Bool,
-                                 csv_opt::CsvExportOptions)
+                                   output_dir::String, overwrite::Bool,
+                                   csv_opt::CsvExportOptions)
     filepath = joinpath(output_dir, "cohesive_damage.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -348,14 +348,18 @@ function write_cohesive_damage_csv(result, case, czm_mesh,
     n_coh = czm_mesh.n_cohesive
 
     # Precompute element properties
+    # θ 用半径反解累计角（同 edge_boundary：θ_cum = (r−a)/b，r = a + b·θ_cum），
+    # 多匝单调，无 atan ±π 接缝
+    a = case.param.cell.Rin
+    b = case.param.cell.layer / (2.0 * pi)
     lengths_phys = Float64[]
-    theta_degs = Float64[]
+    theta_cum_degs = Float64[]
     for elem in czm_mesh.cohesive_elements
         push!(lengths_phys, elem.length * scale.L)
         n1, n2 = elem.nodes_bottom
         mx = 0.5 * (czm_mesh.node[n1, 1] + czm_mesh.node[n2, 1])
         my = 0.5 * (czm_mesh.node[n1, 2] + czm_mesh.node[n2, 2])
-        push!(theta_degs, atan(my, mx) * 180.0 / pi)
+        push!(theta_cum_degs, (hypot(mx, my) - a) / b * 180.0 / pi)
     end
     length(czm_mesh.cohesive_elements) == n_coh || throw(DimensionMismatch(
         "cohesive element count $(length(czm_mesh.cohesive_elements)) does not match n_cohesive $n_coh"))
@@ -374,7 +378,7 @@ function write_cohesive_damage_csv(result, case, czm_mesh,
     end
 
     open(filepath, "w") do f
-        println(f, "time_s,cycle,phase,coh_id,length,D,delta_n,delta_t,T_n,T_t,fractured,theta_deg")
+        println(f, "time_s,cycle,phase,coh_id,length,D,delta_n,delta_t,T_n,T_t,fractured,theta_cum_deg")
 
         for snap in selected_snapshots
             t = snap.time_s
@@ -388,7 +392,7 @@ function write_cohesive_damage_csv(result, case, czm_mesh,
                 tn = snap.traction_n[i] * scale.σ_czm
                 tt = snap.traction_t[i] * scale.σ_czm
                 frac = D >= 0.95
-                println(f, "$t,$cyc,$phase,$i,$(lengths_phys[i]),$D,$dn,$dt_val,$tn,$tt,$frac,$(theta_degs[i])")
+                println(f, "$t,$cyc,$phase,$i,$(lengths_phys[i]),$D,$dn,$dt_val,$tn,$tt,$frac,$(theta_cum_degs[i])")
             end
         end
     end
@@ -400,8 +404,8 @@ end
 # ========================================================================
 
 function write_node_displacement_csv(result, case, czm_mesh,
-                                   output_dir::String, overwrite::Bool,
-                                   csv_opt::CsvExportOptions)
+                                     output_dir::String, overwrite::Bool,
+                                     csv_opt::CsvExportOptions)
     filepath = joinpath(output_dir, "node_displacement.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -444,8 +448,8 @@ end
 # ========================================================================
 
 function write_cohesive_driving_force_csv(result, case, czm_mesh,
-                               output_dir::String, overwrite::Bool,
-                               csv_opt::CsvExportOptions)
+                                          output_dir::String, overwrite::Bool,
+                                          csv_opt::CsvExportOptions)
     filepath = joinpath(output_dir, "cohesive_driving_force.csv")
     if isfile(filepath) && !overwrite
         println("  Skipping $filepath (already exists)")
@@ -665,7 +669,7 @@ end
 - `{prefix}_mesh_elements.csv`: 网格单元连接
 """
 function export_cycle_data_to_csv(export_data::CycleExportData, output_dir::String;
-                                   prefix::String="cycle")
+                                  prefix::String="cycle")
     isdir(output_dir) || mkpath(output_dir)
 
     n_steps = length(export_data.timesteps)

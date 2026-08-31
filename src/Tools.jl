@@ -69,29 +69,19 @@ function identify_boundary_nodes(mesh, param, opt=nothing)
 end
 
 """
-    compute_separation(elem, node, u)
+    compute_separation(czm_mesh, elem, u)
 
-Compute average normal/tangential separation for a cohesive element.
-
-# Returns
-- `delta_n`: normal separation
-- `delta_t`: tangential separation
+计算单个 cohesive 单元的平均法/切向分离 `(δ_n, δ_t)`。法向由 `cohesive_local_frame`
+按 host-inner → host-outer 拓扑定向，避免逆时针边序把物理张开记为负值。
 """
-function compute_separation(elem, node::Matrix{Float64}, u::Vector{Float64})
+function compute_separation(
+    czm_mesh::CohesiveMesh,
+    elem::AbstractCohesiveElement,
+    u::Vector{Float64},
+)
+    _, _, _, R = cohesive_local_frame(czm_mesh, elem)
     n1, n2 = elem.nodes_bottom
     n4, n3 = elem.nodes_top
-
-    x1 = node[n1, 1]; y1 = node[n1, 2]
-    x2 = node[n2, 1]; y2 = node[n2, 2]
-    dx = x2 - x1
-    dy = y2 - y1
-    L = sqrt(dx * dx + dy * dy)
-    L >= 1e-15 || error("degenerate cohesive element: tangential edge ($n1, $n2) has length $L")
-
-    t_vec = [dx / L, dy / L]
-    n_vec = [-t_vec[2], t_vec[1]]
-    R = [n_vec[1] n_vec[2]; t_vec[1] t_vec[2]]
-
     wts, pts = NCweight(2)
     delta_n_avg = 0.0
     delta_t_avg = 0.0
@@ -100,31 +90,23 @@ function compute_separation(elem, node::Matrix{Float64}, u::Vector{Float64})
     for (xi, w) in zip(pts, wts)
         N1 = 0.5 * (1.0 - xi)
         N2 = 0.5 * (1.0 + xi)
-
         B_global = zeros(Float64, 2, 8)
         B_global[1, 1] = -N1; B_global[2, 2] = -N1
         B_global[1, 3] = -N2; B_global[2, 4] = -N2
-        B_global[1, 5] = N2; B_global[2, 6] = N2
-        B_global[1, 7] = N1; B_global[2, 8] = N1
+        B_global[1, 5] = N2;  B_global[2, 6] = N2
+        B_global[1, 7] = N1;  B_global[2, 8] = N1
 
-        B_local = R * B_global
-
-        u_e = zeros(Float64, 8)
-        u_e[1] = u[2 * n1 - 1]; u_e[2] = u[2 * n1]
-        u_e[3] = u[2 * n2 - 1]; u_e[4] = u[2 * n2]
-        u_e[5] = u[2 * n3 - 1]; u_e[6] = u[2 * n3]
-        u_e[7] = u[2 * n4 - 1]; u_e[8] = u[2 * n4]
-
-        delta_local = B_local * u_e
+        u_e = [
+            u[2n1 - 1], u[2n1], u[2n2 - 1], u[2n2],
+            u[2n3 - 1], u[2n3], u[2n4 - 1], u[2n4],
+        ]
+        delta_local = R * B_global * u_e
         delta_n_avg += w * delta_local[1]
         delta_t_avg += w * delta_local[2]
         total_w += w
     end
 
-    delta_n_avg /= total_w
-    delta_t_avg /= total_w
-
-    return delta_n_avg, delta_t_avg
+    return delta_n_avg / total_w, delta_t_avg / total_w
 end
 
 """

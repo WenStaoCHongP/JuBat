@@ -1,8 +1,8 @@
 # CsvExport.jl
 
 - **源文件**: `src/CsvExport.jl`
-- **行数**: 718 行
-- **函数/struct 计数**: 1 个 struct、2 个便捷构造器、18 个函数/方法定义
+- **行数**: 750 行
+- **函数/struct 计数**: 22 个顶层定义（1 struct + 21 function，含便捷构造器）
 - **职责**: JuBat CSV 序列化单一归属——导出多循环分析结果与单循环原始快照；采样、越界保护和单文件失败隔离均在本文件实现。
 - **相关技术文档**: `md/10_参数传递与模块架构.md`、`md/06_内聚力模型_CZM.md`
 
@@ -46,23 +46,29 @@
 
 | 函数 | 行号 | 输出 |
 |---|---:|---|
-| `write_cycle_summary_csv` | L198-L225 | `cycle_summary.csv` |
-| `write_element_currents_csv` | L231-L298 | `element_currents.csv` |
-| `write_node_temperature_csv` | L304-L351 | `node_temperature.csv` |
-| `write_cohesive_damage_csv` | L357-L405 | `cohesive_damage.csv` |
-| `write_node_displacement_csv` | L411-L445 | `node_displacement.csv` |
-| `write_cohesive_driving_force_csv` | L452-L551 | `cohesive_driving_force.csv` |
-| `write_czm_diagnostics_csv` | L557-L573 | `czm_solver_diagnostics.csv` |
+| `write_cycle_summary_csv` | L198-L221 | `cycle_summary.csv` |
+| `write_element_currents_csv` | L227-L282 | `element_currents.csv` |
+| `write_node_temperature_csv` | L289-L331 | `node_temperature.csv` |
+| `write_cohesive_damage_csv` | L338-L400 | `cohesive_damage.csv` |
+| `write_node_displacement_csv` | L406-L442 | `node_displacement.csv` |
+| `write_cohesive_driving_force_csv` | L450-L547 | `cohesive_driving_force.csv` |
+| `write_czm_diagnostics_csv` | L555-L570 | `czm_solver_diagnostics.csv` |
+
+`cohesive_damage.csv` 的角度列 `theta_cum_deg`（2026-08-29 由 `theta_deg` 改名）为半径反解**累计角** `(r−a)/b·180/π`（同 `edge_boundary`，`a=cell.Rin`、`b=cell.layer/2π`），多匝单调、无 atan ±π 接缝；同一物理方位在不同匝上相差整数个 360°。
 
 ### 共享 CSV helper
 
-- `safe_csv_matrix_value` — L579-L585：二维数值矩阵安全访问及非匹配类型 fallback。
-- `find_cycle_solve_result` — L588-L600：按循环和阶段查找 `solve_result`。
-- `compute_csv_element_areas` — L606-L620：用 Shoelace 公式计算 Q4 归一化面积。
+- `require_csv_solve_result` — L576-L581：阶段结果存在性校验，缺失即报错（不静默跳过）。
+- `require_csv_vector` — L583-L590：按 key 取一维向量，长度/类型不符报错。
+- `require_csv_matrix` — L592-L601：按 key 取二维矩阵，形状不符报错。
+- `require_csv_length` — L603-L609：数组长度守卫。
+- `existing_cycle_phases` — L611-L617：列出已有阶段的 phase 结果。
+- `find_cycle_solve_result` — L620-L635：按循环和阶段查找 `solve_result`。
+- `compute_csv_element_areas` — L638-L652：用 Shoelace 公式计算 Q4 归一化面积。
 
 ## 单循环原始数据入口
 
-### `export_cycle_data_to_csv(export_data, output_dir; prefix="cycle")` — L639-L718
+### `export_cycle_data_to_csv(export_data, output_dir; prefix="cycle")` — L671-L750
 
 接收 `CycleExportData` 并写出：
 
@@ -88,16 +94,15 @@
 
 | 行号 | 内容 | 风险 |
 |---|---|---|
-| L210 | SOH 越界时写 `NaN` | 下游统计必须处理 NaN |
-| L484-L486 | driving-force 参数仍为零占位 | 对应 CSV 会提前跳过 |
-| L583/L585 | 安全矩阵访问越界或类型不匹配返回 `NaN` | 上游字段错误可能延迟到 CSV 检查才暴露 |
-| L393 | `D >= 0.95` 判为 fractured | 与其他损伤阈值语义不同 |
+| L394 | `D >= 0.95` 判为 fractured | 与其他损伤阈值语义不同 |
+
+（原表中 SOH 越界写 NaN、driving-force 零占位、安全矩阵访问 NaN fallback 三行对应的代码已不存在——现为 `require_*` 家族显式报错，2026-08-29 核实删除。）
 
 ### [COMPLEX-CHECK]
 
-| 行号 | 内容 | 简化建议 |
+| 位置 | 内容 | 简化建议 |
 |---|---|---|
-| L109-L183 | 七类文件具有相似的 skip/guard/write 调度结构 | 可进一步表驱动，但需保留每类前置条件 |
-| L280-L288 | 九个字段连续安全访问 | 可抽取 NamedTuple 快照 |
-| L386-L404 | cohesive 快照有多组长度守卫 | 可抽取安全向量读取 helper |
-| L493-L556 | driving-force 输出包含多层数据存在性与索引检查 | 参数接通后再单独简化 |
+| `export_cycling_csv`（L100-L192） | 七类文件具有相似的 skip/guard/write 调度结构 | 可进一步表驱动，但需保留每类前置条件 |
+| `write_element_currents_csv`（L227-L282） | 多字段连续安全访问 | 可抽取 NamedTuple 快照 |
+| `write_cohesive_damage_csv`（L368-L377） | cohesive 快照有多组长度守卫 | 可抽取安全向量读取 helper |
+| `write_cohesive_driving_force_csv`（L450-L547） | driving-force 输出包含多层数据存在性与索引检查 | 参数接通后再单独简化 |

@@ -108,4 +108,17 @@ end
         @test n_hi - n_lo == 1
     end
     @test all(>(0.0), normal_orientations)
+
+    # 拓扑有向入口必须把 outer 相对 inner 的位移记为正张开。
+    coh = first(czm_mesh.cohesive_elements)
+    geom = first(JuBat.cohesive_geometry(czm_mesh))
+    gap = 1.0e-6
+    u = zeros(2 * czm_mesh.nnode)
+    for node in coh.nodes_top
+        u[2node - 1] = gap * geom.n_vec[1]
+        u[2node] = gap * geom.n_vec[2]
+    end
+    delta_n, delta_t = JuBat.compute_separation(czm_mesh, coh, u)
+    @test delta_n ≈ gap atol=1e-14
+    @test delta_t ≈ 0.0 atol=1e-14
 end
