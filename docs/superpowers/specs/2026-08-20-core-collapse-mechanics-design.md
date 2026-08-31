@@ -1,8 +1,8 @@
 # 堆芯塌陷力学建模（工况 C）设计规格
 
 - **日期**：2026-08-20
-- **评审修订**：v1.1（2026-08-20，理论正确性验证 + FEM 可行性评审，新增 D8–D11，见 §10.1）；**v1.2**（2026-08-20，第二轮全库独立复核，更正 v1.1 两处错误结论并新增 D12–D15，见 §10.2）；**v1.3**（2026-08-21，实现计划评审后：Batch 1 基线门禁工具替换为 `verify_czm_standalone.jl`，见 §10.3）；**v1.4**（2026-08-22，D13 探针实测结论与宣称边界落定，见 §3.8.1）；**v1.5**（2026-08-22，Φ 缝连接形式修订：与层内 SP–涂层相同（完美粘结）且为默认网格构造，废除 opt-in 开关，见 §3.4）
-- **状态**：实现计划评审完成（2026-08-21），基线工具决策已定（方案 B，§10.3）；Batch 0'' 开工以用户放行为准
+- **评审修订**：v1.1（2026-08-20，理论正确性验证 + FEM 可行性评审，新增 D8–D11，见 §10.1）；**v1.2**（2026-08-20，第二轮全库独立复核，更正 v1.1 两处错误结论并新增 D12–D15，见 §10.2）；**v1.3**（2026-08-21，实现计划评审后：Batch 1 基线门禁工具替换为 `verify_czm_standalone.jl`，见 §10.3）；**v1.4**（2026-08-22，D13 探针实测结论与宣称边界落定，见 §3.8.1）；**v1.5**（2026-08-22，Φ 缝连接形式修订：与层内 SP–涂层相同（完美粘结）且为默认网格构造，废除 opt-in 开关，见 §3.4）；**v1.6**（2026-08-31，实现同步修订：接口/文件/配置表按已落地代码更正，补记 Φ 双网格实现偏离与 D10 实测结论，见 §10.4）
+- **状态**：Batch 0'–5 实现完成并通过代码门禁（全量 34/34，冻结基线 v8）；**C4-lite 物理验收未满足**（有效包络内 `Δ_core` 微米级、`D≡0`，见 §3.5.1）；Batch 6/7 未开始，Batch 8 后置。逐批状态见 §9.1
 - **任务记录**：`docs/planning-with-files/30_堆芯塌陷力学建模/`
 - **理论基线**：`Theory/` v3.0（各向异性表述已按 Batch 0' 修订：逐层各向同性 + 叠层等效）
 - **前置任务**：`理论与模型差异评审`（差距识别）、`界面术语统一`（计数契约）、Batch 0'（Theory/03 修订，已完成并推送）
@@ -69,9 +69,15 @@ Theory v3.0 的工况 C（堆芯塌陷）要求"显式逐层非线性 bulk + 几
 ### 3.4 Φ 跨匝完美粘结（Batch 4'，小批次）
 
 **v1.5 修订（用户决策 2026-08-22，纠正原设计对 Φ 缝的理解）**：Φ 缝（匝间界面：第 N 匝外 SP 面 ↔ 第 N+1 匝内 PE 面）的连接形式**与层内 SP–涂层界面相同**——共享节点完美粘结，且**为默认网格构造，非 opt-in 子开关**：
-- 网格构造阶段**默认**合并 `phi_pairs` 重合节点对（外匝并入内匝索引、连接表重写）：零穿透、零分离、零滑移，与层内 SP 面共享节点完全同构。合并前断言坐标重合（`‖x_outer − x_inner‖ < tol`）；由 `dtheta = 2π/nθ` 均匀分格自动满足，末端部分匝无配对自然豁免。
+- 网格构造阶段**默认**合并 `phi_pairs` 重合节点对：零穿透、零分离、零滑移，与层内 SP 面共享节点完全同构。合并前断言坐标重合（`‖x_outer − x_inner‖ < tol`）；由 `dtheta = 2π/nθ` 均匀分格自动满足，末端部分匝无配对自然豁免。
 - **废除 `czm_phi_bond` 开关设计**（v1.3 §5 该行作废；Batch 1 字段与契约测试随实现删除）——粘结是建模假设本身，与 SP–涂层不需要开关同理。默认行为整体移动 ⟹ 冻结基线按既定程序**重冻结 v3**并声明本决策。
 - 实现归属：并入 Batch 5 Task 1（原 Batch 4' 独立批次取消）。这是 `phi_pairs` 的第一个求解器消费者。
+
+**实现偏离记录（v1.6，实现为准）**：本节原文的"外匝并入内匝索引、连接表重写"描述的是**单网格原地合并**；实际落地为 **双网格方案**（`8ab8863`，前两次单网格迭代失败原因见 findings）：
+
+- `merge_phi_pairs(mesh, phi_pairs, gsorder) -> (mesh_bonded, phi_keep)`（`src/Jellyrollmodel.jl:591`）在原始力学网格之外**另建**合并网格；`CzmSubmesh` 同时持有 `mesh_bonded`（求解自由度网格）与 `phi_keep`（未合并节点中保留行的升序原索引，用于 raw→bonded 对应）。
+- **`phi_pairs` 本身保留未合并网格上的真实外/内节点对**，不退化为 `(i, i)`——该语义在提交修复 R5 中冻结为契约（`31_堆芯塌陷提交修复`）。合并只发生在求解网格侧，物理配对信息不被破坏。
+- 选择双网格的约束：热→CZM 插值的 `mod` 索引算术定位与行数契约必须零改动（用户否决坐标法/闭式重写）。
 - 声明义务：完美粘结抑制 SP 滑移先皱机理（Theory 04:174、07:209）；结果输出必须携带 `collapse_approx = "phi_perfect_bond"` 标记，直至 Batch 8。
 
 ### 3.5 Δ_core 与塌陷状态（Batch 5，C4-lite）
@@ -92,7 +98,32 @@ Theory v3.0 的工况 C（堆芯塌陷）要求"显式逐层非线性 bulk + 几
 - 逐高斯点 `eps_p/κ`；cohesive `D`（现有 `damage_states`）；
 - 每半循环结束时提交；失败步全部回滚。
 
+> **v1.6 实现同步**：2026-08-30 四层重构后，上述状态统一聚合在 `MechState`（`src/CouplingState.jl:201`，吸收原 `CzmLayout`，`damage_states` 由 `czm_mesh` 迁入），字段见 §4.2；`Δ_core` 基准快照为 `MechState.node_ref`（初始螺旋节点，**永不重置**，与 D8"始终相对初始螺旋"一致）。缓存（`K_bulk`/标架/ws）改为惰性挂 `CohesiveMesh`，与演化状态分离；求解器收敛后原位提交，失败/试探不触碰 `MechState`。
+
 **路径跟踪**：把 `solve_czm_arc_length_step`（Crisfield 圆柱弧长）从"cohesive 载荷参数"扩展为"全机械残差"（含 K_G、塑性、Φ 绑定、§3.7 预应力贡献）。**载荷参数化（v1.1 补充）**：本问题无外载标量，λ 定义为缩放**本时间步的本征应变（热-化学）载荷增量** `Δε*`，目标 λ=1；弧长约束允许沿平衡路径越过极值点后推进至 λ=1 才提交状态。负切线/分岔附近步长缩减（下限 `step/128` 后报错终止，不伪造收敛）。
+
+### 3.5.1 C4-lite / D10 实测结论（v1.6，2026-08-24）
+
+**三处验证缺陷先行修复**（详见 `31_堆芯塌陷提交修复` 与 30 号 progress）：
+
+1. C4-lite 夹具调用 `ensure_czm_cache` 时沿用低层默认 `fix_inner=true`，**固定了 `Γ_in,free`**——而 `Δ_core` 恰从第一匝内边界读取，原全零结论受错误 BC 污染。已加"内边界不受约束"契约测试。
+2. winding cohesive 固定左法向与 host-inner→host-outer 张开方向**相反**，张开被当作受压。已按 host 拓扑在缓存/非缓存装配统一定向（平直条带路径方向不变）。
+3. geo 弧长 λ=0 预应力参考态只做一次 Newton、失败预测子步不回滚。已补多步 Newton 与失败子步回滚缩步，最终残差保持严格 tol。
+
+**按用户确认的物理包络复算**（`Δsoc ∈ [-1, 1]`、`|ΔT| ≤ 20 °C`；`tools/probe_c4lite_free_core.jl`，16 个边界/轴点 × 两个预应力倍率）：
+
+| 指标 | 实测 |
+|---|---|
+| 收敛 | 16/16（load_substep），最大残差 `3.393e-9` |
+| `D_max` | **0**（最大起损比 0.4382，未达起损阈值） |
+| `Δ_core` max | **0.002755**（≈5.29 μm） |
+| `κ` max | 0.05649 |
+
+**判定**：包络内响应有界、方向一致、低于起损阈值，但**没有出现 `Δ_core` 与 `D` 的联合增长**，故 **C4-lite 验收门未满足**，按 D10 执行"有界敏感性探针 → 停止评审，不降级验收"。塌陷能力**不予宣称**。
+
+**归零原因（对称性，非缺陷）**：完美对称网格 + 轴对称载荷 ⟹ 响应为 n=0 呼吸模态，被 D8 的 0 阶滤波正确滤除；n≥2 需非对称扰动（几何缺陷/局部载荷）激发。C4-lite 达成的候选前置为"几何缺陷注入或非对称载荷工况"，尚未立项授权。
+
+**超范围说明**：`Δsoc = 1.5/2.0` 的大损伤与 `load_progress ≈ 0.99` 停滞（弧长在 `λ≈0.42146` 触下限显式失败）只保留为数值压力测试，不作为当前工况的物理断点；失败末态显式记为 `ERROR/NA`，未以零值或旧值伪装（`output/probe_c4lite_free_core/probe_results.csv`）。
 
 ### 3.6 损伤–电–热反馈（Batch 6，opt-in）
 
@@ -103,6 +134,10 @@ Theory v3.0 的工况 C（堆芯塌陷）要求"显式逐层非线性 bulk + 几
 - **`A_eff` 量纲冲突（Batch 0'' 修订项）**：Theory `01:649` 与附录 A 把 `A_eff` 标为 m²，与 `05:635`/`06:391` 的无量纲约定冲突；实现一律采用无量纲约定，理论侧在 Batch 0'' 统一。
 - **`D→1` 正则化**：以电导形式 `G ∝ (1−D)` 装配避免 `Inf`；并采用 Theory `04:1495` 的截断 `D ≤ D_max = 1−ε_D`（`ε_D ∈ O(10⁻³–10⁻²)`）。
 - **`(1−D)⁻²` 双计（D12，延后决策，Batch 6 开工前必须结论）**：Theory `04:1457-1481` 从 Holm 反比 + `A_cont=A_0(1−D)` **几何**推出 `R_contact=R_0/(1−D)`，而 `05:683-691` 的辩护称该因子是**材料劣化**（压力松弛/氧化），两者互斥；其引用的"DESR 模型（Plett 2015、Sulzer 2021）"在全 Theory 仅一处出现且附录 C 无条目，不可核查。独立推导给出的可辩护结果是单因子：压降 `= (j/(1−D))·r_0`。候选处置：①单因子 `(1−D)⁻¹`；②保留 `(1−D)⁻²` 但重写 §3.6.1 使 Holm 只贡献 `A_eff`、`R_contact` 改为有据的材料劣化模型；③指数 `p` 参数化（默认 `p=1`，`p=2` 仅作无支撑的敏感性上界）。注意 `A_eff` 作 Butler-Volmer 前因子（降低总反应面积）是独立且合法的用途，与压降中的电流拥挤因子须分开处理。
+
+**v1.6 执行状态**：Batch 6 **未开始**。2026-08-23 曾尝试单独实现 `A_eff(D)` 影响电化学有效面积（Batch 6A），经用户裁决**完整回滚**（`src/CallModel.jl`、`src/JuBat.jl`、`src/Option.jl`、`src/Parallelsolution.jl`、`src/SPMe.jl` 本轮修改撤回，新增测试删除），原因是理论影响范围存在疑义。`opt.czm.continuous_feedback` 字段存在但**全 `src/` 无消费者**，符合默认关闭且不得宣称的记录状态。
+
+**重新立项前置**（除 D12 外，均须先在理论侧冻结）：①`A_eff` 对应的物理反应面积对象；②正负极/界面的作用域；③物质与能量守恒边界；④与旧面积权重代理、完全失效置零、后续接触热阻链的组合规则。
 
 ### 3.7 卷绕预应力（Batch 2'，opt-in，D11）
 
@@ -143,66 +178,94 @@ Theory v3.0 的工况 C（堆芯塌陷）要求"显式逐层非线性 bulk + 几
 
 ### 4.1 文件级变更表
 
-| 文件 | 批次 | 变更 |
-|---|---|---|
-| `src/Option.jl` | 1 | 新增默认关子选项（§5 表）；不改现有字段语义 |
-| `src/Czm.jl` | 1-3, 2' | 新增 `assemble_bulk_residual_tangent`（bulk 残差/切线，三槽位之一）；`PlasticState` 类型；`assemble_coupled_system_full` 改为调用新入口（开关全关时逐句等价）；Batch 2' 初始应力 `σ₀(r)` 项进入残差与 `K_G` |
-| `src/CzmSolve.jl` | 2,5 | Newton/弧长子步内每次迭代重组切线（不再用常量 `K_bulk` 缓存；弹性+无塑性+无 K_G 时仍走缓存快路径）；弧长扩展为全机械残差 |
-| `src/CouplingState.jl` | 1,3,5,6 | `CZMAssemblyCache` 增加参考构型与机械状态字段；塑性状态随 Case 持久化；外层固定点迭代器 |
-| `src/Jellyrollmodel.jl` | 4' | `czm_phi_bond=true` 时 phi_pairs 节点合并 |
-| `src/CycleSolver.jl` | 5 | phase 交接扩展：传递机械状态与当前几何，不重置完美圆 |
-| `src/parameters/Jellyroll.jl` | 2', 3 | `PCC/NCC.sigma_y`、`PCC/NCC.H`（默认 0/未设）；卷绕张力/`σ₀` 分布参数（Batch 2'，未设而开启即 `error`） |
-| `src/SPMe.jl`、`src/ThermalDistributed.jl` | 6 | 连续反馈入口（opt-in）；热阻装配恢复 |
-| `tools/czm_mesh_probe.jl` | 2''（新建） | D13 网格探针脚本：`nθ` × 薄层径向细分扫描，输出临界特征值/Δ_core/主模态（只读诊断，不改求解路径） |
-| `Theory/`（00,01,02,03,04,05,06,07,08,09,11） | 0'', 7 | 纯文档修订，清单见 §9 |
-| `test/` | 各批 | 新测试文件见 §7 |
+**v1.6 说明**：本表已按实际落地代码更正（原表的 `src/Czm.jl` 大小写、Φ 合并归属与 `CZMAssemblyCache` 字段方案均与实现不符）。2026-08-30 四层重构进一步移动了若干归属，以本表为准。
+
+| 文件 | 批次 | 变更 | 状态 |
+|---|---|---|---|
+| `src/Option.jl` | 1 | 子选项收入嵌套 `CzmOptions`（`opt.czm.*`，§5 表）；不改现有字段语义 | ✅ 已落地 |
+| `src/czm.jl` | 1-3, 2' | `assemble_bulk_residual_tangent`（`:494`，三槽位，前两个已实现）；`assemble_coupled_system_full` 调用新入口（开关全关逐位等价）；σ₀ 进入残差与 `K_G` | ✅ 已落地 |
+| `src/CzmPlasticity.jl` | 3, 2'（新建） | `PlasticState`（`:12`）、平面应力一致 J2 返回映射与一致切线；`winding_prestress_field`（`:152`，缺参即 `error`） | ✅ 已落地 |
+| `src/CzmSolve.jl` | 2,5 | 每次迭代重组切线（弹性+无塑性+无 `K_G` 仍走 `K_bulk` 缓存快路径）；`solve_czm_arc_length_step`（`:280`）扩展为全机械残差 Crisfield 球面约束 | ✅ 已落地 |
+| `src/CouplingState.jl` | 1,3,5 | `MechState`（`:201`）聚合演化状态；`ensure_node_ref!`（`:223`）Δ_core 基准快照；`core_ovalization`（`:237`） | ✅ 已落地 |
+| `src/Jellyrollmodel.jl` | 5(原 4') | `merge_phi_pairs`（`:591`）产出 `mesh_bonded`/`phi_keep` 双网格（§3.4 实现偏离记录）；默认构造，无开关 | ✅ 已落地 |
+| `src/SetMesh.jl` | 5(原 4') | `CzmSubmesh` 增 `mesh_bonded`/`phi_keep` 字段（`:49`）；旧 5 参数构造器保留（R4 恢复） | ✅ 已落地 |
+| `src/CycleSolver.jl` | 5 | phase 交接传递机械状态与当前几何，不重置完美圆 | ✅ 已落地 |
+| `src/parameters/Jellyroll.jl` | 2', 3 | `PCC/NCC.sigma_y`、`PCC/NCC.H`；`cell.winding_T_ne`/`winding_T_pe`（未设而开启即 `error`） | ✅ 已落地 |
+| `src/SPMe.jl`、`src/ThermalDistributed.jl` | 6 | 连续反馈入口（opt-in）；热阻装配恢复 | ❌ **未实现**（6A 尝试已回滚，见 §3.6） |
+| `tools/czm_mesh_probe.jl` | 2''（新建） | D13 网格探针：`nθ` × 薄层径向细分扫描（只读诊断） | ✅ 已落地 |
+| `tools/probe_c4lite_free_core.jl` | 5（新建，v1.6 补录） | C4-lite 自由芯部物理包络探针（16 点，只读诊断） | ✅ 已落地 |
+| `Theory/`（00,01,02,03,04,05,06,07,08,09,11） | 0'', 7 | 纯文档修订，清单见 §9 | 0'' ✅ / 7 ❌ 未开始 |
+| `test/` | 各批 | 新测试文件见 §7 | 见 §9.1 |
 
 ### 4.2 关键新接口（内部，不进公共文档）
 
-```julia
-# 残差/切线分列入口（contact 槽位 Batch 8 前为空实现）
-assemble_bulk_residual_tangent(czm_mesh, u, param_cache, mech_state; geo_nl, plasticity)
-    -> (f_int_bulk::Vector{Float64}, K_tangent::SparseMatrixCSC)
+**v1.6：以下为实际落地签名**（原设计稿的 `param_cache` 形参与 `MechHistory` 结构均未按原样实现，以本节为准）。
 
-mutable struct PlasticState
+```julia
+# 残差/切线分列入口（src/czm.jl:494；contact 槽位 Batch 8 前为空实现）
+# mech_state 为尾置可选位置参数，使 Batch 3 引入塑性状态时无需改签名
+assemble_bulk_residual_tangent(czm_mesh::CohesiveMesh, u::Vector{Float64},
+                               param::Params, mech_state=nothing;
+                               geo_nl::Bool=false, plasticity::Bool=false,
+                               K_bulk_cached=nothing, eigenstrain=nothing)
+    -> (f_int_bulk::Vector{Float64}, K_tangent::SparseMatrixCSC)
+# 三槽位：①线弹性（与 assemble_bulk_stiffness 逐位等价）②几何非线性（geo_nl，禁传
+# K_bulk_cached）③J2 塑性（plasticity，要求 geo_nl=true，D-B3-1）。
+# 未实现槽位传非默认值一律 error——静默走线弹性会让上层误以为已生效（AGENTS 9.7）。
+
+mutable struct PlasticState              # src/CzmPlasticity.jl:12
     eps_p::NTuple{3,Float64}   # (ss, nn, sn) 塑性应变
     kappa::Float64             # 等效塑性应变
 end
 
-struct MechHistory        # Case 层持久化
-    plastic::Matrix{PlasticState}     # [elem, gp] 仅 PCC/NCC 有效
-    u_committed::Vector{Float64}      # 当前几何（参考构型更新源）
-    delta_core::Float64
+# Case 层持久化（src/CouplingState.jl:201）——2026-08-30 重构吸收原 CzmLayout，
+# damage_states 由 czm_mesh 迁入；缓存（K_bulk/标架/ws）惰性挂 CohesiveMesh，与本结构分离。
+mutable struct MechState
+    u_prev::Vector{Float64}                               # 上一步收敛位移
+    damage_states::Vector{DamageState}                    # 逐 cohesive 单元损伤
+    plastic_states::Union{Nothing, Matrix{PlasticState}}  # [ne, 4]，收敛才提交（D-B3-2）
+    winding_prestress::Union{Nothing, Vector{NTuple{3,Float64}}}  # σ₀，几何固定后算一次
+    node_ref::Union{Nothing, Matrix{Float64}}             # 初始螺旋快照（Δ_core 基准，永不重置）
+    contact::Nothing                                      # SP–涂层接触预留位（AGENTS §9.8）
 end
 ```
+
+`Δ_core` 不作为 `MechState` 字段持久化，而由 `core_ovalization(czm_mesh, u, ref_node)`（`src/CouplingState.jl:237`）按需从 `node_ref` 与当前 `u` 计算——避免快照与位移不同步。
 
 ### 4.3 数据流（工况 C 开启时）
 
 ```
-每 czm_update_interval 时间步:
+每 opt.czm.update_interval 时间步:
   CallModel (电-热) → T, soc 场
       ↓ 父热单元四节点平均温差 / 单元 SOC，经 thermal_elem_map 映射
-  CZM 力学步 (Newton/弧长):
-      assemble_bulk_residual_tangent   ← u, PlasticState, 参考构型
-      + assemble_czm_system            ← DamageState
-      [+ phi_bond 绑定贡献]
-      → 收敛: 提交 u, eps_p/κ, D, Δ_core;失败: 回滚全部 trial 状态
-      ↓ (Batch 6 起, opt-in) R_contact(D)/A_eff(D), k_n(D)
-  外层固定点: 重复 CallModel↔CZM 直至 ‖ΔD‖,‖Δu‖,‖ΔT‖ < tol
+  CZM 力学步 (Newton/load_substep/弧长)，自由度网格 = mesh_bonded (Φ 已合并):
+      assemble_bulk_residual_tangent   ← u, MechState.plastic_states, node_ref
+      + assemble_czm_system            ← MechState.damage_states
+      [+ MechState.winding_prestress σ₀（opt-in）]
+      → 收敛: 原位提交 u_prev, eps_p/κ, D;失败: 不触碰 MechState（全部 trial 丢弃）
+      → Δ_core = core_ovalization(czm_mesh, u, node_ref)  (按需计算，非持久字段)
+      ↓ (Batch 6 起, opt-in) R_contact(D)/A_eff(D), k_n(D)   ← 当前无消费者
+  外层固定点: 重复 CallModel↔CZM 直至 ‖ΔD‖,‖Δu‖,‖ΔT‖ < tol   ← Batch 6，未实现
 ```
 
-## 5. 配置接口（`src/Option.jl` 新增字段）
+> **v1.6**：Φ 绑定不再是流程中的可选贡献项——合并发生在网格构造阶段，力学步直接在 `mesh_bonded` 上求解（§3.4）。最后两行的 Batch 6 环节当前不存在于代码中。
 
-| 字段 | 类型/默认 | 批次 | 语义 |
-|---|---|---|---|
-| `czm_geo_nonlinear` | `Bool=false` | 2 | 完全 Green-Lagrange TL 残差 + 标准初应力 `K_G`（D9） |
-| `czm_winding_prestress` | `Bool=false` | 2' | 卷绕预应力初始应力场 `σ₀(r)`（要求缠绕参数存在，D11） |
-| `czm_j2_plasticity` | `Bool=false` | 3 | PCC/NCC J2（要求 `sigma_y` 参数存在） |
-| ~~`czm_phi_bond`~~ | ~~`Bool=false`~~ | — | **v1.5 废除**：Φ 粘结为默认网格构造（§3.4），无开关；Batch 1 字段随实现删除 |
-| `czm_continuous_feedback` | `Bool=false` | 6 | 连续损伤–电–热反馈 + 界面热阻 |
-| `czm_friction_mu` | `Float64=0.10` | 8（预留） | SP Coulomb 摩擦系数（当前无消费者） |
+## 5. 配置接口（`CzmOptions`，`src/Option.jl:35`）
 
-兼容性契约：以上全 false 时，行为、结果键、`tools/verify_czm_standalone.jl` 三方法快照（v1.3 替换；原 `czm_baseline_probe.jl` 已于 `2bf2ac7` 删除，见 §10.3）与现状逐指标一致。
+**v1.6 重要更正**：2026-08-30 四层力学结构体重构（spec `2026-08-30-mechanics-struct-refactor`）把 20 个扁平 `czm_*` 字段收进嵌套结构体 `CzmOptions`，通过 **`opt.czm.<field>`** 访问。本表原先的扁平名（`opt.czm_geo_nonlinear` 等）**已不存在**，写代码/测试请用下表右列。
+
+| 原扁平名（已废止） | 现字段 | 类型/默认 | 批次 | 语义 |
+|---|---|---|---|---|
+| `czm_geo_nonlinear` | `opt.czm.geo_nonlinear` | `Bool=false` | 2 | 完全 Green-Lagrange TL 残差 + 标准初应力 `K_G`（D9） |
+| `czm_winding_prestress` | `opt.czm.winding_prestress` | `Bool=false` | 2' | 卷绕预应力初始应力场 `σ₀(r)`（缺 `cell.winding_T_ne/pe` 即 `error`，D11） |
+| `czm_j2_plasticity` | `opt.czm.j2_plasticity` | `Bool=false` | 3 | PCC/NCC J2（缺 `sigma_y` 即 `error`；要求 `geo_nonlinear=true`） |
+| ~~`czm_phi_bond`~~ | — | — | — | **v1.5 废除**：Φ 粘结为默认网格构造（§3.4），无开关；字段已随实现删除 |
+| `czm_continuous_feedback` | `opt.czm.continuous_feedback` | `Bool=false` | 6 | 连续损伤–电–热反馈 + 界面热阻。**字段存在但当前无任何消费者**（§3.6） |
+| `czm_friction_mu` | `opt.czm.friction_mu` | `Float64=0.10` | 8（预留） | SP Coulomb 摩擦系数（当前无消费者） |
+
+主开关 `czm_enabled` 同样迁入为 `opt.czm.enabled`（D3 语义不变）。其余既有字段（`model`/`update_interval`/`fix_inner`/`iter_method`/`arc_length_alpha` 等 14 项）见 `CzmOptions` 定义。默认值契约由 `test/test_czm_option_defaults.jl` 锁定。
+
+兼容性契约：以上全 false 时，行为、结果键、`tools/verify_czm_standalone.jl` 快照与 `example/testexample.jl` 冻结指标逐位一致。**当前冻结基线为 v8**（`Simplify/baseline.md`）；v1.3 所述 v3 已被后续两次重冻结取代，版本演进见 §9.2。原 `czm_baseline_probe.jl` 已于 `2bf2ac7` 删除（§10.3）。
 
 ## 6. 错误处理约定（继承 AGENTS 9.7）
 
@@ -252,6 +315,39 @@ end
 0'(done) → 0''(理论修订, 8 项阻塞) → 1 → 2(C1) → 2'(预应力, opt-in) → 2''(网格探针) → 3(C2) → ~~4'~~(v1.5 取消，Φ 默认粘结并入 Batch 5) → 5(C4-lite + 基线 v3) → 6 → 7(含 5 项文档级修订) → [8(C3/C5), 后置另立]
 ```
 
+### 9.1 逐批执行状态（v1.6，截至 2026-08-31）
+
+| 批次 | 内容 | 状态 |
+|---|---|---|
+| 0' | Theory/03 各向异性表述修复 | ✅ complete |
+| 0'' | Theory 8 项阻塞矛盾修订（D15） | ✅ complete |
+| 1 | 子选项 + 基线冻结 + `assemble_bulk_residual_tangent` 边界 | ✅ complete（门禁入口 `verify_czm_standalone.jl`，方案 B） |
+| 2 | 完全 GL TL + `K_G` | ✅ complete，**C1 达成** |
+| 2' | 卷绕预应力 σ₀(r)，opt-in | ✅ complete（同批用户修正模量参数 → 基线重冻结 v2） |
+| 2'' | D13 网格探针 | ✅ complete，结论见 §3.8.1 |
+| 3 | PCC/NCC 平面应力 J2 | ✅ complete，**C2/L1 达成** |
+| ~~4'~~ | Φ 跨匝完美粘结 | ✅ complete（并入 Batch 5 T1；双网格实现，§3.4） |
+| 5 | 多圈状态 + 路径跟踪 + Δ_core | ⚠️ **实现与代码门禁完成；C4-lite 物理验收未满足**（§3.5.1，按 D10 停止评审不降级） |
+| — | 提交审查修复 R0–R6（独立插入任务） | ✅ complete（`31_堆芯塌陷提交修复`） |
+| 6 | 损伤–电–热反馈闭环 | ❌ **未开始**（6A 尝试已完整回滚；D12 + 四项理论前置未落定，§3.6） |
+| 7 | 系统验证与宣称门禁（含 5 项文档级修订） | ❌ 未开始 |
+| 8 | SP–涂层接触 + Coulomb 摩擦 | ❌ 后置 |
+
+**当前代码门禁**：`test/runtests.jl` 34/34（8m43s，2026-08-24 记录；四层重构后为 32/32，测试文件有合并）；`verify_czm_standalone.jl` 与 `testexample` 冻结指标一致。
+
+**当前能力宣称边界**：可宣称 C1（几何非线性）、C2（箔塑性）；**不可宣称**堆芯塌陷预测能力——有效物理包络内 `D≡0`、`Δ_core` 仅微米级，无损伤联合增长。定量临界载荷宣称另受 D13 ② 约束（需单元技术改造批次）。所有耦合结果继续携带 `collapse_approx = "phi_perfect_bond"` 标记，直至 Batch 8。
+
+### 9.2 冻结基线版本演进
+
+| 版本 | 触发 | 说明 |
+|---|---|---|
+| v1 | Batch 1 初始冻结 | HEAD `e117fd2` |
+| v2 | Batch 2' 用户宏观参数修正 | PCC 70 GPa / NCC 110 GPa / E_coat 1 GPa / SP 750 MPa；参数刻意变更 |
+| v3 | Batch 5 T1 Φ 默认粘结 | 拓扑变化（Nodes 10144，−802 合并对）；分离 → `6.6820e-15 m` |
+| v4 | cohesive 法向 host-inner→host-outer 定向 | 分离 → `1.5174e-12 m`；用户接受此力学迁移 |
+| v5–v7 | 非堆芯塌陷任务产生 | 见 `Simplify/baseline.md` |
+| **v8** | 四层力学结构体重构（2026-08-30） | **数值零漂移**（相对父提交 `66c718e` 全指标逐位一致），仅刷新源码清单；**当前有效基线** |
+
 **Batch 0''（D15，Batch 1 前置）修订 8 项阻塞实现的矛盾**：①`07` 两个同号 §6.4.5（KKT 残留 vs Camanho 代数更新）与 `07:573` 的 KKT 引用；②`K_uu` 两处定义不一（`(6.8)` 有 K_G 无 cohesive，`(6.54)` 反之）；③新增路径跟踪小节（Crisfield 圆柱弧长 + λ 缩放 Δε*，理论现仅 `04:1277` 一句提及）；④Φ 约束施加方式说明（节点合并/主从消元，非弱形式附加项）；⑤`κ_ss` 与 C⁰ Q4 不兼容的实现注记（对应 D9）；⑥层编号双约定统一（5 材料类型 vs 8 物理层序，现均写作"第 i 层"，误读会把 SP 当 NE）；⑦`A_eff` 量纲统一为无量纲；⑧几何参数表按代码重算 + 标注字段来源（D14）。
 
 **并入 Batch 7 的 5 项文档级修订**：附录 A 的 `ν∥` 加权方式与热源公式同步；附录 A 的 `G_⊥` 交叉引用（`03:743-747` 指向的 §2.3.3 无推导）；附录 C 的 `#47/#69/#75` 索引错误与条目计数；`Theory/审查/` 悬空链接（`00:9`、`08:863`、`11:41`）；补录 Camanho(2002)/Holm/弧长法等方法学书目。
@@ -292,3 +388,20 @@ end
 - **基线门禁工具替换（用户决策，方案 B）**：Batch 0''+1 实现计划评审发现 `tools/czm_baseline_probe.jl` 已被 `2bf2ac7` 作为过时脚本删除——计划原 Task 1 的 4 处 API 漂移诊断属实（对照 `49ec452` 历史版本逐处核实），但修复对象已不存在。两个候选（A：从 git 历史恢复旧探针；B：改用 `tools/verify_czm_standalone.jl`）中用户选定 **B**：Batch 1 快照门禁改用 `verify_czm_standalone.jl`（同覆盖 basic/load_substep/arc_length 三方法 × 8 个 Δsoc_n 载荷水平，`2bf2ac7` 已修复 `build_czm_cache` 签名并实测通过），不恢复旧探针。§5 兼容性契约与 §7 Batch 1 验收门的工具名随本版同步替换。
 - 冻结快照存于 `docs/planning-with-files/30_堆芯塌陷力学建模/baseline_czm_standalone.md`（2026-08-21 冻结于 HEAD `e117fd2`）；`FAIL` 收敛条目按原样冻结为行为基准，不得调参"修好"后放行。
 - 本版不改变任何物理/数学/架构条款；D1–D15 全部维持。
+
+### 10.4 v1.6 实现同步修订记录（2026-08-31）
+
+**性质**：纯文档同步，**不改变任何物理/数学条款**；D1–D15 全部维持，未新增决策。修订源为已落地代码与 `docs/planning-with-files/30_堆芯塌陷力学建模/`、`31_堆芯塌陷提交修复/` 的执行记录。
+
+修订项：
+
+1. **头部状态行**：从"Batch 0'' 开工待放行"更正为实际进度（0'–5 完成、C4-lite 未达成、6/7 未开始）。
+2. **§5 配置接口**：**最重要的失配**——2026-08-30 四层重构把扁平 `czm_*` 字段收进嵌套 `CzmOptions`，访问路径改为 `opt.czm.*`；原表所列字段名在代码中已不存在。表格改为"原名 → 现字段"对照，并标注 `continuous_feedback` 有字段无消费者。
+3. **§3.4 实现偏离记录**：Φ 粘结实际为**双网格**（`mesh_bonded`/`phi_keep`）而非原文的单网格原地合并；`phi_pairs` 保留未合并网格真实节点对（R5 冻结契约）。
+4. **§3.5 / §4.2**：状态持久化归属由设想的 `MechHistory` 更正为实际的 `MechState`（吸收 `CzmLayout`，`damage_states` 迁入）；`assemble_bulk_residual_tangent` 与 `PlasticState` 按实际签名更正；`Δ_core` 说明为按需计算而非持久字段。
+5. **新增 §3.5.1**：C4-lite / D10 实测结论——三处验证缺陷（`fix_inner` 误固定 `Γ_in,free`、cohesive 法向反向、弧长 λ=0 参考态）修复过程与包络内 16/16 数据；**记录 C4-lite 验收未满足及对称性归零原因**。
+6. **§3.6 执行状态**：补记 Batch 6A 回滚与四项重新立项理论前置。
+7. **§4.1 文件表**：按实际文件更正（`src/Czm.jl` → `src/czm.jl`；新增 `CzmPlasticity.jl`、`SetMesh.jl`、`probe_c4lite_free_core.jl`；Φ 合并归属改 Batch 5），并加"状态"列。
+8. **新增 §9.1 / §9.2**：逐批执行状态表与能力宣称边界；冻结基线 v1→v8 演进（原文多处仍引 v3）。
+
+**未改动项**：§3.1–3.3、§3.7、§3.8/3.8.1、§6、§8 的物理与门禁条款；§7 验收门定义（仅基线版本引用在 §9.2 集中澄清）。
