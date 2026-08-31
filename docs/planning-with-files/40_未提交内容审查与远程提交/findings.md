@@ -1,0 +1,21 @@
+# 审查发现
+
+- 当前 HEAD 为 `3b9baa5`，远程跟踪分支停在 `e78604f`，本地领先 1 个提交。
+- 已跟踪剩余改动：`md/00`、`CsvExport.md`、`Tools.md`、`src/CsvExport.jl`、`src/Initialisation.jl`、`src/Tools.jl` 及一张运行生成 PNG。
+- 未跟踪项包含两份技术文档、一个探针脚本，以及 `.mimosa/.zcode` 和多个 `output/` 目录。
+- 初始边界：源码/正式文档需逐项审查；本地配置、日志、运行图片/数据默认保留但不提交。
+- `.mimosa/` 是会话历史、hook 状态和审查报告；`.zcode/` 是会话计划缓存，均为本地工具状态，不应提交。
+- `output/` 中剩余项为日志、CSV、PNG/SVG 和 A/B 探针副本；包括已跟踪的 `unit_czm_eigenstrain_deformed.png`，均是运行产物，本批不提交、不删除。
+- `src/CsvExport.jl` 的实质行为修改是把 `cohesive_damage.csv` 的 `theta_deg` 改为由半径反解的多匝累计角 `theta_cum_deg`，避免 `atan` 的 ±π 接缝；配套函数索引已同步。其余可见签名压缩主要是格式变化。
+- `src/Tools.jl` 的核心修改是 `compute_separation(czm_mesh, elem, u)` 复用 `cohesive_local_frame` 的 host-inner→host-outer 法向，修复逆时针卷绕张开符号；经用户明确授权，旧节点顺序接口已删除。
+- `src/Initialisation.jl` 在忽略空白后无实质差异，属于行尾变化，不应纳入提交。
+- `md/16_有限元方法建模基本流程与重要注意事项.md` 是正式专题文档，`md/00` 已同步编号 16，二者应作为同一文档提交。
+- `2026-08-24-mesh-topology-consolidation-design.md` 是未实施的旧设计稿，仍以 `CzmLayout/CZMAssemblyCache` 等 Task 10 前架构为目标，且明确将 CsvExport 排除在范围外；需确认是否作为历史设计提交或继续保留。
+- `tools/probe_c4lite_free_core.jl` 使用已删除的平铺 `opt.czm_*`、参数缓存与旧 `solve_czm_step` 签名，当前无法运行；它是过时诊断脚本，不能原样提交。
+- 历史规划记录原要求保留公开 `compute_separation(elem,node,u)`，因此审查时曾恢复旧方法；用户随后明确允许破坏该接口。最终只保留 `compute_separation(czm_mesh,elem,u)`，使所有调用必须提供 host-inner/host-outer 拓扑，避免节点边序法向与拓扑法向并存。
+- `src/JuBat.jl` 继续公开导出 `compute_separation` 这一名称，但唯一方法现在要求 `(czm_mesh, elem, u)`；旧 `(elem, node, u)` 调用会直接得到 `MethodError`。
+- `CsvExport` 的累计角修复与既有多匝 `theta_cum` 几何约定一致；新增测试覆盖 `theta_cum_deg` 表头、半径反解值及超过 360° 的多匝结果。
+- 最终提交边界：① `CsvExport` 累计角 + `Tools` 单一拓扑有向接口 + 两份测试 + 两篇函数索引；② `md/16` + `md/00`；③ 本任务规划记录与总索引。
+- 验证结果：`test_create_czm_mesh.jl` 67,288 + 13,459 assertions 全过；`test_csv_export_guard.jl` 7 + 3 + 3 assertions 全过；候选路径 `git diff --check` 通过。
+- `example/testexample.jl` 退出 0，19 步、4.0367→3.9438 V、0.0833 Ah、298.15–299.00 K、D=0、最大分离 `9.6486e-13 m`、环向 `-1.3954~3.8603 MPa`、切向 `-0.37425~0.39548 MPa`，与 v8 冻结记录一致。
+- 正式改动已形成 `8bac24b`（拓扑一致的 cohesive 输出）和 `e0ece5a`（FEM 建模流程文档），并推送至 `origin/codex/src-physics-modularization`。
