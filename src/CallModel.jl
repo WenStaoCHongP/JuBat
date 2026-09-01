@@ -153,7 +153,9 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         end
         variables["czm D_mean"] = [stats.mean_D]
         δ_max_n_vals = [s.δ_max_n for s in case.mech.damage_states]
+        δ_max_eff_vals = [s.δ_max_eff for s in case.mech.damage_states]
         variables["czm δ_max_n"] = [maximum(δ_max_n_vals)]
+        variables["czm δ_max_eff"] = [maximum(δ_max_eff_vals)]
         variables["czm δ_mean_n"] = [mean(δ_max_n_vals)]
         variables["czm n_fractured"] = [Float64(stats.n_fractured)]
     else

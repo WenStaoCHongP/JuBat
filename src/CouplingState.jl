@@ -142,6 +142,9 @@ mutable struct CZMAssemblyWorkspace
     # 预分配稀疏矩阵（避免每轮 sparse() 重建）
     K_coh_buf::Vector{Float64}        # nonzero 值缓冲区
     K_coh::SparseMatrixCSC{Float64, Int64}  # 预分配结构的稀疏矩阵
+    # basic 非几何路径的 BC 后矩阵快照与原生 factorize 结果
+    K_bc_factor_matrix::Union{Nothing, SparseMatrixCSC{Float64, Int64}}
+    K_bc_factorization::Any
 
     function CZMAssemblyWorkspace(ndof::Int, n_coh::Int)
         nnz_est = max(n_coh * 64, 1)
@@ -158,7 +161,9 @@ mutable struct CZMAssemblyWorkspace
             Vector{Tuple{Float64, Float64}}(undef, max(n_coh, 1)),
             Vector{Tuple{Float64, Float64}}(undef, max(n_coh, 1)),
             zeros(nnz_est),
-            K_coh_sp)
+            K_coh_sp,
+            nothing,
+            nothing)
     end
 end
 

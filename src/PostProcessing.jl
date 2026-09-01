@@ -105,6 +105,7 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
         result["czm D_mean"] = vec(variables["czm D_mean"][1, 1:v])
         # δ_max_n 存储于分离空间（scale.δ_czm 归一，重设计 v2；修正原误用 scale.L）
         result["czm δ_max_n [m]"] = vec(variables["czm δ_max_n"][1, 1:v]) * case.param_dim.scale.δ_czm
+        result["czm δ_max_eff [m]"] = vec(variables["czm δ_max_eff"][1, 1:v]) * case.param_dim.scale.δ_czm
         result["czm δ_mean_n [m]"] = vec(variables["czm δ_mean_n"][1, 1:v]) * case.param_dim.scale.δ_czm
         result["czm n_fractured"] = vec(variables["czm n_fractured"][1, 1:v])
         result["czm damage [0-1]"] = variables["czm damage"][:, 1:v]
@@ -116,6 +117,7 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
         # 分离位移以 scale.δ_czm 归一（重设计 v2；修正原误用 scale.r0 颗粒半径尺度）
         result["czm separation normal [m]"] = variables["czm separation normal"][:, 1:v] * case.param.scale.δ_czm
         result["czm separation tangent [m]"] = variables["czm separation tangent"][:, 1:v] * case.param.scale.δ_czm
+        result["czm separation effective [m]"] = variables["czm separation effective"][:, 1:v] * case.param.scale.δ_czm
         if haskey(variables, "diffusion stress xx")
             result["diffusion stress xx [Pa]"] = variables["diffusion stress xx"][:, 1:v] * case.param.scale.σ_czm
             result["diffusion stress yy [Pa]"] = variables["diffusion stress yy"][:, 1:v] * case.param.scale.σ_czm

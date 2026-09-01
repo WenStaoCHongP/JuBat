@@ -107,10 +107,25 @@ function czm_output_to_variables(result::CZMResult, variables::Dict{String, Unio
     new_variables["czm traction tangent"] = result.traction_t
     new_variables["czm separation normal"] = result.separation_n
     new_variables["czm separation tangent"] = result.separation_t
+    separation_eff = hypot.(max.(result.separation_n, 0.0), result.separation_t)
+    new_variables["czm separation effective"] = separation_eff
 
     new_variables["czm D_max"] = maximum(result.damage)
     new_variables["czm D_mean"] = mean(result.damage)
+    new_variables["czm δ_max_eff"] = [maximum(separation_eff)]
     new_variables["czm n_fractured"] = Float64(count(d -> d >= 0.99, result.damage))
 
     return new_variables
+end
+
+"""
+    czm_max_separation_key(czm_model)
+
+Return the physical result key corresponding to the separation measure that
+drives the selected cohesive model.
+"""
+function czm_max_separation_key(czm_model::String)
+    czm_model == "mix" && return "czm δ_max_eff [m]"
+    czm_model == "model1" && return "czm δ_max_n [m]"
+    throw(ArgumentError("unsupported CZM model: $czm_model"))
 end

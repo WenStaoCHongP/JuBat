@@ -79,6 +79,47 @@ function extract_bc_dofs(czm_mesh::CohesiveMesh, param; fix_inner::Bool=true)
 end
 
 """
+    same_csc_contents(A, B) -> Bool
+
+仅当两个 CSC 矩阵的尺寸、稀疏结构和存储数值完全一致时返回 `true`。
+用于判定 BC 后刚度矩阵能否安全复用已有分解。
+"""
+function same_csc_contents(
+    A::SparseMatrixCSC{Float64, Int64},
+    B::SparseMatrixCSC{Float64, Int64},
+)
+    return size(A) == size(B) &&
+           A.colptr == B.colptr &&
+           A.rowval == B.rowval &&
+           isequal(A.nzval, B.nzval)
+end
+
+"""
+    solve_czm_linear_system_cached!(ws, K_bc, R_bc) -> Δu
+
+basic 非几何路径的线性求解缓存。只有 BC 后矩阵内容完全一致时复用
+`factorize(K_bc)`；否则重新分解，并在分解与回代均成功后提交新缓存。
+"""
+function solve_czm_linear_system_cached!(
+    ws::CZMAssemblyWorkspace,
+    K_bc::SparseMatrixCSC{Float64, Int64},
+    R_bc::Vector{Float64},
+)
+    cached_matrix = ws.K_bc_factor_matrix
+    cached_factorization = ws.K_bc_factorization
+    if cached_matrix !== nothing && cached_factorization !== nothing &&
+       same_csc_contents(cached_matrix, K_bc)
+        return cached_factorization \ R_bc
+    end
+
+    new_factorization = factorize(K_bc)
+    Δu = new_factorization \ R_bc
+    ws.K_bc_factor_matrix = copy(K_bc)
+    ws.K_bc_factorization = new_factorization
+    return Δu
+end
+
+"""
     backtrack_line_search!(u, Δu, czm_mesh, param, damage_states, F_ext, F_thermo_chem, R_norm_current, bc_dofs, bc_vals, K_bulk_cached, geom_cache, ws; max_halvings=8)
 
 回溯线搜索（零化式 BC 残差）。仅用于 solve_czm_basic_step。
@@ -231,7 +272,11 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, pa
             K_bc, R_bc = apply_bc_czm(K_total, R; bc_dofs=bc_dofs, bc_vals=bc_vals)
 
             Δu = try
-                K_bc \ R_bc
+                if geo_nl
+                    K_bc \ R_bc
+                else
+                    solve_czm_linear_system_cached!(ws_basic, K_bc, R_bc)
+                end
             catch
                 break
             end

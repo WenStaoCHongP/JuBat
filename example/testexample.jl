@@ -201,11 +201,16 @@ function main()
     if has_czm
         D_max = result["czm D_max"]
         D_mean = result["czm D_mean"]
-        δ_max = result["czm δ_max_n [m]"]
+        δ_key = JuBat.czm_max_separation_key(opt.czm.model)
+        δ_max = result[δ_key]
         n_frac = result["czm n_fractured"]
         @printf("  CZM 最终 D_max: %.4f%%\n", D_max[end] * 100)
         @printf("  CZM 最终 D_mean: %.4f%%\n", D_mean[end] * 100)
-        @printf("  CZM 最大法向分离位移: %.4e m\n", maximum(δ_max))
+        if opt.czm.model == "mix"
+            @printf("  CZM 最大有效分离位移: %.4e m\n", maximum(δ_max))
+        else
+            @printf("  CZM 最大法向分离位移: %.4e m\n", maximum(δ_max))
+        end
         @printf("  CZM 断裂单元数: %d\n", Int(n_frac[end]))
     end
 

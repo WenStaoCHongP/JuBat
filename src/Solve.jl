@@ -246,6 +246,12 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
                     t_czm_ns = time_ns()
                     try
                         czm_result = update_czm_damage!(case, variables, T_nodes_czm_current)
+                        variables = czm_output_to_variables(czm_result, variables)
+                        δ_max_n_vals = [s.δ_max_n for s in case.mech.damage_states]
+                        δ_max_eff_vals = [s.δ_max_eff for s in case.mech.damage_states]
+                        variables["czm δ_max_n"] = [maximum(δ_max_n_vals)]
+                        variables["czm δ_max_eff"] = [maximum(δ_max_eff_vals)]
+                        variables["czm δ_mean_n"] = [mean(δ_max_n_vals)]
 
                         if czm_snapshots !== nothing
                             push!(czm_snapshots, CZMSnapshot(

@@ -120,5 +120,47 @@ function identify_bc_nodes_czm(czm_mesh::CohesiveMesh, param; opt=nothing, fix_i
         end
     end
 
+    # 分层力学网格在已选定的内/外螺旋边界基础上，
+    # 始终叠加每个材料层的螺旋起点与终点。`fix_inner`
+    # 只决定是否固定内圈，不影响分层端点约束。
+    # Q4 节点序为 [靠内起点, 靠外起点, 靠外终点, 靠内终点]；CZM 节点复制后
+    # 必须从 bulk_element 读取，才能约束实际承载层上的节点。
+    submesh = czm_mesh.czm_submesh
+    submesh === nothing && error(
+        "identify_bc_nodes_czm requires a layered CzmSubmesh to identify spiral endpoints")
+    n_segments = maximum(submesh.thermal_elem_map)
+    n_bulk = size(czm_mesh.bulk_element, 1)
+    n_bulk % n_segments == 0 || throw(DimensionMismatch(
+        "CZM bulk element count $n_bulk is not divisible by angular segment count $n_segments"))
+    n_layers = n_bulk ÷ n_segments
+
+    endpoint_nodes = Set{Int64}()
+    layer_materials = Vector{Symbol}(undef, n_layers)
+    for layer in 1:n_layers
+        first_elem = (layer - 1) * n_segments + 1
+        last_elem = layer * n_segments
+        layer_materials[layer] = submesh.material_type[first_elem]
+        union!(endpoint_nodes,
+            (czm_mesh.bulk_element[first_elem, 1],
+             czm_mesh.bulk_element[first_elem, 2]),
+            (czm_mesh.bulk_element[last_elem, 4],
+             czm_mesh.bulk_element[last_elem, 3]))
+    end
+
+    # 开口卷绕端的两个特定节点保持自由：第二个 SP 的靠外起点、
+    # 第一层 PE 的靠内终点。其余端点与原边界集合取并集。
+    second_sp_layer = findall(==(:SP), layer_materials)[2]
+    first_pe_layer = findfirst(==(:PE), layer_materials)
+    first_pe_layer === nothing && error(
+        "identify_bc_nodes_czm requires at least one PE layer")
+    second_sp_first_elem = (second_sp_layer - 1) * n_segments + 1
+    first_pe_last_elem = first_pe_layer * n_segments
+    delete!(endpoint_nodes, czm_mesh.bulk_element[second_sp_first_elem, 2])
+    delete!(endpoint_nodes, czm_mesh.bulk_element[first_pe_last_elem, 4])
+
+    for node in endpoint_nodes
+        bc_nodes[node] = :fixed_xy
+    end
+
     return bc_nodes, inner_count, outer_count
 end
