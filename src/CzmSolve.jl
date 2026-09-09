@@ -120,6 +120,37 @@ function solve_czm_linear_system_cached!(
 end
 
 """
+    solve_equilibrated(K_bc, R_bc)
+
+geo 路径线性求解的对角均衡化：D = diag(1/√colmax)，求解 (D·K·D)·y = D·R 后回代
+Δu = D·y。装配切线在归一化体系下量级跨约 22 个数量级，直接分解时 UMFPACK 数值
+主元退化（填充 ~69×，单次 ~2.5 s）；均衡化后填充 ~10×、~0.2 s（实测 12–14×）。
+与 `K_bc \\ R_bc` 数学等价，仅舍入路径不同（解偏差 ~1e-9 相对）——geo 路径基线
+自 2026-09-09 批次起按此数值口径重冻结。
+"""
+function solve_equilibrated(K_bc::SparseMatrixCSC{Float64, Int64}, R_bc::Vector{Float64})
+    n = length(R_bc)
+    d = Vector{Float64}(undef, n)
+    @inbounds for j in 1:n
+        vmax = 0.0
+        for p in K_bc.colptr[j]:(K_bc.colptr[j+1]-1)
+            a = abs(K_bc.nzval[p])
+            a > vmax && (vmax = a)
+        end
+        d[j] = 1.0 / sqrt(vmax)
+    end
+    nzval = similar(K_bc.nzval)
+    @inbounds for j in 1:n
+        dj = d[j]
+        for p in K_bc.colptr[j]:(K_bc.colptr[j+1]-1)
+            nzval[p] = d[K_bc.rowval[p]] * K_bc.nzval[p] * dj
+        end
+    end
+    Ks = SparseMatrixCSC(K_bc.m, K_bc.n, K_bc.colptr, K_bc.rowval, nzval)
+    return d .* (Ks \ (d .* R_bc))
+end
+
+"""
     backtrack_line_search!(u, Δu, czm_mesh, param, damage_states, F_ext, F_thermo_chem, R_norm_current, bc_dofs, bc_vals, K_bulk_cached, geom_cache, ws; max_halvings=8)
 
 回溯线搜索（零化式 BC 残差）。仅用于 solve_czm_basic_step。
@@ -291,7 +322,7 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, pa
 
             Δu = try
                 if geo_nl
-                    K_bc \ R_bc
+                    solve_equilibrated(K_bc, R_bc)
                 else
                     solve_czm_linear_system_cached!(ws_basic, K_bc, R_bc)
                 end
