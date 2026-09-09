@@ -1,17 +1,17 @@
 # example/testexample.jl 代码简化基线
 
-- **Baseline ID**: `testexample-20260831T212819+0800`（v9）
+- **Baseline ID**: `testexample-20260902T171549+0800`（v10）
 - **状态**: PASS（exit code 0）
-- **重冻结方式**: 2026-08-31 用户授权的结构层热膨胀系数变更后完整重跑（testexample.jl 纯文字快速门；本批未改绘图代码，未跑 couple_example.jl）
+- **重冻结方式**: 2026-09-02 用户接受正式 60 s J2 输出后重冻结；同批实际运行并目视核对 `couple_example.jl` 三图
 - **入口**: `example/testexample.jl`
 - **命令**: `julia --startup-file=no --project=. example/testexample.jl`
 - **环境**: Julia 1.11.2，Plots 1.40.9，1 thread，`GKSwstype=100`
-- **Git HEAD**: `696f2aa2b4df4a22c01eb1cf7085e1cf5e53f3a2`（运行时 alphaT 变更尚未提交）
-- **脚本 SHA-256**: `63edef136f21d1df99117d66dacddc845f6ba7587f264dec6967c24dfc3d61eb`
-- **标准 TSV 源码聚合 SHA-256**: `0f015cdff6304715bd9391e3be911e76332b5871bf6a2a017c023ac1c3549de6`（TAB 分隔、LF 拼接、末尾无换行；尾行 `# aggregate_sha256` 不计入聚合）
+- **Git HEAD**: `9d47ec072c430dfa14eea0d1fd8b8b15271d7763`（运行时 J2 历史恢复改动尚未提交）
+- **脚本 SHA-256**: `709f45ea2aa15747cd0997c435bb940dc57fc78a10646f0757875e63bbf0dffd`
+- **标准 TSV 源码聚合 SHA-256**: `133e3fe2469456e8077f66965cc26afc643776c96c92f10f2533959682c9d541`（TAB 分隔、LF 拼接、末尾无换行；尾行 `# aggregate_sha256` 不计入聚合）
 - **说明**: 基线建立时工作树已有用户修改；因此以脚本哈希和 46 个 Julia 文件的内容清单为准，而不是仅以 HEAD 为准。
 
-本基线取代 `testexample-20260830T172856+0800`（v8）及更早。本征应变仍按材料分层计算，但 **SP/PCC/NCC.alphaT 不再为零**（30e-6 / 23e-6 / 17e-6 1/K，用户指定）；CZM 与宏观应力使用历史列同一时间层的温度/SOC，非更新输出列保持最近一次有效力学解。`testexample` 的 19 次 CZM 更新全部实际执行并收敛。
+本基线取代 `testexample-20260831T212819+0800`（v9）及更早。`testexample.jl` 现在明确开启 `geo_nonlinear=true` 与 `j2_plasticity=true`：同一次高斯点本构积分生成装配用局部第二 Piola 应力、一致切线和 committed Cauchy 应力，输出只读取已提交状态，不再二次执行塑性本构。19 次 CZM 更新全部实际执行并收敛。
 
 ## 冻结结果
 
@@ -28,11 +28,14 @@
 | maximum temperature | 299.00 K |
 | final CZM D_max | 0.0000% |
 | final CZM D_mean | 0.0000% |
-| maximum normal separation | 7.4202e-13 m |
+| maximum effective separation（mix） | 1.1209e-12 m |
 | fractured elements | 0 |
 | CZM converged updates | 19 / 19 |
-| hoop/tangential 应力范围 | −1.8433~+4.1344 / −0.2618~+0.2167 MPa |
-| result PNGs | 已移至 couple_example.jl（本门不含图；哈希自 v9 起失效，见下） |
+| hoop/tangential 应力范围 | −1.6724~+3.8807 / −0.60032~+0.99966 MPa |
+| maximum Gauss-point von Mises | 4.9749 MPa |
+| maximum equivalent plastic strain | 0.0000 |
+| collector yielding | false |
+| result PNGs | 独立 `couple_example.jl` 绘图门已重跑、目视核对并刷新哈希 |
 
 ## 后续比较规则
 
@@ -40,7 +43,7 @@
 
 - 必须 exit code 0。
 - 网格规模、时间步数和上表全部科学结果必须与基线在脚本打印精度下完全一致。
-- 图片门移至 `example/couple_example.jl`（输出 `output/couple_example/`，三张 final PNG 哈希记录于 metrics.toml [artifact] 注释）；仅当修改涉及绘图/后处理代码时运行并核对。
+- 图片门位于 `example/couple_example.jl`（输出 `output/couple_example/`，三张 final PNG 哈希记录于 metrics.toml `[artifact]`）；它保持自身 flags-off 配置，是独立绘图门，不代表 J2 文字基线应力场。
 - wall-clock、模块耗时、耗时占比不作严格相等要求，只记录趋势。
 - 任一科学指标不一致时，该简化批次不得继续，先定位差异或回滚。
 - 本次未生成 `output/simple_coupling_debug.log`，因此该文件不属于基线。
@@ -49,8 +52,8 @@
 
 - `metrics.toml`: 机器可读的关键指标与比较策略。
 - `source_manifest.tsv`: 运行时所有 Julia 源文件和入口脚本的 SHA-256。
-- `preflight.log`: 本次直接重冻结的源码与输出身份记录。
-- `run.log`: 2026-08-31 v9 完整重跑的控制台记录与重冻结来源。
+- `preflight.log`: 2026-09-02 v10 重冻结的源码、测试和输出身份记录。
+- `run.log`: 2026-09-02 v10 正式 60 s J2 重跑的控制台记录。
 
 ## 基线 v2（2026-08-22 重冻结，用户宏观参数修正）
 
@@ -106,3 +109,14 @@
 - **PNG 哈希自本版起失效**：本批未改绘图/后处理代码，按 AGENTS §9.6 未跑 `couple_example.jl`；但应力场已移动，metrics.toml `[artifact]` 记录的三张云图哈希不再对应当前代码，已标记 `png_hashes_stale_since = "v9"`，暂不作为门禁。下次涉及绘图的批次须重跑并刷新。
 - **运行环境差异**：基线原记录的 `D:/Julia-1.11.2/bin/julia.exe` 在当前机器上不存在；v9 使用同版本 Julia 1.11.2（`C:/Users/19303/AppData/Local/Programs/Julia-1.11.2`），单线程、`GKSwstype=100`、`--startup-file=no` 不变；项目依赖本次 instantiate 到 `C:/Users/19303/.julia`。
 - **源码清单修正（附带）**：`source_manifest.tsv` 共 18 行变化——2 行是本批改动（`src/parameters/Jellyroll.jl`、`src/czm.jl`）；7 行是 v8 冻结后累积但从未重新登记的源码漂移（`example/testexample.jl`、`src/CouplingState.jl`、`src/CsvExport.jl`、`src/Initialisation.jl`、`src/SetParams.jl`、`src/ThermalDistributed.jl`、`src/Tools.jl`）；**8 行是遗留的 LF 归一化哈希**，与其余 29 行的"工作树原始字节"约定不一致，本次统一为后者。清单此前处于两种约定混用状态，现已内部自洽。聚合规则未变并已重新验证（去 CR、TAB 分隔、LF 拼接、末尾无换行、尾行不计入）。
+
+## 基线 v10（2026-09-02，J2 committed 应力历史恢复）
+
+- 触发：用户接受已验证的 J2 科学输出并明确要求更新基线。`PlasticState` 复用现有 `[ne,4]` 高斯点状态，增加 committed Cauchy 应力；第二 Piola 应力 `S` 只在当前 TL/GL 装配中使用，不扩大长期缓存。
+- basic、load-substep、geo arc-length 统一采用 committed/trial 缓冲，失败不提交、收敛后原子替换；旧的 `commit_plastic=true` 求解后二次实体装配已删除。层分辨输出保留四个既有 Pa 键，并增加最大 GP Mises 与最大 `kappa`。
+- `testexample.jl` 保持 60 s、nθ=80，但明确开启 `geo_nonlinear=true`、`j2_plasticity=true`。正式运行 exit 0，网格 1682/1763、19 步、19/19 CZM 收敛、电压/容量/温度与 v9 一致。
+- J2 冻结力学结果：mix 最大有效分离 `1.1209e-12 m`；环向 `−1.6724~+3.8807 MPa`；切向剪切 `−0.60032~+0.99966 MPa`；全时域最大 GP Mises `4.9749 MPa`；最大 `kappa=0`，因此本工况集流体未屈服。
+- v9 后、v10 前已授权的 `fix_inner=false` 23 节点边界增量和 mix 有效分离打印修复一并进入当前冻结工作树。不得把 v9 的法向分离与 v10 的有效分离直接当作同一量比较。
+- 独立代码审阅发现并修复两个边界问题：已有 committed 状态的后续 Cycle phase 不得重新产生 NaN 首列；屈服容差不得依赖绝对应力值 `1.0`。两项均完成 RED/GREEN，复核无 Critical/Important。
+- 受影响测试：`unit_czm_j2` 28/28、J2 integration 50/50、geo C1 3/3、geo arc 32/32、multicycle 17/17、layer stress 63/63、separation 11/11；package 入口加载成功。
+- 本批修改了后处理，因此实际运行并目视核对 `couple_example.jl`。独立 flags-off 绘图门三图哈希为：温度 `540fe42f...93f978c`、环向 `165793bb...505f1aa`、切向剪切 `fadcb7b8...205b285`，重新启用 PNG 门。它们不代表 J2 文字基线的应力场。

@@ -40,6 +40,17 @@ function rotate_stress_to_polar(node, element, sigma_xx, sigma_yy, sigma_xy)
     return sigma_theta_theta, tau_r_theta
 end
 
+function maximum_committed_history(history, label)
+    values = vec(history)
+    first_valid = findfirst(isfinite, values)
+    first_valid === nothing && error("$label has no committed finite value")
+    all(isnan, @view values[1:first_valid-1]) || error(
+        "$label contains an invalid non-NaN value before the first committed state")
+    all(isfinite, @view values[first_valid:end]) || error(
+        "$label contains a non-finite value after the first committed state")
+    return maximum(@view values[first_valid:end])
+end
+
 function main()
     println("="^80)
     println("Jellyroll电池多SPMe并行电化学-热耦合仿真（文字基线）")
@@ -85,6 +96,8 @@ function main()
     opt.czm.iter_method = "basic"
     opt.czm.load_steps = 10
     opt.czm.tol = 1e-3
+    opt.czm.geo_nonlinear = true
+    opt.czm.j2_plasticity = true
 
     println("OK: 参数设置完成")
     @printf("  电流: %.2f A (%.2f C)\n", i, Crates)
@@ -92,6 +105,8 @@ function main()
     @printf("  模式: 多SPMe并行\n")
     @printf("  CZM迭代法: %s\n", opt.czm.iter_method)
     @printf("  CZM载荷子步数: %d\n", opt.czm.load_steps)
+    @printf("  几何非线性: %s\n", string(opt.czm.geo_nonlinear))
+    @printf("  J2集流体塑性: %s\n", string(opt.czm.j2_plasticity))
 
     # ========================================================================
     # 2. 创建案例和网格
@@ -227,6 +242,15 @@ function main()
         minimum(sigma_theta_theta_MPa), maximum(sigma_theta_theta_MPa))
     @printf("  最终切向剪应力范围: %.4e ~ %.4e MPa\n",
         minimum(tau_r_theta_MPa), maximum(tau_r_theta_MPa))
+
+    sigma_vm_max_MPa = maximum_committed_history(
+        result["diffusion stress max vonMises [Pa]"],
+        "diffusion stress max vonMises [Pa]") * 1e-6
+    kappa_max = maximum_committed_history(
+        result["equivalent plastic strain max [-]"],
+        "equivalent plastic strain max [-]")
+    @printf("  全时域最大高斯点 von Mises 应力: %.4e MPa\n", sigma_vm_max_MPa)
+    @printf("  全时域最大等效塑性应变: %.4e\n", kappa_max)
 
     println("\n" * "="^80)
     println("全部完成")

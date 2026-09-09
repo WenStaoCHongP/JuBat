@@ -427,22 +427,17 @@ function update_czm_damage!(case, variables, T_nodes_carry)
         end
         prestress = case.mech.winding_prestress
     end
-    mech_state = nothing
     if czm_opt.j2_plasticity
         geo_nl || error("update_czm_damage!: j2_plasticity=true 需要 geo_nonlinear=true（D-B3-1）。")
         (param.PCC.sigma_y > 0.0 && param.NCC.sigma_y > 0.0) || error(
             "update_czm_damage!: j2_plasticity=true 但 PCC/NCC 的 sigma_y ≤ 0（未设置）。缺参即拦截，不默认、不置零（AGENTS 9.4/9.7）。")
-        if case.mech.plastic_states === nothing
-            case.mech.plastic_states = [PlasticState() for _ in 1:size(czm_mesh.bulk_element, 1), _ in 1:4]
-        end
-        mech_state = case.mech.plastic_states
     end
 
     # 求解器收敛后在 case.mech 上原位提交损伤/位移（失败不触碰）
     result = solve_czm_step(
         czm_mesh, case.mech, param, F_ext, czm_opt;
         dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
-        eigenstrain=eig, mech_state=mech_state, prestress=prestress
+        eigenstrain=eig, prestress=prestress
     )
 
     all(isfinite, result.displacement) || error("CZM solve returned non-finite displacement")
@@ -453,14 +448,6 @@ function update_czm_damage!(case, variables, T_nodes_carry)
     all(isfinite, result.traction_t) || error("CZM solve returned non-finite tangential traction")
     isfinite(result.residual_norm) || error("CZM solve returned a non-finite residual norm")
     result.converged || error("CZM solve did not converge after $(result.iterations) iterations (residual=$(result.residual_norm))")
-
-    if czm_opt.j2_plasticity
-        assemble_coupled_system(czm_mesh, result.displacement, param;
-            damage_states=case.mech.damage_states,
-            geo_nl=true, eigenstrain=eig, plasticity=true, mech_state=mech_state,
-            czm_model=czm_opt.model,
-            commit_plastic=true)
-    end
 
     if case.opt.debug_coupling
         stats = get_damage_statistics(case.mech.damage_states)

@@ -6,14 +6,17 @@
 """
     PlasticState
 
-PCC/NCC 高斯点塑性状态（spec §4.2）。
-`eps_p` 为塑性应变（工程剪切约定，与 E_vec = [E11, E22, γ12] 同构）；`kappa` 为等效塑性应变。
+实体高斯点已提交状态（spec §4.2）。
+`eps_p` 为塑性应变（工程剪切约定，与 E_vec = [E11, E22, γ12] 同构）；`kappa` 为等效塑性应变；
+`sigma` 为与当前已提交构形一致的 Cauchy 应力 `[σ11, σ22, σ12]`。
 """
 mutable struct PlasticState
     eps_p::NTuple{3, Float64}
     kappa::Float64
+    sigma::NTuple{3, Float64}
 end
-PlasticState() = PlasticState((0.0, 0.0, 0.0), 0.0)
+PlasticState() = PlasticState(
+    (0.0, 0.0, 0.0), 0.0, (NaN, NaN, NaN))
 
 """
     foil_params_of(param, mt) -> (σ_y, H)
@@ -38,7 +41,7 @@ plane_stress_C(E::Float64, ν::Float64) =
 """
     qbar(σ) -> σ̄（σ33≡0 的 J2 等效应力：σ̄² = σ11²+σ22²−σ11σ22+3σ12²）
 """
-qbar(σ::AbstractVector{<:Real}) =
+qbar(σ) =
     sqrt(σ[1]^2 + σ[2]^2 - σ[1] * σ[2] + 3 * σ[3]^2)
 
 const _A_PS = [1.0 -0.5 0.0; -0.5 1.0 0.0; 0.0 0.0 3.0]  # σ̄ = sqrt(σᵀAσ)
@@ -63,8 +66,11 @@ function return_mapping_plane_stress(e_mech, C::Matrix{Float64}, σ_y::Float64,
         "return_mapping_plane_stress: tol must be finite and positive, got $tol"))
     e_trial = [e_mech[1] - eps_p[1], e_mech[2] - eps_p[2], e_mech[3] - eps_p[3]]
     σ = C * e_trial
-    f = qbar(σ) - (σ_y + H * κ)
-    if f ≤ 0.0
+    q_trial = qbar(σ)
+    yield_level = σ_y + H * κ
+    f = q_trial - yield_level
+    yield_scale = max(q_trial, abs(yield_level))
+    if yield_scale == 0.0 || f ≤ tol * yield_scale
         return σ, copy(C), (0.0, 0.0, 0.0), 0.0
     end
 
@@ -132,7 +138,60 @@ end
     clone_plastic_states(states::Matrix{PlasticState}) -> 深拷贝（试算/回滚用）
 """
 clone_plastic_states(states::Matrix{PlasticState}) =
-    PlasticState[PlasticState(s.eps_p, s.kappa) for s in states]
+    map(s -> PlasticState(s.eps_p, s.kappa, s.sigma), states)
+
+"""
+    cauchy_from_second_piola(S, F11, F12, F21, F22)
+
+将平面问题的第二 Piola 应力 `S=(S11,S22,S12)` 推前为 Cauchy 应力。
+`F` 与 `S` 只在当前高斯点本构/装配调用中使用，不进入持久缓存。
+"""
+function cauchy_from_second_piola(S, F11, F12, F21, F22)
+    J = F11 * F22 - F12 * F21
+    isfinite(J) && J > 0.0 || error(
+        "cauchy_from_second_piola: non-positive deformation Jacobian J=$J")
+    A11 = F11 * S[1] + F12 * S[3]
+    A12 = F11 * S[3] + F12 * S[2]
+    A21 = F21 * S[1] + F22 * S[3]
+    A22 = F21 * S[3] + F22 * S[2]
+    sigma = ((A11 * F11 + A12 * F12) / J,
+             (A21 * F21 + A22 * F22) / J,
+             (A11 * F21 + A12 * F22) / J)
+    all(isfinite, sigma) || error(
+        "cauchy_from_second_piola: non-finite Cauchy stress for J=$J")
+    return sigma
+end
+
+"""
+    material_point_response(E_vec, F_vec, D_mat, eps0, committed;
+                            plastic_params=nothing, prestress=(0,0,0))
+        -> (S, C_ep, trial)
+
+单次高斯点本构调用同时产生 TL/GL 装配使用的第二 Piola 应力 `S`、算法切线
+`C_ep` 和含 Cauchy 应力的 trial `PlasticState`。函数不修改 committed 状态。
+"""
+function material_point_response(E_vec, F_vec, D_mat, eps0, committed::PlasticState;
+                                 plastic_params=nothing,
+                                 prestress=(0.0, 0.0, 0.0))
+    e_mech = [E_vec[1] - eps0, E_vec[2] - eps0, E_vec[3]]
+    if plastic_params === nothing
+        S_material = D_mat * e_mech
+        C_ep = D_mat
+        eps_p_new = committed.eps_p
+        kappa_new = committed.kappa
+    else
+        sigma_y, H = plastic_params
+        S_material, C_ep, delta_p, delta_kappa = return_mapping_plane_stress(
+            e_mech, D_mat, sigma_y, H, committed.eps_p, committed.kappa)
+        eps_p_new = ntuple(i -> committed.eps_p[i] + delta_p[i], 3)
+        kappa_new = committed.kappa + delta_kappa
+    end
+    S = ntuple(i -> S_material[i] + prestress[i], 3)
+    sigma = cauchy_from_second_piola(
+        S, F_vec[1], F_vec[2], F_vec[3], F_vec[4])
+    trial = PlasticState(eps_p_new, kappa_new, sigma)
+    return S, C_ep, trial
+end
 
 """
     winding_prestress_field(czm_mesh, param) -> Vector{NTuple{3,Float64}}

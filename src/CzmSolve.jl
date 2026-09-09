@@ -127,14 +127,15 @@ end
 accepted 时返回的 u_new 已含 BC 赋值，外部无需再执行 u = u + α*Δu。
 未 accepted 时返回原始 u（未修改），外部应 break。
 """
-function backtrack_line_search!(u::Vector{Float64}, Δu::Vector{Float64},czm_mesh::CohesiveMesh, param::Params, damage_states,F_ext::Vector{Float64}, F_thermo_chem::Vector{Float64},R_norm_current::Float64,bc_dofs::Vector{Int64}, bc_vals::Vector{Float64},K_bulk_cached, geom_cache, ws;max_halvings::Int=8, visc_beta::Float64=1.0, czm_model::String="model1", fix_inner::Bool=true, geo_nl::Bool=false, eigenstrain=nothing, plasticity::Bool=false, mech_state=nothing, prestress=nothing)
+function backtrack_line_search!(u::Vector{Float64}, Δu::Vector{Float64},czm_mesh::CohesiveMesh, param::Params, damage_states,F_ext::Vector{Float64}, F_thermo_chem::Vector{Float64},R_norm_current::Float64,bc_dofs::Vector{Int64}, bc_vals::Vector{Float64},K_bulk_cached, geom_cache, ws;max_halvings::Int=8, visc_beta::Float64=1.0, czm_model::String="model1", fix_inner::Bool=true, geo_nl::Bool=false, eigenstrain=nothing, plasticity::Bool=false, committed_plastic_states=nothing, trial_plastic_states=nothing, prestress=nothing)
     α = 1.0
     for _ in 1:max_halvings
         u_trial = u + α * Δu
         apply_czm_dirichlet!(u_trial, bc_dofs, bc_vals)
 
         _, f_int_trial, _, _ = assemble_coupled_system(czm_mesh, u_trial, param;damage_states=damage_states, K_bulk_cached=K_bulk_cached,geom_cache=geom_cache, ws=ws, visc_beta=visc_beta, czm_model=czm_model, geo_nl=geo_nl, eigenstrain=eigenstrain,
-        plasticity=plasticity, mech_state=mech_state, prestress=prestress)
+        plasticity=plasticity, committed_plastic_states=committed_plastic_states,
+        trial_plastic_states=trial_plastic_states, prestress=prestress)
 
         R_trial = F_ext + F_thermo_chem - f_int_trial
         for (dof, val) in zip(bc_dofs, bc_vals)
@@ -149,6 +150,17 @@ function backtrack_line_search!(u::Vector{Float64}, Δu::Vector{Float64},czm_mes
         α *= 0.5
     end
     return u, R_norm_current, false, 0.0
+end
+
+function prepare_plastic_state_buffers(ms::MechState, czm_mesh::CohesiveMesh,
+                                       plasticity::Bool)
+    plasticity || return nothing, nothing
+    ne = size(czm_mesh.bulk_element, 1)
+    committed = ms.plastic_states === nothing ?
+        [PlasticState() for _ in 1:ne, _ in 1:4] : ms.plastic_states
+    size(committed) == (ne, 4) || throw(DimensionMismatch(
+        "plastic state size $(size(committed)) must equal ($ne, 4)"))
+    return committed, clone_plastic_states(committed)
 end
 
 function apply_czm_dirichlet!(u::AbstractVector{Float64}, bc_dofs::AbstractVector{Int64}, bc_vals::AbstractVector{Float64})
@@ -213,7 +225,7 @@ function spherical_arc_length_correction(delta_u_bar::AbstractVector{<:Real},
     return delta_u, delta_lambda, g
 end
 
-function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, param, ms::MechState; dT_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_n_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_p_elem::Union{Vector{Float64}, Nothing}=nothing, max_iter::Int=50, tol::Float64=1e-8, visc_beta::Float64=1.0, czm_model::String="model1", fix_inner::Bool=true, geo_nl::Bool=false, eigenstrain=nothing, plasticity::Bool=false, mech_state=nothing, prestress=nothing)
+function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, param, ms::MechState; dT_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_n_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_p_elem::Union{Vector{Float64}, Nothing}=nothing, max_iter::Int=50, tol::Float64=1e-8, visc_beta::Float64=1.0, czm_model::String="model1", fix_inner::Bool=true, geo_nl::Bool=false, eigenstrain=nothing, plasticity::Bool=false, prestress=nothing)
         nnode = czm_mesh.nnode
         ndof = 2 * nnode
         n_coh = czm_mesh.n_cohesive
@@ -222,6 +234,8 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, pa
         u = copy(ms.u_prev)
         u_start = copy(u)
         damage_states = clone_damage_states(ms.damage_states)
+        committed_plastic_states, trial_plastic_states =
+            prepare_plastic_state_buffers(ms, czm_mesh, plasticity)
 
         bc_dofs, bc_vals = extract_bc_dofs(czm_mesh, param; fix_inner=fix_inner)
 
@@ -233,7 +247,11 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, pa
             F_thermo_chem = assemble_thermal_chemical_load(czm_mesh, param, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
             K_bulk_cached = bulk_stiffness(czm_mesh, param)
         end
-        eig_kwargs = geo_nl ? (geo_nl=true, eigenstrain=eigenstrain, plasticity=plasticity, mech_state=mech_state, prestress=prestress) : ()
+        eig_kwargs = geo_nl ? (
+            geo_nl=true, eigenstrain=eigenstrain, plasticity=plasticity,
+            committed_plastic_states=committed_plastic_states,
+            trial_plastic_states=trial_plastic_states,
+            prestress=prestress) : ()
         geom_cache = cohesive_geometry(czm_mesh)
         ws_basic = assembly_workspace(czm_mesh)
 
@@ -285,7 +303,7 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, pa
                 break
             end
 
-            u, R_norm, ls_accepted, α_used = backtrack_line_search!(u, Δu, czm_mesh, param,damage_states, F_ext, F_thermo_chem, R_norm,bc_dofs, bc_vals, K_bulk_cached, geom_cache, ws_basic;visc_beta=visc_beta, czm_model=czm_model, geo_nl=geo_nl, eigenstrain=eigenstrain, plasticity=plasticity, mech_state=mech_state, prestress=prestress)
+            u, R_norm, ls_accepted, α_used = backtrack_line_search!(u, Δu, czm_mesh, param,damage_states, F_ext, F_thermo_chem, R_norm,bc_dofs, bc_vals, K_bulk_cached, geom_cache, ws_basic;visc_beta=visc_beta, czm_model=czm_model, geo_nl=geo_nl, eigenstrain=eigenstrain, plasticity=plasticity, committed_plastic_states=committed_plastic_states, trial_plastic_states=trial_plastic_states, prestress=prestress)
 
             if !ls_accepted
                 break
@@ -297,14 +315,22 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, pa
             damage_states = clone_damage_states(ms.damage_states)   # 未收敛不触碰 ms（试探态丢弃）
         end
 
-        K_total, f_int_total, separations, tractions = assemble_coupled_system(czm_mesh, u, param;damage_states=damage_states, K_bulk_cached=K_bulk_cached,geom_cache=geom_cache, ws=ws_basic, visc_beta=visc_beta, czm_model=czm_model, eig_kwargs...)
-
-        R = F_ext + F_thermo_chem - f_int_total
-
-        for (dof, val) in zip(bc_dofs, bc_vals)
-            R[dof] = val - u[dof]
+        if converged
+            _, _, separations, tractions = assemble_czm_system(
+                czm_mesh, u, param; damage_states=damage_states,
+                geom_cache=geom_cache, ws=ws_basic, visc_beta=visc_beta,
+                czm_model=czm_model)
+        else
+            _, f_int_total, separations, tractions = assemble_coupled_system(
+                czm_mesh, u, param; damage_states=damage_states,
+                K_bulk_cached=K_bulk_cached, geom_cache=geom_cache, ws=ws_basic,
+                visc_beta=visc_beta, czm_model=czm_model, eig_kwargs...)
+            R = F_ext + F_thermo_chem - f_int_total
+            for (dof, val) in zip(bc_dofs, bc_vals)
+                R[dof] = val - u[dof]
+            end
+            R_norm = norm(R)
         end
-        R_norm = norm(R)
 
         # 收敛时报告收敛时的残差（损伤更新前），
         # 未收敛时报告重新组装后的残差
@@ -318,6 +344,7 @@ function solve_czm_basic_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, pa
         if converged
             ms.damage_states = damage_states   # 收敛提交（D-提交语义）
             ms.u_prev = copy(u)
+            plasticity && (ms.plastic_states = trial_plastic_states)
         end
         return result
     end
@@ -540,7 +567,7 @@ Newton-Raphson nonlinear solver with load substeps.
 - `result`: CZMResult
 - `new_czm_mesh`: updated CZM mesh with damage states
 """
-function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, param, ms::MechState; dT_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_n_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_p_elem::Union{Vector{Float64}, Nothing}=nothing, max_iter::Int=50, tol::Float64=1e-8, n_load_steps::Int=10, visc_beta::Float64=1.0, czm_model::String="model1", fix_inner::Bool=true, geo_nl::Bool=false, eigenstrain=nothing, plasticity::Bool=false, mech_state=nothing, prestress=nothing)
+function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, param, ms::MechState; dT_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_n_elem::Union{Vector{Float64}, Nothing}=nothing, Δsoc_p_elem::Union{Vector{Float64}, Nothing}=nothing, max_iter::Int=50, tol::Float64=1e-8, n_load_steps::Int=10, visc_beta::Float64=1.0, czm_model::String="model1", fix_inner::Bool=true, geo_nl::Bool=false, eigenstrain=nothing, plasticity::Bool=false, prestress=nothing)
     nnode = czm_mesh.nnode
     ndof = 2 * nnode
     n_coh = czm_mesh.n_cohesive
@@ -549,6 +576,8 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, para
 
     u = copy(ms.u_prev)
     damage_states = clone_damage_states(ms.damage_states)
+    committed_plastic_states, trial_plastic_states =
+        prepare_plastic_state_buffers(ms, czm_mesh, plasticity)
 
     bc_dofs, bc_vals = extract_bc_dofs(czm_mesh, param; fix_inner=fix_inner)
 
@@ -560,7 +589,11 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, para
         F_thermo_chem_total = assemble_thermal_chemical_load(czm_mesh, param, dT_elem, Δsoc_n_elem, Δsoc_p_elem)
         K_bulk_cached = bulk_stiffness(czm_mesh, param)
     end
-    eig_kwargs = geo_nl ? (geo_nl=true, eigenstrain=eigenstrain, plasticity=plasticity, mech_state=mech_state, prestress=prestress) : ()
+    eig_kwargs = geo_nl ? (
+        geo_nl=true, eigenstrain=eigenstrain, plasticity=plasticity,
+        committed_plastic_states=committed_plastic_states,
+        trial_plastic_states=trial_plastic_states,
+        prestress=prestress) : ()
     geom_cache = cohesive_geometry(czm_mesh)
     ws = assembly_workspace(czm_mesh)
 
@@ -708,6 +741,7 @@ function newton_raphson_czm(czm_mesh::CohesiveMesh, F_ext::Vector{Float64}, para
     if result.converged
         ms.damage_states = damage_states   # 收敛提交
         ms.u_prev = copy(u)
+        plasticity && (ms.plastic_states = trial_plastic_states)
     end
     return result
 end
@@ -728,7 +762,7 @@ function solve_czm_arc_geo_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
         arc_length_alpha::Float64=1.0,
         visc_beta::Float64=1.0, czm_model::String="model1", fix_inner::Bool=true,
         eigenstrain=nothing, eigenstrain_ref=nothing,
-        plasticity::Bool=false, mech_state=nothing, prestress=nothing)
+        plasticity::Bool=false, prestress=nothing)
     eigenstrain === nothing && error("solve_czm_arc_geo_step: geo 弧长需要 eigenstrain（λ 的缩放对象）")
     isfinite(arc_length_alpha) && arc_length_alpha > 0.0 || throw(ArgumentError(
         "solve_czm_arc_geo_step: arc_length_alpha must be finite and positive, got $arc_length_alpha"))
@@ -743,13 +777,19 @@ function solve_czm_arc_geo_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
     result = CZMResult(ndof, n_coh)
     u = copy(ms.u_prev)
     damage_states = clone_damage_states(ms.damage_states)
+    committed_plastic_states, trial_plastic_states =
+        prepare_plastic_state_buffers(ms, czm_mesh, plasticity)
     bc_dofs, bc_vals = extract_bc_dofs(czm_mesh, param; fix_inner=fix_inner)
     zero_bc_vals = zeros(Float64, length(bc_vals))
     apply_czm_dirichlet!(u, bc_dofs, bc_vals)
     ws = assembly_workspace(czm_mesh)
     geom_cache = cohesive_geometry(czm_mesh)
 
-    eig_kw = (geo_nl=true, plasticity=plasticity, mech_state=mech_state, prestress=prestress)
+    eig_kw = (
+        geo_nl=true, plasticity=plasticity,
+        committed_plastic_states=committed_plastic_states,
+        trial_plastic_states=trial_plastic_states,
+        prestress=prestress)
     mix(lam) = (dT=eigenstrain_ref === nothing ? lam .* eigenstrain.dT :
                     eigenstrain_ref.dT .+ lam .* (eigenstrain.dT .- eigenstrain_ref.dT),
                 Δsn=eigenstrain_ref === nothing ? lam .* eigenstrain.Δsn :
@@ -809,7 +849,8 @@ function solve_czm_arc_geo_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
             nothing, geom_cache, ws;
             max_halvings=12, visc_beta=visc_beta, czm_model=czm_model, geo_nl=true,
             eigenstrain=mix(0.0), plasticity=plasticity,
-            mech_state=mech_state, prestress=prestress)
+            committed_plastic_states=committed_plastic_states,
+            trial_plastic_states=trial_plastic_states, prestress=prestress)
         accepted || error(
             "solve_czm_arc_geo_step: reference-state line search failed " *
             "(iteration=$(reference_iter + 1), residual=$R0_norm)")
@@ -976,6 +1017,7 @@ function solve_czm_arc_geo_step(czm_mesh::CohesiveMesh, F_ext::Vector{Float64},
     fill_czm_result!(result, u, damage_states, separations, tractions)
     ms.damage_states = damage_states   # λ=1 平衡验收后提交
     ms.u_prev = copy(u)
+    plasticity && (ms.plastic_states = trial_plastic_states)
     return result
 end
 
@@ -988,7 +1030,7 @@ CZM 单步统一入口（2026-08-30 终态签名）：求解配置从 `czm_opt::
 function solve_czm_step(czm_mesh::CohesiveMesh, ms::MechState, param, F_ext::Vector{Float64},
         czm_opt::CzmOptions;
         dT_elem=nothing, Δsoc_n_elem=nothing, Δsoc_p_elem=nothing,
-        eigenstrain=nothing, mech_state=nothing, prestress=nothing)
+        eigenstrain=nothing, prestress=nothing)
     method = lowercase(czm_opt.iter_method)
     max_iter = czm_opt.max_iter
     tol = czm_opt.tol
@@ -1009,20 +1051,20 @@ function solve_czm_step(czm_mesh::CohesiveMesh, ms::MechState, param, F_ext::Vec
             dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
             max_iter=max_iter, tol=tol, n_load_steps=n_load_steps,
             visc_beta=visc_beta, czm_model=czm_model, fix_inner=fix_inner, geo_nl=geo_nl, eigenstrain=eigenstrain,
-            plasticity=czm_opt.j2_plasticity, mech_state=mech_state, prestress=prestress)
+            plasticity=czm_opt.j2_plasticity, prestress=prestress)
     elseif method == "basic"
         return solve_czm_basic_step(czm_mesh, F_ext, param, ms;
             dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
             max_iter=max_iter, tol=tol,
             visc_beta=visc_beta, czm_model=czm_model, fix_inner=fix_inner, geo_nl=geo_nl, eigenstrain=eigenstrain,
-            plasticity=czm_opt.j2_plasticity, mech_state=mech_state, prestress=prestress)
+            plasticity=czm_opt.j2_plasticity, prestress=prestress)
     elseif (method == "arc_length" || method == "arclength" || method == "arc-length") && geo_nl
         return solve_czm_arc_geo_step(czm_mesh, F_ext, param, ms;
             dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
             max_iter=max_iter, tol=tol, n_load_steps=n_load_steps,
             arc_length_alpha=arc_length_alpha,
             visc_beta=visc_beta, czm_model=czm_model, fix_inner=fix_inner, eigenstrain=eigenstrain,
-            plasticity=czm_opt.j2_plasticity, mech_state=mech_state, prestress=prestress)
+            plasticity=czm_opt.j2_plasticity, prestress=prestress)
     elseif method == "arc_length" || method == "arclength" || method == "arc-length"
         return solve_czm_arc_length_step(czm_mesh, F_ext, param, ms;
             dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,

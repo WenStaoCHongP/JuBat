@@ -147,14 +147,21 @@ function StandardVariables(case::Case, num::Int64)
             variables["czm separation normal"] = zeros(Float64, n_coh, num)
             variables["czm separation tangent"] = zeros(Float64, n_coh, num)
             variables["czm separation effective"] = zeros(Float64, n_coh, num)
-            if !(case.opt.czm.geo_nonlinear || case.opt.czm.j2_plasticity || case.opt.czm.winding_prestress)
-                ne_czm = size(case.czm_mesh.bulk_element, 1)
+            ne_czm = size(case.czm_mesh.bulk_element, 1)
+            if case.opt.czm.j2_plasticity
+                variables["diffusion stress xx"] = fill(NaN, ne_czm, num)
+                variables["diffusion stress yy"] = fill(NaN, ne_czm, num)
+                variables["diffusion stress xy"] = fill(NaN, ne_czm, num)
+                variables["diffusion stress vonMises"] = fill(NaN, ne_czm, num)
+                variables["diffusion stress max vonMises"] = fill(NaN, 1, num)
+                variables["equivalent plastic strain max"] = fill(NaN, 1, num)
+            elseif !(case.opt.czm.geo_nonlinear || case.opt.czm.winding_prestress)
                 variables["diffusion stress xx"] = zeros(Float64, ne_czm, num)
                 variables["diffusion stress yy"] = zeros(Float64, ne_czm, num)
                 variables["diffusion stress xy"] = zeros(Float64, ne_czm, num)
                 variables["diffusion stress vonMises"] = zeros(Float64, ne_czm, num)
             else
-                @warn "层分辨应力恢复与几何非线性/J2/预应力路径不相容，本运行不导出 diffusion stress 历史" maxlog=1
+                @warn "层分辨应力恢复与无 J2 状态的几何非线性/预应力路径不相容，本运行不导出 diffusion stress 历史" maxlog=1
             end
         end
     end

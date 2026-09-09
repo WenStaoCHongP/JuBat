@@ -1,6 +1,7 @@
-# v9 rebaseline run — 2026-08-31T21:28:19+0800
-# command: GKSwstype=100 JULIA_NUM_THREADS=1 julia --startup-file=no --project=. example/testexample.jl
-# HEAD=696f2aa2b4df4a22c01eb1cf7085e1cf5e53f3a2 (working tree: alphaT change uncommitted at run time)
+# v10 rebaseline run — 2026-09-02T17:21:56+0800
+# baseline_id: testexample-20260902T171549+0800
+# command: GKSwstype=100 JULIA_NUM_THREADS=1 D:/Julia-1.11.2/bin/julia.exe --startup-file=no --project=. example/testexample.jl
+# HEAD=9d47ec072c430dfa14eea0d1fd8b8b15271d7763 (working tree: J2 history recovery uncommitted at run time)
 # exit code: 0
 #----------------------------------------------------------------------
 ================================================================================
@@ -14,6 +15,8 @@ OK: 参数设置完成
   模式: 多SPMe并行
   CZM迭代法: basic
   CZM载荷子步数: 10
+  几何非线性: true
+  J2集流体塑性: true
 
 [2/4] 创建案例和Jellyroll网格...
 OK: Jellyroll网格创建完成
@@ -40,7 +43,7 @@ start to solve the problem
 [CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
 [CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
 [CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
-[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=1.0e-6, max(δ_eff)=1.0e-6, converged=true, D_max(commit)=0.0, D_visc_max=0.0
 [CZM-Debug] max(δ_n)=1.0e-6, max(δ_eff)=1.0e-6, converged=true, D_max(commit)=0.0, D_visc_max=0.0
 [CZM-Debug] max(δ_n)=1.0e-6, max(δ_eff)=1.0e-6, converged=true, D_max(commit)=0.0, D_visc_max=0.0
 [CZM-Debug] max(δ_n)=1.0e-6, max(δ_eff)=1.0e-6, converged=true, D_max(commit)=0.0, D_visc_max=0.0
@@ -48,10 +51,10 @@ start to solve the problem
 
 [Solve-Timing] CallModel 阶段累计耗时（用于优化定位）
   calls = 19
-  SPMe solve           : 6.134 s (4.77%), avg 322.848 ms/call
-  Branch solver        : 1.620 s (1.26%), avg 85.254 ms/call
-  Thermal distributed  : 1.618 s (1.26%), avg 85.151 ms/call
-  CZM model            : 119.260 s (92.71%), avg 6276.856 ms/call
+  SPMe solve           : 3.095 s (4.89%), avg 162.881 ms/call
+  Branch solver        : 0.774 s (1.22%), avg 40.726 ms/call
+  Thermal distributed  : 0.817 s (1.29%), avg 43.001 ms/call
+  CZM model            : 58.568 s (92.59%), avg 3082.545 ms/call
 finish the simulation
 OK: 求解成功完成
 
@@ -62,17 +65,17 @@ OK: 求解成功完成
   最终电压: 3.9438 V
   电压降: 0.0929 V
 
-  总仿真耗时 (wall-clock): 140.443 s
+  总仿真耗时 (wall-clock): 69.262 s
 
   各模块耗时分解（CallModel累计）:
     模块                        累计 [s] 占比 [%]  平均 [ms/step]
     --------------------------------------------------------------
-    SPMe 求解                      6.134     4.77         322.848
-    分流求解器                     1.620     1.26          85.254
-    热分布式模型                   1.618     1.26          85.151
-    CZM 模型                     119.260    92.71        6276.856
+    SPMe 求解                      3.095     4.89         162.881
+    分流求解器                     0.774     1.22          40.726
+    热分布式模型                   0.817     1.29          43.001
+    CZM 模型                      58.568    92.59        3082.545
     --------------------------------------------------------------
-    CallModel 合计               128.632
+    CallModel 合计                63.254
 
 ================================================================================
 仿真完成
@@ -83,10 +86,12 @@ OK: 求解成功完成
   温度范围: 298.15 K ~ 299.00 K
   CZM 最终 D_max: 0.0000%
   CZM 最终 D_mean: 0.0000%
-  CZM 最大法向分离位移: 7.4202e-13 m
+  CZM 最大有效分离位移: 1.1209e-12 m
   CZM 断裂单元数: 0
-  最终环向应力范围: -1.8433e+00 ~ 4.1344e+00 MPa
-  最终切向剪应力范围: -2.6184e-01 ~ 2.1666e-01 MPa
+  最终环向应力范围: -1.6724e+00 ~ 3.8807e+00 MPa
+  最终切向剪应力范围: -6.0032e-01 ~ 9.9966e-01 MPa
+  全时域最大高斯点 von Mises 应力: 4.9749e+00 MPa
+  全时域最大等效塑性应变: 0.0000e+00
 
 ================================================================================
 全部完成

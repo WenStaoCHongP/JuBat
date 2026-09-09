@@ -189,12 +189,70 @@ function macro_eigenstrain(case, variables, T_nodes)
 end
 
 """
+    project_bulk_stress(czm_mesh, plastic_states)
+
+从已提交的实体高斯点 `PlasticState` 只读归约层分辨 Cauchy 应力。分量和逐点
+von Mises 按参考构形 `weight*detJ` 在每个 Q4 内加权；同时返回全局高斯点最大
+von Mises 与最大等效塑性应变。函数不调用本构更新。
+"""
+function project_bulk_stress(czm_mesh, plastic_states)
+    ne = size(czm_mesh.bulk_element, 1)
+    size(plastic_states) == (ne, 4) || throw(DimensionMismatch(
+        "plastic state size $(size(plastic_states)) must equal ($ne, 4)"))
+    xx = zeros(Float64, ne)
+    yy = zeros(Float64, ne)
+    xy = zeros(Float64, ne)
+    vm = zeros(Float64, ne)
+    area = zeros(Float64, ne)
+    gp_count = zeros(Int, ne)
+    max_vm = -Inf
+    max_kappa = -Inf
+    gs = czm_mesh.bulk_mesh.gs
+    for q in eachindex(gs.weight)
+        e = gs.ele[q]
+        1 <= e <= ne || error(
+            "project_bulk_stress: Gauss point $q refers to invalid element $e")
+        gp_count[e] += 1
+        g = gp_count[e]
+        1 <= g <= 4 || error(
+            "project_bulk_stress: bulk element $e has more than four Gauss points")
+        state = plastic_states[e, g]
+        all(isfinite, state.sigma) && isfinite(state.kappa) || error(
+            "project_bulk_stress: non-finite committed state at element $e Gauss point $g")
+        wJ = gs.weight[q] * gs.detJ[q]
+        isfinite(wJ) && wJ > 0.0 || error(
+            "project_bulk_stress: non-positive Gauss weight at element $e Gauss point $g")
+        sigma_vm = qbar(state.sigma)
+        xx[e] += wJ * state.sigma[1]
+        yy[e] += wJ * state.sigma[2]
+        xy[e] += wJ * state.sigma[3]
+        vm[e] += wJ * sigma_vm
+        area[e] += wJ
+        max_vm = max(max_vm, sigma_vm)
+        max_kappa = max(max_kappa, state.kappa)
+    end
+    all(==(4), gp_count) || error(
+        "project_bulk_stress: every bulk element must have four Gauss points")
+    xx ./= area
+    yy ./= area
+    xy ./= area
+    vm ./= area
+    return (xx=xx, yy=yy, xy=xy, vonMises=vm,
+            maxVonMises=max_vm, maxKappa=max_kappa)
+end
+
+"""
     compute_macro_stress(case, variables, T_nodes)
 
 以当前已收敛 `case.mech.u_prev` 和同一时间层载荷恢复四个层分辨应力分量。
 返回归一化到 `scale.σ_czm` 的 NamedTuple；调用方负责决定历史记录时刻。
 """
 function compute_macro_stress(case, variables, T_nodes)
+    if case.opt.czm.j2_plasticity
+        case.mech.plastic_states === nothing && error(
+            "compute_macro_stress: J2 state is unavailable before the first converged mechanical solve")
+        return project_bulk_stress(case.czm_mesh, case.mech.plastic_states)
+    end
     czm_mesh = case.czm_mesh
     ε0 = macro_eigenstrain(case, variables, T_nodes)
     sigma_xx, sigma_yy, sigma_xy, sigma_vm = recover_bulk_stress(
@@ -208,6 +266,10 @@ function write_macro_stress!(variables_hist, v, stress)
     variables_hist["diffusion stress yy"][:, v] = stress.yy
     variables_hist["diffusion stress xy"][:, v] = stress.xy
     variables_hist["diffusion stress vonMises"][:, v] = stress.vonMises
+    haskey(variables_hist, "diffusion stress max vonMises") &&
+        (variables_hist["diffusion stress max vonMises"][1, v] = stress.maxVonMises)
+    haskey(variables_hist, "equivalent plastic strain max") &&
+        (variables_hist["equivalent plastic strain max"][1, v] = stress.maxKappa)
     return variables_hist
 end
 
@@ -216,7 +278,8 @@ end
 
 恢复当前已收敛层分辨应力并写入第 `v` 个历史列。Solve 主循环另行保存最近一次
 实际 CZM 更新的恢复结果，使非更新步保持该有效状态而不是保留预分配零。
-非线性路径不分配历史键，此处按既有门控原样返回。
+J2 路径读取 committed 高斯点状态；无 J2 状态的其他非线性路径不分配历史键，
+此处按既有门控原样返回。
 """
 function export_macro_stress(case, variables, variables_hist, v, T_nodes)
     (case.opt.czm.enabled && case.czm_mesh !== nothing) || return variables_hist

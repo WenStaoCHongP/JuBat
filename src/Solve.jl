@@ -182,8 +182,13 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         case.mech = MechState(case.czm_mesh)
     end
     macro_stress_active = czm_active && haskey(variables_hist, "diffusion stress xx")
-    latest_macro_stress = macro_stress_active ?
-        compute_macro_stress(case, variables, T_nodes_carry) : nothing
+    latest_macro_stress = if !macro_stress_active
+        nothing
+    elseif case.opt.czm.j2_plasticity && case.mech.plastic_states === nothing
+        nothing
+    else
+        compute_macro_stress(case, variables, T_nodes_carry)
+    end
     czm_step_count = 0
 
     dt_init = 1e-8

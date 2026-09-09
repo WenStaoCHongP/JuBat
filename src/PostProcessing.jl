@@ -123,6 +123,12 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
             result["diffusion stress yy [Pa]"] = variables["diffusion stress yy"][:, 1:v] * case.param.scale.σ_czm
             result["diffusion stress xy [Pa]"] = variables["diffusion stress xy"][:, 1:v] * case.param.scale.σ_czm
             result["diffusion stress vonMises [Pa]"] = variables["diffusion stress vonMises"][:, 1:v] * case.param.scale.σ_czm
+            if haskey(variables, "diffusion stress max vonMises")
+                result["diffusion stress max vonMises [Pa]"] =
+                    variables["diffusion stress max vonMises"][:, 1:v] * case.param.scale.σ_czm
+                result["equivalent plastic strain max [-]"] =
+                    variables["equivalent plastic strain max"][:, 1:v]
+            end
         end
     end
     return result
