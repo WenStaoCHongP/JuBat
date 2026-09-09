@@ -8,12 +8,12 @@
 
 JuBat 是基于 Julia 的电池建模框架，采用二阶有限元方法 (FEM) 求解方程。本项目专注于 **Jellyroll（果冻卷）型号电池**的多物理场耦合仿真：
 
-| 物理场 | 模型 | 技术文档 |
+| 物理场 | 模型 | 技术文档（KB raw 底稿） |
 |--------|------|----------|
-| 电化学 | SPMe (Single Particle Model with electrolyte) | `md/04_电化学模型_SPMe.md` |
-| 热学 | 二维分布式热模型 (各向异性导热) | `md/05_热模型_二维分布式.md` |
-| 力学 | 内聚力模型 (CZM) | `md/06_内聚力模型_CZM.md` |
-| 耦合 | 界面热阻模型 | `md/07_界面热阻模型.md` |
+| 电化学 | SPMe (Single Particle Model with electrolyte) | `KB/raw/repos/jubat/md-raw/04_电化学模型_SPMe.md` |
+| 热学 | 二维分布式热模型 (各向异性导热) | `KB/raw/repos/jubat/md-raw/05_热模型_二维分布式.md` |
+| 力学 | 内聚力模型 (CZM) | `KB/raw/repos/jubat/md-raw/06_内聚力模型_CZM.md` |
+| 耦合 | 界面热阻模型 | `KB/raw/repos/jubat/md-raw/07_界面热阻模型.md` |
 
 **参考文献**: W. Ai, Y. Liu, Improving the convergence rate of Newman's battery model using 2nd order finite element method, J. Energy Storage. 67 (2023) 107512.
 
@@ -21,17 +21,22 @@ JuBat 是基于 Julia 的电池建模框架，采用二阶有限元方法 (FEM) 
 
 ## 2. 技术文档索引
 
-详细技术文档位于 `md/` 目录，按层次组织：
+> **2026-09-09 迁移**：原 `md/` 手册与 `test/`、`tools/` 已迁出至知识库
+> `KB = D:/OneDrive/Desktop/lib知识库/lib-knowledge-base`（下称 KB）。
+> - 原始手册底稿（只读）：`KB/raw/repos/jubat/md-raw/`（原 `md/` 全部 65 文件，含 `对照/`、`源码函数索引/`）
+> - 编译后互链文章：`KB/wiki/concepts|topics/`（一模型一文；SPMe/CZM 与既有文献概念互链）
+> - `test/`、`tools/` 快照：`KB/raw/repos/jubat/{test,tools}/`；工作区恢复用仓库根 `restore-from-kb.jl`
+> - docs 历史归档：`KB/raw/repos/jubat/docs-archive/`
 
 ### 第一层：参数与基础 (01-03)
-| 编号 | 文档 | 内容 |
+| 编号 | 底稿（KB/raw/repos/jubat/md-raw/） | 内容 |
 |------|------|------|
 | 01 | `01_参数定义与归一化.md` | 物理参数、电化学/热学/机械归一化、Jellyroll专用参数 |
 | 02 | `02_几何与网格.md` | 阿基米德螺旋线、collector-seeded网格、COH2D4单元、CohesiveMesh结构 |
 | 03 | `03_边界条件.md` | 侧面/极耳冷却、界面热阻边界条件 |
 
 ### 第二层：模型实现 (04-07)
-| 编号 | 文档 | 内容 |
+| 编号 | 底稿（KB/raw/repos/jubat/md-raw/） | 内容 |
 |------|------|------|
 | 04 | `04_电化学模型_SPMe.md` | 颗粒扩散、电解液守恒、Butler-Volmer、机械耦合 |
 | 05 | `05_热模型_二维分布式.md` | 能量方程、分层热源、各向异性导热、极坐标FVM |
@@ -39,14 +44,14 @@ JuBat 是基于 Julia 的电池建模框架，采用二阶有限元方法 (FEM) 
 | 07 | `07_界面热阻模型.md` | 间隙导热系数、损伤耦合、使用建议 |
 
 ### 第三层：算法与求解 (08-10)
-| 编号 | 文档 | 内容 |
+| 编号 | 底稿（KB/raw/repos/jubat/md-raw/） | 内容 |
 |------|------|------|
 | 08 | `08_逐单元算法.md` | 多SPMe并行架构、状态向量设计、分层热源计算 |
 | 09 | `09_分流求解器.md` | Newton-Raphson分流、截止电压检测、CZM失效处理 |
 | 10 | `10_参数传递与模块架构.md` | Case/variables结构、CycleSolver、耦合数据流 |
 
 ### 第四层：验证方案 (11-13)
-| 编号 | 文档 | 内容 |
+| 编号 | 底稿（KB/raw/repos/jubat/md-raw/） | 内容 |
 |------|------|------|
 | 11 | `11_电化学验证方案.md` | SPMe验证、验收标准 |
 | 12 | `12_热模型验证方案.md` | 圆环精确解、FVM验证 |
@@ -124,7 +129,7 @@ yt_chem[e] = [cn_surf[1:Nrn]; cp_surf[1:Nrp]; ce[1:Nel]]
 M_global = blockdiag(M_elems..., MT)
 ```
 
-详见 `md/08_逐单元算法.md`。
+详见 `KB/raw/repos/jubat/md-raw/08_逐单元算法.md`。
 
 ### 4.2 Jellyroll 几何
 
@@ -134,7 +139,7 @@ M_global = blockdiag(M_elems..., MT)
 - 螺旋增长率 `b = t_repeat / (2π)`
 - 层序: PE → PCC → PE → SP → NE → NCC → NE → SP
 
-详见 `md/02_几何与网格.md`。
+详见 `KB/raw/repos/jubat/md-raw/02_几何与网格.md`。
 
 ### 4.3 耦合数据流
 
@@ -158,7 +163,7 @@ CZM (内聚力模型)
 └─────────────────────────────┘
 ```
 
-详见 `md/10_参数传递与模块架构.md`。
+详见 `KB/raw/repos/jubat/md-raw/10_参数传递与模块架构.md`。
 
 ---
 
@@ -321,7 +326,7 @@ opt.debug_log_path = "output/debug.log"
 - 验证脚本已更新以使用统一归一化方案
 - 网格坐标已归一化（`x* = x / L`），从网格积分得到的 `A_elem` 是无量纲面积
 - 计算物理功率时必须乘以 `scale.L^2` 转换为物理面积
-- 详见 `docs/plans/thermal_verify_normalization_findings.md`
+- 详见 `KB/raw/repos/jubat/docs-archive/thermal_verify/`（原 docs/plans，已归档）
 
 ### 8.3 常见问题
 
@@ -366,7 +371,7 @@ opt.debug_log_path = "output/debug.log"
 **结果还原**：
 结果需通过 `param_dim.scale` 中的参考值还原为物理单位。
 
-详见 `md/01_参数定义与归一化.md`。
+详见 `KB/raw/repos/jubat/md-raw/01_参数定义与归一化.md`。
 
 ### 9.2 状态管理
 
@@ -401,7 +406,7 @@ JuBat 区分两个尺度的弹性模量，**不可混用**：
 
 CZM 求解统一入口：`solve_czm_step(czm_mesh, case.mech, param, F_ext, opt.czm; dT_elem=…, Δsoc_n_elem=…, Δsoc_p_elem=…) -> CZMResult`。
 
-详见 `md/15_颗粒与极片模量区分.md`。
+详见 `KB/raw/repos/jubat/md-raw/15_颗粒与极片模量区分.md`。
 
 ### 9.5 planning-with-files 文件存放约定
 
@@ -409,11 +414,17 @@ CZM 求解统一入口：`solve_czm_step(czm_mesh, case.mech, param, F_ext, opt.
 - `<中文任务名>` 采用与 `docs/planning-with-files/` 现有子目录一致的简短中文主题命名，例如 `代码简化计划评审`。
 - 不得将这三个文件直接创建在项目根目录；若误建，应迁移到对应任务子目录，并避免覆盖已有任务记录。
 - `docs/planning-with-files/index.md` 是规划文件总索引；新增、迁移或删除任务目录/文件后，须同步更新任务说明、时间、Git 修改次数与跟踪状态。
+- **任务收尾归档（2026-09-09 起）**：任务完成后，任务目录归档至 `KB/raw/repos/jubat/docs-archive/planning-with-files/` 并从仓库删除；`index.md` 对应行标注"已归档 KB + 日期"。挂起/未完成任务目录保留在仓库。
 
-### 9.6 代码简化基线约定（两级验证，2026-08-29 减负）
+### 9.6 代码简化基线约定（两级验证，2026-08-29 减负；2026-09-09 适配归档工作流）
 
 - `example/testexample.jl`（纯文字结果输出，60 s）是 `src/` 代码修改的快速行为基线；基线档案位于 `Simplify/baseline/testexample/`，总入口为 `Simplify/baseline.md`。全套绘图代码在 `example/couple_example.jl`（输出 `output/couple_example/`）。
-- 常规修改不必跑全套验证，只需：① 运行受影响部分的验证（相关 `test/` 文件与示例脚本）；② 以 Julia 1.11.2、单线程、`GKSwstype=100`、`--startup-file=no` 跑一次 60 秒 `testexample.jl`。
+- **test/tools 已归档 KB**：`test/`、`tools/` 不在工作区，位于 `KB/raw/repos/jubat/`。修改 `src/` 需要跑测试时的标准流程：
+  1. `julia restore-from-kb.jl --what test`（需要 tools 时另加 `--what tools`）
+  2. 运行相关 `test/` 文件与示例脚本验证
+  3. 若测试/工具被修改：`julia restore-from-kb.jl --sync --what test`（逐项）回写 KB，并提交 KB
+  4. `rm -rf test tools` 清理恢复副本，保持 `git status` 干净
+- 常规修改不必跑全套验证，只需：① 按上述流程运行受影响部分的验证；② 以 Julia 1.11.2、单线程、`GKSwstype=100`、`--startup-file=no` 跑一次 60 秒 `testexample.jl`。
 - 快速门判定：退出码、网格/步数、`metrics.toml` 中的科学结果（含应力范围文字指标）按记录精度一致；运行耗时仅供参考。
 - 仅当修改涉及绘图/后处理代码时，另跑 `example/couple_example.jl` 并核对三张 final PNG SHA-256。
 - 任一强制指标不一致时，停止后续修改并定位或回退该批次，不得以“数值接近”代替基线一致。
@@ -434,7 +445,7 @@ CZM 求解统一入口：`solve_czm_step(czm_mesh, case.mech, param, F_ext, opt.
 
 ### 9.9 结果输出存放约定
 
-- 所有脚本（`tools/`、`example/`、`test/` 等）输出结果数据（CSV、PNG/SVG 图片、报告、日志等）时，必须写入 `output/<脚本名>/` 子目录；`<脚本名>` 取脚本文件主干（不含扩展名），保证从目录名即可识别输出来源，例如 `tools/check_collector_mesh.jl` 的输出写入 `output/check_collector_mesh/`。
+- 所有脚本（`tools/`、`example/`、`test/` 等，`tools/`、`test/` 已归档 KB、按 §9.6 恢复使用）输出结果数据（CSV、PNG/SVG 图片、报告、日志等）时，必须写入 `output/<脚本名>/` 子目录；`<脚本名>` 取脚本文件主干（不含扩展名），保证从目录名即可识别输出来源，例如 `tools/check_collector_mesh.jl` 的输出写入 `output/check_collector_mesh/`。
 - 输出路径必须基于 `@__DIR__` 构造（如 `joinpath(@__DIR__, "..", "output", "<脚本名>")`），不得依赖运行时工作目录，也不得写入仓库根目录、`tools/` 目录或其他与脚本名无关的 `output/` 子目录。
 - 目录不存在时用 `mkpath` 创建；同脚本重复运行允许覆盖旧输出。
 
