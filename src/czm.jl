@@ -371,6 +371,154 @@ function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, param::Params)
 end
 
 """
+    bulk_gauss_geometry(czm_mesh; gsorder=2) -> Vector{Vector{BulkElementGP}}
+
+逐单元参考几何高斯数据（w/detJ/dNdx/dNdy，与 u 无关）的惰性缓存，挂
+`CohesiveMesh.bulk_gp_geom`（参数冻结契约：对象身份即失效判据）。值由 IntQ4
+原路径一次性填充，供 `gl_element_residual_tangent` 逐 GP 复用，省去每次装配
+对 LagrangeBasis/Jacobian/inv 的重复计算。
+"""
+struct BulkElementGP
+    w::Float64
+    detJ::Float64
+    dNdx::Vector{Float64}
+    dNdy::Vector{Float64}
+end
+
+function bulk_gauss_geometry(czm_mesh::CohesiveMesh; gsorder::Int=2)
+    cache = czm_mesh.bulk_gp_geom
+    if cache === nothing
+        element = czm_mesh.bulk_element
+        node = czm_mesh.node
+        ne0 = size(element, 1)
+        cache = Vector{Vector{BulkElementGP}}(undef, ne0)
+        for e in 1:ne0
+            elem_nodes = element[e, :]
+            x_e = node[elem_nodes, 1]
+            y_e = node[elem_nodes, 2]
+            gps = Vector{BulkElementGP}(undef, 0)
+            IntQ4(x_e, y_e; order=gsorder) do ξ, η, w, dNdx, dNdy, detJ
+                push!(gps, BulkElementGP(w, detJ, copy(dNdx), copy(dNdy)))
+            end
+            cache[e] = gps
+        end
+        czm_mesh.bulk_gp_geom = cache
+    end
+    return cache::Vector{Vector{BulkElementGP}}
+end
+
+"""
+bulk 装配两阶段缓存（T1-c，任务 47）：ke/fe 逐单元缓冲、与现行三元组 sparse()
+同 pattern 的预分配 CSC、以及每元素 8×8 块到 CSC 存储位的定位表 pmap。
+pattern 由与旧路径完全相同的三元组顺序构建；散射阶段按元素序累加，
+与 Base sparse! 的零初始化+顺序累加逐位一致。
+"""
+struct BulkAssemblyCache
+    ke::Array{Float64, 3}
+    fe::Matrix{Float64}
+    colptr::Vector{Int64}
+    rowval::Vector{Int64}
+    nzval::Vector{Float64}
+    pmap::Array{Int64, 3}
+end
+
+function bulk_assembly_cache(czm_mesh::CohesiveMesh)
+    cache = czm_mesh.bulk_asm
+    if cache === nothing
+        element = czm_mesh.bulk_element
+        ne0 = size(element, 1)
+        ndof = 2 * czm_mesh.nnode
+        I_idx = Int64[]
+        J_idx = Int64[]
+        sizehint!(I_idx, ne0 * 64)
+        sizehint!(J_idx, ne0 * 64)
+        dofs = Vector{Int64}(undef, 8)
+        for e in 1:ne0
+            elem_nodes = element[e, :]
+            for (k, n) in enumerate(elem_nodes)
+                dofs[2*k-1] = 2*n - 1
+                dofs[2*k] = 2*n
+            end
+            for a in 1:8, b in 1:8
+                push!(I_idx, dofs[a])
+                push!(J_idx, dofs[b])
+            end
+        end
+        K0 = sparse(I_idx, J_idx, zeros(Float64, length(I_idx)), ndof, ndof)
+        pmap = Array{Int64, 3}(undef, 8, 8, ne0)
+        for e in 1:ne0
+            elem_nodes = element[e, :]
+            for (k, n) in enumerate(elem_nodes)
+                dofs[2*k-1] = 2*n - 1
+                dofs[2*k] = 2*n
+            end
+            for a in 1:8, b in 1:8
+                col = dofs[b]
+                row = dofs[a]
+                lo = K0.colptr[col]
+                hi = K0.colptr[col + 1] - 1
+                p = lo - 1 + searchsortedfirst(view(K0.rowval, lo:hi), row)
+                pmap[a, b, e] = p
+            end
+        end
+        cache = BulkAssemblyCache(zeros(Float64, 8, 8, ne0), zeros(Float64, 8, ne0),
+            K0.colptr, K0.rowval, zeros(Float64, nnz(K0)), pmap)
+        czm_mesh.bulk_asm = cache
+    end
+    return cache::BulkAssemblyCache
+end
+
+"""
+    bulk_element_kernel!(ke, fe, e, ...) -> nothing
+
+两阶段装配的阶段一（可并行）：逐单元的材料准备与 GL 残差/切线计算，写入
+ke[:, :, e] / fe[:, e] 与该单元的 trial 塑性槽位（元素间不相交，线程安全）。
+每单元算术与旧串行循环逐字相同。
+"""
+function bulk_element_kernel!(ke::Array{Float64, 3}, fe::Matrix{Float64}, e::Int,
+                              element::Matrix{Int64}, node::Matrix{Float64},
+                              u::Vector{Float64}, param::Params,
+                              material_type::Vector{Symbol}, plasticity::Bool,
+                              committed_plastic_states, trial_plastic_states,
+                              prestress, dT_el, Δsn, Δsp,
+                              gp_cache::Vector{Vector{BulkElementGP}})
+    mt = material_type[e]
+    local D_mat::Matrix{Float64}, plastic_params
+    E_e, ν_e = moduli_of(param, mt)
+    D_mat = E_e / (1.0 - ν_e^2) * [1.0 ν_e 0.0;
+                                    ν_e 1.0 0.0;
+                                    0.0 0.0 (1.0 - ν_e) / 2.0]
+    plastic_params = nothing
+    if plasticity && (mt === :PCC || mt === :NCC)
+        σ_y, H = foil_params_of(param, mt)
+        σ_y > 0.0 || error(
+            "bulk_element_kernel!: czm_j2_plasticity=true 但 $mt 的 sigma_y ≤ 0（未设置）。")
+        plastic_params = (σ_y, H)
+    end
+    ε0 = 0.0
+    if dT_el !== nothing
+        ε0 = eigenstrain_of(param, mt, dT_el[e], Δsn[e], Δsp[e])
+    end
+    elem_nodes = element[e, :]
+    x_e = node[elem_nodes, 1]
+    y_e = node[elem_nodes, 2]
+    u_e = zeros(Float64, 8)
+    for (k, n) in enumerate(elem_nodes)
+        u_e[2*k-1] = u[2*n-1]
+        u_e[2*k] = u[2*n]
+    end
+    f_e, K_e = gl_element_residual_tangent(x_e, y_e, u_e, D_mat, ε0, 2;
+        committed_gp_states=plasticity ? view(committed_plastic_states, e, :) : nothing,
+        trial_gp_states=plasticity ? view(trial_plastic_states, e, :) : nothing,
+        plastic_params=plastic_params,
+        sigma0=prestress === nothing ? (0.0, 0.0, 0.0) : prestress[e],
+        gp_geom=gp_cache[e])
+    ke[:, :, e] .= K_e
+    fe[:, e] .= f_e
+    return nothing
+end
+
+"""
     gl_element_residual_tangent(x_e, y_e, u_e, D_mat, ε0, gsorder) -> (f_e, K_e)
 
 单个 Q4 的完全 Green-Lagrange 残差/切线（Batch 2，spec §3.2，D9）。坐标与位移均在
@@ -387,7 +535,8 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
                                      trial_gp_states=nothing,
                                      plastic_params=nothing,
                                      sigma0::NTuple{3, Float64}=(0.0, 0.0, 0.0),
-                                     split_KG::Bool=false)
+                                     split_KG::Bool=false,
+                                     gp_geom=nothing)
     (committed_gp_states === nothing) == (trial_gp_states === nothing) ||
         error("gl_element_residual_tangent: committed/trial Gauss-point states must be supplied together")
     if committed_gp_states !== nothing
@@ -402,7 +551,7 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
     K_mat_e = split_KG ? zeros(Float64, 8, 8) : nothing
     K_G_e = split_KG ? zeros(Float64, 8, 8) : nothing
     gp = 0
-    IntQ4(x_e, y_e; order=gsorder) do ξ, η, w, dNdx, dNdy, detJ
+    run_gp = (w, dNdx, dNdy, detJ) -> begin
         gp += 1
         # ∇u
         uxx = 0.0; uxy = 0.0; uyx = 0.0; uyy = 0.0
@@ -468,6 +617,15 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
         K_e .+= wJ .* (G' * Sh * G)
         if split_KG
             K_G_e .+= wJ .* (G' * Sh * G)
+        end
+    end
+    if gp_geom === nothing
+        IntQ4(x_e, y_e; order=gsorder) do ξ, η, w, dNdx, dNdy, detJ
+            run_gp(w, dNdx, dNdy, detJ)
+        end
+    else
+        for g in gp_geom
+            run_gp(g.w, g.dNdx, g.dNdy, g.detJ)
         end
     end
     split_KG && return f_e, K_mat_e, K_G_e
@@ -571,6 +729,30 @@ function assemble_bulk_residual_tangent(
         I_mat = split_KG ? Int64[] : nothing; J_mat = split_KG ? Int64[] : nothing; V_mat = split_KG ? Float64[] : nothing
         I_G = split_KG ? Int64[] : nothing; J_G = split_KG ? Int64[] : nothing; V_G = split_KG ? Float64[] : nothing
         f_gl = zeros(Float64, ndof)
+        gp_cache = bulk_gauss_geometry(czm_mesh)
+        if !split_KG
+            cache = bulk_assembly_cache(czm_mesh)
+            Threads.@threads for e in 1:ne0
+                bulk_element_kernel!(cache.ke, cache.fe, e, element, node, u, param,
+                    submesh.material_type, plasticity, committed_plastic_states,
+                    trial_plastic_states, prestress, dT_el, Δsn, Δsp, gp_cache)
+            end
+            fill!(cache.nzval, 0.0)
+            pmap = cache.pmap
+            for e in 1:ne0
+                elem_nodes = element[e, :]
+                for a in 1:8
+                    dof_a = isodd(a) ? 2 * elem_nodes[(a + 1) ÷ 2] - 1 : 2 * elem_nodes[a ÷ 2]
+                    f_gl[dof_a] += cache.fe[a, e]
+                    for b in 1:8
+                        cache.nzval[pmap[a, b, e]] += cache.ke[a, b, e]
+                    end
+                end
+            end
+            # nzval 返回副本：调用方可跨装配持有返回值（如有限差分测试），
+            # 缓冲区本体仅阶段二内部使用
+            return f_gl, SparseMatrixCSC(ndof, ndof, cache.colptr, cache.rowval, copy(cache.nzval))
+        end
         for e in 1:ne0
             mt = submesh.material_type[e]
             local D_mat::Matrix{Float64}, plastic_params
@@ -605,7 +787,8 @@ function assemble_bulk_residual_tangent(
                                                    trial_gp_states=plasticity ? view(trial_plastic_states, e, :) : nothing,
                                                    plastic_params=plastic_params,
                                                    sigma0=prestress === nothing ? (0.0, 0.0, 0.0) : prestress[e],
-                                                   split_KG=split_KG)
+                                                   split_KG=split_KG,
+                                                   gp_geom=gp_cache[e])
             if split_KG
                 f_e, K_mat_e, K_G_e = res_gl
             else

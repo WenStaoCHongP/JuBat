@@ -427,6 +427,7 @@ CZM 求解统一入口：`solve_czm_step(czm_mesh, case.mech, param, F_ext, opt.
 - 常规修改不必跑全套验证，只需：① 按上述流程运行受影响部分的验证；② 以 Julia 1.11.2、单线程、`GKSwstype=100`、`--startup-file=no` 跑一次 60 秒 `testexample.jl`。
 - 快速门判定：退出码、网格/步数、`metrics.toml` 中的科学结果（含应力范围文字指标）按记录精度一致；运行耗时仅供参考。
 - 仅当修改涉及绘图/后处理代码时，另跑 `example/couple_example.jl` 并核对三张 final PNG SHA-256。
+- **多线程运行口径（2026-09-09 T1-c 起）**：bulk 装配两阶段化为 `Threads.@threads` 并行计算+串行散射（位级不变，`-t1` 语义与现状一致）；提速运行入口可用 `julia -t8` 并配 `OPENBLAS_NUM_THREADS=8`（避免 BLAS 过订阅），基线门仍以 `-t1` 为准。
 - 任一强制指标不一致时，停止后续修改并定位或回退该批次，不得以“数值接近”代替基线一致。
 
 ### 9.7 严格契约判断的后续简化计划

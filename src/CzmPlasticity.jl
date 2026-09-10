@@ -45,6 +45,7 @@ qbar(σ) =
     sqrt(σ[1]^2 + σ[2]^2 - σ[1] * σ[2] + 3 * σ[3]^2)
 
 const _A_PS = [1.0 -0.5 0.0; -0.5 1.0 0.0; 0.0 0.0 3.0]  # σ̄ = sqrt(σᵀAσ)
+const _I4 = Matrix{Float64}(I, 4, 4)  # 一致切线 J⁻¹ 提取用，避免每 GP 构造
 
 """
     return_mapping_plane_stress(e_mech, C, σ_y, H, eps_p, κ) -> (σ, C_ep, Δeps_p, Δκ)
@@ -71,7 +72,7 @@ function return_mapping_plane_stress(e_mech, C::Matrix{Float64}, σ_y::Float64,
     f = q_trial - yield_level
     yield_scale = max(q_trial, abs(yield_level))
     if yield_scale == 0.0 || f ≤ tol * yield_scale
-        return σ, copy(C), (0.0, 0.0, 0.0), 0.0
+        return σ, C, (0.0, 0.0, 0.0), 0.0
     end
 
     G = C[3, 3]
@@ -84,7 +85,7 @@ function return_mapping_plane_stress(e_mech, C::Matrix{Float64}, σ_y::Float64,
     for iter in 1:max_iter
         iterations = iter
         σ1, σ2, σ3, Δγ = x
-        q = qbar([σ1, σ2, σ3])
+        q = qbar(@view x[1:3])
         q > 1e-300 || error("return_mapping_plane_stress: σ̄→0 in plastic step (invalid state)")
         n = (_A_PS * [σ1, σ2, σ3]) / q
         σhat = C * (e_trial .- Δγ .* n)
@@ -106,7 +107,7 @@ function return_mapping_plane_stress(e_mech, C::Matrix{Float64}, σ_y::Float64,
     σn = x[1:3]
     Δγ = x[4]
     Δγ ≥ 0.0 || error("return_mapping_plane_stress: negative plastic multiplier Δγ=$Δγ")
-    q = qbar(σn)
+    q = qbar(@view x[1:3])
     n = (_A_PS * σn) / q
     σhat = C * (e_trial .- Δγ .* n)
     R_final = [σn[1] - σhat[1], σn[2] - σhat[2], σn[3] - σhat[3],
@@ -129,7 +130,7 @@ function return_mapping_plane_stress(e_mech, C::Matrix{Float64}, σ_y::Float64,
     J[4, 4] = -H
     Δeps_p = (Δγ * n[1], Δγ * n[2], Δγ * n[3])
     # 一致切线：C_ep = (J⁻¹)[1:3,1:3]·C（J 为收敛点雅可比）
-    X = J \ Matrix{Float64}(I, 4, 4)
+    X = J \ _I4
     C_ep = X[1:3, 1:3] * C
     return σn, C_ep, Δeps_p, Δγ
 end
