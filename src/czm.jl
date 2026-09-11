@@ -408,6 +408,34 @@ function bulk_gauss_geometry(czm_mesh::CohesiveMesh; gsorder::Int=2)
 end
 
 """
+每线程装配小矩阵复用缓冲（T1-d，任务 47 增补）：run_gp 体内逐 GP 的
+B/G/Sh/BtS/DB/BtDB/GtSh/GtShG 与每元素 f_e/K_e 全部落在此结构，消除
+每步 ~15 万次小分配及多线程下的 GC 争用。`Threads.@threads` 循环体内无
+yield 点，task 不跨元素迁移，按 threadid 取用安全。
+"""
+struct BulkGPScratch
+    f_e::Vector{Float64}
+    K_e::Matrix{Float64}
+    B::Matrix{Float64}
+    G::Matrix{Float64}
+    Sh::Matrix{Float64}
+    Svec::Vector{Float64}
+    BtS::Vector{Float64}
+    DB::Matrix{Float64}
+    BtDB::Matrix{Float64}
+    GtSh::Matrix{Float64}
+    GtShG::Matrix{Float64}
+end
+
+function BulkGPScratch()
+    BulkGPScratch(zeros(Float64, 8), zeros(Float64, 8, 8),
+        zeros(Float64, 3, 8), zeros(Float64, 4, 8), zeros(Float64, 4, 4),
+        Vector{Float64}(undef, 3), Vector{Float64}(undef, 8),
+        Matrix{Float64}(undef, 3, 8), Matrix{Float64}(undef, 8, 8),
+        Matrix{Float64}(undef, 8, 4), Matrix{Float64}(undef, 8, 8))
+end
+
+"""
 bulk 装配两阶段缓存（T1-c，任务 47）：ke/fe 逐单元缓冲、与现行三元组 sparse()
 同 pattern 的预分配 CSC、以及每元素 8×8 块到 CSC 存储位的定位表 pmap。
 pattern 由与旧路径完全相同的三元组顺序构建；散射阶段按元素序累加，
@@ -420,6 +448,7 @@ struct BulkAssemblyCache
     rowval::Vector{Int64}
     nzval::Vector{Float64}
     pmap::Array{Int64, 3}
+    scratch::Vector{BulkGPScratch}
 end
 
 function bulk_assembly_cache(czm_mesh::CohesiveMesh)
@@ -462,7 +491,8 @@ function bulk_assembly_cache(czm_mesh::CohesiveMesh)
             end
         end
         cache = BulkAssemblyCache(zeros(Float64, 8, 8, ne0), zeros(Float64, 8, ne0),
-            K0.colptr, K0.rowval, zeros(Float64, nnz(K0)), pmap)
+            K0.colptr, K0.rowval, zeros(Float64, nnz(K0)), pmap,
+            [BulkGPScratch() for _ in 1:Threads.nthreads()])
         czm_mesh.bulk_asm = cache
     end
     return cache::BulkAssemblyCache
@@ -481,7 +511,8 @@ function bulk_element_kernel!(ke::Array{Float64, 3}, fe::Matrix{Float64}, e::Int
                               material_type::Vector{Symbol}, plasticity::Bool,
                               committed_plastic_states, trial_plastic_states,
                               prestress, dT_el, Δsn, Δsp,
-                              gp_cache::Vector{Vector{BulkElementGP}})
+                              gp_cache::Vector{Vector{BulkElementGP}},
+                              scratch::BulkGPScratch)
     mt = material_type[e]
     local D_mat::Matrix{Float64}, plastic_params
     E_e, ν_e = moduli_of(param, mt)
@@ -512,7 +543,8 @@ function bulk_element_kernel!(ke::Array{Float64, 3}, fe::Matrix{Float64}, e::Int
         trial_gp_states=plasticity ? view(trial_plastic_states, e, :) : nothing,
         plastic_params=plastic_params,
         sigma0=prestress === nothing ? (0.0, 0.0, 0.0) : prestress[e],
-        gp_geom=gp_cache[e])
+        gp_geom=gp_cache[e],
+        scratch=scratch)
     ke[:, :, e] .= K_e
     fe[:, e] .= f_e
     return nothing
@@ -536,7 +568,8 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
                                      plastic_params=nothing,
                                      sigma0::NTuple{3, Float64}=(0.0, 0.0, 0.0),
                                      split_KG::Bool=false,
-                                     gp_geom=nothing)
+                                     gp_geom=nothing,
+                                     scratch=nothing)
     (committed_gp_states === nothing) == (trial_gp_states === nothing) ||
         error("gl_element_residual_tangent: committed/trial Gauss-point states must be supplied together")
     if committed_gp_states !== nothing
@@ -546,10 +579,21 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
     elseif plastic_params !== nothing
         error("gl_element_residual_tangent: plastic_params requires committed/trial Gauss-point states")
     end
-    f_e = zeros(Float64, 8)
-    K_e = zeros(Float64, 8, 8)
+    own = scratch === nothing
+    f_e = own ? zeros(Float64, 8) : scratch.f_e
+    K_e = own ? zeros(Float64, 8, 8) : scratch.K_e
     K_mat_e = split_KG ? zeros(Float64, 8, 8) : nothing
     K_G_e = split_KG ? zeros(Float64, 8, 8) : nothing
+    B = own ? zeros(Float64, 3, 8) : scratch.B
+    G = own ? zeros(Float64, 4, 8) : scratch.G
+    Sh = own ? zeros(Float64, 4, 4) : scratch.Sh
+    Svec = own ? Vector{Float64}(undef, 3) : scratch.Svec
+    BtS = own ? Vector{Float64}(undef, 8) : scratch.BtS
+    DB = own ? Matrix{Float64}(undef, 3, 8) : scratch.DB
+    BtDB = own ? Matrix{Float64}(undef, 8, 8) : scratch.BtDB
+    GtSh = own ? Matrix{Float64}(undef, 8, 4) : scratch.GtSh
+    GtShG = own ? Matrix{Float64}(undef, 8, 8) : scratch.GtShG
+    own || (fill!(f_e, 0.0); fill!(K_e, 0.0))
     gp = 0
     run_gp = (w, dNdx, dNdy, detJ) -> begin
         gp += 1
@@ -584,8 +628,7 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
             trial_gp_states[gp] = trial
             S1, S2, S3 = S
         end
-        # B_GL = ∂E_vec/∂u_e（u=0 时退化为线性 B）
-        B = zeros(Float64, 3, 8)
+        # B_GL = ∂E_vec/∂u_e（u=0 时退化为线性 B）；B 全槽位逐一赋值，复用免清零
         for i in 1:4
             dx, dy = dNdx[i], dNdy[i]
             B[1, 2*i-1] = (1.0 + uxx) * dx
@@ -595,28 +638,34 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
             B[3, 2*i-1] = (1.0 + uxx) * dy + uxy * dx
             B[3, 2*i]   = (1.0 + uyy) * dx + uyx * dy
         end
-        # 残差 f = ∫ Bᵀ S dA
-        BtS = B' * [S1, S2, S3]
+        # 残差 f = ∫ Bᵀ S dA（mul!/axpy! 与 B'*v、.+= wJ.* 同算术序）
+        Svec[1] = S1; Svec[2] = S2; Svec[3] = S3
+        mul!(BtS, B', Svec)
         axpy!(w * detJ, BtS, f_e)
         # 材料切线 ∫ Bᵀ C B dA（塑性时为算法一致切线 C_ep）
-        DB = D_tan * B
+        mul!(DB, D_tan, B)
         wJ = w * detJ
-        K_e .+= wJ .* (B' * DB)
+        mul!(BtDB, B', DB)
+        axpy!(wJ, BtDB, K_e)
         if split_KG
-            K_mat_e .+= wJ .* (B' * DB)
+            axpy!(wJ, BtDB, K_mat_e)
         end
-        # 标准初应力 K_G = ∫ Gᵀ Ŝ G dA
-        G = zeros(Float64, 4, 8)
+        # 标准初应力 K_G = ∫ Gᵀ Ŝ G dA；G 全槽位逐一赋值，复用免清零
         for i in 1:4
             G[1, 2*i-1] = dNdx[i]
             G[2, 2*i-1] = dNdy[i]
-            G[3, 2*i]   = dNdx[i]
-            G[4, 2*i]   = dNdy[i]
+            G[3, 2*i] = dNdx[i]
+            G[4, 2*i] = dNdy[i]
         end
-        Sh = [S1 S3 0.0 0.0; S3 S2 0.0 0.0; 0.0 0.0 S1 S3; 0.0 0.0 S3 S2]
-        K_e .+= wJ .* (G' * Sh * G)
+        Sh[1, 1] = S1;  Sh[1, 2] = S3;  Sh[1, 3] = 0.0; Sh[1, 4] = 0.0
+        Sh[2, 1] = S3;  Sh[2, 2] = S2;  Sh[2, 3] = 0.0; Sh[2, 4] = 0.0
+        Sh[3, 1] = 0.0; Sh[3, 2] = 0.0; Sh[3, 3] = S1;  Sh[3, 4] = S3
+        Sh[4, 1] = 0.0; Sh[4, 2] = 0.0; Sh[4, 3] = S3;  Sh[4, 4] = S2
+        mul!(GtSh, G', Sh)
+        mul!(GtShG, GtSh, G)
+        axpy!(wJ, GtShG, K_e)
         if split_KG
-            K_G_e .+= wJ .* (G' * Sh * G)
+            axpy!(wJ, GtShG, K_G_e)
         end
     end
     if gp_geom === nothing
@@ -735,7 +784,8 @@ function assemble_bulk_residual_tangent(
             Threads.@threads for e in 1:ne0
                 bulk_element_kernel!(cache.ke, cache.fe, e, element, node, u, param,
                     submesh.material_type, plasticity, committed_plastic_states,
-                    trial_plastic_states, prestress, dT_el, Δsn, Δsp, gp_cache)
+                    trial_plastic_states, prestress, dT_el, Δsn, Δsp, gp_cache,
+                    cache.scratch[Threads.threadid()])
             end
             fill!(cache.nzval, 0.0)
             pmap = cache.pmap
