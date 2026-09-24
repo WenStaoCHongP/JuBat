@@ -70,7 +70,7 @@ end
 定向，不能只依赖界面边的节点顺序：Jellyroll 节点沿逆时针 θ 递增时，固定左法向
 指向卷芯内侧，会把物理张开误判为受压。
 """
-function cohesive_local_frame(czm_mesh::CohesiveMesh, elem::AbstractCohesiveElement)
+function cohesive_local_frame(czm_mesh::CohesiveMesh, elem::CohesiveElement)
     n1, n2 = elem.nodes_bottom
     x1, y1 = czm_mesh.node[n1, 1], czm_mesh.node[n1, 2]
     x2, y2 = czm_mesh.node[n2, 1], czm_mesh.node[n2, 2]
@@ -121,6 +121,8 @@ function assemble_czm_system(
     u::Vector{Float64},
     param::Params;
     damage_states=nothing,
+    gp_damage_states=nothing,
+    gp_trial_states=nothing,
     geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,
     ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,
     visc_beta::Float64=1.0,
@@ -130,6 +132,14 @@ function assemble_czm_system(
     ndof = 2 * nnode
     n_coh = czm_mesh.n_cohesive
     states = damage_states === nothing ? error("assemble_czm_system: damage_states 必须传入（2026-08-30 重构后不再挂网格）") : damage_states
+    if gp_damage_states !== nothing
+        ngp = length(NCweight(czm_mesh.bulk_mesh.gs.order)[1])
+        size(gp_damage_states) == (n_coh, ngp) || throw(DimensionMismatch("GP damage history size mismatch"))
+        gp_trial_states === nothing || size(gp_trial_states) == size(gp_damage_states) ||
+            throw(DimensionMismatch("GP trial history size mismatch"))
+    elseif gp_trial_states !== nothing
+        throw(ArgumentError("GP trial history requires GP committed history"))
+    end
 
     # 使用或创建工作区
     if ws === nothing
@@ -176,8 +186,6 @@ function assemble_czm_system(
     Λ = param.scale.L / param.scale.δ_czm
 
     @inbounds for i in 1:n_coh
-        damage_state = states[i]
-
         # 按 interface_type 直读界面参数宿主（:PE_PCC→PCC、:NE_NCC→NCC）
         iface = czm_mesh.cohesive_elements[i].interface_type
         ip = iface === :PE_PCC ? param.PCC : param.NCC
@@ -215,7 +223,8 @@ function assemble_czm_system(
             ws.u_e[5] = u[dofs[5]]; ws.u_e[6] = u[dofs[6]]
             ws.u_e[7] = u[dofs[7]]; ws.u_e[8] = u[dofs[8]]
 
-            for (ξ, w) in zip(pts, wts)
+            for (g, (ξ, w)) in enumerate(zip(pts, wts))
+                damage_state = gp_damage_states === nothing ? states[i] : gp_damage_states[i, g]
                 N1 = 0.5 * (1.0 - ξ)
                 N2 = 0.5 * (1.0 + ξ)
 
@@ -234,7 +243,10 @@ function assemble_czm_system(
                 δ_n = Λ * ws.δ_local[1]
                 δ_t = Λ * ws.δ_local[2]
 
-                T_n, T_t, _, _ = bilinear_traction_state(δ_n, δ_t, damage_state, ip, czm_model; visc_beta=visc_beta)
+                T_n, T_t, _, new_state = bilinear_traction_state(δ_n, δ_t, damage_state, ip, czm_model; visc_beta=visc_beta)
+                if gp_trial_states !== nothing
+                    gp_trial_states[i, g] = new_state
+                end
                 dT_dδ = bilinear_tangent(δ_n, δ_t, damage_state, ip, czm_model; visc_beta=visc_beta)
 
                 J = L / 2.0
@@ -958,6 +970,8 @@ function assemble_coupled_system(
     F_ext::Union{Vector{Float64}, Nothing}=nothing,
     F_thermo_chem::Union{Vector{Float64}, Nothing}=nothing,
     damage_states=nothing,
+    gp_damage_states=nothing,
+    gp_trial_states=nothing,
     K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,
     geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,
     ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,
@@ -987,6 +1001,7 @@ function assemble_coupled_system(
     # 内聚力刚度和内力（使用几何缓存和工作区，透传 param）
     K_coh, f_int_coh, separations, tractions = assemble_czm_system(
         czm_mesh, u, param; damage_states=damage_states,
+        gp_damage_states=gp_damage_states, gp_trial_states=gp_trial_states,
         geom_cache=geom_cache, ws=ws, visc_beta=visc_beta, czm_model=czm_model)
 
     # 总刚度矩阵

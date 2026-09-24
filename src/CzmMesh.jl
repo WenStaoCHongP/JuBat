@@ -1,16 +1,5 @@
 # CZM cohesive mesh topology and construction.
 
-mutable struct CohesiveElement <: AbstractCohesiveElement
-    id::Int64
-    nodes::Vector{Int64}           # [n1, n2, n3, n4]
-    nodes_bottom::Vector{Int64}    # [n1, n2] 底面节点
-    nodes_top::Vector{Int64}       # [n4, n3] 顶面节点（顺序与底面一致）
-    length::Float64                # 单元长度
-    interface_type::Symbol         # 2 种本构/材料类型之一；不表示 4 个真实面的计数
-    host_outer_elem::Int           # 外层 Q4 单元 id（在 czm_submesh.mesh.element 中的行号）
-    host_inner_elem::Int           # 内层 Q4 单元 id
-end
-
 """
     create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param) -> CohesiveMesh
 

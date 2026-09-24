@@ -76,7 +76,7 @@ end
 """
 function compute_separation(
     czm_mesh::CohesiveMesh,
-    elem::AbstractCohesiveElement,
+    elem::CohesiveElement,
     u::Vector{Float64},
 )
     _, _, _, R = cohesive_local_frame(czm_mesh, elem)

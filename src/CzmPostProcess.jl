@@ -10,7 +10,7 @@
 """
     get_damage_statistics(damage_states)
 """
-function get_damage_statistics(damage_states::AbstractVector{<:AbstractDamageState})
+function get_damage_statistics(damage_states::AbstractVector{DamageState})
     n = length(damage_states)
 
     if n == 0
@@ -35,7 +35,7 @@ end
 """
     check_fracture_criterion(damage_states; threshold=0.99)
 """
-function check_fracture_criterion(damage_states::AbstractVector{<:AbstractDamageState}; threshold::Float64=0.99)
+function check_fracture_criterion(damage_states::AbstractVector{DamageState}; threshold::Float64=0.99)
     stats = get_damage_statistics(damage_states)
 
     is_fractured_avg = stats.mean_D >= threshold
@@ -59,6 +59,7 @@ end
 """
 function reset_damage_states!(ms::MechState)
     ms.damage_states = [DamageState() for _ in 1:length(ms.damage_states)]
+    ms.gp_damage_states = nothing
     return ms
 end
 
@@ -90,6 +91,8 @@ function accumulate_cycle_damage!(ms::MechState, cycle_damage_increment::Float64
         new_damage_states[i] = new_state
     end
     ms.damage_states = new_damage_states
+    # 外部按单元修改历史后，下一次逐GP求解须从该单元状态重新初始化。
+    ms.gp_damage_states = nothing
     return ms
 end
 

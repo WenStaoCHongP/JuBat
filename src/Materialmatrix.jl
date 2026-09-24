@@ -82,11 +82,13 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 		new_state.D = 1.0
 		new_state.D_visc = 1.0
 		new_state.fractured = true
+		# 2026-09-22 裂纹闭合（Abaqus 标准行为：压缩刚度永不损伤，完全断裂后作为防
+		# 相互穿透的罚刚度）——与非断裂分支的压缩路径 T_n = K_n·δ_n 保持一致。
+		# 张开方向保持零牵引；model1 的切向保留与既有行为一致。
+		T_n = δ_n >= 0 ? 0.0 : ip.K_n * δ_n
 		if czm_model == "model1"
-			T_n = 0.0
 			T_t = ip.K_t * δ_t
 		else
-			T_n = 0.0
 			T_t = 0.0
 		end
 		return T_n, T_t, 1.0, new_state
@@ -127,15 +129,15 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 		end
 		new_state.D = D_eq
 		new_state.accumulated_damage = max(new_state.accumulated_damage, D_eq)
-		if D_eq >= 1.0 - 1e-10
-			new_state.fractured = true
-		end
 	end
 
 	# Viscous damage: D_visc = D_visc_committed + visc_beta * (D_eq - D_visc_committed)
 	D_visc = damage_state.D_visc + visc_beta * (D_eq - damage_state.D_visc)
 	D_visc = max(damage_state.D_visc, D_visc)  # monotonicity
 	new_state.D_visc = D_visc
+	# With viscous regularization, equilibrium damage may reach one before
+	# traction damage does. Keep the cohesive branch until traction vanishes.
+	new_state.fractured = D_visc >= 1.0 - 1e-10
 
 	# Traction uses D_visc (not D_eq)
 	if δ_n >= 0
@@ -176,7 +178,8 @@ function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageStat
 	dT_dδ = zeros(Float64, 2, 2)
 
 	if damage_state.fractured
-		dT_dδ[1, 1] = 1e-10 * ip.K_n
+		# 2026-09-22 与 bilinear_traction_state 的闭合修复同步：压缩方向恢复罚刚度
+		dT_dδ[1, 1] = δ_n >= 0 ? 1e-10 * ip.K_n : ip.K_n
 		if czm_model == "model1"
 			dT_dδ[2, 2] = ip.K_t
 		else
@@ -204,7 +207,7 @@ function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageStat
 
 	# Compute D_eq and D_visc (same logic as bilinear_traction_state for consistency)
 	δ_max_hist = damage_state.δ_max_eff
-	is_loading = (δ_eff > δ_max_hist - 1e-15)
+	is_loading = δ_eff > δ_max_hist
 
 	D_eq = damage_state.D
 	if is_loading && δ_eff > δ_0_eff && δ_eff < δ_c_eff
@@ -227,7 +230,7 @@ function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageStat
 				dT_dδ[1, 1] = ip.K_n
 			end
 		elseif δ_eff >= δ_c_eff
-			dT_dδ[1, 1] = 1e-10 * ip.K_n
+			dT_dδ[1, 1] = δ_n >= 0 ? max(1e-10, 1.0 - D_visc) * ip.K_n : ip.K_n
 		else
 			if δ_n >= 0 && δ_eff > 1e-15
 				dD_dδn = δ_c_eff * δ_0_eff / (δ_eff^2 * (δ_c_eff - δ_0_eff))
@@ -248,8 +251,8 @@ function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageStat
 			end
 			dT_dδ[2, 2] = (1.0 - D_visc) * ip.K_t
 		elseif δ_eff >= δ_c_eff
-			dT_dδ[1, 1] = 1e-10 * ip.K_n
-			dT_dδ[2, 2] = 1e-10 * ip.K_t
+			dT_dδ[1, 1] = δ_n >= 0 ? max(1e-10, 1.0 - D_visc) * ip.K_n : ip.K_n
+			dT_dδ[2, 2] = max(1e-10, 1.0 - D_visc) * ip.K_t
 		else
 			dD_dδeff = δ_c_eff * δ_0_eff / (δ_eff^2 * (δ_c_eff - δ_0_eff))
 			if δ_n >= 0 && δ_eff > 1e-15
@@ -275,7 +278,7 @@ end
 
 Batch update of damage states.
 """
-function update_damage(damage_states::AbstractVector{<:AbstractDamageState}, separations::Vector{Tuple{Float64, Float64}}, ip::CurrentCollector, czm_model::String; visc_beta::Float64=1.0)
+function update_damage(damage_states::AbstractVector{DamageState}, separations::Vector{Tuple{Float64, Float64}}, ip::CurrentCollector, czm_model::String; visc_beta::Float64=1.0)
 	n = length(damage_states)
 	@assert length(separations) == n "Mismatch in array lengths"
 
@@ -336,7 +339,7 @@ end
 """
 	compute_element_gap_conductance(damage_states, elem_idx, ip, param) -> h_eff
 """
-function compute_element_gap_conductance(damage_states::AbstractVector{<:AbstractDamageState}, elem_idx::Int64, ip::CurrentCollector, param::Params)
+function compute_element_gap_conductance(damage_states::AbstractVector{DamageState}, elem_idx::Int64, ip::CurrentCollector, param::Params)
 	state = damage_states[elem_idx]
 	D = state.D
 	δ_n = state.δ_max_n
@@ -346,7 +349,7 @@ end
 """
 	get_fractured_elements(damage_states) -> Vector{Int64}
 """
-function get_fractured_elements(damage_states::AbstractVector{<:AbstractDamageState})
+function get_fractured_elements(damage_states::AbstractVector{DamageState})
 	fractured = Int64[]
 	for (i, state) in enumerate(damage_states)
 		if state.fractured || state.D >= 0.99
@@ -359,7 +362,7 @@ end
 """
 	get_active_elements(czm_mesh, damage_states, mesh_data) -> Vector{Int64}
 """
-function get_active_elements(czm_mesh::CohesiveMesh, damage_states::AbstractVector{<:AbstractDamageState}, mesh_data::MeshGeometry)
+function get_active_elements(czm_mesh::CohesiveMesh, damage_states::AbstractVector{DamageState}, mesh_data::MeshGeometry)
 	ne = length(mesh_data.element_layer)
 	active = ones(Bool, ne)
 	fractured_czm = get_fractured_elements(damage_states)
@@ -382,7 +385,7 @@ end
 """
 	compute_all_gap_conductances(czm_mesh, params) -> Vector{Float64}
 """
-function compute_all_gap_conductances(damage_states::AbstractVector{<:AbstractDamageState}, ip::CurrentCollector, param::Params)
+function compute_all_gap_conductances(damage_states::AbstractVector{DamageState}, ip::CurrentCollector, param::Params)
 	n_czm = length(damage_states)
 	h_eff_all = zeros(Float64, n_czm)
 	for i in 1:n_czm

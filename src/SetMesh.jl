@@ -18,10 +18,17 @@ mutable struct Mesh
     gs::GaussPoint # Gauss points
 end
 
-# Abstract CZM types are used by CohesiveMesh and defined here to avoid
-# include-order issues with czm.jl.
-abstract type AbstractCohesiveElement end
-abstract type AbstractDamageState end
+# CohesiveElement is defined here because CohesiveMesh stores it directly.
+mutable struct CohesiveElement
+    id::Int64
+    nodes::Vector{Int64}           # [n1, n2, n3, n4]
+    nodes_bottom::Vector{Int64}    # [n1, n2] 底面节点
+    nodes_top::Vector{Int64}       # [n4, n3] 顶面节点（顺序与底面一致）
+    length::Float64                # 单元长度
+    interface_type::Symbol         # 2 种本构/材料类型之一；不表示 4 个真实面的计数
+    host_outer_elem::Int           # 外层 Q4 单元 id（在 czm_submesh.mesh.element 中的行号）
+    host_inner_elem::Int           # 内层 Q4 单元 id
+end
 
 """
     CzmSubmesh
@@ -61,7 +68,7 @@ mutable struct CohesiveMesh
     node::Matrix{Float64}                     # 扩展后节点坐标
     nnode::Int64                              # 总节点数
     bulk_element::Matrix{Int64}               # 更新后的固体单元连接关系
-    cohesive_elements::Vector{AbstractCohesiveElement} # 内聚力单元
+    cohesive_elements::Vector{CohesiveElement} # 内聚力单元
     n_cohesive::Int64                         # 内聚力单元数
     n_layers::Int64                           # 遗留字段名：实际保存 cohesive 本构/材料类型数（2），不是物理层数、真实面数或单元数
     node_map::Dict{Int64, Vector{Int64}}      # 原节点 → [分层后的节点们]
@@ -79,7 +86,7 @@ mutable struct CohesiveMesh
         new(Mesh("Q4", 2, zeros(0,2), 0, zeros(Int64,0,4),
             GaussPoint(zeros(0,2), zeros(0,2), zeros(0), zeros(0), zeros(Int64,0), zeros(0,4), zeros(0,8), 2)),
             zeros(0, 2), 0, zeros(Int64, 0, 4),
-            AbstractCohesiveElement[], 0, 0, Dict{Int64, Vector{Int64}}(),
+            CohesiveElement[], 0, 0, Dict{Int64, Vector{Int64}}(),
             Vector{Vector{Tuple{Int64,Int64}}}(),
             nothing, nothing, nothing, nothing, nothing, nothing, nothing)
     end

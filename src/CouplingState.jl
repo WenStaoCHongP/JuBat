@@ -70,7 +70,7 @@ function compute_boundary_edge_cache(mesh, is_outer)
         for (a, b) in ((nodes[1],nodes[2]), (nodes[2],nodes[3]),
                        (nodes[3],nodes[4]), (nodes[4],nodes[1]))
             (is_outer[a] && is_outer[b]) || continue
-            key = a < b ? (a, b) : (b, a)
+            key = minmax(a, b)
             key in seen && continue
             push!(seen, key)
             push!(edges, key)
@@ -183,7 +183,7 @@ end
 - `fractured`: 是否已完全断裂
 - `accumulated_damage`: 累积损伤（用于循环加载）
 """
-mutable struct DamageState <: AbstractDamageState
+mutable struct DamageState
     D::Float64                     # 等效损伤 D_eq
     D_visc::Float64                # 粘性有效损伤（用于牵引和切线）
     δ_max_n::Float64              # 历史最大法向分离
@@ -206,6 +206,7 @@ CZM 求解的演化状态聚合（2026-08-30 重构：吸收 CzmLayout；损伤�
 mutable struct MechState
     u_prev::Vector{Float64}               # 上一步收敛位移（跨时间步持有）
     damage_states::Vector{DamageState}    # 逐 cohesive 单元损伤状态（原 czm_mesh.damage_states）
+    gp_damage_states::Union{Nothing, Matrix{DamageState}} # 可选逐 cohesive GP 历史；收敛后才提交
     plastic_states::Union{Nothing, Matrix{PlasticState}}  # PCC/NCC 高斯点塑性状态（Batch 3，[ne,4]；收敛才提交 D-B3-2）
     winding_prestress::Union{Nothing, Vector{NTuple{3, Float64}}}  # 卷绕预应力 σ₀（Batch 2'；几何固定一次计算持久持有）
     node_ref::Union{Nothing, Matrix{Float64}}   # 初始螺旋节点快照（Δ_core 基准，永不重置）
@@ -217,7 +218,7 @@ function MechState(czm_mesh::CohesiveMesh)
     ndof = 2 * czm_mesh.nnode
     MechState(zeros(Float64, ndof),
               [DamageState() for _ in 1:czm_mesh.n_cohesive],
-              nothing, nothing, nothing, nothing)
+              nothing, nothing, nothing, nothing, nothing)
 end
 
 """
@@ -392,7 +393,7 @@ end
 
 输入或求解结果包含非有限值、或非线性求解未收敛时抛出异常。
 """
-function update_czm_damage!(case, variables, T_nodes_carry)
+function update_czm_damage!(case, variables, T_nodes_carry; dt_seconds::Union{Nothing, Real}=nothing)
     czm_mesh = case.czm_mesh
     param = case.param
     czm_opt = case.opt.czm
@@ -414,7 +415,7 @@ function update_czm_damage!(case, variables, T_nodes_carry)
     all(isfinite, Δsoc_n_elem) || throw(ArgumentError("CZM negative-electrode SOC increment contains non-finite values"))
     all(isfinite, Δsoc_p_elem) || throw(ArgumentError("CZM positive-electrode SOC increment contains non-finite values"))
 
-    # 初始化位移与配置由 ms/czm_opt 携带；visc_beta 在 solve_czm_step 内从 czm_opt 计算
+    # 初始化位移与配置由 ms/czm_opt 携带；粘性系数按实际经过的物理秒数计算。
     geo_nl = czm_opt.geo_nonlinear
     eig = geo_nl ? (dT=dT_elem, Δsn=Δsoc_n_elem, Δsp=Δsoc_p_elem) : nothing
     prestress = nothing
@@ -437,7 +438,7 @@ function update_czm_damage!(case, variables, T_nodes_carry)
     result = solve_czm_step(
         czm_mesh, case.mech, param, F_ext, czm_opt;
         dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
-        eigenstrain=eig, prestress=prestress
+        eigenstrain=eig, prestress=prestress, dt_seconds=dt_seconds
     )
 
     all(isfinite, result.displacement) || error("CZM solve returned non-finite displacement")

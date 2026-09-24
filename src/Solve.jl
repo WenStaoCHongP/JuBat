@@ -190,6 +190,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         compute_macro_stress(case, variables, T_nodes_carry)
     end
     czm_step_count = 0
+    czm_elapsed_dt = 0.0
 
     dt_init = 1e-8
     vc = 1:size(M_old,1)
@@ -247,10 +248,13 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             # 对应历史列记录的同一时刻。非更新步保留 latest_macro_stress。
             if czm_active
                 czm_step_count += 1
+                czm_elapsed_dt += dt
                 if czm_step_count % case.opt.czm.update_interval == 0
                     t_czm_ns = time_ns()
                     try
-                        czm_result = update_czm_damage!(case, variables, T_nodes_czm_current)
+                        czm_result = update_czm_damage!(case, variables, T_nodes_czm_current;
+                            dt_seconds=czm_elapsed_dt * case.param.scale.t0)
+                        czm_elapsed_dt = 0.0
                         variables = czm_output_to_variables(czm_result, variables)
                         δ_max_n_vals = [s.δ_max_n for s in case.mech.damage_states]
                         δ_max_eff_vals = [s.δ_max_eff for s in case.mech.damage_states]

@@ -6,7 +6,7 @@
 取 damage_states[e_coh].D 的最大值；无 cohesive 覆盖则取 0。
 （2026-08-30 重构：damage_states 来自 MechState，显式传入。）
 """
-function map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, damage_states::AbstractVector{<:AbstractDamageState}, ne_thermal::Int)
+function map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, damage_states::AbstractVector{DamageState}, ne_thermal::Int)
 	D_per_thermal = zeros(ne_thermal)
 	for e_coh in 1:czm_mesh.n_cohesive
 		e_thermal = czm_mesh.cohesive_to_thermal[e_coh]

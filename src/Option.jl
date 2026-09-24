@@ -39,7 +39,7 @@ end
     soh_threshold::Float64 = 0.8         # SOH终止阈值，SOH≤此值时终止循环
     inner_exit_only::Bool = true         # 断裂时仅内圈单元退出电化学反应
     fix_inner::Bool = true               # CZM边界条件：true=内外圈+分层端点，false=外圈+分层端点
-    iter_method::String = "basic"        # "basic" | "load_substep" | "arc_length"
+    iter_method::String = "basic"        # "basic" | "gp_basic" | "load_substep" | "arc_length"
     max_iter::Int64 = 100                # CZM 牛顿迭代最大步数
     tol::Float64 = 1e-4                  # CZM 收敛容差
     load_steps::Int64 = 2                # 载荷子步数（load_substep 模式）
