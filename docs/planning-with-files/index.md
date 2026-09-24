@@ -572,4 +572,10 @@
 - **当前阶段**：Complete——1800 s 采样（CZM 97.57%、:294 线性求解 71.8%）→ 边界 A/B 五变体证伪罚 BC → 均衡化落地（60 s 2.13× / 1800 s A/B 3.25×，195 步科学指标逐位一致）→ 均衡化后复采样热点转移至装配+线搜索 67.4%；T1-a 试做一次后按用户指示回退（设计保留）；J2 批次（77b2932）与均衡化批次（b68873e）已提交推送。
 - **归档**：已归档 KB（2026-09-09，`raw/repos/jubat/docs-archive/planning-with-files/46_长工况热点优化/`）；配套证据入 `raw/repos/jubat/diagnostics/`（profile_1800s_equilibrated、testexample_gate_outputs、couple_example_v10、testexample_soc065_60s_baseline、两个证据脚本）。
 
+## 55_弧长五循环损伤热点
+
+- **执行任务**：以弱化界面参数、非几何弧长法尝试五次短循环，比较损伤启动前后热点，并按知识库与联网一手资料审查当前弧长设计。
+- **当前阶段**：Complete——两次同参运行均在首圈静置 43 s 附近严格拒绝未收敛，未完成五圈；损伤后热点集中于末端 basic 校正与 UMFPACK 分解。审查确认反向预测状态不配对、逐子步不可逆历史缺口和弧长约束验收尺度问题，未改生产求解器。
+- **归档**：已归档 KB（2026-09-24，`raw/repos/jubat/docs-archive/planning-with-files/55_弧长五循环损伤热点/`）；实验、脚本、采样与审查报告位于 `raw/repos/jubat/diagnostics/testexample_soc065_arc_hotspots/`。
+
 新增或迁移 planning-with-files 任务后，应同步更新本索引；标准任务目录使用 `task_plan.md`、`findings.md`、`progress.md` 三文件结构。
