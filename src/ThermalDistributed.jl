@@ -85,7 +85,29 @@ function apply_convection_bc(K, F, mesh, is_outer, case; edge_cache=nothing)
     return K, F
 end
 
-function apply_cool_method(K, F, mesh, case)
+# 节点组沿弧向的 Voronoi 弧长权重（首末半段；单节点权重 1）——tab 导热锚定与
+# 极耳产热共用的分配权重（任务 50 提取，算法与原内联版逐字相同）
+function nodal_arc_weights(mesh, nodes)
+    n_nodes = length(nodes)
+    arc_lengths = zeros(Float64, n_nodes)
+    if n_nodes == 1
+        arc_lengths[1] = 1.0
+    else
+        coords = [mesh.node[n, :] for n in nodes]
+        for i in 1:n_nodes
+            if i == 1
+                arc_lengths[i] = norm(coords[2] - coords[1]) / 2.0
+            elseif i == n_nodes
+                arc_lengths[i] = norm(coords[i] - coords[i-1]) / 2.0
+            else
+                arc_lengths[i] = (norm(coords[i] - coords[i-1]) + norm(coords[i+1] - coords[i])) / 2.0
+            end
+        end
+    end
+    return arc_lengths
+end
+
+function apply_cool_method(K, F, mesh, case, t::Float64)
     cool_method = case.opt.cool_method
     if cool_method == "none"
         return K, F
@@ -123,22 +145,7 @@ function apply_cool_method(K, F, mesh, case)
         end
 
         param = case.param
-        n_nodes = length(tab_nodes)
-        arc_lengths = zeros(Float64, n_nodes)
-        if n_nodes == 1
-            arc_lengths[1] = 1.0
-        else
-            coords = [mesh.node[n, :] for n in tab_nodes]
-            for i in 1:n_nodes
-                if i == 1
-                    arc_lengths[i] = norm(coords[2] - coords[1]) / 2.0
-                elseif i == n_nodes
-                    arc_lengths[i] = norm(coords[i] - coords[i-1]) / 2.0
-                else
-                    arc_lengths[i] = (norm(coords[i] - coords[i-1]) + norm(coords[i+1] - coords[i])) / 2.0
-                end
-            end
-        end
+        arc_lengths = nodal_arc_weights(mesh, tab_nodes)
 
         total_arc_length = sum(arc_lengths)
         if total_arc_length < 1e-12
@@ -150,6 +157,35 @@ function apply_cool_method(K, F, mesh, case)
             coeff = param.tab.h * param.tab.area * weight / param.cell.width
             K[n, n] -= coeff
             F[n] += coeff * param.cell.T_amb
+        end
+
+        # —— 极耳电阻产热（任务 50）：P_ear = (I*/N)²·R*，逐耳注入自己的节点组 ——
+        # 拓展锚点：几何→电阻在 R* 两行、电流均分在 n_ears、节点分组在 groups；
+        # 异构几何/温度耦合不均分未来只改对应入口
+        tstar = param.tab.thickness
+        if tstar != 0.0
+            tstar > 0.0 || error(
+                "apply_cool_method: tab.thickness < 0（非法几何，缺参即拦截）")
+            (param.tab.sig_pos > 0.0 && param.tab.sig_neg > 0.0) || error(
+                "apply_cool_method: tab.thickness > 0 需要 sig_pos/sig_neg > 0（缺参即拦截）")
+            I_star = case.opt.Current(t * case.param.scale.t0) / case.param.scale.I_typ
+            R_pos = param.tab.length / (param.tab.sig_pos * param.tab.width * tstar)
+            R_neg = param.tab.length / (param.tab.sig_neg * param.tab.width * tstar)
+            pos_groups, neg_groups = jellyroll_tab_node_groups(mesh, param)
+            for (groups, R_tab) in ((pos_groups, R_pos), (neg_groups, R_neg))
+                n_ears = length(groups)
+                n_ears > 0 || continue
+                p_ear = (I_star / n_ears)^2 * R_tab * param.tab.power_scale
+                for group in groups
+                    isempty(group) && continue
+                    weights = nodal_arc_weights(mesh, group)
+                    wsum = sum(weights)
+                    wsum > 0.0 || continue
+                    for (i, n) in enumerate(group)
+                        F[n] += p_ear * weights[i] / wsum
+                    end
+                end
+            end
         end
         return K, F
     end
@@ -192,7 +228,7 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64)
 
     # 使用 setup_thermal2D_mesh 预计算的边界缓存。
     K, F = apply_convection_bc(K, F, mesh, nothing, case; edge_cache=case.geometry.boundary_edges)
-    K, F = apply_cool_method(K, F, mesh, case)
+    K, F = apply_cool_method(K, F, mesh, case, t)
     return K, F
 end
 

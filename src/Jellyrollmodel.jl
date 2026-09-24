@@ -392,9 +392,14 @@ end
 
 # 返回
 - `(pos_indices::Vector{Int}, neg_indices::Vector{Int})`
+    jellyroll_tab_node_groups(mesh, param) -> (pos_groups, neg_groups)
+
+逐极耳（逐 theta 角度）返回节点组：pos_groups[k] 为 theta_pos[k] 窗口内节点（升序），
+neg_groups 同理。跨组去重沿用 jellyroll_tab_node_indices 的 keep-first 语义（先出现的
+角度优先）；窗口算法与其逐字相同（任务 50 多极耳拓展）。
 """
-function jellyroll_tab_node_indices(mesh, param)
-    @assert mesh.dimension == 2 "jellyroll_tab_node_indices 仅适用于 2D 网格"
+function jellyroll_tab_node_groups(mesh, param)
+    @assert mesh.dimension == 2 "jellyroll_tab_node_groups 仅适用于 2D 网格"
 
     a = param.cell.Rin
     b = param.cell.layer / (2 * pi)
@@ -407,12 +412,14 @@ function jellyroll_tab_node_indices(mesh, param)
     theta_cum_in = [(hypot(mesh.node[i,1], mesh.node[i,2]) - a) / b for i in 1:nn]
     theta_cum_out = [(hypot(mesh.node[i,1], mesh.node[i,2]) - a - t_repeat) / b for i in 1:nn]
 
-    pos_idx = Int[]
-    theta_min, theta_max = minimum(theta_cum_in), maximum(theta_cum_in)
-    for theta0_orig in param.tab.theta_pos
-        theta0 = Float64(theta0_orig)
-        while theta0 > theta_max; theta0 -= 2.0 * pi; end
-        while theta0 < theta_min; theta0 += 2.0 * pi; end
+    function collect_window(theta_cum, thetas, leading::Bool)
+        groups = Vector{Vector{Int}}()
+        seen = Set{Int}()
+        theta_min, theta_max = minimum(theta_cum), maximum(theta_cum)
+        for theta0_orig in thetas
+            theta0 = Float64(theta0_orig)
+            while theta0 > theta_max; theta0 -= 2.0 * pi; end
+            while theta0 < theta_min; theta0 += 2.0 * pi; end
 
             delta_theta = 0.0
             if tw > 1e-12 && b > 0.0
@@ -440,61 +447,32 @@ function jellyroll_tab_node_indices(mesh, param)
                 delta_theta == 0.0 && (delta_theta = 0.5 * (lo + hi))
             end
 
-            theta_start = theta0
-            theta_end = theta0 + delta_theta
-        for i in 1:nn
-            r = hypot(mesh.node[i,1], mesh.node[i,2])
-            theta_cum = theta_cum_in[i]
-            if (Rin - 1e-8 <= r <= Rout + 1e-8) && (theta_start <= theta_cum <= theta_end)
-                push!(pos_idx, i)
+            theta_start = leading ? theta0 : theta0 - delta_theta
+            theta_end = leading ? theta0 + delta_theta : theta0
+            group = Int[]
+            for i in 1:nn
+                r = hypot(mesh.node[i,1], mesh.node[i,2])
+                theta_cum_i = theta_cum[i]
+                if (Rin - 1e-8 <= r <= Rout + 1e-8) && (theta_start <= theta_cum_i <= theta_end)
+                    i in seen || (push!(group, i); push!(seen, i))
+                end
             end
+            push!(groups, group)
         end
+        return groups
     end
 
-    neg_idx = Int[]
-    theta_min, theta_max = minimum(theta_cum_out), maximum(theta_cum_out)
-    for theta0_orig in param.tab.theta_neg
-        theta0 = Float64(theta0_orig)
-        while theta0 > theta_max; theta0 -= 2.0 * pi; end
-        while theta0 < theta_min; theta0 += 2.0 * pi; end
+    pos_groups = collect_window(theta_cum_in, param.tab.theta_pos, true)
+    neg_groups = collect_window(theta_cum_out, param.tab.theta_neg, false)
+    return pos_groups, neg_groups
+end
 
-            delta_theta = 0.0
-            if tw > 1e-12 && b > 0.0
-                u0 = a + b * theta0
-                F(u) = (u * sqrt(u^2 + b^2) + b^2 * asinh(u / b)) / (2.0 * b)
-                s0 = F(u0)
-
-                hi = max(1e-6, tw / max(1e-12, sqrt(u0^2 + b^2)))
-                for _ in 1:100
-                    (F(u0 + b * hi) - s0) >= tw && break
-                    hi *= 2.0
-                end
-
-                lo = 0.0
-                tol_bsearch = max(1e-12, tw * 1e-9)
-                for _ in 1:80
-                    mid = 0.5 * (lo + hi)
-                    sval = F(u0 + b * mid) - s0
-                    if abs(sval - tw) <= tol_bsearch
-                        delta_theta = mid
-                        break
-                    end
-                    sval < tw ? (lo = mid) : (hi = mid)
-                end
-                delta_theta == 0.0 && (delta_theta = 0.5 * (lo + hi))
-            end
-
-            theta_start = theta0 - delta_theta
-            theta_end = theta0
-        for i in 1:nn
-            r = hypot(mesh.node[i,1], mesh.node[i,2])
-            theta_cum = theta_cum_out[i]
-            if (Rin - 1e-8 <= r <= Rout + 1e-8) && (theta_start <= theta_cum <= theta_end)
-                push!(neg_idx, i)
-            end
-        end
-    end
-
+"""
+"""
+function jellyroll_tab_node_indices(mesh, param)
+    pos_groups, neg_groups = jellyroll_tab_node_groups(mesh, param)
+    pos_idx = reduce(vcat, pos_groups; init=Int[])
+    neg_idx = reduce(vcat, neg_groups; init=Int[])
     return unique(pos_idx), unique(neg_idx)
 end
 

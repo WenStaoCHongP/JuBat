@@ -127,6 +127,13 @@ tab.h = 10.
 # specify tab angles on circumference (radians)
 tab.theta_pos = [15π]  #none or [1，... ,15π...]
 tab.theta_neg = [44π]
+# 极耳电阻产热（任务 50，默认关闭）：设置 sig_pos/sig_neg/thickness 三者>0 即启用 I²R 热源
+# 参照：Li 2021 实测 LG M50T 极耳 165 µm × 3.5 mm × 11 mm（正 Al/负镀镍铜），
+# 验算 R_pos≈0.54 mΩ、R_neg≈0.32 mΩ（5 A 各 ~13/8 mW）；纯镍负耳应设 sig_neg≈1.43e7
+# 同极性多极耳为并联均分：每耳 (I/N)²·R；多极耳/尺寸扫描工况由 theta 数组+几何参数纯 param 驱动
+# tab.sig_pos = 3.55e7   # Al（同 PCC.sig）
+# tab.sig_neg = 5.96e7   # 镀镍铜（同 NCC.sig）
+# tab.thickness = 165e-6
 
 # Cell parameters for thermal model
 cell = Cell()    
