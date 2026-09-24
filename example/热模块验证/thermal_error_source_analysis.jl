@@ -66,7 +66,7 @@ function get_outer_edges(mesh, Rout::Float64)
         n1, n2, n3, n4 = mesh.element[e, :]
         for (a, b) in ((n1, n2), (n2, n3), (n3, n4), (n4, n1))
             if is_outer[a] && is_outer[b]
-                key = a < b ? (a, b) : (b, a)
+                key = minmax(a, b)
                 if !(key in seen)
                     push!(seen, key)
                     push!(edges, key)
