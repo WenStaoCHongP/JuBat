@@ -1,0 +1,98 @@
+Julia=1.11.2; Julia threads=1; BLAS threads=14; config=LBTConfig([ILP64] libopenblas64_.dll)
+================================================================================
+Jellyroll电池多SPMe并行电化学-热耦合仿真（SOC 0.65 / mix / 60 s 优化基线）
+================================================================================
+
+[1/4] 参数设置...
+OK: 参数设置完成
+  电流: 5.00 A (1.00 C)
+  初始SOC: 0.65
+  仿真时间: 60.0 秒
+  模式: 多SPMe并行
+  CZM迭代法: basic
+  CZM载荷子步数: 10
+  分离位移模式: mix（混合模式，有效分离度量）
+  几何非线性: true
+  J2集流体塑性: true
+
+[2/4] 创建案例和Jellyroll网格...
+OK: Jellyroll网格创建完成
+  周向单元数 n_theta: 80
+  总单元数 ne: 1682
+  总节点数 nT: 1763
+  内半径 Rin: 0.0019 m
+  外半径 Rout: 0.0101 m
+
+[3/4] 运行多SPMe并行求解器...
+
+[Solve] 初始化完成: V=3.770909660179 V, t_end=60.0
+start to solve the problem 
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=0.0, max(δ_eff)=0.0, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=1.0e-6, max(δ_eff)=1.0e-6, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=1.0e-6, max(δ_eff)=1.0e-6, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=1.0e-6, max(δ_eff)=1.0e-6, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+[CZM-Debug] max(δ_n)=1.0e-6, max(δ_eff)=1.0e-6, converged=true, D_max(commit)=0.0, D_visc_max=0.0
+
+[Solve-Timing] CallModel 阶段累计耗时（用于优化定位）
+  calls = 21
+  SPMe solve           : 3.602 s (5.14%), avg 171.547 ms/call
+  Branch solver        : 0.782 s (1.12%), avg 37.254 ms/call
+  Thermal distributed  : 0.792 s (1.13%), avg 37.721 ms/call
+  CZM model            : 64.936 s (92.62%), avg 3092.195 ms/call
+finish the simulation
+OK: 求解成功完成
+
+[4/4] 仿真耗时统计
+------------------------------------------------------------
+  总时间步数: 21
+  初始电压: 3.7709 V
+  最终电压: 3.6950 V
+  电压降: 0.0759 V
+
+  总仿真耗时 (wall-clock): 76.204 s
+
+  各模块耗时分解（CallModel累计）:
+    模块                        累计 [s] 占比 [%]  平均 [ms/step]
+    --------------------------------------------------------------
+    SPMe 求解                      3.602     5.14         171.547
+    分流求解器                     0.782     1.12          37.254
+    热分布式模型                   0.792     1.13          37.721
+    CZM 模型                      64.936    92.62        3092.195
+    --------------------------------------------------------------
+    CallModel 合计                70.113
+
+================================================================================
+仿真完成
+================================================================================
+
+[结果输出]
+  最终容量: 0.0833 Ah
+  温度范围: 298.15 K ~ 298.77 K
+  CZM 最终 D_max: 0.0000%
+  CZM 最终 D_mean: 0.0000%
+  CZM 最大有效分离位移: 9.0967e-13 m
+  CZM 断裂单元数: 0
+  最终环向应力范围: -1.2182e+00 ~ 3.1646e+00 MPa
+  最终切向剪应力范围: -4.9735e-01 ~ 7.8748e-01 MPa
+  全时域最大高斯点 von Mises 应力: 4.0256e+00 MPa
+  全时域最大等效塑性应变: 0.0000e+00
+
+================================================================================
+全部完成
+================================================================================
+INCLUDE_WALL_SECONDS=90.59299993515015

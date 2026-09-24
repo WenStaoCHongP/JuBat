@@ -1,0 +1,13 @@
+total_stacks=6987
+czm_basic                              5407  77.387%
+umfpack_numeric_inclusive              4200  60.112%
+czm_linear_solve_line294               4167  59.639%
+bulk_assembly_inclusive                1110  15.887%
+compilation_inclusive                   859  12.294%
+newton_entry_assembly                   813  11.636%
+gc_collect_inclusive                    398   5.696%
+line_search_inclusive                   365   5.224%
+material_response_inclusive             100   1.431%
+cohesive_assembly_inclusive              72   1.030%
+umfpack_symbolic_inclusive               59   0.844%
+j2_return_mapping_inclusive               6   0.086%

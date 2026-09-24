@@ -8,3 +8,11 @@ output/mesh_convergence/
 
 # Local agent CLI session data
 .zcode/
+.mimosa/
+.zcodeignore
+
+# Script outputs archived to the knowledge base
+output/couple_example/
+output/testexample/
+output/testexample_soc065_1800s/
+output/testexample_soc065_5cycles/
