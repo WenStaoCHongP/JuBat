@@ -42,8 +42,8 @@ end
     iter_method::String = "basic"        # "basic" | "gp_basic" | "load_substep" | "arc_length"
     max_iter::Int64 = 100                # CZM 牛顿迭代最大步数
     tol::Float64 = 1e-4                  # CZM 收敛容差
-    load_steps::Int64 = 2                # 载荷子步数（load_substep 模式）
-    arc_length_alpha::Float64 = 1.0      # 弧长法系数（arc_length 模式）
+    load_steps::Int64 = 2                # 初始载荷子步数（load_substep / arc_length）
+    arc_length_alpha::Float64 = 1.0      # geo=true: 球面载荷权重；geo=false: 柱面分支方向权重
     viscous_enabled::Bool = false        # 粘性正则化开关
     viscous_tau::Float64 = 0.0           # 物理松弛时间 [s]，推荐 10~100 s
     area_loss_enabled::Bool = false      # 启用渐进式有效面积损失（D > threshold 时缩减有效面积）
