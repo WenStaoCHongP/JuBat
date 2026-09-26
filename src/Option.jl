@@ -44,6 +44,8 @@ end
     tol::Float64 = 1e-4                  # CZM 收敛容差
     load_steps::Int64 = 2                # 初始载荷子步数（load_substep / arc_length）
     arc_length_alpha::Float64 = 1.0      # geo=true: 球面载荷权重；geo=false: 柱面分支方向权重
+    wall_time_limit_seconds::Float64 = 0.0 # 非几何弧长单个机械步耗时上限；0=关闭
+    snapshot_path::String = ""            # 求解失败时保存机械步输入；空字符串=关闭
     viscous_enabled::Bool = false        # 粘性正则化开关
     viscous_tau::Float64 = 0.0           # 物理松弛时间 [s]，推荐 10~100 s
     area_loss_enabled::Bool = false      # 启用渐进式有效面积损失（D > threshold 时缩减有效面积）

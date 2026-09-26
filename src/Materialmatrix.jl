@@ -121,6 +121,9 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 		else
 			D_eq = δ_c_eff * (δ_eff - δ_0_eff) / (δ_eff * (δ_c_eff - δ_0_eff))
 		end
+		# A change of mode mix can raise the effective threshold while the
+		# separation norm grows. The equilibrium history is irreversible too.
+		D_eq = max(damage_state.D, D_eq)
 
 		new_state.δ_max_eff = δ_eff
 		new_state.δ_max_n = max(new_state.δ_max_n, δ_n_pos)
@@ -169,108 +172,107 @@ function bilinear_traction(δ_n::Float64, δ_t::Float64, damage_state::DamageSta
 	return T_n, T_t, D
 end
 
-"""
-	bilinear_tangent(δ_n, δ_t, damage_state, params)
+function bilinear_damage_gradient(δ_n::Float64, δ_t::Float64,
+        previous::DamageState, trial::DamageState, ip::CurrentCollector,
+        czm_model::String, visc_beta::Float64)
+    zero_grad = (0.0, 0.0)
+    (previous.fractured || trial.fractured) && return zero_grad, zero_grad
+    δn_pos = max(δ_n, 0.0)
+    if czm_model == "model1"
+        e = δn_pos
+        a, c = ip.δ_0, ip.δ_c
+        e_n = if δ_n > 0.0
+            1.0
+        else
+            0.0
+        end
+        e_t = 0.0
+        a_n = a_t = c_n = c_t = 0.0
+    else
+        e = hypot(δn_pos, δ_t)
+        e > 1e-15 || return zero_grad, zero_grad
+        β = abs(δ_t) / e
+        βη = β^ip.eta
+        a = sqrt(ip.δ_0^2 + (ip.δ_0_t^2 - ip.δ_0^2) * βη)
+        c = sqrt(ip.δ_c^2 + (ip.δ_c_t^2 - ip.δ_c^2) * βη)
+        e_n = if δ_n > 0.0
+            δn_pos / e
+        else
+            0.0
+        end
+        e_t = δ_t / e
+        a_n = a_t = c_n = c_t = 0.0
+        if δ_t != 0.0
+            β_n = -β * e_n / e
+            β_t = sign(δ_t) / e - β * e_t / e
+            a_β = (ip.δ_0_t^2 - ip.δ_0^2) * ip.eta * β^(ip.eta - 1.0) / (2.0a)
+            c_β = (ip.δ_c_t^2 - ip.δ_c^2) * ip.eta * β^(ip.eta - 1.0) / (2.0c)
+            a_n, a_t = a_β * β_n, a_β * β_t
+            c_n, c_t = c_β * β_n, c_β * β_t
+        end
+    end
+    (e > previous.δ_max_eff && a < e < c && trial.D > previous.D) ||
+        return zero_grad, zero_grad
 
-Compute bilinear tangent stiffness matrix.
-"""
-function bilinear_tangent(δ_n::Float64, δ_t::Float64, damage_state::DamageState, ip::CurrentCollector, czm_model::String; visc_beta::Float64=1.0)
-	dT_dδ = zeros(Float64, 2, 2)
+    den = c - a
+    D_e = c * a / (e^2 * den)
+    D_a = c * (e - c) / (e * den^2)
+    D_c = -a * (e - a) / (e * den^2)
+    q_eq = (D_e * e_n + D_a * a_n + D_c * c_n,
+            D_e * e_t + D_a * a_t + D_c * c_t)
+    raw_visc = previous.D_visc + visc_beta * (trial.D - previous.D_visc)
+    q_visc = if raw_visc > previous.D_visc
+        (visc_beta * q_eq[1], visc_beta * q_eq[2])
+    else
+        zero_grad
+    end
+    return q_eq, q_visc
+end
 
-	if damage_state.fractured
-		# 2026-09-22 与 bilinear_traction_state 的闭合修复同步：压缩方向恢复罚刚度
-		dT_dδ[1, 1] = δ_n >= 0 ? 1e-10 * ip.K_n : ip.K_n
-		if czm_model == "model1"
-			dT_dδ[2, 2] = ip.K_t
-		else
-			dT_dδ[2, 2] = 1e-10 * ip.K_t
-		end
-		return dT_dδ
-	end
+"""Consistent smooth-branch tangent of `bilinear_traction_state`."""
+function bilinear_tangent(δ_n::Float64, δ_t::Float64,
+        damage_state::DamageState, ip::CurrentCollector, czm_model::String;
+        visc_beta::Float64=1.0)
+    dT_dδ = zeros(Float64, 2, 2)
+    if damage_state.fractured
+        dT_dδ[1, 1] = if δ_n >= 0.0
+            1e-10 * ip.K_n
+        else
+            ip.K_n
+        end
+        dT_dδ[2, 2] = if czm_model == "model1"
+            ip.K_t
+        else
+            1e-10 * ip.K_t
+        end
+        return dT_dδ
+    end
 
-	δ_n_pos = max(0.0, δ_n)
-	if czm_model == "model1"
-		δ_eff = δ_n_pos
-		δ_0_eff = ip.δ_0
-		δ_c_eff = ip.δ_c
-	else
-		δ_eff = sqrt(δ_n_pos^2 + δ_t^2)
-		if δ_eff > 1e-15
-			β = abs(δ_t) / δ_eff
-			δ_0_eff = sqrt(ip.δ_0^2 + (ip.δ_0_t^2 - ip.δ_0^2) * β^ip.eta)
-			δ_c_eff = sqrt(ip.δ_c^2 + (ip.δ_c_t^2 - ip.δ_c^2) * β^ip.eta)
-		else
-			δ_0_eff = ip.δ_0
-			δ_c_eff = ip.δ_c
-		end
-	end
+    _, _, _, trial = bilinear_traction_state(δ_n, δ_t, damage_state,
+        ip, czm_model; visc_beta=visc_beta)
+    retained = max(1e-10, 1.0 - trial.D_visc)
+    dT_dδ[1, 1] = if δ_n >= 0.0
+        retained * ip.K_n
+    else
+        ip.K_n
+    end
+    dT_dδ[2, 2] = if czm_model == "model1"
+        ip.K_t
+    else
+        retained * ip.K_t
+    end
 
-	# Compute D_eq and D_visc (same logic as bilinear_traction_state for consistency)
-	δ_max_hist = damage_state.δ_max_eff
-	is_loading = δ_eff > δ_max_hist
-
-	D_eq = damage_state.D
-	if is_loading && δ_eff > δ_0_eff && δ_eff < δ_c_eff
-		D_eq = δ_c_eff * (δ_eff - δ_0_eff) / (δ_eff * (δ_c_eff - δ_0_eff))
-	elseif is_loading && δ_eff >= δ_c_eff
-		D_eq = 1.0
-	elseif is_loading && δ_eff <= δ_0_eff
-		D_eq = 0.0
-	end
-	D_visc = damage_state.D_visc + visc_beta * (D_eq - damage_state.D_visc)
-	D_visc = max(damage_state.D_visc, D_visc)  # monotonicity
-
-	if czm_model == "model1"
-		dT_dδ[2, 2] = ip.K_t
-
-		if δ_eff <= δ_0_eff || !is_loading
-			if δ_n >= 0
-				dT_dδ[1, 1] = (1.0 - D_visc) * ip.K_n
-			else
-				dT_dδ[1, 1] = ip.K_n
-			end
-		elseif δ_eff >= δ_c_eff
-			dT_dδ[1, 1] = δ_n >= 0 ? max(1e-10, 1.0 - D_visc) * ip.K_n : ip.K_n
-		else
-			if δ_n >= 0 && δ_eff > 1e-15
-				dD_dδn = δ_c_eff * δ_0_eff / (δ_eff^2 * (δ_c_eff - δ_0_eff))
-				# Key: dD/dδ multiplied by visc_beta for consistent linearization
-				dT_dδ[1, 1] = (1.0 - D_visc) * ip.K_n - ip.K_n * δ_n * visc_beta * dD_dδn
-			else
-				dT_dδ[1, 1] = ip.K_n
-			end
-		end
-		dT_dδ[1, 2] = 0.0
-		dT_dδ[2, 1] = 0.0
-	else
-		if δ_eff <= δ_0_eff || !is_loading
-			if δ_n >= 0
-				dT_dδ[1, 1] = (1.0 - D_visc) * ip.K_n
-			else
-				dT_dδ[1, 1] = ip.K_n
-			end
-			dT_dδ[2, 2] = (1.0 - D_visc) * ip.K_t
-		elseif δ_eff >= δ_c_eff
-			dT_dδ[1, 1] = δ_n >= 0 ? max(1e-10, 1.0 - D_visc) * ip.K_n : ip.K_n
-			dT_dδ[2, 2] = max(1e-10, 1.0 - D_visc) * ip.K_t
-		else
-			dD_dδeff = δ_c_eff * δ_0_eff / (δ_eff^2 * (δ_c_eff - δ_0_eff))
-			if δ_n >= 0 && δ_eff > 1e-15
-				dδeff_dδn = δ_n_pos / δ_eff
-				dδeff_dδt = δ_t / δ_eff
-				# Key: dD/dδ multiplied by visc_beta for consistent linearization
-				dT_dδ[1, 1] = (1.0 - D_visc) * ip.K_n - ip.K_n * δ_n * visc_beta * dD_dδeff * dδeff_dδn
-				dT_dδ[1, 2] = -ip.K_n * δ_n * visc_beta * dD_dδeff * dδeff_dδt
-				dT_dδ[2, 1] = -ip.K_t * δ_t * visc_beta * dD_dδeff * dδeff_dδn
-				dT_dδ[2, 2] = (1.0 - D_visc) * ip.K_t - ip.K_t * δ_t * visc_beta * dD_dδeff * dδeff_dδt
-			else
-				dT_dδ[1, 1] = ip.K_n
-				dT_dδ[2, 2] = (1.0 - D_visc) * ip.K_t
-			end
-		end
-	end
-
-	return dT_dδ
+    _, q_visc = bilinear_damage_gradient(δ_n, δ_t, damage_state,
+        trial, ip, czm_model, visc_beta)
+    if δ_n > 0.0
+        dT_dδ[1, 1] -= ip.K_n * δ_n * q_visc[1]
+        dT_dδ[1, 2] -= ip.K_n * δ_n * q_visc[2]
+    end
+    if czm_model != "model1"
+        dT_dδ[2, 1] -= ip.K_t * δ_t * q_visc[1]
+        dT_dδ[2, 2] -= ip.K_t * δ_t * q_visc[2]
+    end
+    return dT_dδ
 end
 
 """

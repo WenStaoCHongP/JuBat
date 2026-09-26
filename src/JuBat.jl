@@ -1,5 +1,5 @@
 module JuBat
-using LinearAlgebra, SparseArrays, Plots, Parameters, CSV, Infiltrator, Statistics, Printf
+using LinearAlgebra, SparseArrays, Plots, Parameters, CSV, Infiltrator, Statistics, Printf, Serialization
 
 include("Option.jl")
 include("SetMesh.jl")
