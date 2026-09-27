@@ -1,18 +1,11 @@
 # Local IDE / agent settings
 .claude/settings.local.json
 
-# Generated outputs (regenerable artifacts)
-output/csv/180/
-output/csv/czm_study_2/
-output/mesh_convergence/
+# Generated outputs (regenerable artifacts)——output/ 全目录不入库（2026-09-27：
+# 结果 CSV/图/日志属运行产物，按用户指令全部忽略；历史档案已归档 KB 或本地）
+output/
 
 # Local agent CLI session data
 .zcode/
 .mimosa/
 .zcodeignore
-
-# Script outputs archived to the knowledge base
-output/couple_example/
-output/testexample/
-output/testexample_soc065_1800s/
-output/testexample_soc065_5cycles/
