@@ -5,6 +5,10 @@
 # 结果 CSV/图/日志属运行产物，按用户指令全部忽略；历史档案已归档 KB 或本地）
 output/
 
+# Docs——规划/评审文档属本地开发过程记录，不入库（2026-09-27；历史已跟踪文件
+# 移出索引但磁盘保留；需要共享时另行单独提交）
+docs/
+
 # Local agent CLI session data
 .zcode/
 .mimosa/
