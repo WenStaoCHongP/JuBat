@@ -153,6 +153,10 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, nothing; deactivated_elements=deactivated_elements, f_n_area=f_n_area, f_p_area=f_p_area)
     t_branch_s = (time_ns() - t_branch_ns) * 1e-9
 
+    # 任务 58：有效面积比例存入结果键（area_fraction_history 导出与圈末聚合的数据源）
+    variables["thermal2D effective area fraction n"] = f_n_area
+    variables["thermal2D effective area fraction p"] = f_p_area
+
     # 4) 并行求解每个单元的SPMe（area_loss 开启时 f 逐单元缩放 j0→BV）
     M_elems = Vector{SparseMatrixCSC{Float64,Int64}}(undef, ne)
     K_elems = Vector{SparseMatrixCSC{Float64,Int64}}(undef, ne)

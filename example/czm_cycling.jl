@@ -284,7 +284,7 @@ function main()
     end
     println("\n  cycle_summary.csv / phase_summary.csv 已导出")
 
-    # --- 逐元素全历史导出（选定循环）：element_map + damage/sep_n/sep_t 宽表 ---
+    # --- 逐元素全历史导出（选定循环）：element_map + damage/sep_n/sep_t + f/stress 宽表 ---
     if !isempty(result.czm_snapshots)
         n_coh = length(result.czm_snapshots[1].damage)
         open(joinpath(outdir, "element_map.csv"), "w") do io
@@ -297,6 +297,7 @@ function main()
             end
         end
         δ_czm = case.param.scale.δ_czm
+        σ_czm = case.param.scale.σ_czm
         snap_cycles_present = sort(unique([s.cycle for s in result.czm_snapshots]))
         header = "t_s," * join(("e$j" for j in 1:n_coh), ",")
         for cyc in snap_cycles_present
@@ -314,6 +315,62 @@ function main()
             end
             @printf("  全历史已导出: 循环 %d（%d 步 × %d 单元）\n", cyc, length(snaps), n_coh)
         end
+
+        # f_n/f_p 逐机械步宽表（任务 58 面积反馈：从 phase solve_result 聚合选定圈）
+        ne_th = size(mesh_th.element, 1)
+        fn_header = "t_s," * join(("e$j" for j in 1:ne_th), ",")
+        for cyc in snap_cycles_present
+            open(joinpath(outdir, "area_fraction_history_cyc$cyc.csv"), "w") do io
+                println(io, "t_s,phase,f_n_min,f_p_min")
+                for cr in result.cycle_results
+                    cr.cycle_idx == cyc || continue
+                    for (pname, ph) in (("discharge", cr.discharge), ("rest1", cr.rest1),
+                                        ("charge", cr.charge), ("rest2", cr.rest2))
+                        ph === nothing && continue
+                        raw = ph.solve_result === nothing ? nothing :
+                            get(ph.solve_result, "thermal2D effective area fraction n", nothing)
+                        raw === nothing && continue
+                        raw_p = get(ph.solve_result, "thermal2D effective area fraction p", nothing)
+                        tvec = get(ph.solve_result, "time [s]", nothing)
+                        for k in axes(raw, 2)
+                            t = tvec === nothing ? k : ph.t_start + tvec[k] - tvec[1]
+                            println(io, "$t,$pname,$(minimum(raw[:, k])),$(minimum(raw_p[:, k]))")
+                        end
+                    end
+                end
+            end
+        end
+
+        # 应力逐机械步宽表（选定圈，从 diffusion stress 在线导出键聚合）
+        for cyc in snap_cycles_present
+            open(joinpath(outdir, "stress_history_cyc$cyc.csv"), "w") do io
+                println(io, "t_s,phase,e_id,sigma_xx_MPa,sigma_yy_MPa,sigma_xy_MPa")
+                wrote_any = false
+                for cr in result.cycle_results
+                    cr.cycle_idx == cyc || continue
+                    for (pname, ph) in (("discharge", cr.discharge), ("rest1", cr.rest1),
+                                        ("charge", cr.charge), ("rest2", cr.rest2))
+                        ph === nothing && continue
+                        raw_x = ph.solve_result === nothing ? nothing :
+                            get(ph.solve_result, "diffusion stress xx [Pa]", nothing)
+                        raw_x === nothing && continue
+                        raw_y = get(ph.solve_result, "diffusion stress yy [Pa]", nothing)
+                        raw_xy = get(ph.solve_result, "diffusion stress xy [Pa]", nothing)
+                        tvec = get(ph.solve_result, "time [s]", nothing)
+                        n_mech = size(raw_x, 1)
+                        for k in axes(raw_x, 2)
+                            t = tvec === nothing ? k : ph.t_start + tvec[k] - tvec[1]
+                            for e in 1:n_mech
+                                println(io, "$t,$pname,$e,$(raw_x[e, k] * 1e-6),$(raw_y[e, k] * 1e-6),$(raw_xy[e, k] * 1e-6)")
+                            end
+                            wrote_any = true
+                        end
+                    end
+                end
+                wrote_any || println("  （循环 $cyc 无层分辨应力键——需在线导出激活）")
+            end
+        end
+        println("  f_n/f_p 与应力历史已导出（选定圈）")
     end
 
     # --- 场数据长表导出（JUBAT_EXPORT_FIELD_DATA=1，需 save_detailed 求解） ---
