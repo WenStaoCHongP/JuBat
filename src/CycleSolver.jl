@@ -207,12 +207,18 @@ end
 - `CyclingResult`: 循环结果汇总
 """
 function solve_cycling(case::Case, cycle_opt::CycleOption, ms=nothing;verbose::Bool=true, save_detailed::Bool=false)
-    
+
     n_cycles = cycle_opt.n_cycles
     result = CyclingResult(n_cycles)
 
+    # 2026-09-26 逐元素全历史导出：JUBAT_SNAPSHOT_CYCLES="1,5,10,30,50,100" 指定
+    # 采集逐机械步 CZMSnapshot 的循环号；其余循环不采集（仅逐循环/逐相位汇总 CSV）。
+    # 与 save_detailed 解耦：后者仍全程采集并额外保留 solve_result（内存不可行于百循环）。
+    snapshot_cycles = czm_snapshot_cycles()
+    want_snapshots = ms !== nothing && (save_detailed || !isempty(snapshot_cycles))
+
     # CZM snapshots vector (shared across all phases)
-    czm_snaps = save_detailed && ms !== nothing ? CZMSnapshot[] : nothing
+    czm_snaps = want_snapshots ? CZMSnapshot[] : nothing
 
     # 应用初始SOC设置
     soc_init = cycle_opt.SOC_init
@@ -247,8 +253,10 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, ms=nothing;verbose::B
     initial_capacity = 0.0  # 初始放电容量（第一个循环结束后设置）
     soh_terminated = false  # SOH终止标志
 
-    # 循环主体
+    # 循环主体（cycle_snaps 按循环号门控：仅选定循环采集全历史快照）
     for cycle in 1:n_cycles
+        cycle_snaps = czm_snaps === nothing ? nothing :
+            (save_detailed || cycle in snapshot_cycles ? czm_snaps : nothing)
         if verbose
             println("\n" * "-"^40)
             @printf("循环 %d/%d\n", cycle, n_cycles)
@@ -286,7 +294,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, ms=nothing;verbose::B
             current_state;
             ms=ms,
             dt_range=cycle_opt.dt_cycle,
-            czm_snapshots=czm_snaps, czm_cycle=cycle
+            czm_snapshots=cycle_snaps, czm_cycle=cycle
         )
         cycle_result.discharge = discharge_result
         current_state = discharge_result.final_state
@@ -314,7 +322,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, ms=nothing;verbose::B
                 current_state;  # 继承上一步状态
                 ms=ms,
                 dt_range=cycle_opt.dt_cycle,
-                czm_snapshots=czm_snaps, czm_cycle=cycle
+                czm_snapshots=cycle_snaps, czm_cycle=cycle
             )
             cycle_result.rest1 = rest1_result
             current_state = rest1_result.final_state
@@ -352,7 +360,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, ms=nothing;verbose::B
             current_state;
             ms=ms,
             dt_range=cycle_opt.dt_cycle,
-            czm_snapshots=czm_snaps, czm_cycle=cycle
+            czm_snapshots=cycle_snaps, czm_cycle=cycle
         )
         cycle_result.charge = charge_result
         current_state = charge_result.final_state
@@ -379,7 +387,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, ms=nothing;verbose::B
                 current_state;  # 继承上一步状态
                 ms=ms,
                 dt_range=cycle_opt.dt_cycle,
-                czm_snapshots=czm_snaps, czm_cycle=cycle
+                czm_snapshots=cycle_snaps, czm_cycle=cycle
             )
             cycle_result.rest2 = rest2_result
             current_state = rest2_result.final_state
@@ -530,4 +538,11 @@ function apply_initial_soc!(case::Case, param_dim, soc::Float64)
     case.param.PE.cs0 = param_dim.PE.cs0 / param_dim.PE.cs_max
     
     return cs0_NE, cs0_PE
+end
+
+# 2026-09-26 逐元素全历史导出：解析 JUBAT_SNAPSHOT_CYCLES（逗号分隔循环号，空=不采集）
+function czm_snapshot_cycles()
+    raw = get(ENV, "JUBAT_SNAPSHOT_CYCLES", "")
+    isempty(raw) && return Set{Int}()
+    return Set(parse(Int, strip(x)) for x in split(raw, ","))
 end

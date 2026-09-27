@@ -145,6 +145,18 @@ function append_cycle_result!(result, cycle, cycle_result; save_detailed::Bool=f
 
     if save_detailed
         push!(result.cycle_results, cycle_result)
+    else
+        # 2026-09-26：非 detailed 也保留相位元数据（相位表与 phase_summary.csv 的
+        # 数据源）；剥离重量级 solve_result（全程逐元素历史矩阵，百循环下不可存）
+        # 与 final_state（跨相位传递已在 solve_cycling 内完成，事后无需保留），
+        # 保留内存与旧的非 detailed 行为同量级
+        for ph in (cycle_result.discharge, cycle_result.rest1,
+                   cycle_result.charge, cycle_result.rest2)
+            ph === nothing && continue
+            ph.solve_result = nothing
+            ph.final_state = nothing
+        end
+        push!(result.cycle_results, cycle_result)
     end
 
     result.n_cycles = cycle

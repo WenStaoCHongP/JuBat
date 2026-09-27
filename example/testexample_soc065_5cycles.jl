@@ -20,6 +20,7 @@ geo/J2 成对关闭（D-B3-1），回答：**损伤已可启动的参数下，D 
 """
 
 using Printf
+using Profile
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
 
@@ -107,7 +108,7 @@ function main()
     # 2026-09-22 诊断口径：关闭粘性（回到原始崩溃配置），失败时转储 mech 状态
 
     cycle_opt = JuBat.CycleOption(
-        n_cycles = 5,
+        n_cycles = parse(Int, get(ENV, "JUBAT_CYCLES", "5")),
         I_charge = i,
         I_discharge = i,
         t_charge = 1800.0,
@@ -156,9 +157,15 @@ function main()
     println("\n[3/4] 运行循环求解器...")
 
     t_wall_start = time_ns()
+    profile_on = get(ENV, "JUBAT_PROFILE", "0") == "1"
     local result
     try
-        result = JuBat.solve_cycling(case, cycle_opt, case.mech)
+        if profile_on
+            Profile.init(n = 10_000_000, delay = 0.01)
+            result = Profile.@profile JuBat.solve_cycling(case, cycle_opt, case.mech)
+        else
+            result = JuBat.solve_cycling(case, cycle_opt, case.mech)
+        end
     catch err
         # 阶段0诊断：失败点原位状态转储（fractured 置位？受损单元承压 or 受拉？剪切主导？）
         println("\n[诊断] solve_cycling 失败，原位状态转储：")
@@ -200,6 +207,13 @@ function main()
         rethrow(err)
     end
     t_wall_s = (time_ns() - t_wall_start) * 1e-9
+    if profile_on
+        prof_path = joinpath(outdir, "profile_flat.txt")
+        open(prof_path, "w") do io
+            Profile.print(io, format = :flat)
+        end
+        println("profile 已保存: $prof_path")
+    end
 
     println("OK: 循环求解完成")
     @printf("  完成循环数: %d / 计划循环数: %d / 总墙钟: %.1f s\n",
@@ -229,6 +243,65 @@ function main()
                     cr.cycle_idx, label, ph.duration, ph.D_max, ph.ΔD_max)
             end
         end
+    end
+
+    # CSV 导出（后续后处理）：逐循环汇总 + 逐相位明细，写入 run 目录
+    open(joinpath(outdir, "cycle_summary.csv"), "w") do io
+        println(io, "cycle_idx,capacity_charge_Ah,capacity_discharge_Ah,coulombic_efficiency,D_max,D_mean,n_fractured,T_max_K,soh")
+        for k in eachindex(result.cycle_idx)
+            println(io, join((
+                result.cycle_idx[k], result.capacity_charge[k], result.capacity_discharge[k],
+                result.coulombic_efficiency[k], result.D_max[k], result.D_mean[k],
+                result.n_fractured[k], result.T_max[k], result.soh[k]), ","))
+        end
+    end
+    open(joinpath(outdir, "phase_summary.csv"), "w") do io
+        println(io, "cycle_idx,phase,t_start_s,t_end_s,duration_s,V_start_V,V_end_V,capacity_Ah,terminated_by,T_max_K,T_mean_end_K,D_max,D_mean,dD_max")
+        for cr in result.cycle_results
+            for (label, ph) in (("discharge", cr.discharge), ("rest1", cr.rest1),
+                                ("charge", cr.charge), ("rest2", cr.rest2))
+                ph === nothing && continue
+                println(io, join((
+                    cr.cycle_idx, label, ph.t_start, ph.t_end, ph.duration,
+                    ph.V_start, ph.V_end, ph.capacity, string(ph.terminated_by),
+                    ph.T_max, ph.T_mean_end, ph.D_max, ph.D_mean, ph.ΔD_max), ","))
+            end
+        end
+    end
+    println("\n  CSV 已导出: $(joinpath(outdir, "cycle_summary.csv")) / phase_summary.csv")
+
+    # 逐元素全历史导出（JUBAT_SNAPSHOT_CYCLES 选定循环）：element_map + 每圈
+    # damage/sep_n/sep_t 宽表（行=机械步，列=cohesive 单元，id 对应 element_map 行序）
+    if !isempty(result.czm_snapshots)
+        n_coh = length(result.czm_snapshots[1].damage)
+        open(joinpath(outdir, "element_map.csv"), "w") do io
+            println(io, "elem_id,interface,x_m,y_m")
+            for (j, elem) in enumerate(case.czm_mesh.cohesive_elements)
+                ns = vcat(elem.nodes_bottom, elem.nodes_top)
+                x = sum(case.czm_mesh.node[ns, 1]) / length(ns) * case.param.scale.L
+                y = sum(case.czm_mesh.node[ns, 2]) / length(ns) * case.param.scale.L
+                println(io, "$j,$(string(elem.interface_type)),$x,$y")
+            end
+        end
+        δ_czm = case.param.scale.δ_czm
+        snap_cycles_present = sort(unique([s.cycle for s in result.czm_snapshots]))
+        header = "t_s," * join(("e$j" for j in 1:n_coh), ",")
+        for cyc in snap_cycles_present
+            snaps = sort(filter(s -> s.cycle == cyc, result.czm_snapshots), by = s -> s.time_s)
+            for (fname, getcol) in (
+                    ("damage_history_cyc$cyc.csv", s -> s.damage),
+                    ("sep_n_history_cyc$cyc.csv", s -> s.separation_n .* δ_czm),
+                    ("sep_t_history_cyc$cyc.csv", s -> s.separation_t .* δ_czm))
+                open(joinpath(outdir, fname), "w") do io
+                    println(io, header)
+                    for s in snaps
+                        println(io, string(s.time_s) * "," * join(getcol(s), ","))
+                    end
+                end
+            end
+            @printf("  全历史已导出: 循环 %d（%d 步 × %d 单元）\n", cyc, length(snaps), n_coh)
+        end
+        println("  单元坐标系: $(joinpath(outdir, "element_map.csv"))")
     end
 
     println()
