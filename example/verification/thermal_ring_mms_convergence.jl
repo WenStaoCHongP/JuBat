@@ -430,7 +430,7 @@ function run_case(param_dim, ntheta, dr, model, label)
         polar_mesh_data=mesh_data)
     T = result.T_nodes .* T_ref
 
-    out_dir = normpath(joinpath(@__DIR__, "..", "..", "output", "thermal_verify", label))
+    out_dir = normpath(joinpath(@__DIR__, "..", "..", "output", "thermal_ring_mms_convergence", label))
     isdir(out_dir) || mkpath(out_dir)
     plot_mesh_outline(mesh, out_dir)
 
@@ -664,7 +664,7 @@ function main()
     Rout_nd = Rout / scale.L
     ntheta = 40
     dr = (Rout - Rin) / 20
-    out_root = normpath(joinpath(@__DIR__, "..", "..", "output", "thermal_verify"))
+    out_root = normpath(joinpath(@__DIR__, "..", "..", "output", "thermal_ring_mms_convergence"))
     isdir(out_root) || mkpath(out_root)
 
     fem = run_case_data(param_dim, ntheta, dr, "ring2D")

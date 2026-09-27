@@ -21,10 +21,9 @@ function get_czm_nθ(param_dim)
     E_NE  = param_dim.NE.E;  t_NE = param_dim.NE.thickness
     E_PE  = param_dim.PE.E;  t_PE = param_dim.PE.thickness
     E_eff = (E_NE * t_NE + E_PE * t_PE) / (t_NE + t_PE)
-    # G_c   = param_dim.cohesive.G_c_n                                      # TODO Chunk 2 Task 2.1
-    # σ_max = param_dim.cohesive.σ_max_n                                    # TODO Chunk 2 Task 2.1
-    G_c   = NaN  # TODO Chunk 2 Task 2.1
-    σ_max = NaN  # TODO Chunk 2 Task 2.1
+    # 2026-09-27 修复：参数已迁移到 param.PCC/NCC
+    G_c   = param_dim.PCC.G_c
+    σ_max = param_dim.PCC.σ_max
     l_c   = G_c * E_eff / σ_max^2
 
     R_in  = param_dim.cell.Rin
@@ -82,8 +81,8 @@ end
 
 """计算断裂能耗散 E_frac(t)"""
 function compute_fracture_energy(result, czm_mesh, param_dim)
-    # G_c = param_dim.cohesive.G_c_n                                        # TODO Chunk 2 Task 2.1
-    G_c = NaN  # TODO Chunk 2 Task 2.1
+    # 2026-09-27 修复：参数已迁移到 param.PCC
+    G_c = param_dim.PCC.G_c
     scale = param_dim.scale
     nt = length(result["time [s]"])
 
@@ -291,7 +290,7 @@ function main()
     end
 
     # ── 绘图 ──
-    out_dir = joinpath(root_dir, "output", "4_czm_convergence")
+    out_dir = joinpath(root_dir, "output", "mesh_4_czm_gci")
     mkpath(out_dir)
 
     colors = [:red, :orange, :green, :blue]

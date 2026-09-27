@@ -13,7 +13,7 @@
 
 using LinearAlgebra, Statistics, Printf, CSV, Plots
 
-include(joinpath(@__DIR__, "../src/JuBat.jl"))
+include(joinpath(@__DIR__, "../../src/JuBat.jl"))
 using .JuBat
 
 function interp_linear(x::Vector{Float64}, y::Vector{Float64}, xi::Vector{Float64})
@@ -262,7 +262,7 @@ function main()
     @printf("  PyBaMM: %.6f K -> %.6f K, ΔT = %.6f K\n", T_ref_on_t[1], T_ref_on_t[end], T_ref_on_t[end] - T_ref_on_t[1])
 
     # 写 CSV
-    out_dir = joinpath(@__DIR__, "..", "..", "output", "thermal_error_source_analysis")
+    out_dir = joinpath(@__DIR__, "..", "..", "output", "thermal_error_decomposition")
     isdir(out_dir) || mkpath(out_dir)
     out_csv = joinpath(out_dir, "thermal_error_breakdown.csv")
     open(out_csv, "w") do io

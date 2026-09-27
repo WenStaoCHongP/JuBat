@@ -24,9 +24,9 @@
 """
 
 using LinearAlgebra, SparseArrays, Statistics, Plots, Printf
-include(joinpath(@__DIR__, "../src/JuBat.jl"))
+include(joinpath(@__DIR__, "../../src/JuBat.jl"))
 
-const OUTPUT_DIR = joinpath(@__DIR__, "..", "..", "output", "cycle_example")
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "..", "output", "cycling_electrochem_thermal")
 mkpath(OUTPUT_DIR)
 
 function main()

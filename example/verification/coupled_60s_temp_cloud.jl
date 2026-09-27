@@ -77,7 +77,7 @@ function main()
 		(crate=1.0, t_end=60)
 	]
 
-	out_dir = joinpath(root_dir, "output", "60s温度分布云图")
+	out_dir = joinpath(root_dir, "output", "coupled_60s_temp_cloud")
 	isdir(out_dir) || mkpath(out_dir)
 
 	for c in cases

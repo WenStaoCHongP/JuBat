@@ -1,22 +1,32 @@
 """
-SOC 0.65 五次短循环：Jellyroll电池多SPMe并行电化学-热-CZM循环仿真（纯文字结果）
+Jellyroll 电池长循环仿真：多 SPMe 并行电化学-热-CZM 循环（文字结果 + CSV 导出）
 
-以 `example/testexample_soc065_1800s.jl` 为基，改用 `solve_cycling` 跑 5 次短循环
-（放电 1800 s → 静置 600 s → 充电 1800 s → 静置 600 s），回答一个问题：
-**循环载荷下 CZM 损伤是否启动**（单次 1800 s 放电全程 D=0，但 κ 已累积至 6.5e-3）。
+自由设定循环次数（JUBAT_CYCLES 环境变量，默认 5），一次运行产出后处理所需的
+全部 CSV（逐循环汇总 / 逐相位明细 / 选定循环逐元素全历史 / 选定循环场数据长表）。
 
-与 1800 s 单次工况的差异：
-- 循环求解（solve_cycling，循环序=放电→静置→充电→静置），n_cycles=5
-- 充放电极幅同 5 A；截止 4.2/2.5 V；SOC_init=0.65（由 solve_cycling 内部施加）
-- reset_T_each_cycle=false：保留跨循环热累积（更利于损伤发展的保守选择）
-- 其余（mix、geo+J2、basic、tol=1e-3、nθ=80、表面冷却）与 1800 s 工况一致
+界面参数口径（2026-09-27 定版，KB jubat-czm-dev-playbook）：
+基线文件不动（σ_max 82e6/92e6、K_n 2.4e17/1.2e17、G_c 25.3/6.2），脚本内
+缩放 ×0.09（强度）/ ×0.1（刚度）/ ×2（断裂能）→ 等效 σ_max 7.38/8.28 MPa、
+K_n 2.4e16/1.2e16 Pa/m、G_c 50.6/12.4 J/m²。geo/J2 成对关闭（D-B3-1）。
 
-2026-09-24 弧长修复复测：在当前生产参数基础上，界面强度乘 0.09、
-刚度乘 0.1、断裂能乘 2，得到 PE/NE 强度 7.38/8.28 MPa、
-刚度 2.4/1.2e16 Pa/m、断裂能 50.6/12.4 J/m²；
-geo/J2 成对关闭（D-B3-1），回答：**损伤已可启动的参数下，D 是否随循环增长**。
-输出 `output/testexample_soc065_5cycles/debug_a0.9_gc2/`（不覆盖任务 51 证据）。
-日期：2026-09-14
+环境变量：
+  JUBAT_CYCLES=<N>            总循环次数（默认 5）
+  JUBAT_CZM_METHOD=<name>     求解方法（basic / gp_basic / arc_length）
+  JUBAT_CZM_TAU_SECONDS=<s>   物理时间粘性 τ（设为 5 时 gp_basic + 粘性 = 稳健口径）
+  JUBAT_SNAPSHOT_CYCLES=<csv> 选定循环号逗号列表（如 1,5,10,30,50,100）→ 采全历史
+  JUBAT_EXPORT_FIELD_DATA=1   同时导出温度/位移/电流/损伤场数据长表（需 save_detailed）
+  JUBAT_RUN_TAG=<name>        输出目录子目录名（默认 debug_a0.9_gc2）
+
+网格信息（节点坐标/单元连接 CSV）不随本脚本导出——网格静态，需时用
+`tools/check_collector_mesh.jl`（KB 恢复后运行）单独生成到
+`output/网格信息/theta<N>/`（见 KB jubat-czm-dev-playbook 网格工具节）。
+
+推荐运行（100 循环 + 全历史导出）：
+  JUBAT_CYCLES=100 JUBAT_CZM_METHOD=gp_basic JUBAT_CZM_TAU_SECONDS=5 \
+  JUBAT_SNAPSHOT_CYCLES=1,5,10,30,50,100 JUBAT_EXPORT_FIELD_DATA=1 \
+  JUBAT_RUN_TAG=long_run julia -t8 example/czm_cycling.jl
+
+日期：2026-09-14（2026-09-27 合并场数据导出、改为自由循环次数）
 """
 
 using Printf
@@ -24,13 +34,24 @@ using Profile
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
 
+# JUBAT_SNAPSHOT_CYCLES 解析（空=不采集全历史）
+function czm_snapshot_cycles()
+    raw = get(ENV, "JUBAT_SNAPSHOT_CYCLES", "")
+    isempty(raw) && return Set{Int}()
+    return Set(parse(Int, strip(x)) for x in split(raw, ","))
+end
+
 function main()
     run_tag = get(ENV, "JUBAT_RUN_TAG", "debug_a0.9_gc2")
-    outdir = joinpath(@__DIR__, "..", "output", "testexample_soc065_5cycles", run_tag)
+    outdir = joinpath(@__DIR__, "..", "output", "czm_cycling", run_tag)
     mkpath(outdir)
 
+    n_cycles = parse(Int, get(ENV, "JUBAT_CYCLES", "5"))
+    snapshot_cycles = czm_snapshot_cycles()
+    export_field = get(ENV, "JUBAT_EXPORT_FIELD_DATA", "0") == "1"
+
     println("="^80)
-    println("Jellyroll电池多SPMe并行电化学-热耦合循环仿真（SOC 0.65 / 5次短循环 / 调试参数）")
+    @printf("Jellyroll电池多SPMe并行电化学-热耦合循环仿真（SOC 0.65 / %d次循环 / 调试参数）\n", n_cycles)
     println("="^80)
 
     # ========================================================================
@@ -42,8 +63,7 @@ function main()
     param_dim.cell.v_l = 2.5
     param_dim.cell.v_h = 4.2
 
-    # 当前生产默认值上的同参复测：强度×0.09、刚度×0.1、断裂能×2。
-    # ChooseCell 后缩放并同步派生量与 CZM 锚（与 testexample_soc065_1800s.jl 扫描口径一致）。
+    # 界面参数口径（定版）：基线文件 × 脚本缩放 ×0.09/×0.1/×2
     strength_scale, stiffness_scale, gc_scale = 0.09, 0.1, 2.0
     for ip in (param_dim.PCC, param_dim.NCC)
         ip.σ_max *= strength_scale
@@ -105,10 +125,9 @@ function main()
         opt.czm.viscous_enabled = true
         opt.czm.viscous_tau = parse(Float64, tau_seconds)
     end
-    # 2026-09-22 诊断口径：关闭粘性（回到原始崩溃配置），失败时转储 mech 状态
 
     cycle_opt = JuBat.CycleOption(
-        n_cycles = parse(Int, get(ENV, "JUBAT_CYCLES", "5")),
+        n_cycles = n_cycles,
         I_charge = i,
         I_discharge = i,
         t_charge = 1800.0,
@@ -124,13 +143,17 @@ function main()
 
     println("OK: 参数设置完成")
     @printf("  电流: %.2f A（充放同幅）\n", i)
-    @printf("  循环: %d 次（放电 1800 s → 静置 600 s → 充电 1800 s → 静置 600 s）\n", cycle_opt.n_cycles)
+    @printf("  循环: %d 次（放电 1800 s → 静置 600 s → 充电 1800 s → 静置 600 s）\n", n_cycles)
     @printf("  初始SOC: 0.65（solve_cycling 内部施加）\n")
-    @printf("  跨循环温度: 累积（reset_T_each_cycle=false）\n")
-    @printf("  充电前温度: 重置（reset_T_before_charge=true）\n")
-    @printf("  CZM: %s / geo=%s / J2=%s / %s / max_iter=%d / tol=%.1e / τ=%g s\n",
-        opt.czm.model, opt.czm.geo_nonlinear, opt.czm.j2_plasticity,
-        opt.czm.iter_method, opt.czm.max_iter, opt.czm.tol, opt.czm.viscous_tau)
+    @printf("  等效界面参数: σ_max=%.2f/%.2f MPa, K=%.1e/%.1e, G_c=%.1f/%.1f J/m²\n",
+        param_dim.PCC.σ_max * 1e-6, param_dim.NCC.σ_max * 1e-6,
+        param_dim.PCC.K_n, param_dim.NCC.K_n,
+        param_dim.PCC.G_c, param_dim.NCC.G_c)
+    @printf("  CZM: %s / geo=%s / J2=%s / max_iter=%d / tol=%.1e / τ=%g s\n",
+        opt.czm.iter_method, opt.czm.geo_nonlinear, opt.czm.j2_plasticity,
+        opt.czm.max_iter, opt.czm.tol, opt.czm.viscous_tau)
+    @printf("  全历史采集循环: %s\n", isempty(snapshot_cycles) ? "无" : sort(collect(snapshot_cycles)) |> x -> join(x, ","))
+    @printf("  场数据长表: %s\n", export_field ? "导出" : "不导出")
 
     # ========================================================================
     # 2. 创建案例和网格
@@ -151,6 +174,13 @@ function main()
     println("OK: Jellyroll网格创建完成")
     @printf("  周向单元数 n_theta: %d / 总单元数 ne: %d / 总节点数 nT: %d\n", n_theta, ne, mesh_th.nlen)
 
+    # === 设定全局环境（快照循环门控） ===
+    if !isempty(snapshot_cycles)
+        ENV["JUBAT_SNAPSHOT_CYCLES"] = join(sort(collect(snapshot_cycles)), ",")
+    else
+        delete!(ENV, "JUBAT_SNAPSHOT_CYCLES")
+    end
+
     # ========================================================================
     # 3. 循环求解
     # ========================================================================
@@ -160,14 +190,15 @@ function main()
     profile_on = get(ENV, "JUBAT_PROFILE", "0") == "1"
     local result
     try
+        solve_fn = () -> JuBat.solve_cycling(case, cycle_opt, case.mech;
+            save_detailed = export_field)
         if profile_on
             Profile.init(n = 10_000_000, delay = 0.01)
-            result = Profile.@profile JuBat.solve_cycling(case, cycle_opt, case.mech)
+            result = Profile.@profile solve_fn()
         else
-            result = JuBat.solve_cycling(case, cycle_opt, case.mech)
+            result = solve_fn()
         end
     catch err
-        # 阶段0诊断：失败点原位状态转储（fractured 置位？受损单元承压 or 受拉？剪切主导？）
         println("\n[诊断] solve_cycling 失败，原位状态转储：")
         println("  错误: " * first(sprint(showerror, err), 200))
         mech = case.mech
@@ -185,24 +216,6 @@ function main()
                 string(iface), count(s -> s.fractured, states),
                 count(s -> s.D > 0.9, states), count(s -> s.D > 0.99, states),
                 maximum(s.D for s in states), length(states))
-            n_open = n_closed = n_shear_dom = 0
-            max_dn = 0.0
-            for (k, j) in enumerate(idx)
-                states[k].D > 1e-8 || continue
-                elem = case.czm_mesh.cohesive_elements[j]
-                _, _, _, R = JuBat.cohesive_local_frame(case.czm_mesh, elem)
-                n1, n2 = elem.nodes_bottom
-                n4, n3 = elem.nodes_top
-                dx = 0.5 * (u[2*n4-1] - u[2*n1-1]) + 0.5 * (u[2*n3-1] - u[2*n2-1])
-                dy = 0.5 * (u[2*n4] - u[2*n1]) + 0.5 * (u[2*n3] - u[2*n2])
-                δn = R[1, 1] * dx + R[1, 2] * dy
-                δt = R[2, 1] * dx + R[2, 2] * dy
-                δn >= 0 ? (n_open += 1) : (n_closed += 1)
-                abs(δt) > abs(δn) && (n_shear_dom += 1)
-                max_dn = max(max_dn, abs(δn))
-            end
-            @printf("  %s 受损单元(D>0): δn>=0张开=%d, δn<0承压=%d, 剪切主导=%d, max|δn|=%.3e(归一)\n",
-                string(iface), n_open, n_closed, n_shear_dom, max_dn)
         end
         rethrow(err)
     end
@@ -220,9 +233,9 @@ function main()
         length(result.cycle_idx), cycle_opt.n_cycles, t_wall_s)
 
     # ========================================================================
-    # 4. 损伤是否启动：逐循环与阶段分解
+    # 4. 损伤分析与 CSV 导出
     # ========================================================================
-    println("\n[4/4] 损伤启动分析")
+    println("\n[4/4] 损伤分析 + CSV 导出")
     println("-"^78)
     @printf("  %-6s %-12s %-12s %-12s %-12s %-10s\n",
         "循环", "放电容量[Ah]", "D_max", "D_mean", "T_max[K]", "SOH")
@@ -245,7 +258,7 @@ function main()
         end
     end
 
-    # CSV 导出（后续后处理）：逐循环汇总 + 逐相位明细，写入 run 目录
+    # --- CSV 导出：逐循环汇总 + 逐相位明细 ---
     open(joinpath(outdir, "cycle_summary.csv"), "w") do io
         println(io, "cycle_idx,capacity_charge_Ah,capacity_discharge_Ah,coulombic_efficiency,D_max,D_mean,n_fractured,T_max_K,soh")
         for k in eachindex(result.cycle_idx)
@@ -268,10 +281,9 @@ function main()
             end
         end
     end
-    println("\n  CSV 已导出: $(joinpath(outdir, "cycle_summary.csv")) / phase_summary.csv")
+    println("\n  cycle_summary.csv / phase_summary.csv 已导出")
 
-    # 逐元素全历史导出（JUBAT_SNAPSHOT_CYCLES 选定循环）：element_map + 每圈
-    # damage/sep_n/sep_t 宽表（行=机械步，列=cohesive 单元，id 对应 element_map 行序）
+    # --- 逐元素全历史导出（选定循环）：element_map + damage/sep_n/sep_t 宽表 ---
     if !isempty(result.czm_snapshots)
         n_coh = length(result.czm_snapshots[1].damage)
         open(joinpath(outdir, "element_map.csv"), "w") do io
@@ -301,7 +313,83 @@ function main()
             end
             @printf("  全历史已导出: 循环 %d（%d 步 × %d 单元）\n", cyc, length(snaps), n_coh)
         end
-        println("  单元坐标系: $(joinpath(outdir, "element_map.csv"))")
+    end
+
+    # --- 场数据长表导出（JUBAT_EXPORT_FIELD_DATA=1，需 save_detailed 求解） ---
+    if export_field && !isempty(result.cycle_results)
+        L = case.param.scale.L
+        δ_czm = case.param.scale.δ_czm
+
+        # node_temperature.csv（热节点，全相位逐时间步）
+        open(joinpath(outdir, "node_temperature.csv"), "w") do f
+            println(f, "cycle,phase,time_s,node_id,T_K")
+            for cr in result.cycle_results, (pname, ph) in
+                    (("discharge", cr.discharge), ("rest1", cr.rest1),
+                     ("charge", cr.charge), ("rest2", cr.rest2))
+                ph === nothing && continue
+                raw = ph.solve_result === nothing ? nothing :
+                    get(ph.solve_result, "thermal2D temperature at nodes [K]", nothing)
+                raw === nothing && continue
+                tvec = ph.solve_result === nothing ? nothing :
+                    get(ph.solve_result, "time [s]", nothing)
+                for k in axes(raw, 2)
+                    t = tvec === nothing ? k * (ph.duration / size(raw, 2)) :
+                        ph.t_start + tvec[k] - tvec[1]
+                    for n in 1:size(raw, 1)
+                        println(f, "$(cr.cycle_idx),$pname,$t,$n,$(raw[n, k])")
+                    end
+                end
+            end
+        end
+
+        # node_displacement.csv（力学节点，快照时刻）
+        if !isempty(result.czm_snapshots)
+            open(joinpath(outdir, "node_displacement.csv"), "w") do f
+                println(f, "cycle,phase,time_s,node_id,ux,uy")
+                for s in result.czm_snapshots
+                    nn = case.czm_mesh.nnode
+                    for n in 1:nn
+                        println(f, "$(s.cycle),$(s.phase),$(s.time_s),$n,$(s.displacement[2n-1]*L),$(s.displacement[2n]*L)")
+                    end
+                end
+            end
+        end
+
+        # element_currents.csv（热单元电流）
+        open(joinpath(outdir, "element_currents.csv"), "w") do f
+            println(f, "cycle,phase,time_s,elem_id,I_e")
+            for cr in result.cycle_results, (pname, ph) in
+                    (("discharge", cr.discharge), ("rest1", cr.rest1),
+                     ("charge", cr.charge), ("rest2", cr.rest2))
+                ph === nothing && continue
+                raw = ph.solve_result === nothing ? nothing :
+                    get(ph.solve_result, "thermal2D element current", nothing)
+                raw === nothing && continue
+                tvec = ph.solve_result === nothing ? nothing :
+                    get(ph.solve_result, "time [s]", nothing)
+                for k in axes(raw, 2)
+                    t = tvec === nothing ? k * (ph.duration / size(raw, 2)) :
+                        ph.t_start + tvec[k] - tvec[1]
+                    for e in 1:size(raw, 1)
+                        println(f, "$(cr.cycle_idx),$pname,$t,$e,$(raw[e, k])")
+                    end
+                end
+            end
+        end
+
+        # cohesive_damage.csv（plot_czm 损伤云图契约：长表）
+        if !isempty(result.czm_snapshots)
+            open(joinpath(outdir, "cohesive_damage.csv"), "w") do f
+                println(f, "cycle,phase,time_s,coh_id,D,sep_n_m,sep_t_m")
+                for s in result.czm_snapshots
+                    for j in 1:length(s.damage)
+                        println(f, "$(s.cycle),$(s.phase),$(s.time_s),$j,$(s.damage[j]),$(s.separation_n[j]*δ_czm),$(s.separation_t[j]*δ_czm)")
+                    end
+                end
+            end
+        end
+
+        println("  场数据长表已导出: node_temperature / node_displacement / element_currents / cohesive_damage")
     end
 
     println()
@@ -309,7 +397,6 @@ function main()
     n_frac_all = isempty(result.n_fractured) ? 0 : maximum(result.n_fractured)
     @printf("  全程 D_max = %.4e ｜ 断裂单元峰值 = %d\n", D_max_all, n_frac_all)
 
-    # solve_cycling 内部经 update_czm_damage! 演化 case.mech（ms 参数仅控制快照）
     fm = result.final_mech === nothing ? case.mech : result.final_mech
     if fm.gp_damage_states !== nothing
         gp = fm.gp_damage_states
@@ -319,14 +406,11 @@ function main()
     end
     if fm.plastic_states !== nothing
         kappa_max = maximum(s.kappa for s in fm.plastic_states)
-        n_yielded = count(s.kappa > 0 for s in fm.plastic_states)
-        @printf("  最终等效塑性应变 KAPPA_MAX = %.4e（对照：单次 1800 s 放电为 6.4801e-3）\n", kappa_max)
-        @printf("  屈服过的高斯点数 YIELDED = %d / %d\n", n_yielded, length(fm.plastic_states))
+        @printf("  最终等效塑性应变 KAPPA_MAX = %.4e\n", kappa_max)
     else
         println("  （调试口径 J2 关闭：无塑性状态）")
     end
 
-    # 分界面最终损伤统计（调试参数下双界面顺序启动的对照）
     for (iface, ip) in ((:PE_PCC, case.param.PCC), (:NE_NCC, case.param.NCC))
         idx = findall(e -> e.interface_type == iface, case.czm_mesh.cohesive_elements)
         states = fm.damage_states[idx]

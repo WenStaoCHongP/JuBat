@@ -2,7 +2,7 @@
 2D 等效集总量 vs Thermal.jl(lumped) 对比脚本
 
 输出：
-- output/thermal_equivalent_lumped_compare.csv
+- output/thermal_2d_vs_lumped_vs_pybamm.csv
 - output/thermal_equivalent_temperature_compare.png
 - output/thermal_equivalent_power_compare.png
 """
@@ -392,7 +392,7 @@ function main()
     @printf("  - 建议: 使用等效换热系数 h_eff ≈ %.1f × h 可使 2D 散热与集总模型等效\n",
             mean((T2d .- Tamb) ./ (T_edge .- Tamb .+ 1e-6)))
 
-    out_dir = joinpath(@__DIR__, "..", "..", "output", "thermal_equivalent_lumped_compare")
+    out_dir = joinpath(@__DIR__, "..", "..", "output", "thermal_2d_vs_lumped_vs_pybamm")
     isdir(out_dir) || mkpath(out_dir)
     out_csv = joinpath(out_dir, "thermal_equivalent_lumped_compare.csv")
     open(out_csv, "w") do io
@@ -423,7 +423,7 @@ function main()
     plot!(pC, t2d, Qrev_ref_i, label="PyBaMM reversible", linewidth=2, linestyle=:dash)
     savefig(pC, joinpath(out_dir, "thermal_equivalent_component_compare.png"))
 
-    println("\n已写出: output/thermal_equivalent_lumped_compare.csv")
+    println("\n已写出: output/thermal_2d_vs_lumped_vs_pybamm.csv")
     println("已写出: output/thermal_equivalent_temperature_compare.png")
     println("已写出: output/thermal_equivalent_power_compare.png")
     println("已写出: output/thermal_equivalent_component_compare.png")

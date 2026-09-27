@@ -16,7 +16,7 @@ using LinearAlgebra, SparseArrays, Statistics, Plots, Printf
 include(joinpath(@__DIR__, "../../src/JuBat.jl"))
 using .JuBat
 
-const OUTPUT_DIR = joinpath(@__DIR__, "..", "..", "output", "SPMe_Thermal_example")
+const OUTPUT_DIR = joinpath(@__DIR__, "..", "..", "output", "coupled_spme_thermal")
 mkpath(OUTPUT_DIR)
 
 function element_areas(mesh)

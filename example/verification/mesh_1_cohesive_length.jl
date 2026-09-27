@@ -27,10 +27,10 @@ function main()
     E_PE  = param_dim.PE.E              # Pa
     t_NE  = param_dim.NE.thickness      # m
     t_PE  = param_dim.PE.thickness      # m
-    # G_c   = param_dim.cohesive.G_c_n    # J/m²                              # TODO Chunk 2 Task 2.1
-    # σ_max = param_dim.cohesive.σ_max_n  # Pa                                # TODO Chunk 2 Task 2.1
-    G_c   = NaN  # TODO Chunk 2 Task 2.1
-    σ_max = NaN  # TODO Chunk 2 Task 2.1
+    # 2026-09-27 修复：参数已迁移到 param.PCC/NCC（原 param_dim.cohesive 已删除）。
+    # 取 PCC 界面（PE-PCC）参数；如需 NE-NCC（铜箔）侧改用 param.NCC。
+    G_c   = param_dim.PCC.G_c    # J/m²
+    σ_max = param_dim.PCC.σ_max  # Pa
     R_in  = param_dim.cell.Rin          # m
     R_out = param_dim.cell.Rout         # m
     nu_NE = param_dim.NE.nu
