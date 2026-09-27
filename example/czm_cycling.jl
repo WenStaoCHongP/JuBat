@@ -117,6 +117,7 @@ function main()
     end
     opt.czm.load_steps = 10
     opt.czm.tol = 1e-3
+    opt.czm.area_loss_enabled = get(ENV, "JUBAT_AREA_LOSS", "0") == "1"  # 任务 58 双面连续面积反馈
     opt.czm.geo_nonlinear = false   # 调试口径：geo/J2 成对关闭（D-B3-1）
     opt.czm.j2_plasticity = false
     opt.czm.update_interval = 1
@@ -149,9 +150,9 @@ function main()
         param_dim.PCC.σ_max * 1e-6, param_dim.NCC.σ_max * 1e-6,
         param_dim.PCC.K_n, param_dim.NCC.K_n,
         param_dim.PCC.G_c, param_dim.NCC.G_c)
-    @printf("  CZM: %s / geo=%s / J2=%s / max_iter=%d / tol=%.1e / τ=%g s\n",
+    @printf("  CZM: %s / geo=%s / J2=%s / max_iter=%d / tol=%.1e / τ=%g s / area_loss=%s\n",
         opt.czm.iter_method, opt.czm.geo_nonlinear, opt.czm.j2_plasticity,
-        opt.czm.max_iter, opt.czm.tol, opt.czm.viscous_tau)
+        opt.czm.max_iter, opt.czm.tol, opt.czm.viscous_tau, string(opt.czm.area_loss_enabled))
     @printf("  全历史采集循环: %s\n", isempty(snapshot_cycles) ? "无" : sort(collect(snapshot_cycles)) |> x -> join(x, ","))
     @printf("  场数据长表: %s\n", export_field ? "导出" : "不导出")
 

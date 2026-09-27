@@ -397,16 +397,11 @@ function compute_all_gap_conductances(damage_states::AbstractVector{DamageState}
 end
 
 """
-	effective_area_factor(D::Float64, D_threshold::Float64) -> Float64
+	effective_area_factor(D::Float64) -> Float64
 
-计算热单元的有效面积比例因子。
-
-当 D ≤ D_threshold 时返回 1.0（无缩减）；
-当 D > D_threshold 时线性缩减至 D=1.0 时为 0.0。
-
-公式: factor = (1 - D) / (1 - D_threshold)
+双面连续面积反馈（任务 58，2026-09-27）：f(D) = 1 − D，无起始阈值。
+D=0 → f=1（无损）；D=1 → f=0（该面面积贡献严格归零）。
 """
-function effective_area_factor(D::Float64, D_threshold::Float64)
-	D ≤ D_threshold && return 1.0
-	return (1.0 - D) / (1.0 - D_threshold)
+function effective_area_factor(D::Float64)
+    return 1.0 - D
 end

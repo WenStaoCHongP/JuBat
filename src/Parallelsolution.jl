@@ -55,13 +55,13 @@ function compute_prefactors(variables, param, mesh_ne, mesh_pe)
 			cn_surf=cn_surf, cp_surf=cp_surf, ce_n_gs=ce_n_gs, ce_p_gs=ce_p_gs)
 end
 
-"""计算单个单元的电化学系数"""
-function compute_element_coefficients(e, T_e, param, prefactors, T_ref)
-	# 交换电流密度
+"""计算单个单元的电化学系数（任务 58：j0 缩放传入分流阻抗调制）"""
+function compute_element_coefficients(e, T_e, param, prefactors, T_ref, f_n_e::Float64=1.0, f_p_e::Float64=1.0)
+	# 交换电流密度（area_loss 开启时 f 缩放→等压 Newton 阻抗调制电流重分布）
 	arr_n = Arrhenius(param.NE.Eac_k, T_e)
 	arr_p = Arrhenius(param.PE.Eac_k, T_e)
-	j0_n = param.NE.k * arr_n * prefactors.prefactor_n
-	j0_p = param.PE.k * arr_p * prefactors.prefactor_p
+	j0_n = param.NE.k * arr_n * prefactors.prefactor_n * f_n_e
+	j0_p = param.PE.k * arr_p * prefactors.prefactor_p * f_p_e
     
 	# 电解液电导率
 	kappa_ne = param.EL.kappa(param.EL.ce0, T_e) * param.NE.eps^param.NE.brugg
@@ -83,13 +83,16 @@ function compute_element_coefficients(e, T_e, param, prefactors, T_ref)
 	return (C1=C1, C2=C2, alpha_p=alpha_p, alpha_n=alpha_n, C5=C5)
 end
 
-"""批量计算所有单元的系数"""
-function compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref)
-	coeffs = Vector{NamedTuple{(:C1,:C2,:alpha_p,:alpha_n,:C5)}}(undef, ne)
-	for e in 1:ne
-		coeffs[e] = compute_element_coefficients(e, Te_prev[e], param, prefactors, T_ref)
-	end
-	return coeffs
+"""批量计算所有单元的系数（f_n/f_p 逐单元面积比例，调用方始终填充长度 ne）"""
+function compute_all_coefficients(ne, Te_prev, param, prefactors, T_ref,
+                                  f_n_area::Vector{Float64}, f_p_area::Vector{Float64})
+    (length(f_n_area) == ne && length(f_p_area) == ne) ||
+        error("compute_all_coefficients: f vectors must have length $ne, got $(length(f_n_area)) and $(length(f_p_area))")
+    coeffs = Vector{NamedTuple{(:C1,:C2,:alpha_p,:alpha_n,:C5)}}(undef, ne)
+    for e in 1:ne
+        coeffs[e] = compute_element_coefficients(e, Te_prev[e], param, prefactors, T_ref, f_n_area[e], f_p_area[e])
+    end
+    return coeffs
 end
 
 # 分支电压模型
@@ -355,25 +358,15 @@ end
 - 总电流由剩余活跃单元承担
 - 失效单元不参与牛顿迭代
 """
-function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, yt::Array{Float64}, t::Float64, I_total::Float64, areas::Vector{Float64}, Te_prev::Vector{Float64}, x_prev::Union{Nothing,Vector{Float64}}=nothing; deactivated_elements::Union{Nothing,Vector{Int64}}=nothing, D_elem::Union{Nothing,Vector{Float64}}=nothing)
+function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, yt::Array{Float64}, t::Float64, I_total::Float64, areas::Vector{Float64}, Te_prev::Vector{Float64}, x_prev::Union{Nothing,Vector{Float64}}=nothing; deactivated_elements::Union{Nothing,Vector{Int64}}=nothing, f_n_area::Vector{Float64}=fill(1.0, length(areas)), f_p_area::Vector{Float64}=fill(1.0, length(areas)))
 	ne = length(areas)
-	# 渐进式有效面积损失：损伤调制权重
-	if case.opt.czm.area_loss_enabled && D_elem !== nothing
-		A_eff = areas .* effective_area_factor.(D_elem, case.opt.czm.area_loss_threshold)
-		w = A_eff ./ sum(A_eff)
-		# 调试：输出面积损失权重变化
-		loss_idx = findall(d -> d > case.opt.czm.area_loss_threshold, D_elem)
-		if !isempty(loss_idx) && case.opt.debug_coupling
-			factors = effective_area_factor.(D_elem[loss_idx], case.opt.czm.area_loss_threshold)
-			println("  [AreaLoss][Weight] 超阈值=$(length(loss_idx))单元 | D=$(round.(D_elem[loss_idx], digits=3)) | factor=$(round.(factors, digits=4)) | w∈[$(round(minimum(w), digits=4)), $(round(maximum(w), digits=4))]")
-		end
-	else
-		w = areas ./ sum(areas)
-	end
+	# 任务 58 双面连续面积反馈：w 回归纯几何（不消费 D）；
+	# f 逐单元传入 j0→等压 Newton 阻抗调制电流重分布（compute_all_coefficients 内部）
+	w = areas ./ sum(areas)
 	phi_scale = case.param.scale.phi
 	V_MIN, V_MAX = case.param_dim.cell.v_l / phi_scale, case.param_dim.cell.v_h / phi_scale
 
-	# CZM 失效掩码
+	# 失效掩码（截止检测合并旧接口；area_loss 的 f==0 零电流在下方统一处理）
 	deactivated_mask = falses(ne)
 	if deactivated_elements !== nothing
 		for e in deactivated_elements
@@ -382,11 +375,21 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 		end
 	end
 
-	# 电化学预因子 + 各单元系数
+	# 电化学预因子 + 各单元系数（area_loss 开启时 f 缩放 j0）
 	prefactors = compute_prefactors(variables, case.param, case.mesh["negative electrode"], case.mesh["positive electrode"])
-	coeffs = compute_all_coefficients(ne, Te_prev, case.param, prefactors, case.param.cell.T0)
+	coeffs = compute_all_coefficients(ne, Te_prev, case.param, prefactors, case.param.cell.T0, f_n_area, f_p_area)
 
-	# 截止检测 + 合并 CZM 失效
+	# 任务 58 f==0 零电流路线：某一极双面全损伤→该支路不参与 BV/asinh，
+	# 直接赋 I_e=0（等价于从 Newton 活动集中排除，不产生 Inf/NaN）
+	if case.opt.czm.area_loss_enabled
+		for e in 1:ne
+			if f_n_area[e] == 0.0 || f_p_area[e] == 0.0
+				deactivated_mask[e] = true
+			end
+		end
+	end
+
+	# 截止检测 + 合并失效
 	ci = detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
 	active_mask = copy(ci.active_mask)
 	for e in 1:ne
