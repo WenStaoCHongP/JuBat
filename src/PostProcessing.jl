@@ -85,13 +85,9 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
         for key in ["thermal2D element current", "thermal2D eta_n_e", "thermal2D eta_p_e",
                     "thermal2D element soc_n", "thermal2D element soc_p",
                     "thermal2D element voltages", "thermal2D element OCV",
-                    "thermal2D dUdT_n_e", "thermal2D dUdT_p_e"]
+                    "thermal2D dUdT_n_e", "thermal2D dUdT_p_e",
+                    "thermal2D effective area fraction n", "thermal2D effective area fraction p"]
             result[key] = variables[key][:, 1:v]
-        end
-        # 任务 58：有效面积比例仅多 SPMe 路径产出（CallModel_MultiSPMe 写入）；
-        # 其他路径无此键，缺键时不产生伪面积数据
-        for key in ["thermal2D effective area fraction n", "thermal2D effective area fraction p"]
-            haskey(variables, key) && (result[key] = variables[key][:, 1:v])
         end
 
         # ── 截止与激活信息 ──
