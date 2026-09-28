@@ -34,12 +34,12 @@ function SPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
     return M, K, F, variables
 end
 
-function SPMe_element(case::Case, yt_e, t::Float64, e::Int; I_e::Float64, T_e::Float64, jacobi::String="update",workspace::Union{Nothing, Dict{String, Union{Array{Float64},Float64}}}=nothing, j0_scale_n::Float64=1.0, j0_scale_p::Float64=1.0)
-    # 1) 使用 workspace 或创建新 variables（area_loss 开启时 j0 缩放传入 BV）
+function SPMe_element(case::Case, yt_e, t::Float64, e::Int; I_e::Float64, T_e::Float64, jacobi::String="update",workspace::Union{Nothing, Dict{String, Union{Array{Float64},Float64}}}=nothing)
+    # 1) 使用 workspace 或创建新 variables
     if workspace !== nothing
-        variables_e = SPMe_variables!(workspace, case, yt_e, t; I_app=I_e, T_e=T_e, j0_scale_n=j0_scale_n, j0_scale_p=j0_scale_p)
+        variables_e = SPMe_variables!(workspace, case, yt_e, t; I_app=I_e, T_e=T_e)
     else
-        variables_e = SPMe_variables(case, vec(yt_e), t; I_app=I_e, T_e=T_e, j0_scale_n=j0_scale_n, j0_scale_p=j0_scale_p)
+        variables_e = SPMe_variables(case, vec(yt_e), t; I_app=I_e, T_e=T_e)
     end
     
     # 2) 力学耦合（如果启用）
@@ -98,7 +98,7 @@ end
 SPMe_variables 的原位变体：直接写入预分配 workspace，不创建新 Dict。
 计算逻辑与 SPMe_variables 完全一致，仅省去 StandardVariables 分配。
 """
-function SPMe_variables!(ws::Dict{String, Union{Array{Float64},Float64}},case::Case, yt, t::Float64;I_app::Union{Nothing,Float64}=nothing,T_e::Union{Nothing,Float64}=nothing,j0_scale_n::Float64=1.0,j0_scale_p::Float64=1.0)
+function SPMe_variables!(ws::Dict{String, Union{Array{Float64},Float64}},case::Case, yt, t::Float64;I_app::Union{Nothing,Float64}=nothing,T_e::Union{Nothing,Float64}=nothing)
     param = case.param
 
     if isnothing(I_app)
@@ -147,8 +147,8 @@ function SPMe_variables!(ws::Dict{String, Union{Array{Float64},Float64}},case::C
 
     j0_n_gs =  param.NE.k * Arrhenius(param.NE.Eac_k, T) .* abs.(cn_surf .* (1.0 .- cn_surf) .* ce_n_gs) .^ 0.5
     j0_p_gs =  param.PE.k * Arrhenius(param.PE.Eac_k, T) .* abs.(cp_surf .* (1.0 .- cp_surf) .* ce_p_gs) .^ 0.5
-    j0_n_av = IntV(j0_n_gs, mesh_ne) / param.NE.thickness * j0_scale_n
-    j0_p_av = IntV(j0_p_gs, mesh_pe) / param.PE.thickness * j0_scale_p
+    j0_n_av = IntV(j0_n_gs, mesh_ne) / param.NE.thickness
+    j0_p_av = IntV(j0_p_gs, mesh_pe) / param.PE.thickness
     eta_n = 2.0 * T * asinh.(j_n / 2.0 / j0_n_av)
     eta_p = 2.0 * T * asinh.(j_p / 2.0 / j0_p_av)
 
@@ -213,7 +213,7 @@ function SPMe_BC(case::Case, variables::Dict{String, Union{Array{Float64},Float6
     return flux
 end
 
-function SPMe_variables(case::Case, yt::AbstractVector{Float64}, t::Float64; I_app::Union{Nothing,Float64}=nothing, T_e::Union{Nothing,Float64}=nothing, j0_scale_n::Float64=1.0, j0_scale_p::Float64=1.0)
+function SPMe_variables(case::Case, yt::AbstractVector{Float64}, t::Float64; I_app::Union{Nothing,Float64}=nothing, T_e::Union{Nothing,Float64}=nothing)
     param = case.param
     variables = StandardVariables(case, 1)
     # 允许外部覆盖无量纲电流与温度
@@ -255,8 +255,8 @@ function SPMe_variables(case::Case, yt::AbstractVector{Float64}, t::Float64; I_a
 
     j0_n_gs =  param.NE.k * Arrhenius(param.NE.Eac_k, T) .* abs.(cn_surf .* (1.0 .- cn_surf) .* ce_n_gs) .^ 0.5
     j0_p_gs =  param.PE.k * Arrhenius(param.PE.Eac_k, T) .* abs.(cp_surf .* (1.0 .- cp_surf) .* ce_p_gs) .^ 0.5
-    j0_n_av = IntV(j0_n_gs, mesh_ne) / param.NE.thickness * j0_scale_n
-    j0_p_av = IntV(j0_p_gs, mesh_pe) / param.PE.thickness * j0_scale_p
+    j0_n_av = IntV(j0_n_gs, mesh_ne) / param.NE.thickness
+    j0_p_av = IntV(j0_p_gs, mesh_pe) / param.PE.thickness
     eta_n = 2.0 * T * asinh.(j_n / 2.0 / j0_n_av)
     eta_p = 2.0 * T * asinh.(j_p / 2.0 / j0_p_av)
 

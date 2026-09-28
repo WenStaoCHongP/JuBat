@@ -85,8 +85,7 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
         for key in ["thermal2D element current", "thermal2D eta_n_e", "thermal2D eta_p_e",
                     "thermal2D element soc_n", "thermal2D element soc_p",
                     "thermal2D element voltages", "thermal2D element OCV",
-                    "thermal2D dUdT_n_e", "thermal2D dUdT_p_e",
-                    "thermal2D effective area fraction n", "thermal2D effective area fraction p"]
+                    "thermal2D dUdT_n_e", "thermal2D dUdT_p_e"]
             result[key] = variables[key][:, 1:v]
         end
 

@@ -20,57 +20,6 @@ function map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, damage_states::Abstra
 	return D_per_thermal
 end
 
-"""
-	effective_area_fraction_by_interface(czm_mesh, damage_states, ne_thermal, scale_L, cell_width) -> (f_n, f_p)
-
-任务 58 双面连续面积反馈（2026-09-27）：按真实箔—涂层面及父热单元求两极各自
-剩余面积比例 f。每面面积 A_k,j,e = elem.length × scale.L × cell_width [m²]；
-按极性（PE_PCC→f_p，NE_NCC→f_n）以面积加权消费 damage_states[].D：
-
-  f_k[e] = Σ_j A_k,j,e·(1−D_k,j,e) / Σ_j A_k,j,e
-
-f 是相对于该热单元该极双面初始面积的比例。缺面、映射越界、NaN、缺面
-不能解释为无损（显式 error）。不修改 damage_states 本身。
-"""
-function effective_area_fraction_by_interface(
-        czm_mesh::CohesiveMesh, damage_states::AbstractVector{DamageState},
-        ne_thermal::Int, scale_L::Float64, cell_width::Float64)
-    length(damage_states) == czm_mesh.n_cohesive ||
-        error("effective_area_fraction_by_interface: damage_states size mismatch")
-
-    A0_p = zeros(ne_thermal)   # PE_PCC 双面无损面积
-    Aeff_p = zeros(ne_thermal) # PE_PCC 双面有效面积
-    A0_n = zeros(ne_thermal)
-    Aeff_n = zeros(ne_thermal)
-
-    for j in 1:czm_mesh.n_cohesive
-        e_th = czm_mesh.cohesive_to_thermal[j]
-        (1 <= e_th <= ne_thermal) ||
-            error("effective_area_fraction_by_interface: cohesive $j maps to invalid thermal $e_th")
-        D = damage_states[j].D
-        (isfinite(D) && 0.0 <= D <= 1.0) ||
-            error("effective_area_fraction_by_interface: cohesive $j has invalid D=$D")
-        A = czm_mesh.cohesive_elements[j].length * scale_L * cell_width
-        A_eff = A * (1.0 - D)
-        iface = czm_mesh.cohesive_elements[j].interface_type
-        if iface === :PE_PCC
-            A0_p[e_th] += A
-            Aeff_p[e_th] += A_eff
-        elseif iface === :NE_NCC
-            A0_n[e_th] += A
-            Aeff_n[e_th] += A_eff
-        else
-            error("effective_area_fraction_by_interface: unknown interface type $iface")
-        end
-    end
-
-    f_p = [A0_p[e] > 0 ? Aeff_p[e] / A0_p[e] :
-           error("effective_area_fraction_by_interface: thermal elem $e has no PE_PCC face") for e in 1:ne_thermal]
-    f_n = [A0_n[e] > 0 ? Aeff_n[e] / A0_n[e] :
-           error("effective_area_fraction_by_interface: thermal elem $e has no NE_NCC face") for e in 1:ne_thermal]
-    return f_n, f_p
-end
-
 function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
     # 验证前提条件
     if case.layout === nothing
@@ -127,37 +76,41 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     variables["thermal2D temperature at nodes"] = T_nodes
     variables["thermal2D element area"] = areas
 
-    # 任务 58 双面连续面积反馈（2026-09-27）：f=1-D 按界面→热单元面积加权，
-    # 逐单元传参到分流（j0 缩放→等压 Newton 阻抗调制）和 SPMe（逐单元 BV 缩放）。
-    # 删除旧 fracture 标记 inactive 关断（get_fractured_elements→deactivated→I_e=0
-    # 及 compute_heat_sources_with_czm 热源清零）：唯一失活判据是 f_n==0 || f_p==0。
-    deactivated_elements = Int64[]   # 旧接口保留但不再消费 fracture
-    f_n_area = fill(1.0, ne)         # 逐单元负极面积比例（NE_NCC 双面）；关闭时恒 1
-    f_p_area = fill(1.0, ne)         # 逐单元正极面积比例（PE_PCC 双面）；关闭时恒 1
-    if case.opt.czm.area_loss_enabled && case.czm_mesh !== nothing &&
-       case.czm_mesh.cohesive_to_thermal !== nothing
-        f_n_area, f_p_area = effective_area_fraction_by_interface(
-            case.czm_mesh, case.mech.damage_states, ne,
-            case.param.scale.L, case.param_dim.cell.width)
-        if case.opt.debug_coupling
-            t_phys = round(t * case.param.scale.t0, digits=1)
-            f_min_n = minimum(f_n_area); f_min_p = minimum(f_p_area)
-            if f_min_n < 1.0 || f_min_p < 1.0
-                println("  [AreaLoss] t=$(t_phys)s | f_n_min=$(round(f_min_n, digits=4)) | f_p_min=$(round(f_min_p, digits=4)) | f_n<1: $(count(<(1.0), f_n_area)) | f_p<1: $(count(<(1.0), f_p_area))")
+    # 获取CZM失效单元列表（仅在启用CZM时）
+    # 当CZM单元损伤D >= 0.95时，对应热单元电流归零，总电流重分配
+    if case.opt.czm.enabled && case.czm_mesh !== nothing
+        fractured_czm = get_fractured_elements(case.mech.damage_states)
+        deactivated_elements = Int64[]
+        geom = case.geometry
+        for e in 1:ne
+            for czm_idx in get(geom.czm_element_map, e, Int64[])
+                if czm_idx in fractured_czm
+                    push!(deactivated_elements, e)
+                    break
+                end
             end
+        end
+    else
+        deactivated_elements = Int64[]
+    end
+
+    # 计算渐进式面积损失的 D 映射（仅在启用时）
+    D_elem_area_loss = nothing
+    if case.opt.czm.area_loss_enabled && case.czm_mesh !== nothing && case.czm_mesh.cohesive_to_thermal !== nothing
+        D_elem_area_loss = map_czm_damage_to_thermal(case.czm_mesh, case.mech.damage_states, ne)
+        # 调试：输出 D 映射统计
+        D_above = filter(d -> d > case.opt.czm.area_loss_threshold, D_elem_area_loss)
+        if !isempty(D_above) && case.opt.debug_coupling
+            t_phys = round(t * case.param.scale.t0, digits=1)
+            println("  [AreaLoss] t=$(t_phys)s | D_max=$(round(maximum(D_elem_area_loss), digits=4)) | 超阈值单元=$(length(D_above))/$(ne) | threshold=$(case.opt.czm.area_loss_threshold)")
         end
     end
 
-    # 分流求解（area_loss 开启时 f 进入 j0→等压阻抗调制；关闭时 f 恒为空数组→不消费损伤）
     t_branch_ns = time_ns()
-    variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, nothing; deactivated_elements=deactivated_elements, f_n_area=f_n_area, f_p_area=f_p_area)
+    variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, nothing; deactivated_elements=deactivated_elements, D_elem=D_elem_area_loss)
     t_branch_s = (time_ns() - t_branch_ns) * 1e-9
-
-    # 任务 58：有效面积比例存入结果键（area_fraction_history 导出与圈末聚合的数据源）
-    variables["thermal2D effective area fraction n"] = f_n_area
-    variables["thermal2D effective area fraction p"] = f_p_area
-
-    # 4) 并行求解每个单元的SPMe（area_loss 开启时 f 逐单元缩放 j0→BV）
+    
+    # 4) 并行求解每个单元的SPMe（使用线程本地精简工作区）
     M_elems = Vector{SparseMatrixCSC{Float64,Int64}}(undef, ne)
     K_elems = Vector{SparseMatrixCSC{Float64,Int64}}(undef, ne)
     F_elems = Vector{Vector{Float64}}(undef, ne)
@@ -172,7 +125,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     Threads.@threads for e in 1:ne
         tid = Threads.threadid()
         ws_e = ws_pool[tid]
-        M_e, K_e, F_e, vars_e = SPMe_element(case, yt_chem[e], t, e;I_e=I_e[e], T_e=Te_prev[e],jacobi=jacobi, workspace=ws_e, j0_scale_n=f_n_area[e], j0_scale_p=f_p_area[e])
+        M_e, K_e, F_e, vars_e = SPMe_element(case, yt_chem[e], t, e;I_e=I_e[e], T_e=Te_prev[e],jacobi=jacobi, workspace=ws_e)
         M_elems[e] = M_e
         K_elems[e] = K_e
         F_elems[e] = vec(F_e)

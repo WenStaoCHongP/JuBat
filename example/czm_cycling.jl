@@ -14,9 +14,7 @@ K_n 2.4e16/1.2e16 Pa/m、G_c 50.6/12.4 J/m²。geo/J2 成对关闭（D-B3-1）�
   JUBAT_CZM_METHOD=<name>     求解方法（basic / gp_basic / arc_length）
   JUBAT_CZM_TAU_SECONDS=<s>   物理时间粘性 τ（设为 5 时 gp_basic + 粘性 = 稳健口径）
   JUBAT_SNAPSHOT_CYCLES=<csv> 选定循环号逗号列表（如 1,5,10,30,50,100）→ 采全历史
-  JUBAT_EXPORT_FIELD_DATA=1   同时导出场数据长表（温度/位移/电流/损伤）与 f_n/f_p、
-                              应力逐机械步历史（数据源为逐相位 solve_result，仅
-                              save_detailed 求解保留，未启用时不产出这两类 CSV）
+  JUBAT_EXPORT_FIELD_DATA=1   同时导出温度/位移/电流/损伤场数据长表（需 save_detailed）
   JUBAT_RUN_TAG=<name>        输出目录子目录名（默认 debug_a0.9_gc2）
 
 网格信息（节点坐标/单元连接 CSV）不随本脚本导出——网格静态，需时用
@@ -41,16 +39,6 @@ function czm_snapshot_cycles()
     raw = get(ENV, "JUBAT_SNAPSHOT_CYCLES", "")
     isempty(raw) && return Set{Int}()
     return Set(parse(Int, strip(x)) for x in split(raw, ","))
-end
-
-# 遍历循环结果的相位（cyc=0 表示全部循环），跳过 nothing 相位，
-# 产出 (cycle_idx, phase_name, PhaseResult)
-function each_phase(result, cyc = 0)
-    return ((cr.cycle_idx, name, ph) for cr in result.cycle_results
-            if cyc <= 0 || cr.cycle_idx == cyc
-            for (name, ph) in (("discharge", cr.discharge), ("rest1", cr.rest1),
-                               ("charge", cr.charge), ("rest2", cr.rest2))
-            if ph !== nothing)
 end
 
 function main()
@@ -119,7 +107,7 @@ function main()
     opt.debug_log_path = joinpath(outdir, "simple_coupling_debug.log")
     opt.czm.enabled = true
     opt.czm.model = "mix"
-    opt.czm.fix_inner = true   # 内圈固定；外圈恒固定（fix_inner 只决定内圈，见 CzmBC.identify_bc_nodes_czm）
+    opt.czm.fix_inner = false
     opt.czm.iter_method = get(ENV, "JUBAT_CZM_METHOD", "basic")
     opt.czm.max_iter = parse(Int, get(ENV, "JUBAT_CZM_MAX_ITER", string(opt.czm.max_iter)))
     if lowercase(opt.czm.iter_method) in ("arc_length", "arclength", "arc-length")
@@ -129,7 +117,6 @@ function main()
     end
     opt.czm.load_steps = 10
     opt.czm.tol = 1e-3
-    opt.czm.area_loss_enabled = get(ENV, "JUBAT_AREA_LOSS", "0") == "1"  # 任务 58 双面连续面积反馈
     opt.czm.geo_nonlinear = false   # 调试口径：geo/J2 成对关闭（D-B3-1）
     opt.czm.j2_plasticity = false
     opt.czm.update_interval = 1
@@ -162,9 +149,9 @@ function main()
         param_dim.PCC.σ_max * 1e-6, param_dim.NCC.σ_max * 1e-6,
         param_dim.PCC.K_n, param_dim.NCC.K_n,
         param_dim.PCC.G_c, param_dim.NCC.G_c)
-    @printf("  CZM: %s / geo=%s / J2=%s / max_iter=%d / tol=%.1e / τ=%g s / area_loss=%s\n",
+    @printf("  CZM: %s / geo=%s / J2=%s / max_iter=%d / tol=%.1e / τ=%g s\n",
         opt.czm.iter_method, opt.czm.geo_nonlinear, opt.czm.j2_plasticity,
-        opt.czm.max_iter, opt.czm.tol, opt.czm.viscous_tau, string(opt.czm.area_loss_enabled))
+        opt.czm.max_iter, opt.czm.tol, opt.czm.viscous_tau)
     @printf("  全历史采集循环: %s\n", isempty(snapshot_cycles) ? "无" : sort(collect(snapshot_cycles)) |> x -> join(x, ","))
     @printf("  场数据长表: %s\n", export_field ? "导出" : "不导出")
 
@@ -283,16 +270,20 @@ function main()
     end
     open(joinpath(outdir, "phase_summary.csv"), "w") do io
         println(io, "cycle_idx,phase,t_start_s,t_end_s,duration_s,V_start_V,V_end_V,capacity_Ah,terminated_by,T_max_K,T_mean_end_K,D_max,D_mean,dD_max")
-        for (cyc, label, ph) in each_phase(result)
-            println(io, join((
-                cyc, label, ph.t_start, ph.t_end, ph.duration,
-                ph.V_start, ph.V_end, ph.capacity, string(ph.terminated_by),
-                ph.T_max, ph.T_mean_end, ph.D_max, ph.D_mean, ph.ΔD_max), ","))
+        for cr in result.cycle_results
+            for (label, ph) in (("discharge", cr.discharge), ("rest1", cr.rest1),
+                                ("charge", cr.charge), ("rest2", cr.rest2))
+                ph === nothing && continue
+                println(io, join((
+                    cr.cycle_idx, label, ph.t_start, ph.t_end, ph.duration,
+                    ph.V_start, ph.V_end, ph.capacity, string(ph.terminated_by),
+                    ph.T_max, ph.T_mean_end, ph.D_max, ph.D_mean, ph.ΔD_max), ","))
+            end
         end
     end
     println("\n  cycle_summary.csv / phase_summary.csv 已导出")
 
-    # --- 逐元素全历史导出（选定循环）：element_map + damage/sep_n/sep_t + f/stress 宽表 ---
+    # --- 逐元素全历史导出（选定循环）：element_map + damage/sep_n/sep_t 宽表 ---
     if !isempty(result.czm_snapshots)
         n_coh = length(result.czm_snapshots[1].damage)
         open(joinpath(outdir, "element_map.csv"), "w") do io
@@ -322,45 +313,6 @@ function main()
             end
             @printf("  全历史已导出: 循环 %d（%d 步 × %d 单元）\n", cyc, length(snaps), n_coh)
         end
-
-        # f_n/f_p 与应力逐机械步历史（选定圈，任务 58 面积反馈/层分辨应力）。
-        # 数据源为逐相位 solve_result——仅 save_detailed 求解保留
-        # （本脚本 save_detailed=export_field），未启用时不产出
-        if export_field
-            for cyc in snap_cycles_present
-                open(joinpath(outdir, "area_fraction_history_cyc$cyc.csv"), "w") do io
-                    println(io, "t_s,phase,f_n_min,f_p_min")
-                    for (_, pname, ph) in each_phase(result, cyc)
-                        fn = ph.solve_result["thermal2D effective area fraction n"]
-                        fp = ph.solve_result["thermal2D effective area fraction p"]
-                        tvec = ph.solve_result["time [s]"]
-                        for k in axes(fn, 2)
-                            t = ph.t_start + tvec[k] - tvec[1]
-                            println(io, "$t,$pname,$(minimum(fn[:, k])),$(minimum(fp[:, k]))")
-                        end
-                    end
-                end
-            end
-
-            for cyc in snap_cycles_present
-                open(joinpath(outdir, "stress_history_cyc$cyc.csv"), "w") do io
-                    println(io, "t_s,phase,e_id,sigma_xx_MPa,sigma_yy_MPa,sigma_xy_MPa")
-                    for (_, pname, ph) in each_phase(result, cyc)
-                        σxx = ph.solve_result["diffusion stress xx [Pa]"]
-                        σyy = ph.solve_result["diffusion stress yy [Pa]"]
-                        σxy = ph.solve_result["diffusion stress xy [Pa]"]
-                        tvec = ph.solve_result["time [s]"]
-                        for k in axes(σxx, 2)
-                            t = ph.t_start + tvec[k] - tvec[1]
-                            for e in axes(σxx, 1)
-                                println(io, "$t,$pname,$e,$(σxx[e, k] * 1e-6),$(σyy[e, k] * 1e-6),$(σxy[e, k] * 1e-6)")
-                            end
-                        end
-                    end
-                end
-            end
-            println("  f_n/f_p 与应力历史已导出（选定圈）")
-        end
     end
 
     # --- 场数据长表导出（JUBAT_EXPORT_FIELD_DATA=1，需 save_detailed 求解） ---
@@ -371,13 +323,20 @@ function main()
         # node_temperature.csv（热节点，全相位逐时间步）
         open(joinpath(outdir, "node_temperature.csv"), "w") do f
             println(f, "cycle,phase,time_s,node_id,T_K")
-            for (cyc, pname, ph) in each_phase(result)
-                raw = ph.solve_result["thermal2D temperature at nodes [K]"]
-                tvec = ph.solve_result["time [s]"]
+            for cr in result.cycle_results, (pname, ph) in
+                    (("discharge", cr.discharge), ("rest1", cr.rest1),
+                     ("charge", cr.charge), ("rest2", cr.rest2))
+                ph === nothing && continue
+                raw = ph.solve_result === nothing ? nothing :
+                    get(ph.solve_result, "thermal2D temperature at nodes [K]", nothing)
+                raw === nothing && continue
+                tvec = ph.solve_result === nothing ? nothing :
+                    get(ph.solve_result, "time [s]", nothing)
                 for k in axes(raw, 2)
-                    t = ph.t_start + tvec[k] - tvec[1]
+                    t = tvec === nothing ? k * (ph.duration / size(raw, 2)) :
+                        ph.t_start + tvec[k] - tvec[1]
                     for n in 1:size(raw, 1)
-                        println(f, "$cyc,$pname,$t,$n,$(raw[n, k])")
+                        println(f, "$(cr.cycle_idx),$pname,$t,$n,$(raw[n, k])")
                     end
                 end
             end
@@ -399,13 +358,20 @@ function main()
         # element_currents.csv（热单元电流）
         open(joinpath(outdir, "element_currents.csv"), "w") do f
             println(f, "cycle,phase,time_s,elem_id,I_e")
-            for (cyc, pname, ph) in each_phase(result)
-                raw = ph.solve_result["thermal2D element current"]
-                tvec = ph.solve_result["time [s]"]
+            for cr in result.cycle_results, (pname, ph) in
+                    (("discharge", cr.discharge), ("rest1", cr.rest1),
+                     ("charge", cr.charge), ("rest2", cr.rest2))
+                ph === nothing && continue
+                raw = ph.solve_result === nothing ? nothing :
+                    get(ph.solve_result, "thermal2D element current", nothing)
+                raw === nothing && continue
+                tvec = ph.solve_result === nothing ? nothing :
+                    get(ph.solve_result, "time [s]", nothing)
                 for k in axes(raw, 2)
-                    t = ph.t_start + tvec[k] - tvec[1]
+                    t = tvec === nothing ? k * (ph.duration / size(raw, 2)) :
+                        ph.t_start + tvec[k] - tvec[1]
                     for e in 1:size(raw, 1)
-                        println(f, "$cyc,$pname,$t,$e,$(raw[e, k])")
+                        println(f, "$(cr.cycle_idx),$pname,$t,$e,$(raw[e, k])")
                     end
                 end
             end
