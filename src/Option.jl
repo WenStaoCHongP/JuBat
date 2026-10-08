@@ -48,8 +48,7 @@ end
     snapshot_path::String = ""            # 求解失败时保存机械步输入；空字符串=关闭
     viscous_enabled::Bool = false        # 粘性正则化开关
     viscous_tau::Float64 = 0.0           # 物理松弛时间 [s]，推荐 10~100 s
-    area_loss_enabled::Bool = false      # 启用渐进式有效面积损失（D > threshold 时缩减有效面积）
-    area_loss_threshold::Float64 = 0.83  # 面积开始缩减的损伤阈值
+    area_loss_enabled::Bool = false      # 启用渐进式有效面积损失（无阈值 factor=1−D；D=1 支路面积失活，任务59 P1）
     geo_nonlinear::Bool = false          # 完全 Green-Lagrange TL 残差 + 标准初应力 K_G（Batch 2）
     winding_prestress::Bool = false      # 卷绕预应力初始应力场 σ₀(r)，缺参即 error（Batch 2'）
     j2_plasticity::Bool = false          # PCC/NCC 平面应力一致 J2 返回映射，缺 sigma_y 即 error（Batch 3）

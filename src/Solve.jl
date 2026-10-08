@@ -328,14 +328,16 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
 
         # ====================================================================
         # 精细化截止电压检测（单元级别）
+        # 任务59 Q4：面积全失活静置诊断（status=4.0 且 I_total==0）绕过电压截止
         # ====================================================================
         V_cell = variables["cell voltage"] * case.param.scale.phi
         v_l = case.param.cell.v_l
         v_h = case.param.cell.v_h
         t_phys = t * case.param.scale.t0  # 物理时间 (s)
+        area_diag = multi_spme_enabled && get(variables, "thermal2D Vsolve status", 0.0) == 4.0
 
         # 检查是否有单元截止
-        if multi_spme_enabled
+        if multi_spme_enabled && !area_diag
             n_cutoff = Int(variables["thermal2D n_cutoff_elements"])
 
             # 记录首个截止单元信息
@@ -358,20 +360,34 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
                 termination_reason = "all_elements_cutoff"
                 break
             end
+
+            # 任务59 R2 返工：正面积支路存在但活动集为空（面积失活+电压截止混合耗尽）——
+            # 带载时按电流方向消费既有电压截止终止语义，不得带载零电流按时间继续；
+            # n_cutoff/n_deactivated 保持真实数量，不伪造成全截止
+            if ne_total > 0 && 0 < n_cutoff < ne_total &&
+               Int(get(variables, "thermal2D n_active_elements", 0.0)) == 0
+                I_now = get(variables, "cell current", 0.0)
+                if I_now != 0.0
+                    termination_reason = I_now > 0 ? "voltage_cutoff_low" : "voltage_cutoff_high"
+                    break
+                end
+            end
         end
 
-        # 整体电压截止检测（备用）
-        if V_cell < v_l
+        # 整体电压截止检测（备用；诊断电压不得驱动截止）
+        if !area_diag && V_cell < v_l
             termination_reason = "voltage_cutoff_low"
             break
-        elseif V_cell > v_h
+        elseif !area_diag && V_cell > v_h
             termination_reason = "voltage_cutoff_high"
             break
         end
     end
 
     # 记录终止原因和截止信息
-    if t >= t_end
+    # 任务59 R2-A 返工：仅当循环内未确定其他终止原因（仍为默认 time_limit）时按时间耗尽收尾；
+    # 末步触发的截止（all_elements_cutoff / voltage_cutoff_low/high / 混合耗尽）不被覆盖
+    if t >= t_end && termination_reason == "time_limit"
         termination_reason = "time_limit"
     end
     result = PostProcessing(case, variables_hist, v)
@@ -436,12 +452,19 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     if return_final_state
         V_final = variables["cell voltage"] * case.param.scale.phi
         t_final = max(0.0, t * case.param.scale.t0)
-        result["final_state"] = Dict{String, Any}(
+        # 任务59 Q4：final_state 附 Vsolve 状态标量（V 在全失活静置时保留诊断数值）
+        final_state = Dict{String, Any}(
             "y" => copy(y_old),
             "T_nodes" => copy(T_nodes_carry),
             "V" => V_final,
             "t_global" => t_final
         )
+        if haskey(variables, "thermal2D Vsolve status")
+            # 任务59 R5 返工：final_state 使用与历史/result 同名的完整键名
+            final_state["thermal2D Vsolve status"] = variables["thermal2D Vsolve status"]
+            final_state["thermal2D Vsolve converged"] = variables["thermal2D Vsolve converged"]
+        end
+        result["final_state"] = final_state
     end
     return result
 end

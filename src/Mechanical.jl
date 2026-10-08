@@ -301,16 +301,65 @@ end
   `create_czm_mesh` 构建（`opt.czm.enabled` 可保持 false，在线 CZM 路径不受影响）
 - `variables["T_nodes"]`：归一化节点温度（T/T_ref；向量或历史矩阵取末列）
 - `variables["thermal2D element soc_n/soc_p"]`：归一化化学计量比
-- 边界：外圈固定；内圈按 `opt.czm.fix_inner`（默认 true = 内外均固定）
+- 边界：几何外圈固定；内圈按 `opt.czm.fix_inner`（默认 true = 内外均固定）；
+  双重属性端点 a_B（外圈）/b_B（内圈）由 bonded 拓扑补全（任务59 P2-R1）
 
 # 输出（返回 copy(variables) 增键，均为有量纲）
 - `"diffusion stress xx/yy/xy/vonMises [Pa]"`（σ_czm 空间恢复后 ×scale.σ_czm）
 - `"displacement x/y [m]"`（L 归一化位移 ×scale.L）
 """
-function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{Array{Float64},Float64}})
-    # === 入口断言：参数集必须定义 E_coat 才能启用宏观力学 ===
-    @assert case.param_dim.PE.E_coat > 0 && case.param_dim.NE.E_coat > 0 "宏观力学分析需要 PE/NE.E_coat > 0；当前参数集未定义极片模量（E_coat=0）。请在参数文件中补全 PE.E_coat/PE.nu_coat/NE.E_coat/NE.nu_coat，或禁用 mechanicalmodel=\"full\"。"
+# identify_bc_nodes_bonded(submesh, mesh_bonded, param; opt=nothing, fix_inner=true)
+#     -> (bc_nodes::Dict{Int,Symbol}, inner_count::Int, outer_count::Int)
+# CZM 关闭路径（thermal_diffusion_stress_2D，mesh_bonded 域）的机械边界（任务59 P2-R1）：
+# 几何内/外圈 + 双重属性端点 a_B/b_B，节点由 bonded 自己的 element 拓扑取得——
+# a_B=第二 SP 层首元素第2节点（外圈固定属性）、b_B=第一 PE 层末元素第4节点（内圈属性）。
+# fix_inner=true 固定 O_B∪I_B；false 仅固定 O_B（b_B 释放）。
+# 不引入 CZM 路径的 S/E 端点锚定、不改共用热学 identify_boundary_nodes。
+function identify_bc_nodes_bonded(submesh::CzmSubmesh, mesh_bonded::Mesh, param; opt=nothing, fix_inner::Bool=true)
+    nnode = mesh_bonded.nlen
+    bc_nodes = Dict{Int64, Symbol}()
+    is_inner, is_outer = identify_boundary_nodes(mesh_bonded, param, opt)
+    inner_count = 0
+    outer_count = 0
+    for i in 1:nnode
+        if fix_inner && is_inner[i]
+            bc_nodes[i] = :fixed_xy
+            inner_count += 1
+        end
+        if is_outer[i]
+            bc_nodes[i] = :fixed_xy
+            outer_count += 1
+        end
+    end
+    ne_b = size(mesh_bonded.element, 1)
+    n_segments = maximum(submesh.thermal_elem_map)
+    ne_b % n_segments == 0 || throw(DimensionMismatch(
+        "bonded element count $ne_b is not divisible by angular segment count $n_segments"))
+    n_layers = ne_b ÷ n_segments
+    layer_materials = [submesh.material_type[(l - 1) * n_segments + 1] for l in 1:n_layers]
+    second_sp_layer = findall(==(:SP), layer_materials)[2]
+    first_pe_layer = findfirst(==(:PE), layer_materials)
+    first_pe_layer === nothing && error(
+        "identify_bc_nodes_bonded requires at least one PE layer")
+    a_B = mesh_bonded.element[(second_sp_layer - 1) * n_segments + 1, 2]
+    b_B = mesh_bonded.element[first_pe_layer * n_segments, 4]
+    # 双重属性端点补固定与计数：圈属性各自去重（跨圈重叠允许计入两边，
+    # 总固定集合由 Dict 键天然去重）
+    if !is_outer[a_B]
+        bc_nodes[a_B] = :fixed_xy
+        outer_count += 1
+    end
+    if fix_inner && !is_inner[b_B]
+        bc_nodes[b_B] = :fixed_xy
+        inner_count += 1
+    end
+    return bc_nodes, inner_count, outer_count
+end
 
+# assemble_bonded_elastic(case, variables) -> (K_mech, F_mech)
+# thermal_diffusion_stress_2D 的罚前装配（任务59 P2-R1 返工拆分：暴露罚前 K0/F0
+# 供自由 DOF 平衡残差独立验收；不改变装配本身、材料、罚或求解）。
+function assemble_bonded_elastic(case::Case, variables::Dict{String, Union{Array{Float64},Float64}})
     param = case.param
     submesh = case.czm_mesh.czm_submesh
     mesh = submesh.mesh_bonded
@@ -371,17 +420,32 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
         coeff_v[g] = factor
     end
     F_mech = Assemble1D(Vi_u, dNdx, coeff_u, ndof) + Assemble1D(Vi_v, dNdy, coeff_v, ndof)
+    return K_mech, F_mech
+end
 
-    # 边界：外圈固定；内圈按 opt.czm.fix_inner（默认 true = 内外均固定），相对罚
-    is_inner, is_outer = identify_boundary_nodes(mesh, param, case.opt)
+function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{Array{Float64},Float64}})
+    # === 入口断言：参数集必须定义 E_coat 才能启用宏观力学 ===
+    @assert case.param_dim.PE.E_coat > 0 && case.param_dim.NE.E_coat > 0 "宏观力学分析需要 PE/NE.E_coat > 0；当前参数集未定义极片模量（E_coat=0）。请在参数文件中补全 PE/PE.nu_coat/NE.E_coat/NE.nu_coat，或禁用 mechanicalmodel=\"full\"。"
+
+    param = case.param
+    submesh = case.czm_mesh.czm_submesh
+    mesh = submesh.mesh_bonded
+    K_mech, F_mech = assemble_bonded_elastic(case, variables)
+    T_nodes = variables["T_nodes"]
+    T_nodes = isa(T_nodes, AbstractVector) ? T_nodes : T_nodes[:, end]
+    ε0 = macro_eigenstrain(case, variables, T_nodes)
+
+    # 边界（任务59 P2-R1）：bonded 域机械圈属性——外圈 +（fix_inner 时）内圈，
+    # 补双重属性端点 a_B（外圈）/b_B（内圈），相对罚
+    bc_nodes_b, _, _ = identify_bc_nodes_bonded(submesh, mesh, param;
+        opt=case.opt, fix_inner=case.opt.czm.fix_inner)
     penalty = 1e6 * maximum(abs, diag(K_mech))
-    @inbounds for i in 1:nnode
-        if is_outer[i] || (case.opt.czm.fix_inner && is_inner[i])
-            K_mech[2 * i - 1, 2 * i - 1] += penalty
-            K_mech[2 * i, 2 * i] += penalty
-            F_mech[2 * i - 1] = 0.0
-            F_mech[2 * i] = 0.0
-        end
+    for (i, bc_type) in bc_nodes_b
+        bc_type === :fixed_xy || continue
+        K_mech[2 * i - 1, 2 * i - 1] += penalty
+        K_mech[2 * i, 2 * i] += penalty
+        F_mech[2 * i - 1] = 0.0
+        F_mech[2 * i] = 0.0
     end
 
     U = K_mech \ F_mech

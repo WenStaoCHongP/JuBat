@@ -5,16 +5,25 @@
 对每个粗热单元 e_thermal，扫描所有 cohesive_to_thermal[e_coh] == e_thermal 的 cohesive 单元，
 取 damage_states[e_coh].D 的最大值；无 cohesive 覆盖则取 0。
 （2026-08-30 重构：damage_states 来自 MechState，显式传入。）
+（任务59 R1 返工：源 D 须为 [0,1] 内有限值、映射索引须在界内、长度须匹配——
+非法输入显式失败，不得吞并为无损或静默跳过。）
 """
 function map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, damage_states::AbstractVector{DamageState}, ne_thermal::Int)
+	czm_mesh.cohesive_to_thermal !== nothing || error(
+		"map_czm_damage_to_thermal: cohesive_to_thermal 映射缺失（结构非法，不得静默回退）")
+	n_coh = czm_mesh.n_cohesive
+	length(damage_states) == n_coh || error(
+		"map_czm_damage_to_thermal: damage_states 长度 $(length(damage_states)) != n_cohesive $n_coh")
 	D_per_thermal = zeros(ne_thermal)
-	for e_coh in 1:czm_mesh.n_cohesive
+	for e_coh in 1:n_coh
 		e_thermal = czm_mesh.cohesive_to_thermal[e_coh]
-		if 1 <= e_thermal <= ne_thermal
-			D = damage_states[e_coh].D
-			if D > D_per_thermal[e_thermal]
-				D_per_thermal[e_thermal] = D
-			end
+		1 <= e_thermal <= ne_thermal || error(
+			"map_czm_damage_to_thermal: cohesive $e_coh 映射越界 e_thermal=$e_thermal（ne_thermal=$ne_thermal）")
+		D = damage_states[e_coh].D
+		(isfinite(D) && 0.0 <= D <= 1.0) || error(
+			"map_czm_damage_to_thermal: cohesive $e_coh 损伤非法 D=$D（须为 [0,1] 内有限值），拒绝吞并为无损")
+		if D > D_per_thermal[e_thermal]
+			D_per_thermal[e_thermal] = D
 		end
 	end
 	return D_per_thermal
@@ -76,39 +85,29 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     variables["thermal2D temperature at nodes"] = T_nodes
     variables["thermal2D element area"] = areas
 
-    # 获取CZM失效单元列表（仅在启用CZM时）
-    # 当CZM单元损伤D >= 0.95时，对应热单元电流归零，总电流重分配
-    if case.opt.czm.enabled && case.czm_mesh !== nothing
-        fractured_czm = get_fractured_elements(case.mech.damage_states)
-        deactivated_elements = Int64[]
-        geom = case.geometry
-        for e in 1:ne
-            for czm_idx in get(geom.czm_element_map, e, Int64[])
-                if czm_idx in fractured_czm
-                    push!(deactivated_elements, e)
-                    break
-                end
-            end
-        end
-    else
-        deactivated_elements = Int64[]
-    end
-
-    # 计算渐进式面积损失的 D 映射（仅在启用时）
+    # 渐进式面积损失的 D 映射（唯一损伤消费入口；fractured 不再生成独立停流列表，任务59 P1）
+    # R1 返工：反馈源已存在（挂了 czm_mesh）时结构必须完整合法——缺 mech/缺映射均显式失败，
+    # 不再按 czm.enabled 分叉；完全没有反馈源（未挂 czm_mesh 且 CZM 关）才是合法几何权重路径。
     D_elem_area_loss = nothing
-    if case.opt.czm.area_loss_enabled && case.czm_mesh !== nothing && case.czm_mesh.cohesive_to_thermal !== nothing
-        D_elem_area_loss = map_czm_damage_to_thermal(case.czm_mesh, case.mech.damage_states, ne)
-        # 调试：输出 D 映射统计
-        D_above = filter(d -> d > case.opt.czm.area_loss_threshold, D_elem_area_loss)
-        if !isempty(D_above) && case.opt.debug_coupling
-            t_phys = round(t * case.param.scale.t0, digits=1)
-            println("  [AreaLoss] t=$(t_phys)s | D_max=$(round(maximum(D_elem_area_loss), digits=4)) | 超阈值单元=$(length(D_above))/$(ne) | threshold=$(case.opt.czm.area_loss_threshold)")
+    if case.opt.czm.area_loss_enabled
+        if case.czm_mesh !== nothing
+            case.mech !== nothing || error(
+                "CallModel_MultiSPMe: area_loss_enabled 且存在 czm_mesh（反馈源），但 case.mech 缺失（非法状态）")
+            case.czm_mesh.cohesive_to_thermal !== nothing || error(
+                "CallModel_MultiSPMe: area_loss_enabled 且反馈源存在，但 cohesive_to_thermal 映射缺失（非法状态，不得静默回退几何权重）")
+            D_elem_area_loss = map_czm_damage_to_thermal(case.czm_mesh, case.mech.damage_states, ne)
+        elseif case.opt.czm.enabled
+            error("CallModel_MultiSPMe: area_loss_enabled 且 CZM 启用，但缺少 czm_mesh（非法状态，不得静默回退几何权重）")
         end
+        # 其余：无反馈源（未挂 czm_mesh、CZM 关）→ 合法普通路径，按几何权重
     end
 
     t_branch_ns = time_ns()
-    variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, nothing; deactivated_elements=deactivated_elements, D_elem=D_elem_area_loss)
+    variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, nothing; D_elem=D_elem_area_loss)
     t_branch_s = (time_ns() - t_branch_ns) * 1e-9
+
+    # active_elements：实际分流活动支路索引（面积活跃 ∩ 电压截止；任务59 Q6 裁决）
+    variables["active_elements"] = Float64.(findall(==(1.0), variables["thermal2D active_mask"]))
     
     # 4) 并行求解每个单元的SPMe（使用线程本地精简工作区）
     M_elems = Vector{SparseMatrixCSC{Float64,Int64}}(undef, ne)

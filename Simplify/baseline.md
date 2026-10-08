@@ -4,13 +4,14 @@
 
 | 基线 | 入口 | 状态 | 关键判定 | 档案 |
 |---|---|---|---|---|
-| `testexample-20260902T171549+0800` | `example/testexample.jl`（纯文字 J2 快速门，60 s） | PASS | 开启几何非线性与 PCC/NCC J2；单次本构积分提交 Cauchy 应力并恢复历史；最大 GP Mises 4.9749 MPa、最大 kappa=0；独立 couple_example 三图门已重跑并刷新 | [详细记录](baseline/testexample/README.md) |
+| `testexample-20261007T152634+0800`（v11） | `example/testexample.jl`（纯文字 J2 快速门，60 s） | PASS | 任务59 P1+P2：无阈值面积权重（factor=1−D、统一面积失活、非法显式失败）+ 机械边界修订（fix_inner=false 92 节点：释放 12 层起点、a/b 双重属性；bonded 同步）；分离 1.0469e-12 m、GP Mises 4.7052 MPa、kappa=0；用户 2026-10-07 接受四组应力/分离差异 | [详细记录](baseline/testexample/README.md) |
 
 ## 固定运行环境
 
 ```powershell
 $env:GKSwstype = '100'
 $env:JULIA_NUM_THREADS = '1'
+$env:OPENBLAS_NUM_THREADS = '1'
 & 'D:\Julia-1.11.2\bin\julia.exe' --startup-file=no --project=. example\testexample.jl
 ```
 
@@ -23,6 +24,7 @@ $env:JULIA_NUM_THREADS = '1'
 
 | 日期 | 原因 | 旧基线 | 新基线 | 关键变化 |
 |---|---|---|---|---|
+| 2026-10-07 | 任务59 P1+P2 全部技术评审通过后，用户接受完整实际科学差异并授权重冻结 | `testexample-20260902T171549+0800` | `testexample-20261007T152634+0800` | P1：无阈值面积权重 factor=1−D（fractured 独立停流/热源清零删除；全失活带载抛错/静置 status=4；非法 D/映射显式失败；分流与相位同界限源）。P2：机械边界自由模式 F=O∪(E∖b)（103→92 节点，释放 12 层起点）/固定模式 F=O∪I∪S∪E（182→184，补 a/b），bonded 同步。科学变化（用户接受）：分离 1.1209e-12→1.0469e-12 m、环向 −1.6724/3.8807→−1.6795/3.9212 MPa、切向剪 −0.60032/0.99966→−0.60328/0.60634 MPa、Mises 4.9749→4.7052 MPa；电/热按已打印精度一致。专项：面积路线 136、endpoint 40、bonded 38、c4lite 25、layer 63；旧 v10 五文件归档 archive/。couple_example 三图实跑：温度图哈希不变、两张应力图随已接受差异更新 |
 | `testexample-soc065-60s-20260908` | 冻结的 `script_snapshot.jl`（当前示例已恢复1800 s） | 已建立 | SOC 0.65独立快速门；21个记录点、20/20 CZM收敛；最大GP Mises 4.0256 MPa、kappa=0；不替换原testexample门 | [详细记录](baseline/testexample_soc065_60s/README.md) |
 | 2026-09-02 | 用户接受 J2 committed 应力历史恢复的正式 60 s 输出并要求更新基线 | `testexample-20260831T212819+0800` | `testexample-20260902T171549+0800` | testexample 开启 geo/J2；同一次 GP 本构积分服务装配与输出，删除求解后二次塑性装配；1682/1763、19 步、电热指标不变；mix 有效分离 1.1209e-12 m，环向 −1.6724~+3.8807 MPa，切向剪切 −0.60032~+0.99966 MPa，最大 GP Mises 4.9749 MPa、最大 kappa=0（未屈服）。受影响测试 204 项通过，另增跨 phase/单位缩放 13 项；独立 couple_example 三图门重跑并重新启用 |
 | 2026-08-31 | 用户指定：结构层热膨胀系数由显式置零改为物理值（SP.alphaT→30e-6、PCC.alphaT→23e-6、NCC.alphaT→17e-6 1/K） | `testexample-20260830T172856+0800` | `testexample-20260831T212819+0800` | 电/热指标、网格（1682/1763）、19 步、零损伤与 19/19 收敛**逐位不变**（alphaT 不进热残差）；分离 9.6486e-13→7.4202e-13 m；环向应力 −1.3954~+3.8603→−1.8433~+4.1344 MPa；切向剪 −0.3743~+0.3955→−0.2618~+0.2167 MPa。A/B 隔离：alphaT=0 一侧逐位复现 v8 环向范围，同时证明 `mix` 脚本漂移对宏观应力无影响。全量测试 32/32。三张应力 PNG 哈希失效（本批未重跑绘图），已标记非门禁。源码清单 18 行变化，其中 8 行为遗留 LF 归一化哈希的约定统一 |

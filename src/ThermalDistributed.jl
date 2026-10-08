@@ -424,32 +424,13 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
     return variables
 end
 
-function compute_heat_sources_with_czm(case::Case, variables::Dict,variables_elems::Union{Vector{<:Dict}, Nothing},I_e::Vector{Float64}, T_e::Vector{Float64},areas::Vector{Float64}, czm_mesh, mesh_data)
-    # 先计算所有单元的热源
-    variables = compute_heat_sources(case, variables, variables_elems, I_e, T_e, areas; per_element_spme=true)
+"""
+	compute_heat_sources_with_czm(case, variables, variables_elems, I_e, T_e, areas, czm_mesh, mesh_data)
 
-    active_elements = get_active_elements(czm_mesh, case.mech.damage_states, case.geometry)
-    ne = length(variables["heat_source_fields"])
-
-    # 创建活跃掩码
-    is_active = falses(ne)
-    for e in active_elements
-        is_active[e] = true
-    end
-
-    # 将非活跃单元的热源设为零
-    q_total = variables["heat_source_fields"]
-    for e in 1:ne
-        if !is_active[e]
-            q_total[e] = 0.0
-        end
-    end
-
-    variables["heat_source_fields"] = q_total
-    variables["active_elements"] = Float64.(active_elements)
-
-    # 更新总功率（仅活跃单元）
-    variables["total heat source"] = [dot(q_total, areas)]
-
-    return variables
+统一热源薄包装（任务59 P1）：直接委托 `compute_heat_sources`，按实际 I_e 计算各分量与总量。
+不再消费 fractured/D>=0.99（停流统一由无阈值面积失活承担），不覆写 heat_source_fields
+或总热源。保留原公开签名；`active_elements` 等活动诊断键由分流结果提供，本函数不改动。
+"""
+function compute_heat_sources_with_czm(case::Case, variables::Dict, variables_elems::Union{Vector{<:Dict}, Nothing}, I_e::Vector{Float64}, T_e::Vector{Float64}, areas::Vector{Float64}, czm_mesh, mesh_data)
+    return compute_heat_sources(case, variables, variables_elems, I_e, T_e, areas; per_element_spme=true)
 end

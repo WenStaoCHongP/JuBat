@@ -64,7 +64,7 @@ end
 不缓存——identify_bc_nodes_czm 为 O(nnode)，成本可忽略）。
 """
 function extract_bc_dofs(czm_mesh::CohesiveMesh, param; fix_inner::Bool=true)
-    bc_nodes, _, _ = identify_bc_nodes_czm(czm_mesh, param; fix_inner=fix_inner)
+    bc_nodes, _, _, _ = identify_bc_nodes_czm(czm_mesh, param; fix_inner=fix_inner)
     bc_dofs = Int64[]
     bc_vals = Float64[]
     for (node, bc_type) in bc_nodes

@@ -120,9 +120,8 @@ function identify_bc_nodes_czm(czm_mesh::CohesiveMesh, param; opt=nothing, fix_i
         end
     end
 
-    # 分层力学网格在已选定的内/外螺旋边界基础上，
-    # 始终叠加每个材料层的螺旋起点与终点。`fix_inner`
-    # 只决定是否固定内圈，不影响分层端点约束。
+    # 分层端点拓扑（任务59 P2）：从真实 bulk_element 读取 S/E 与 a/b，
+    # 不硬编码层节点号、不用坐标重合代替拓扑身份。
     # Q4 节点序为 [靠内起点, 靠外起点, 靠外终点, 靠内终点]；CZM 节点复制后
     # 必须从 bulk_element 读取，才能约束实际承载层上的节点。
     submesh = czm_mesh.czm_submesh
@@ -134,33 +133,53 @@ function identify_bc_nodes_czm(czm_mesh::CohesiveMesh, param; opt=nothing, fix_i
         "CZM bulk element count $n_bulk is not divisible by angular segment count $n_segments"))
     n_layers = n_bulk ÷ n_segments
 
-    endpoint_nodes = Set{Int64}()
+    start_nodes = Set{Int64}()
+    end_nodes = Set{Int64}()
     layer_materials = Vector{Symbol}(undef, n_layers)
     for layer in 1:n_layers
         first_elem = (layer - 1) * n_segments + 1
         last_elem = layer * n_segments
         layer_materials[layer] = submesh.material_type[first_elem]
-        union!(endpoint_nodes,
+        union!(start_nodes,
             (czm_mesh.bulk_element[first_elem, 1],
-             czm_mesh.bulk_element[first_elem, 2]),
+             czm_mesh.bulk_element[first_elem, 2]))
+        union!(end_nodes,
             (czm_mesh.bulk_element[last_elem, 4],
              czm_mesh.bulk_element[last_elem, 3]))
     end
 
-    # 开口卷绕端的两个特定节点保持自由：第二个 SP 的靠外起点、
-    # 第一层 PE 的靠内终点。其余端点与原边界集合取并集。
+    # a=第二个 SP 层靠外起点（用户指定外圈固定属性）；b=第一层 PE 靠内终点（内圈属性）
     second_sp_layer = findall(==(:SP), layer_materials)[2]
     first_pe_layer = findfirst(==(:PE), layer_materials)
     first_pe_layer === nothing && error(
         "identify_bc_nodes_czm requires at least one PE layer")
     second_sp_first_elem = (second_sp_layer - 1) * n_segments + 1
     first_pe_last_elem = first_pe_layer * n_segments
-    delete!(endpoint_nodes, czm_mesh.bulk_element[second_sp_first_elem, 2])
-    delete!(endpoint_nodes, czm_mesh.bulk_element[first_pe_last_elem, 4])
+    a = czm_mesh.bulk_element[second_sp_first_elem, 2]
+    b = czm_mesh.bulk_element[first_pe_last_elem, 4]
 
-    for node in endpoint_nodes
-        bc_nodes[node] = :fixed_xy
+    if fix_inner
+        # 任务59 P2：固定模式 F = O ∪ I ∪ S ∪ E——a、b 补回，不再排除两处开口端
+        for node in union(start_nodes, end_nodes)
+            bc_nodes[node] = :fixed_xy
+        end
+    else
+        # 任务59 P2：自由模式 F = O ∪ (E\{b})——不再叠加起点集合 S；
+        # a 具外圈属性补全固定；b 具自由内圈属性保持自由；其他终点保留原规则
+        bc_nodes[a] = :fixed_xy
+        for node in end_nodes
+            node == b && continue
+            bc_nodes[node] = :fixed_xy
+        end
     end
 
-    return bc_nodes, inner_count, outer_count
+    # 统计（P2-R2）：圈属性计数含新增端点——按补全后的 O/I 去重，
+    # a 补入外圈计数、b（仅固定模式实际固定时）补入内圈计数；总数为最终固定集合大小
+    if !is_outer[a]
+        outer_count += 1
+    end
+    if fix_inner && !is_inner[b]
+        inner_count += 1
+    end
+    return bc_nodes, inner_count, outer_count, length(bc_nodes)
 end

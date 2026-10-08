@@ -177,7 +177,7 @@ CZM (内聚力模型)
 | `Nrp`, `Nrn` | 10 | 正/负极颗粒网格点数 |
 | `Np`, `Ns`, `Nn` | 10 | 电极/隔膜网格点数 |
 | `gsorder` | 2 | 高斯积分阶数 |
-| `Current` | x->5.0 | 电流函数 I(t) |
+| `Current` | x->0 | 电流函数 I(t)（默认零电流静置；带载工况须显式设置） |
 | `time` | [0, 3600] | 仿真时间范围 |
 | `dt` | [1e-6, 10] | 自适应时间步范围 |
 | `solveType` | "Crank-Nicolson" | 时间离散格式 |
@@ -209,8 +209,8 @@ CZM (内聚力模型)
 | `czm.geo_nonlinear` | false | 完全 GL/TL 残差 + 初应力 K_G |
 | `czm.winding_prestress` | false | 卷绕预应力 σ₀ |
 | `czm.j2_plasticity` | false | PCC/NCC J2 塑性 |
-| `czm.area_loss_enabled` / `czm.area_loss_threshold` | false / 0.83 | 渐进式有效面积损失 |
-| `czm.fix_inner` | true | 边界：内外圈均固定 |
+| `czm.area_loss_enabled` | false | 渐进式有效面积损失（无阈值 factor=1−D，任务59 P1；D=1 支路面积失活、I_e=0，全失活带载报错/静置 status=4 诊断） |
+| `czm.fix_inner` | true | 机械边界模式（任务59 P2）：true=固定 O∪I∪S∪E（含双重属性端点 a/b）；false=固定 O∪(E\{b})——全部层起点 S 释放、a 具外圈属性仍固定、b 自由。CZM 关闭的 bonded 路径同步消费 a_B/b_B 圈属性（true O_B∪I_B / false O_B）。nθ=80 计数：CZM true 81/81/184、false 0/81/92 |
 | `czm.soh_threshold` | 0.8 | SOH 终止阈值 |
 | `czm.friction_mu` | 0.10 | SP Coulomb 摩擦（Batch 8 预留） |
 

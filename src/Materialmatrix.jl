@@ -350,6 +350,8 @@ end
 
 """
 	get_fractured_elements(damage_states) -> Vector{Int64}
+
+机械断裂统计接口（任务59 P1 后仅保留统计用途，不再接入电流/热源消费）。
 """
 function get_fractured_elements(damage_states::AbstractVector{DamageState})
 	fractured = Int64[]
@@ -359,29 +361,6 @@ function get_fractured_elements(damage_states::AbstractVector{DamageState})
 		end
 	end
 	return fractured
-end
-
-"""
-	get_active_elements(czm_mesh, damage_states, mesh_data) -> Vector{Int64}
-"""
-function get_active_elements(czm_mesh::CohesiveMesh, damage_states::AbstractVector{DamageState}, mesh_data::MeshGeometry)
-	ne = length(mesh_data.element_layer)
-	active = ones(Bool, ne)
-	fractured_czm = get_fractured_elements(damage_states)
-
-	for e in 1:ne
-		if !mesh_data.is_inner_layer[e]
-			continue
-		end
-		for czm_idx in get(mesh_data.czm_element_map, e, Int64[])
-			if czm_idx in fractured_czm
-				active[e] = false
-				break
-			end
-		end
-	end
-
-	return findall(active)
 end
 
 """
@@ -397,16 +376,12 @@ function compute_all_gap_conductances(damage_states::AbstractVector{DamageState}
 end
 
 """
-	effective_area_factor(D::Float64, D_threshold::Float64) -> Float64
+	effective_area_factor(D::Float64) -> Float64
 
-计算热单元的有效面积比例因子。
-
-当 D ≤ D_threshold 时返回 1.0（无缩减）；
-当 D > D_threshold 时线性缩减至 D=1.0 时为 0.0。
-
-公式: factor = (1 - D) / (1 - D_threshold)
+无阈值热单元有效面积比例因子（任务59 P1）：factor = 1 - D，D∈[0,1]。
+D=0 → 1.0（无损）；D=1 → 0.0（该支路面积失活、电流严格为 0）。
+无起始阈值，不保留双参数阈值重载。
 """
-function effective_area_factor(D::Float64, D_threshold::Float64)
-	D ≤ D_threshold && return 1.0
-	return (1.0 - D) / (1.0 - D_threshold)
+function effective_area_factor(D::Float64)
+	return 1.0 - D
 end

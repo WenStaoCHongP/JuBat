@@ -89,8 +89,15 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
             result[key] = variables[key][:, 1:v]
         end
 
-        # ── 截止与激活信息 ──
+        # ── 截止与激活信息（含任务59 Q4 面积失活状态接线）──
         result["thermal2D active_mask"] = variables["thermal2D active_mask"][:, 1:v]
+        result["thermal2D deactivated_mask"] = variables["thermal2D deactivated_mask"][:, 1:v]
+        result["thermal2D inactive_reason"] = variables["thermal2D inactive_reason"][:, 1:v]
+        result["thermal2D n_active_elements"] = vec(variables["thermal2D n_active_elements"][1, 1:v])
+        result["thermal2D n_deactivated_elements"] = vec(variables["thermal2D n_deactivated_elements"][1, 1:v])
+        result["thermal2D Vsolve status"] = vec(variables["thermal2D Vsolve status"][1, 1:v])
+        result["thermal2D Vsolve iters"] = vec(variables["thermal2D Vsolve iters"][1, 1:v])
+        result["thermal2D Vsolve converged"] = vec(variables["thermal2D Vsolve converged"][1, 1:v])
         result["thermal2D n_cutoff_elements"] = variables["thermal2D n_cutoff_elements"][1, 1:v]
         result["thermal2D nearest_cutoff_element"] = variables["thermal2D nearest_cutoff_element"][1, 1:v]
         result["thermal2D nearest_cutoff_ocv"] = variables["thermal2D nearest_cutoff_ocv"][1, 1:v]

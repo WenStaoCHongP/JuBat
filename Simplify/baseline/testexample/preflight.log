@@ -1,57 +1,23 @@
-REFREEZE_MODE=fresh_rerun_authorized_change
-REFREEZE_AUTHORIZATION=user_explicit (accepted verified 60 s J2 output and requested baseline update, 2026-09-02)
-SOURCE_RUN_ARTIFACT_WRITTEN=2026-09-02T17:21:56+0800
-BASELINE_ID=testexample-20260902T171549+0800
-SUPERSEDES=testexample-20260831T212819+0800
-HEAD=9d47ec072c430dfa14eea0d1fd8b8b15271d7763
+REFREEZE_MODE=fresh_candidate_reused_authorized_change
+REFREEZE_AUTHORIZATION=user_explicit (accepted full P2 scientific diff incl. stress redistribution and separation change, 2026-10-07; technical review passed p2_technical_review.md §7)
+SOURCE_RUN_ARTIFACT=output/testexample/p2r2_gate/run.log (2026-10-07; final source unchanged after run — AGENTS/docs/KB only)
+BASELINE_ID=testexample-20261007T152634+0800
+SUPERSEDES=testexample-20260902T171549+0800
+HEAD=ea70f341de37f5329e1c6a6ad236160afb9ccdaf (task59 P1+P2 uncommitted worktree; identity via manifest)
 SCRIPT_SHA256=709f45ea2aa15747cd0997c435bb940dc57fc78a10646f0757875e63bbf0dffd
 COUPLE_EXAMPLE_SHA256=3e0e764dc259ae981184af902502624b30b19e4fcc618478e2d1f9f373d53ec4
-SOURCE_MANIFEST_TSV_SHA256=133e3fe2469456e8077f66965cc26afc643776c96c92f10f2533959682c9d541
-SOURCE_MANIFEST_FILE_SHA256=87d0d80e996ddbe38a9ea40c0c39db3df8682b7c4a71d79f048a66d442d2d4b5
-SOURCE_FILE_COUNT=46
-RUN_LOG_SHA256=0663c90920bb06abacfa594970107b4a97ee48fb2da608a0ca2bd7b6018cebd8
-JULIA_VERSION=julia version 1.11.2
-JULIA_COMMAND=D:/Julia-1.11.2/bin/julia.exe --startup-file=no --project=. example/testexample.jl
+SOURCE_MANIFEST_TSV_SHA256=2f1ffebc03ea4ce8a05e252649064fc15cd56d915c866378eb6911ae34d191f7
+SOURCE_MANIFEST_FILE_SHA256=df77ebd70af67396358fbb1460895500b34cde35922e3454712535a15fc397cf
+AGGREGATION_NOTE=adjudicated 2026-10-08: 2f1ffebc...=current 46-entry canonical aggregate (v10 rule: TAB,LF join,no trailing NL,footer excluded); 048e7244...=pre-params 41-entry aggregate (manifest-content difference, not algorithm/line-ending)
+WALL_SECONDS=23.638 (from run.log; couple_example independent gate wall 19.978 s)
+SOURCE_MANIFEST_FILE_COUNT=46
+JULIA_VERSION=1.11.2
 JULIA_THREADS=1
-GKSwstype=100
-
-ACCEPTED_OUTPUT:
-text-only 60 s J2 quick gate; exit 0; solver wall 69.262 s.
-mesh 1682 thermal elements / 1763 thermal nodes; 19 time steps; 19/19 CZM updates converged.
-voltage 4.0367 -> 3.9438 V; capacity 0.0833 Ah; temperature 298.15~299.00 K.
-damage D_max=D_mean=0; fractured=0.
-mix maximum effective separation 1.1209e-12 m.
-final hoop stress -1.6724~3.8807 MPa; tangential shear -0.60032~0.99966 MPa.
-maximum Gauss-point von Mises 4.9749 MPa; maximum equivalent plastic strain 0; collector yielded=false.
-
-PHYSICS_AND_ARCHITECTURE_CHANGE_SUMMARY:
-example/testexample.jl explicitly enables czm.geo_nonlinear=true and czm.j2_plasticity=true.
-PlasticState carries committed Cauchy stress together with eps_p/kappa.
-The same Gauss-point material integration supplies local second-Piola S, consistent tangent, and trial state.
-S remains assembly-local; output only projects committed Cauchy state and does not rerun plasticity.
-basic/load-substep/geo arc-length use committed/trial buffers and commit atomically only on convergence.
-The obsolete post-solve commit_plastic bulk assembly is removed.
-Later Cycle phases initialize history from an existing committed state instead of adding a new NaN prefix.
-The yield cutoff is relative to trial/yield stress scale and is invariant under equivalent stress-unit rescaling.
-
-PRIOR_ACCEPTED_WORKTREE_CHANGES_INCLUDED:
-fix_inner=false includes the user-authorized 23 layer-endpoint constraints.
-mix mode reports effective separation, not normal separation; v9 and v10 separation values are not the same quantity.
-
-TESTS:
-test/unit_czm_j2.jl 28/28 PASS.
-test/test_czm_j2_integration.jl 50/50 PASS.
-test/test_czm_geo_c1.jl 3/3 PASS.
-test/test_czm_arc_geo.jl 32/32 PASS.
-test/test_czm_multicycle_c4lite.jl 17/17 PASS.
-test/test_layer_resolved_stress.jl 63/63 PASS.
-test/test_czm_separation_output.jl 11/11 PASS.
-package entry point loaded successfully with compiled modules disabled to avoid sandbox cache writes.
-Independent read-only code review: no remaining Critical or Important issue after two RED/GREEN fixes.
-
-COUPLE_EXAMPLE_OUTPUT:
-example/couple_example.jl rerun with its own flags-off configuration; exit 0; three images visually checked.
-final_temperature_field.png bytes=210436 sha256=540fe42f1039cb4446046a6da96f1ecf18d162b643bc40a40a099ca2b93f978c
-final_hoop_stress_field.png bytes=344460 sha256=165793bb718d7da71421708d52d5381f48f419f10e161236bc258a77c505f1aa
-final_tangential_shear_stress_field.png bytes=275073 sha256=fadcb7b814d5bd8b8535194fd9040f070b5055683f2911662bbee5765205b285
-PNG gate is active for couple_example.jl only; it does not represent the J2 testexample stress field.
+GKSWSTYPE=100
+OPENBLAS_NUM_THREADS=1
+FIX_INNER=false
+AREA_LOSS_ENABLED=false
+BC_FIX_INNER_FALSE_NODES=92
+BC_FIX_INNER_FALSE_DOFS=184
+BC_FIX_INNER_TRUE_NODES=184
+BC_FIX_INNER_TRUE_DOFS=368
