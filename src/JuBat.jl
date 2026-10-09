@@ -7,7 +7,7 @@ include("SetParams.jl")
 include("CzmPlasticity.jl")  # 平面应力 J2 塑性（Batch 3）
 include("CouplingState.jl")  # MultiSPMeLayout + MeshGeometry 类型定义
 include("SetCase.jl")
-include("CzmBC.jl")  # CZM 边界条件
+include("CzmBC.jl")  # CZM 边界条件（含支承/端点约束解析、方向投影与刚体转动规范）
 include("czm.jl")  # CZM 本构与系统装配
 include("CzmMesh.jl")  # CZM 网格拓扑与构造
 include("CzmUnitMesh.jl")  # 单元级条带网格（验证用）

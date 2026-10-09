@@ -38,7 +38,11 @@ end
     update_interval::Int64 = 1           # CZM损伤更新间隔（时间步数），1=每步更新
     soh_threshold::Float64 = 0.8         # SOH终止阈值，SOH≤此值时终止循环
     inner_exit_only::Bool = true         # 断裂时仅内圈单元退出电化学反应
-    fix_inner::Bool = true               # CZM边界条件：true=内外圈+分层端点，false=外圈+分层端点
+    fix_inner::Bool = true               # 固定/释放内圈；nothing 端点选项沿用既有规则
+    outer_bc::Symbol = :fixed_xy         # :fixed_xy | :radial_slide（参考径向固定、切向自由）
+    fix_start::Union{Nothing,Bool} = nothing # 所有材料层起点额外二维固定；nothing=沿用旧规则
+    fix_end::Union{Nothing,Bool} = nothing   # 所有材料层终点额外二维固定；nothing=沿用旧规则
+    endpoint_variant::Symbol = :keep        # :keep | :omit_a | :omit_b | :omit_ab：omit 删除 a/b 人工圈属性与 S/E 端点固定贡献，保留真实几何支承
     iter_method::String = "basic"        # "basic" | "gp_basic" | "load_substep" | "arc_length"
     max_iter::Int64 = 100                # CZM 牛顿迭代最大步数
     tol::Float64 = 1e-4                  # CZM 收敛容差

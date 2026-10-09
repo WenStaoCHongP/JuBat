@@ -211,6 +211,8 @@ CZM (内聚力模型)
 | `czm.j2_plasticity` | false | PCC/NCC J2 塑性 |
 | `czm.area_loss_enabled` | false | 渐进式有效面积损失（无阈值 factor=1−D，任务59 P1；D=1 支路面积失活、I_e=0，全失活带载报错/静置 status=4 诊断） |
 | `czm.fix_inner` | true | 机械边界模式（任务59 P2）：true=固定 O∪I∪S∪E（含双重属性端点 a/b）；false=固定 O∪(E\{b})——全部层起点 S 释放、a 具外圈属性仍固定、b 自由。CZM 关闭的 bonded 路径同步消费 a_B/b_B 圈属性（true O_B∪I_B / false O_B）。nθ=80 计数：CZM true 81/81/184、false 0/81/92 |
+| `czm.outer_bc` / `czm.fix_start` / `czm.fix_end` | :fixed_xy / nothing / nothing | 任务62 公开边界配置：外圈 :fixed_xy\|:radial_slide（径向小位移滑移，geo=true 拒绝）；fix_start/fix_end 显式布尔增加/不增加所有材料层起点 S/终点 E 的二维固定，nothing=沿用 fix_inner 旧规则；CZM 与 bonded 路径同语义 |
+| `czm.endpoint_variant` | :keep | 特殊端点实验选择（任务62，2026-10-09 用户裁决公开化）：:keep\|:omit_a\|:omit_b\|:omit_ab——omit 删除对应点（a=卷绕起点端子，人工外圈属性；b=卷绕末端端子，人工内圈属性，仅 fix_inner=true 激活）的人工圈属性补充与 S/E 端点固定贡献，保留真实几何 O/I 支承；非法值在求解入口报错。任务62 对照结论：E1_omit_b ≡ 任务59 旧规则约束集合；omit_a 显著改变接缝损伤位置与收敛性（S0_E0 keep 完成 vs omit_a 492 步失稳） |
 | `czm.soh_threshold` | 0.8 | SOH 终止阈值 |
 | `czm.friction_mu` | 0.10 | SP Coulomb 摩擦（Batch 8 预留） |
 
@@ -284,7 +286,7 @@ CZM (内聚力模型)
 |------|------|
 | `src/CzmMesh.jl` | CZM 界面单元拓扑与 `create_czm_mesh` |
 | `src/czm.jl` | CZM 损伤状态、材料映射与系统装配 |
-| `src/CzmBC.jl` | CZM 边界节点识别与边界条件施加 |
+| `src/CzmBC.jl` | CZM 边界条件：Cartesian 罚法、边界节点识别、`resolve_mechanical_bc` 支承/端点约束解析（MechanicalBoundary + endpoint_variant 过滤）、方向正交消元与刚体转动规范（MechanicalBCDOFs，2026-10-09 自 MechanicalBC.jl/MechanicalBCSolve.jl 合并） |
 | `src/CzmSolve.jl` | Newton-Raphson CZM 求解 |
 | `src/Mechanical.jl` | 应力计算 |
 

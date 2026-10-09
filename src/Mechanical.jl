@@ -370,8 +370,23 @@ function assemble_bonded_elastic(case::Case, variables::Dict{String, Union{Array
     ne = size(mesh.element, 1)
     nnode = mesh.nlen
     ndof = 2 * nnode
-    dNdx = mesh.gs.dNidx[:, 1:4]
-    dNdy = mesh.gs.dNidx[:, 5:8]
+    # Recompute mechanical gradients with the same Jacobian convention as
+    # IntQ4/recover_bulk_stress. Historical mesh.gs Q4 row-gradients used J^-1
+    # instead of J^-T and therefore gave a rigid rotation artificial strain.
+    # Keep this correction local to bonded mechanics; do not mutate shared GS
+    # data or silently change thermal/electrochemical assembly in this batch.
+    gradients = Matrix{Float64}(undef,length(mesh.gs.ele),8)
+    for g in eachindex(mesh.gs.ele)
+        e = mesh.gs.ele[g]
+        reference = last(LagrangeBasis("Q4",2,vec(mesh.gs.xi[g,:])))
+        coordinates = mesh.node[mesh.element[e,:],:]
+        J = reference*coordinates
+        spatial = transpose(J\reference)
+        gradients[g,1:4] = spatial[:,1]
+        gradients[g,5:8] = spatial[:,2]
+    end
+    dNdx = gradients[:,1:4]
+    dNdy = gradients[:,5:8]
     wJ = mesh.gs.weight .* mesh.gs.detJ
     ele_of_gp = mesh.gs.ele
     ngs = length(wJ)
@@ -437,18 +452,28 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
 
     # 边界（任务59 P2-R1）：bonded 域机械圈属性——外圈 +（fix_inner 时）内圈，
     # 补双重属性端点 a_B（外圈）/b_B（内圈），相对罚
-    bc_nodes_b, _, _ = identify_bc_nodes_bonded(submesh, mesh, param;
-        opt=case.opt, fix_inner=case.opt.czm.fix_inner)
-    penalty = 1e6 * maximum(abs, diag(K_mech))
-    for (i, bc_type) in bc_nodes_b
-        bc_type === :fixed_xy || continue
-        K_mech[2 * i - 1, 2 * i - 1] += penalty
-        K_mech[2 * i, 2 * i] += penalty
-        F_mech[2 * i - 1] = 0.0
-        F_mech[2 * i] = 0.0
+    if case.opt.czm.outer_bc === :fixed_xy &&
+       case.opt.czm.fix_start === nothing && case.opt.czm.fix_end === nothing
+        bc_nodes_b, _, _ = identify_bc_nodes_bonded(submesh, mesh, param;
+            opt=case.opt, fix_inner=case.opt.czm.fix_inner)
+        penalty = 1e6 * maximum(abs, diag(K_mech))
+        for (i, bc_type) in bc_nodes_b
+            bc_type === :fixed_xy || continue
+            K_mech[2 * i - 1, 2 * i - 1] += penalty
+            K_mech[2 * i, 2 * i] += penalty
+            F_mech[2 * i - 1] = 0.0
+            F_mech[2 * i] = 0.0
+        end
+        U = K_mech \ F_mech
+    else
+        boundary = resolve_mechanical_bc(submesh,mesh,param,case.opt.czm;opt=case.opt)
+        dofs,vals = mechanical_boundary_dofs(boundary)
+        K_bc,F_bc = apply_bc_czm(K_mech,F_mech;bc_dofs=dofs,bc_vals=vals)
+        U = czm_linear_solve(K_bc,F_bc,dofs)
+        diagnostic = mechanical_boundary_diagnostics(U,F_mech-K_mech*U,boundary)
+        diagnostic.free_residual <= 1e-7*max(1.0,norm(F_mech)) || error(
+            "bonded directional solve has nonzero free equilibrium residual")
     end
-
-    U = K_mech \ F_mech
 
     sigma_xx, sigma_yy, sigma_xy, sigma_vm = recover_bulk_stress(
         mesh.node, mesh.element, submesh.material_type, U, ε0, param)
