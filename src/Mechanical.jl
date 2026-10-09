@@ -173,6 +173,28 @@ function recover_bulk_stress(node, element, material_type, u, ε0, param)
 end
 
 """
+    recover_bulk_strain(node, element, u) -> (eps_xx, eps_yy, gam_xy)
+
+单元中心总机械应变（无量纲）：由 L 归一化位移在 Q4 中心梯度求值，与
+`recover_bulk_stress` 同一几何离散。不含特征应变（热/化学自由膨胀）扣减；
+弹性应变 = 总应变 − ε0·[1,1,0]，或由已导出应力按层刚度反解。
+"""
+function recover_bulk_strain(node, element, u)
+    ne = size(element, 1)
+    eps_xx = zeros(Float64, ne)
+    eps_yy = zeros(Float64, ne)
+    gam_xy = zeros(Float64, ne)
+    @inbounds for e in 1:ne
+        nodes = element[e, :]
+        dNdx, dNdy, _ = q4_center_gradients(node, nodes)
+        eps_xx[e] = sum(dNdx[i] * u[2 * nodes[i] - 1] for i in 1:4)
+        eps_yy[e] = sum(dNdy[i] * u[2 * nodes[i]] for i in 1:4)
+        gam_xy[e] = sum(dNdy[i] * u[2 * nodes[i] - 1] + dNdx[i] * u[2 * nodes[i]] for i in 1:4)
+    end
+    return eps_xx, eps_yy, gam_xy
+end
+
+"""
     macro_eigenstrain(case, variables, T_nodes) -> Vector{Float64}
 
 逐力学体单元特征应变，与在线 CZM 热-化学载荷同源（`eigenstrain_of`：

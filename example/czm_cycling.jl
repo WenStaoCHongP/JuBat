@@ -14,8 +14,10 @@ K_n 2.4e16/1.2e16 Pa/m、G_c 50.6/12.4 J/m²。geo/J2 成对关闭（D-B3-1）�
   JUBAT_CZM_METHOD=<name>     求解方法（basic / gp_basic / arc_length）
   JUBAT_CZM_TAU_SECONDS=<s>   物理时间粘性 τ（设为 5 时 gp_basic + 粘性 = 稳健口径）
   JUBAT_SNAPSHOT_CYCLES=<csv> 选定循环号逗号列表（如 1,5,10,30,50,100）→ 采全历史
-  JUBAT_EXPORT_FIELD_DATA=1   同时导出温度/位移/电流/损伤场数据长表（需 save_detailed）
+  JUBAT_EXPORT_FIELD_DATA=1   同时导出温度/位移/电流/损伤/牵引/应力/应变场数据长表（需 save_detailed）
   JUBAT_RUN_TAG=<name>        输出目录子目录名（默认 debug_a0.9_gc2）
+  JUBAT_AREA_LOSS=1           渐进面积损失开关（任务59 P1：factor=1−D 调制分流面积权重；
+                              默认 0=几何权重不消费损伤）
 
 网格信息（节点坐标/单元连接 CSV）不随本脚本导出——网格静态，需时用
 `tools/check_collector_mesh.jl`（KB 恢复后运行）单独生成到
@@ -125,6 +127,8 @@ function main()
         opt.czm.viscous_enabled = true
         opt.czm.viscous_tau = parse(Float64, tau_seconds)
     end
+    # 任务59 P1：渐进面积损失开关（真实消费 opt.czm.area_loss_enabled，非仅设 ENV）
+    opt.czm.area_loss_enabled = get(ENV, "JUBAT_AREA_LOSS", "0") == "1"
 
     cycle_opt = JuBat.CycleOption(
         n_cycles = n_cycles,
@@ -152,6 +156,9 @@ function main()
     @printf("  CZM: %s / geo=%s / J2=%s / max_iter=%d / tol=%.1e / τ=%g s\n",
         opt.czm.iter_method, opt.czm.geo_nonlinear, opt.czm.j2_plasticity,
         opt.czm.max_iter, opt.czm.tol, opt.czm.viscous_tau)
+    @printf("  渐进面积损失: %s（%s）\n",
+        opt.czm.area_loss_enabled ? "开启" : "关闭",
+        opt.czm.area_loss_enabled ? "factor=1−D 调度分流面积" : "几何权重，不消费损伤")
     @printf("  全历史采集循环: %s\n", isempty(snapshot_cycles) ? "无" : sort(collect(snapshot_cycles)) |> x -> join(x, ","))
     @printf("  场数据长表: %s\n", export_field ? "导出" : "不导出")
 
@@ -296,6 +303,7 @@ function main()
             end
         end
         δ_czm = case.param.scale.δ_czm
+        σ_czm = case.param.scale.σ_czm
         snap_cycles_present = sort(unique([s.cycle for s in result.czm_snapshots]))
         header = "t_s," * join(("e$j" for j in 1:n_coh), ",")
         for cyc in snap_cycles_present
@@ -303,7 +311,9 @@ function main()
             for (fname, getcol) in (
                     ("damage_history_cyc$cyc.csv", s -> s.damage),
                     ("sep_n_history_cyc$cyc.csv", s -> s.separation_n .* δ_czm),
-                    ("sep_t_history_cyc$cyc.csv", s -> s.separation_t .* δ_czm))
+                    ("sep_t_history_cyc$cyc.csv", s -> s.separation_t .* δ_czm),
+                    ("traction_n_history_cyc$cyc.csv", s -> s.traction_n .* σ_czm),
+                    ("traction_t_history_cyc$cyc.csv", s -> s.traction_t .* σ_czm))
                 open(joinpath(outdir, fname), "w") do io
                     println(io, header)
                     for s in snaps
@@ -319,6 +329,7 @@ function main()
     if export_field && !isempty(result.cycle_results)
         L = case.param.scale.L
         δ_czm = case.param.scale.δ_czm
+        σ_czm = case.param.scale.σ_czm
 
         # node_temperature.csv（热节点，全相位逐时间步）
         open(joinpath(outdir, "node_temperature.csv"), "w") do f
@@ -377,19 +388,52 @@ function main()
             end
         end
 
-        # cohesive_damage.csv（plot_czm 损伤云图契约：长表）
+        # cohesive_damage.csv（plot_czm 损伤云图契约：长表，含界面牵引 Pa）
         if !isempty(result.czm_snapshots)
             open(joinpath(outdir, "cohesive_damage.csv"), "w") do f
-                println(f, "cycle,phase,time_s,coh_id,D,sep_n_m,sep_t_m")
+                println(f, "cycle,phase,time_s,coh_id,D,sep_n_m,sep_t_m,traction_n_Pa,traction_t_Pa")
                 for s in result.czm_snapshots
                     for j in 1:length(s.damage)
-                        println(f, "$(s.cycle),$(s.phase),$(s.time_s),$j,$(s.damage[j]),$(s.separation_n[j]*δ_czm),$(s.separation_t[j]*δ_czm)")
+                        println(f, "$(s.cycle),$(s.phase),$(s.time_s),$j,$(s.damage[j]),$(s.separation_n[j]*δ_czm),$(s.separation_t[j]*δ_czm),$(s.traction_n[j]*σ_czm),$(s.traction_t[j]*σ_czm)")
                     end
                 end
             end
         end
 
-        println("  场数据长表已导出: node_temperature / node_displacement / element_currents / cohesive_damage")
+        # element_stress.csv（相位末层分辨宏观应力：CZM bulk 单元，Pa）
+        open(joinpath(outdir, "element_stress.csv"), "w") do f
+            println(f, "cycle,phase,time_s,elem_id,sxx_Pa,syy_Pa,sxy_Pa,vm_Pa")
+            for cr in result.cycle_results, (pname, ph) in
+                    (("discharge", cr.discharge), ("rest1", cr.rest1),
+                     ("charge", cr.charge), ("rest2", cr.rest2))
+                ph === nothing && continue
+                sr = ph.solve_result
+                (sr === nothing || !haskey(sr, "diffusion stress xx [Pa]")) && continue
+                sxx = sr["diffusion stress xx [Pa]"][:, end]
+                syy = sr["diffusion stress yy [Pa]"][:, end]
+                sxy = sr["diffusion stress xy [Pa]"][:, end]
+                svm = sr["diffusion stress vonMises [Pa]"][:, end]
+                for e in eachindex(sxx)
+                    println(f, "$(cr.cycle_idx),$pname,$(ph.t_end),$e,$(sxx[e]),$(syy[e]),$(sxy[e]),$(svm[e])")
+                end
+            end
+        end
+
+        # element_strain.csv（快照时刻单元中心总机械应变，无量纲；弹性应变=总应变−ε0）
+        if !isempty(result.czm_snapshots)
+            cm = case.czm_mesh
+            open(joinpath(outdir, "element_strain.csv"), "w") do f
+                println(f, "cycle,phase,time_s,elem_id,eps_xx,eps_yy,gam_xy")
+                for s in result.czm_snapshots
+                    exx, eyy, gxy = JuBat.recover_bulk_strain(cm.node, cm.bulk_element, s.displacement)
+                    for e in eachindex(exx)
+                        println(f, "$(s.cycle),$(s.phase),$(s.time_s),$e,$(exx[e]),$(eyy[e]),$(gxy[e])")
+                    end
+                end
+            end
+        end
+
+        println("  场数据长表已导出: node_temperature / node_displacement / element_currents / cohesive_damage / element_stress / element_strain")
     end
 
     println()
