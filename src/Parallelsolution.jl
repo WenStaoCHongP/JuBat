@@ -428,6 +428,51 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 	end
 
 	w = A_eff ./ sum(A_eff)
+	# 任务63 B2：暴露真实消费权重/有效面积（ON=A_eff/ΣA_eff，OFF=几何权重），供诊断观察点与结果导出
+	variables["thermal2D branch weight"] = w
+	variables["thermal2D effective area"] = A_eff
+
+	# 任务63 R0 严格零支路契约（用户 2026-10-11 裁决）：I_total==0（静置）时所有支路电流
+	# 严格为 0——在源头跳过共同电压 Newton（其零和方程只约束 Σw·I_e，会解出正负抵消的
+	# 小支路电流）与总量归一化。扩散/电解液松弛/导热/力学演化由调用方照常推进，本函数
+	# 只负责分流。代表性端电压 = 活动支路零电流电压（OCV）的算术平均（与全失活诊断路径
+	# 同一定义口径；不声称逐支路电压方程已满足——静置无平衡电流，局部 OCV 允许不同）。
+	if I_total == 0.0 && any(area_active)
+		ci = detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
+		active_mask = ci.active_mask .& area_active
+		I_e = zeros(Float64, ne)
+		V = mean([coeffs[e].C1 for e in findall(active_mask)])
+		isfinite(V) || error(
+			"solve_branch_currents: 静置严格零支路的 OCV 均值非有限（NaN/Inf），拒绝发布诊断电压")
+		voltage_in_bounds, cutoff_type_global, _, _ = check_voltage_bounds(
+			V, V_MIN, V_MAX, phi_scale, I_total, w, I_e)
+		variables["thermal2D element current"] = I_e
+		variables["thermal2D element current A"] = zeros(Float64, ne)
+		variables["thermal2D common voltage"] = V
+		variables["thermal2D common voltage V"] = V * phi_scale
+		variables["thermal2D Vsolve status"] = 3.0
+		variables["thermal2D Vsolve iters"] = 0.0
+		variables["thermal2D Vsolve converged"] = 1.0
+		variables["thermal2D n_active_elements"] = Float64(sum(active_mask))
+		variables["thermal2D n_cutoff_elements"] = Float64(ci.n_cutoff)
+		variables["thermal2D n_deactivated_elements"] = Float64(sum(deactivated_mask))
+		variables["thermal2D active_mask"] = Float64.(active_mask)
+		variables["thermal2D deactivated_mask"] = Float64.(deactivated_mask)
+		for e in 1:ne
+			inactive_reason[e] = !area_active[e] ? 2.0 : (!active_mask[e] ? 1.0 : 0.0)
+		end
+		variables["thermal2D inactive_reason"] = inactive_reason
+		variables["thermal2D voltage_in_bounds"] = voltage_in_bounds ? 1.0 : 0.0
+		variables["thermal2D cutoff_type_global"] = Float64(cutoff_type_global)
+		variables["thermal2D element OCV"] = ci.all_ocv
+		variables["thermal2D cutoff_elements"] = Float64.(ci.cutoff_elements)
+		variables["thermal2D cutoff_ocv"] = ci.cutoff_ocv
+		variables["thermal2D cutoff_type"] = Float64.(ci.cutoff_type)
+		variables["thermal2D nearest_cutoff_element"] = Float64(ci.nearest_element)
+		variables["thermal2D nearest_cutoff_ocv"] = ci.nearest_ocv
+		variables["thermal2D margin_to_cutoff"] = ci.margin
+		return variables, I_e, V
+	end
 
 	# 截止检测 + 面积活跃合并
 	ci = detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)

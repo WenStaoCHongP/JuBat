@@ -29,6 +29,27 @@ function map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, damage_states::Abstra
 	return D_per_thermal
 end
 
+# 任务63 B2（R4/5.5）：可选分流消费观察点。默认 nothing 惰性；诊断入口在
+# finally 中恢复，生产路径零开销。事件字段见 CallModel_MultiSPMe 内回调处。
+const branch_consumption_observer = Ref{Any}(nothing)
+
+# 任务63 R0-c/M0：球体积平均（FE/高斯口径，与 ElectrodeDiffusion 的 r² 质量装配同一
+# 积分：q = gs.x²·weight·detJ，c_bar = Σ q_gp·c_h(r_gp)/Σ q_gp = 1ᵀMc/1ᵀM1）。
+# 网格必须是 NE/PE 对应的 negative/positive particle 径向网格（Nrn/Nrp 决定），
+# 不得使用电极厚度坐标网格（R1 返工：后者长度 Nn/Np+1，合法不同配置下 DimensionMismatch）。
+function particle_volume_average(c::AbstractVector{Float64}, mesh::Mesh)
+    length(c) == mesh.nlen || throw(DimensionMismatch(
+        "particle_volume_average: concentration $(length(c)) vs particle nodes $(mesh.nlen)"))
+    all(isfinite, c) || throw(ArgumentError("non-finite particle concentration"))
+    c_gs = vec(sum(mesh.gs.Ni .* c[mesh.element[mesh.gs.ele, :]], dims=2))
+    q = vec(mesh.gs.x).^2 .* mesh.gs.weight .* mesh.gs.detJ
+    den = sum(q)
+    isfinite(den) && den > 0 || throw(ArgumentError("invalid particle volume measure"))
+    c_bar = dot(c_gs, q) / den
+    isfinite(c_bar) || throw(ArgumentError("non-finite particle volume average"))
+    return c_bar
+end
+
 function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
     # 验证前提条件
     if case.layout === nothing
@@ -106,6 +127,17 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, nothing; D_elem=D_elem_area_loss)
     t_branch_s = (time_ns() - t_branch_ns) * 1e-9
 
+    # 任务63 B2（R4/5.5）：可选分流消费观察点——每次实际消费后原位回调，惰性无开销。
+    # 事件携带真实消费输入（D_elem、areas）与产出（I_e、w、A_eff、活动集），t 为归一化时间。
+    obs_branch = branch_consumption_observer[]
+    obs_branch === nothing || obs_branch((; t=t, I_total=I_total, areas=areas,
+        D_elem=D_elem_area_loss, I_e=copy(I_e), Vc=Vc, Te_prev=copy(Te_prev),
+        w=copy(variables["thermal2D branch weight"]),
+        A_eff=copy(variables["thermal2D effective area"]),
+        active_mask=copy(variables["thermal2D active_mask"]),
+        deactivated_mask=copy(variables["thermal2D deactivated_mask"]),
+        inactive_reason=copy(variables["thermal2D inactive_reason"])))
+
     # active_elements：实际分流活动支路索引（面积活跃 ∩ 电压截止；任务59 Q6 裁决）
     variables["active_elements"] = Float64.(findall(==(1.0), variables["thermal2D active_mask"]))
     
@@ -161,7 +193,9 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         variables = compute_heat_sources(case, variables, variables_elems, I_e, Te_prev, areas; per_element_spme=true)
     end
 
-    # 保存辅助变量（用于调试）
+    # 保存辅助变量（用于调试）；M0：体积平均改用 NE/PE 对应 particle 径向网格
+    mesh_np = case.mesh["negative particle"]
+    mesh_pp = case.mesh["positive particle"]
     for e in 1:ne
         vars_e = variables_elems[e]
         variables["thermal2D eta_n_e"][e] = vars_e["negative electrode overpotential"][1]
@@ -174,6 +208,9 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         csp_data = vars_e["positive particle lithium concentration"]
         variables["thermal2D element soc_n"][e] = mean(vec(csn_data))
         variables["thermal2D element soc_p"][e] = mean(vec(csp_data))
+        # R0-c/M0：同步记录 FE 球体积平均（诊断键；M0 生产消费仍为节点算术平均，M1 才切换）
+        variables["thermal2D element soc_n_vol"][e] = particle_volume_average(vec(csn_data), mesh_np)
+        variables["thermal2D element soc_p_vol"][e] = particle_volume_average(vec(csp_data), mesh_pp)
     end
     variables["thermal2D element current"] = I_e
     

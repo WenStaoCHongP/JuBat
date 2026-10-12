@@ -123,8 +123,9 @@ function run_boundary_case(spec, outdir)
             snapshot = (; phase=label, t_end=pr.t_end, D_end=D[end], terminated_by=string(pr.terminated_by),
                 currents=copy(Iend), damage=copy(case.mech.damage_states))
             push!(snapshots,snapshot)
-            write_csv(joinpath(outdir,"current_phase_end_$label.csv"),("element","I_A"),
-                ((e,Iend[e]) for e in 1:length(Iend)))
+            # I_e 为无量纲契约字段（Σw·I_e=I_total）；物理等效 I_eq_A=I_e·I_typ（R3 单位修正）
+            write_csv(joinpath(outdir,"current_phase_end_$label.csv"),("element","I_e","I_eq_A"),
+                ((e,Iend[e],Iend[e]*case.param.scale.I_typ) for e in 1:length(Iend)))
             export_thermal_damage(case,outdir,label)
             println("[$(spec.id)] CAPTURE_PHASE=$label t_end=$(pr.t_end) terminated_by=$(pr.terminated_by) D_end=$(D[end]) steps=$(length(t))")
         catch err

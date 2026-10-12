@@ -256,7 +256,8 @@ function solve_czm_step(czm_mesh::CohesiveMesh, ms::MechState, param,
     czm_opt.outer_bc === :radial_slide && czm_opt.geo_nonlinear && throw(ArgumentError(
         "radial_slide requires geo_nonlinear=false"))
     if boundary === nothing && (czm_opt.outer_bc !== :fixed_xy ||
-            czm_opt.fix_start !== nothing || czm_opt.fix_end !== nothing)
+            czm_opt.fix_start !== nothing || czm_opt.fix_end !== nothing ||
+            czm_opt.endpoint_variant !== :keep)
         boundary = resolve_mechanical_bc(czm_mesh,param,czm_opt)
     end
     if boundary !== nothing

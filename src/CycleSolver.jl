@@ -115,7 +115,7 @@ end
 # 2. 单阶段求解器
 # ========================================================================
 
-function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, V_limit::Float64, initial_state::Union{Dict{String,Any},Nothing}; ms=nothing, dt_range::Vector{Float64}=[1.0, 10.0], czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing, czm_cycle::Int=1)
+function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, V_limit::Float64, initial_state::Union{Dict{String,Any},Nothing}; ms=nothing, dt_range::Vector{Float64}=[1.0, 10.0], czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing, czm_cycle::Int=1, chemical_step_observer::Union{Nothing,Function}=nothing)
     result = PhaseResult()
     result.phase_type = phase_type
     result.t_start = initial_state === nothing ? 0.0 : initial_state["t_global"]
@@ -154,7 +154,8 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_curren
 
         solve_result = Solve(case; initial_state=initial_state, return_final_state=true,
                              czm_snapshots=czm_snapshots, czm_cycle=czm_cycle,
-                             czm_phase=string(phase_type))
+                             czm_phase=string(phase_type),
+                             chemical_step_observer=chemical_step_observer)
 
         # CZM 损伤已由 Solve 主循环每步更新（Solve.jl:270-285），此处不再冗余调用。
         # 旧版在此处调用 update_czm_damage!(..., u_czm_prev=nothing) 会导致：

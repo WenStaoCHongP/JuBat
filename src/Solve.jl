@@ -1,4 +1,4 @@
-function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing,return_final_state::Bool=false,thermal_variables::Union{Dict{String,Any},Nothing}=nothing,thermal_update_fn::Union{Function,Nothing}=nothing,thermal_record::Bool=false,polar_mesh_data::Any=nothing,czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing,czm_cycle::Int=1,czm_phase::String="unknown")
+function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing,return_final_state::Bool=false,thermal_variables::Union{Dict{String,Any},Nothing}=nothing,thermal_update_fn::Union{Function,Nothing}=nothing,thermal_record::Bool=false,polar_mesh_data::Any=nothing,czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing,czm_cycle::Int=1,czm_phase::String="unknown",chemical_step_observer::Union{Nothing,Function}=nothing)
     if case.opt.model == "thermal"
             if thermal_variables === nothing
                 error("Solve: model==\"thermal\" requires thermal_variables keyword argument")
@@ -148,6 +148,9 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     v = 1
     timing_totals = Dict{String,Float64}("spme" => 0.0,"branch" => 0.0,"thermal" => 0.0,"czm" => 0.0,)
     timing_call_count = 0
+    # 5.7.4 返工 P2-2：独立候选/接受/eval 计数器（不复用输出列 v）
+    chem_trial_idx = 0
+    chem_accepted_idx = 0
 
     function accumulate_callmodel_timing!(totals::Dict{String,Float64}, vars::Dict{String, Union{Array{Float64},Float64}})
         totals["spme"] += get(vars, "timing spme solve [s]", 0.0)
@@ -196,6 +199,11 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     vc = 1:size(M_old,1)
     y_c = (M_old - K_old * dt_init) \ (M_old * y0[vc] + F_old * dt_init)
     y_old = vcat(y_c, y_phi)
+    # 任务63 5.7.4：初始化 BE 后同步发观察点（y0→y_c + M0/K0/F0）
+    if chemical_step_observer !== nothing
+        chemical_step_observer((; kind = :init_BE, h = dt_init, t_eval = t,
+            M = M_old, K = K_old, F = F_old, y_before = y0[vc], y_after = y_c))
+    end
     Variable_update!(variables_hist, variables, v)
     latest_macro_stress === nothing ||
         write_macro_stress!(variables_hist, v, latest_macro_stress)
@@ -217,6 +225,12 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     # run the model
     while t <= t_end
         # 电化学步
+        # 5.7.4 返工 P2-2：候选开始（独立计数器）
+        chem_trial_idx += 1
+        if chemical_step_observer !== nothing
+            chemical_step_observer((; kind = :attempt_begin, h = dt, t_eval = t,
+                trial_idx = chem_trial_idx))
+        end
         M_new, K_new, F_new, variables, y_phi = CallModel(case, y_old, t, jacobi="update")
         timing_call_count += 1
         accumulate_callmodel_timing!(timing_totals, variables)
@@ -228,6 +242,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         Ft = theta * F_new * dt + (1 - theta) * F_old * dt
         y_c = convert(SparseMatrixCSC{Float64,Int}, Mt) \ (Kt * y_old[vc] + Ft)
         y_new = vcat(y_c, y_phi)
+        h_used = dt   # 5.7.4 返工：求解实际使用的步长（调步前保存，不被自适应/截断覆盖）
 
         # multi-SPMe：求解后提取温度自由度，用于记录/后处理
         if multi_spme_enabled
@@ -241,6 +256,11 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         errors[v] = error_y
         if error_y > 2 * case.opt.dtThreshold && case.opt.dtType == "auto" && dt >= dt_min * 4
             # reduce dt to dt/2 and recaculate y_new
+            # 5.7.4 返工 P2-2：拒绝（独立计数，不计入库存/接受账本）
+            if chemical_step_observer !== nothing
+                chemical_step_observer((; kind = :rejected, h_used = h_used,
+                    t_eval = t, error_y = error_y, trial_idx = chem_trial_idx))
+            end
             dt = dt  /2
             t -= dt
         else
@@ -320,9 +340,26 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             end
 
             # update system information
-            y_old = copy(y_new)
-            K_old = copy(K_new)
-            F_old = copy(F_new)
+            # 5.7.4 返工 P2-1/P2-2：观察者启用时暂存旧引用 → 完成原提交 → 递增接受索引 → 同步回调
+            if chemical_step_observer !== nothing
+                local y_before_ref = y_old[vc]
+                local K_old_ref = K_old
+                local F_old_ref = F_old
+                y_old = copy(y_new)
+                K_old = copy(K_new)
+                F_old = copy(F_new)
+                chem_accepted_idx += 1
+                chemical_step_observer((; kind = :accepted_commit, h_used = h_used,
+                    dt_next = dt, theta = theta,
+                    t_eval = t, trial_idx = chem_trial_idx, accepted_idx = chem_accepted_idx,
+                    M_new = M_new, K_old = K_old_ref, K_new = K_new,
+                    F_old = F_old_ref, F_new = F_new,
+                    y_before = y_before_ref, y_after = y_old[vc]))
+            else
+                y_old = copy(y_new)
+                K_old = copy(K_new)
+                F_old = copy(F_new)
+            end
             t += dt
         end
 

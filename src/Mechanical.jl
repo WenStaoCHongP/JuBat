@@ -475,7 +475,8 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     # 边界（任务59 P2-R1）：bonded 域机械圈属性——外圈 +（fix_inner 时）内圈，
     # 补双重属性端点 a_B（外圈）/b_B（内圈），相对罚
     if case.opt.czm.outer_bc === :fixed_xy &&
-       case.opt.czm.fix_start === nothing && case.opt.czm.fix_end === nothing
+       case.opt.czm.fix_start === nothing && case.opt.czm.fix_end === nothing &&
+       case.opt.czm.endpoint_variant === :keep
         bc_nodes_b, _, _ = identify_bc_nodes_bonded(submesh, mesh, param;
             opt=case.opt, fix_inner=case.opt.czm.fix_inner)
         penalty = 1e6 * maximum(abs, diag(K_mech))
