@@ -252,6 +252,13 @@ end
 # production and restored by the diagnostic entry point in a finally block.
 const mechanical_step_observer = Ref{Any}(nothing)
 
+"""
+    solve_czm_step(czm_mesh, ms, param, F_ext, czm_opt; dt_seconds=nothing, ...)
+
+F_ext 为二维单位高度节点力的无量纲向量：物理 N/m 除 σ_ref*L；若给定高度 H
+上的物理总节点力 N，则除 σ_ref*L*H。坐标与位移除 L。dt_seconds 及 viscous_tau
+均为实际物理秒，不是除 t0 的内部时间；此接口不按数值大小猜测或转换单位。
+"""
 function solve_czm_step(czm_mesh::CohesiveMesh, ms::MechState, param,
         F_ext::Vector{Float64}, czm_opt::CzmOptions;
         dT_elem=nothing, Δsoc_n_elem=nothing, Δsoc_p_elem=nothing,

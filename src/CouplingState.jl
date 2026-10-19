@@ -278,12 +278,12 @@ end
 # 数据流
 - dT_czm：粗热单元 dT (= avg(T_nodes[thermal_elem[e]]) - T0)
           → thermal_elem_map 直接取值（element-to-element）
-- Δsoc_p/n：variables["thermal2D element soc_p/n"] (粗热单元 mol/m³)
+- Δsoc_p/n：variables["thermal2D element soc_p/n"] (粗热单元无量纲 c/c_max)
              → thermal_elem_map 直接取值 - cs0，按 material_type 分发
 
 # 单位契约
-- T_nodes, T0, dT_czm: Kelvin
-- soc_p/n, cs0, Δsoc: mol/m³
+- T_nodes、param.cell.T0 为 T/T_ref；dT_czm 为 ΔT/T_ref，例如 12.3 K 输入 12.3/T_ref。
+- soc_p/n, cs0, Δsoc: 无量纲 c/c_max；Omega 已乘 cs_max，ΩΔsoc/3 的尺度契约不变。
 """
 function compute_czm_strain_inputs(case, variables, T_nodes)
     czm_mesh = case.czm_mesh
