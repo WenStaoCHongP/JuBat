@@ -1038,7 +1038,7 @@ function assemble_coupled_system_full(
     K_total, f_int_total, separations, tractions = assemble_coupled_system(
         czm_mesh, u, param;
         damage_states=damage_states, K_bulk_cached=K_bulk_cached,
-        geom_cache=geom_cache, ws=ws, visc_beta=visc_beta)
+        geom_cache=geom_cache, ws=ws, visc_beta=visc_beta, czm_model=czm_model)
 
     # 热-化学载荷（透传 param）
     F_thermo_chem = assemble_thermal_chemical_load(

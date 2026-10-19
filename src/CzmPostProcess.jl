@@ -97,9 +97,22 @@ function accumulate_cycle_damage!(ms::MechState, cycle_damage_increment::Float64
 end
 
 """
-    czm_output_to_variables(result, variables)
+    czm_output_to_variables(result, variables; committed_states)
+
+Export a successful step with its real committed element history. Equilibrium
+damage alone does not determine whether viscous traction has fully vanished.
 """
-function czm_output_to_variables(result::CZMResult, variables::Dict{String, Union{Array{Float64}, Float64}})
+function czm_output_to_variables(result::CZMResult, variables::Dict{String, Union{Array{Float64}, Float64}};
+                                 committed_states::AbstractVector{DamageState})
+    length(committed_states) == length(result.damage) || throw(DimensionMismatch(
+        "committed CZM history must match result damage length"))
+    for (i, state) in enumerate(committed_states)
+        all(isfinite, (state.D, state.D_visc, state.δ_max_n, state.δ_max_t,
+                       state.δ_max_eff, state.accumulated_damage)) || throw(ArgumentError(
+            "committed CZM history contains non-finite values at element $i"))
+        state.D == result.damage[i] || throw(ArgumentError(
+            "committed CZM damage differs from result at element $i"))
+    end
     new_variables = copy(variables)
     u_x = result.displacement[1:2:end]
     u_y = result.displacement[2:2:end]
@@ -116,7 +129,7 @@ function czm_output_to_variables(result::CZMResult, variables::Dict{String, Unio
     new_variables["czm D_max"] = maximum(result.damage)
     new_variables["czm D_mean"] = mean(result.damage)
     new_variables["czm δ_max_eff"] = [maximum(separation_eff)]
-    new_variables["czm n_fractured"] = Float64(count(d -> d >= 0.99, result.damage))
+    new_variables["czm n_fractured"] = Float64(count(s -> s.fractured, committed_states))
 
     return new_variables
 end

@@ -191,10 +191,14 @@ function backtrack_line_search!(u::Vector{Float64}, Δu::Vector{Float64},czm_mes
 end
 
 function gp_history_for_step(ms::MechState, czm_mesh::CohesiveMesh)
+    length(ms.damage_states) == czm_mesh.n_cohesive || throw(DimensionMismatch(
+        "element damage history length must equal $(czm_mesh.n_cohesive)"))
     weights, _ = NCweight(czm_mesh.bulk_mesh.gs.order)
     shape = (czm_mesh.n_cohesive, length(weights))
     if ms.gp_damage_states === nothing
-        any(s -> s.D != 0.0 || s.D_visc != 0.0 || s.δ_max_eff != 0.0,
+        any(s -> s.D != 0.0 || s.D_visc != 0.0 || s.δ_max_eff != 0.0 ||
+                 s.δ_max_n != 0.0 || s.δ_max_t != 0.0 ||
+                 s.accumulated_damage != 0.0 || s.fractured,
             ms.damage_states) && throw(ArgumentError(
             "cannot reconstruct GP damage history from a nonzero element-average history"))
         return [clone_damage_state(ms.damage_states[i]) for i in 1:shape[1], _ in 1:shape[2]]

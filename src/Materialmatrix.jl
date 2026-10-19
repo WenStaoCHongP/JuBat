@@ -77,6 +77,10 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 	new_state.δ_max_eff = damage_state.δ_max_eff
 	new_state.fractured = damage_state.fractured
 	new_state.accumulated_damage = damage_state.accumulated_damage
+	# Component envelopes record geometry independently of the damage driver.
+	δ_n_pos = max(0.0, δ_n)
+	new_state.δ_max_n = max(new_state.δ_max_n, δ_n_pos)
+	new_state.δ_max_t = max(new_state.δ_max_t, abs(δ_t))
 
 	if damage_state.fractured
 		new_state.D = 1.0
@@ -93,7 +97,6 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 		end
 		return T_n, T_t, 1.0, new_state
 	end
-	δ_n_pos = max(0.0, δ_n)
 	if czm_model == "model1"
 		δ_eff = δ_n_pos
 		δ_0_eff = ip.δ_0
@@ -126,10 +129,6 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 		D_eq = max(damage_state.D, D_eq)
 
 		new_state.δ_max_eff = δ_eff
-		new_state.δ_max_n = max(new_state.δ_max_n, δ_n_pos)
-		if czm_model != "model1"
-			new_state.δ_max_t = max(new_state.δ_max_t, abs(δ_t))
-		end
 		new_state.D = D_eq
 		new_state.accumulated_damage = max(new_state.accumulated_damage, D_eq)
 	end
@@ -356,7 +355,7 @@ end
 function get_fractured_elements(damage_states::AbstractVector{DamageState})
 	fractured = Int64[]
 	for (i, state) in enumerate(damage_states)
-		if state.fractured || state.D >= 0.99
+		if state.fractured
 			push!(fractured, i)
 		end
 	end
