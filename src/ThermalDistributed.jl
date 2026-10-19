@@ -114,7 +114,7 @@ function apply_cool_method(K, F, mesh, case, t::Float64)
     elseif cool_method == "surface"
         param = case.param
         Bi = case.param_dim.scale.h
-        conv_factor = 2.0 * Bi / param.cell.width
+        conv_factor = 2.0 * Bi * param.cell.lambda_r / param.cell.width
 
         ngs = length(mesh.gs.detJ)
         Ni = mesh.gs.Ni
@@ -154,7 +154,7 @@ function apply_cool_method(K, F, mesh, case, t::Float64)
 
         for (i, n) in enumerate(tab_nodes)
             weight = arc_lengths[i] / total_arc_length
-            coeff = param.tab.h * param.tab.area * weight / param.cell.width
+            coeff = param.tab.h * param.cell.lambda_r * param.tab.area * weight / param.cell.width
             K[n, n] -= coeff
             F[n] += coeff * param.cell.T_amb
         end
