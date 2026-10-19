@@ -206,11 +206,17 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         variables["thermal2D dUdT_p_e"][e] = param.PE.dUdT(cp_surf_e)[1]
         csn_data = vars_e["negative particle lithium concentration"]
         csp_data = vars_e["positive particle lithium concentration"]
-        variables["thermal2D element soc_n"][e] = mean(vec(csn_data))
-        variables["thermal2D element soc_p"][e] = mean(vec(csp_data))
-        # R0-c/M0：同步记录 FE 球体积平均（诊断键；M0 生产消费仍为节点算术平均，M1 才切换）
-        variables["thermal2D element soc_n_vol"][e] = particle_volume_average(vec(csn_data), mesh_np)
-        variables["thermal2D element soc_p_vol"][e] = particle_volume_average(vec(csp_data), mesh_pp)
+        # M1（2026-10-12 用户裁决）：生产化学膨胀消费切换为 FE 球体积平均（1ᵀMc/1ᵀM1，
+        # 与扩散质量装配同一积分；静置零通量时库存守恒、平均严格不变）。
+        # 旧节点均值保留为有界诊断键（*_nodeavg）。
+        vol_n = particle_volume_average(vec(csn_data), mesh_np)
+        vol_p = particle_volume_average(vec(csp_data), mesh_pp)
+        variables["thermal2D element soc_n"][e] = vol_n
+        variables["thermal2D element soc_p"][e] = vol_p
+        variables["thermal2D element soc_n_vol"][e] = vol_n   # 同一正确值，不再各算一套
+        variables["thermal2D element soc_p_vol"][e] = vol_p
+        variables["thermal2D element soc_n_nodeavg"][e] = mean(vec(csn_data))
+        variables["thermal2D element soc_p_nodeavg"][e] = mean(vec(csp_data))
     end
     variables["thermal2D element current"] = I_e
     
