@@ -11,7 +11,7 @@ function ThermalLumped(case::Case, variables::Dict{String, Union{Array{Float64},
         csp_surf = variables["positive particle surface lithium concentration"][end]
         Q_ohm = 0
         Q_rxn = abs(I_app * (eta_p - eta_n) ) # reaction heat is always positive
-        Q_rev = abs(I_app) * T * (param.PE.dUdT(csp_surf) - param.NE.dUdT(csn_surf)) 
+        Q_rev = -I_app * T * (param.PE.dUdT(csp_surf) - param.NE.dUdT(csn_surf))
     elseif case.opt.model == "SPMe"
         I_app = variables["cell current"]
         eta_n = variables["negative electrode overpotential"][1]
@@ -39,7 +39,7 @@ function ThermalLumped(case::Case, variables::Dict{String, Union{Array{Float64},
         dphi_e = 2.0 * T * (1 - param.EL.tplus) * (csp_av - csn_av) / param.EL.ce0 - I_app * R_EL - dphi_S
         Q_ohm = -I_app * dphi_e
         Q_rxn = abs(I_app * (eta_p - eta_n) ) # reaction heat is always positive
-        Q_rev = abs(I_app) * T * (param.PE.dUdT(csp_surf) - param.NE.dUdT(csn_surf))
+        Q_rev = -I_app * T * (param.PE.dUdT(csp_surf) - param.NE.dUdT(csn_surf))
     else
         eta_n_gs = variables["negative electrode overpotential at Gauss point"]
         eta_p_gs = variables["positive electrode overpotential at Gauss point"]
