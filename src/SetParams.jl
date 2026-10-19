@@ -170,7 +170,7 @@ end
     sig_pos::Float64 = 0     # 正极耳（Al）电导率 [S/m]；0=不产热（参照 PCC.sig=3.55e7）
     sig_neg::Float64 = 0     # 负极耳电导率 [S/m]；0=不产热（镀镍铜参照 NCC.sig=5.96e7，纯镍耳≈1.43e7）
     thickness::Float64 = 0   # 极耳带厚 [m]；0=不产热（Li 2021 实测 165e-6）
-    power_scale::Float64 = 0 # 派生无量纲常数（NormaliseParam 预计算）：P* = P·L/(λ_r·W)
+    power_scale::Float64 = 0 # 点功率转二维载荷：L/H，物理功率还原为 P_ref*(H/L)*sum(F)
 end
 # param_dim.Tab.width = 0.75 * param_dim.Tab.length  
 # param_dim.Tab.area = param_dim.Tab.length * param_dim.Tab.width
@@ -483,9 +483,8 @@ function NormaliseParam(param_dim::Params)
     param.tab.sig_pos = param_dim.tab.sig_pos * param_dim.scale.L * param_dim.scale.phi / param_dim.scale.I_typ
     param.tab.sig_neg = param_dim.tab.sig_neg * param_dim.scale.L * param_dim.scale.phi / param_dim.scale.I_typ
     param.tab.thickness = param_dim.tab.thickness / param.scale.L
-    # 点功率注入因子（无量纲）：P* = P·L/(λ_r·W)，与 tab/表面 BC 的 λ_r·W 分母族同构
-    param.tab.power_scale = param_dim.scale.P_ref * param_dim.scale.L /
-        (param_dim.cell.lambda_r * param_dim.cell.width)
+    # I*²R* 为 P/P_ref；二维截面载荷除以无量纲高度 H/L。
+    param.tab.power_scale = param_dim.scale.L / param_dim.cell.width
     
     # CZM 界面字段归一化（PE-PCC 界面 = PCC，NE-NCC 界面 = NCC；2026-08-30 重构）
     # PCC（PE-PCC 界面）
