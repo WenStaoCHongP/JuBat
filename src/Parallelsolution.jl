@@ -45,7 +45,7 @@ function compute_prefactors(variables, param, mesh_ne, mesh_pe)
 	du_p_dT_val = scalarize(du_p_dT)
     
 	# 固相电导
-	c_sigma = (param.NE.thickness / param.NE.sig + param.PE.thickness / param.PE.sig) / 3.0
+	c_sigma = (param.NE.thickness / (param.NE.sig * param.NE.eps_s) + param.PE.thickness / (param.PE.sig * param.PE.eps_s)) / 3.0
     
 	return (prefactor_n=prefactor_n, prefactor_p=prefactor_p,
 			csn_av=csn_av, csp_av=csp_av,

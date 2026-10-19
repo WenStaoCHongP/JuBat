@@ -152,7 +152,7 @@ function SPMe_variables!(ws::Dict{String, Union{Array{Float64},Float64}},case::C
     eta_n = 2.0 * T * asinh.(j_n / 2.0 / j0_n_av)
     eta_p = 2.0 * T * asinh.(j_p / 2.0 / j0_p_av)
 
-    dphi_S = I_app / 3 * (param.NE.thickness / param.NE.sig + param.PE.thickness / param.PE.sig)
+    dphi_S = I_app / 3 * (param.NE.thickness / (param.NE.sig * param.NE.eps_s) + param.PE.thickness / (param.PE.sig * param.PE.eps_s))
     kappa_ne_gs = param.EL.kappa(ce_n_gs, T) * param.NE.eps ^ param.NE.brugg
     kappa_pe_gs = param.EL.kappa(ce_p_gs, T) * param.PE.eps ^ param.PE.brugg
     kappa_sp_gs = param.EL.kappa(ce_sp_gs, T) * param.SP.eps ^ param.SP.brugg
@@ -261,7 +261,7 @@ function SPMe_variables(case::Case, yt::AbstractVector{Float64}, t::Float64; I_a
     eta_p = 2.0 * T * asinh.(j_p / 2.0 / j0_p_av)
 
     ## another implementation in pybamm
-    dphi_S = I_app / 3 * (param.NE.thickness / param.NE.sig + param.PE.thickness / param.PE.sig)    
+    dphi_S = I_app / 3 * (param.NE.thickness / (param.NE.sig * param.NE.eps_s) + param.PE.thickness / (param.PE.sig * param.PE.eps_s))
     kappa_ne_gs = param.EL.kappa(ce_n_gs, T) * param.NE.eps ^ param.NE.brugg
     kappa_pe_gs = param.EL.kappa(ce_p_gs, T) * param.PE.eps ^ param.PE.brugg
     kappa_sp_gs = param.EL.kappa(ce_sp_gs, T) * param.SP.eps ^ param.SP.brugg
