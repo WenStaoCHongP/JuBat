@@ -144,7 +144,8 @@ function Calstressdisp(electrode::Electrode, mesh::Mesh, cs::Array{Float64}, T::
 """
     recover_bulk_stress(node, element, material_type, u, ε0, param)
 
-逐单元恢复层分辨宏观应力（σ_czm 归一空间）。平面应力 σ = D·(ε − ε0·[1,1,0])，
+逐单元中心小应变恢复层分辨宏观应力（σ_czm 归一空间）；不支持有限转动或预应力。
+平面应力 σ = D·(ε − ε0·[1,1,0])，
 D 由 `moduli_of(param, material_type[e])` 逐层给出；`u` 为 L 归一化位移
 （按 [u1x,u1y,u2x,u2y,...] 排布），`ε0` 为逐单元特征应变。
 """
@@ -173,13 +174,83 @@ function recover_bulk_stress(node, element, material_type, u, ε0, param)
 end
 
 """
-    recover_bulk_strain(node, element, u) -> (eps_xx, eps_yy, gam_xy)
+    recover_bulk_stress_geo(czm_mesh, u, param, ε0; prestress=nothing)
+
+显式载荷的只读弹性 GL/TL 恢复：坐标、位移均除 L，ε0 是本次机械输入的逐单元
+特征应变；prestress 为同次输入的参考 PK2 S0（σ_czm 归一）。nothing 明确表示
+本次无 S0；本函数没有 options，不能判断生产开启预应力但缺失其来源的情况。
+四个参考 GP 的 Cauchy σ=F*S*F'/det(F₂D) 按参考 w*detJ 加权；vonMises 是逐 GP
+值的加权平均，通常不同于平均应力的 vonMises。返回 (xx,yy,xy,vonMises)，单位
+σ_czm；保留现有二维平面应力约定，不主张完整三维厚度伸长。仅可惰性填充参考
+mesh 几何缓存，不调用返回映射，不创建或提交塑性/损伤状态。
+"""
+function recover_bulk_stress_geo(czm_mesh, u, param, ε0; prestress=nothing)
+    node, element = czm_mesh.node, czm_mesh.bulk_element
+    ne = size(element, 1)
+    size(node) == (czm_mesh.nnode, 2) || throw(DimensionMismatch("recover_bulk_stress_geo: node shape must be (nnode, 2)"))
+    size(element, 2) == 4 || throw(DimensionMismatch("recover_bulk_stress_geo: bulk connectivity must have four columns"))
+    u isa AbstractVector && length(u) == 2 * czm_mesh.nnode || throw(DimensionMismatch("recover_bulk_stress_geo: u must have 2*nnode entries"))
+    ε0 isa AbstractVector && length(ε0) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: ε0 must have one entry per bulk element"))
+    czm_mesh.czm_submesh === nothing && error("recover_bulk_stress_geo: missing bulk material source")
+    mt = czm_mesh.czm_submesh.material_type
+    length(mt) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: material count must equal bulk element count"))
+    all(n -> 1 <= n <= czm_mesh.nnode, element) || throw(DimensionMismatch("recover_bulk_stress_geo: bulk node index out of bounds"))
+    all(isfinite, node) && all(isfinite, u) && all(isfinite, ε0) || error("recover_bulk_stress_geo: non-finite geometry, displacement or eigenstrain")
+    if prestress !== nothing
+        prestress isa AbstractVector && length(prestress) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: S0 must have one entry per bulk element"))
+        all(s -> length(s) == 3, prestress) || throw(DimensionMismatch("recover_bulk_stress_geo: each S0 must have three components"))
+        all(s -> all(isfinite, s), prestress) || error("recover_bulk_stress_geo: non-finite S0")
+    end
+    geom = bulk_gauss_geometry(czm_mesh; gsorder=2)
+    length(geom) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: reference geometry element count mismatch"))
+    xx = zeros(ne); yy = zeros(ne); xy = zeros(ne); vm = zeros(ne)
+    for e in 1:ne
+        length(geom[e]) == 4 || throw(DimensionMismatch("recover_bulk_stress_geo: every bulk element requires four reference Gauss points"))
+        nodes = element[e, :]
+        ue = [u[d] for n in nodes for d in (2*n-1, 2*n)]
+        C = plane_stress_C(moduli_of(param, mt[e])...)
+        all(isfinite, C) || error("recover_bulk_stress_geo: non-finite material stiffness at element $e")
+        area = 0.0
+        for g in geom[e]
+            length(g.dNdx) == 4 && length(g.dNdy) == 4 || throw(DimensionMismatch("recover_bulk_stress_geo: each gradient requires four entries"))
+            all(isfinite, g.dNdx) && all(isfinite, g.dNdy) && isfinite(g.w) && g.w > 0.0 && isfinite(g.detJ) && g.detJ > 0.0 || error("recover_bulk_stress_geo: invalid reference Gauss geometry at element $e")
+            k = bulk_gl_kinematics(ue, g.dNdx, g.dNdy)
+            S1 = C[1,1] * (k.E11 - ε0[e]) + C[1,2] * (k.E22 - ε0[e])
+            S2 = C[1,2] * (k.E11 - ε0[e]) + C[2,2] * (k.E22 - ε0[e])
+            S3 = C[3,3] * k.g12
+            if prestress !== nothing
+                S1 += prestress[e][1]; S2 += prestress[e][2]; S3 += prestress[e][3]
+            end
+            sigma = cauchy_from_second_piola((S1,S2,S3), k.F11,k.F12,k.F21,k.F22)
+            q = qbar(sigma)
+            isfinite(q) || error("recover_bulk_stress_geo: non-finite pointwise von Mises at element $e")
+            wJ = g.w * g.detJ
+            xx[e] += wJ * sigma[1]; yy[e] += wJ * sigma[2]; xy[e] += wJ * sigma[3]
+            vm[e] += wJ * q; area += wJ
+        end
+        isfinite(area) && area > 0.0 || error("recover_bulk_stress_geo: invalid reference area at element $e")
+        xx[e] /= area; yy[e] /= area; xy[e] /= area; vm[e] /= area
+        all(isfinite, (xx[e],yy[e],xy[e],vm[e])) || error("recover_bulk_stress_geo: non-finite average at element $e")
+    end
+    return (xx=xx,yy=yy,xy=xy,vonMises=vm)
+end
+
+"""
+    recover_bulk_strain(node, element, u; geo_nl=false) -> (eps_xx, eps_yy, gam_xy)
 
 单元中心总机械应变（无量纲）：由 L 归一化位移在 Q4 中心梯度求值，与
 `recover_bulk_stress` 同一几何离散。不含特征应变（热/化学自由膨胀）扣减；
-弹性应变 = 总应变 − ε0·[1,1,0]，或由已导出应力按层刚度反解。
+geo_nl=false 保留小应变；geo_nl=true 返回 Green–Lagrange E11/E22/2E12。
+弹性应变 = 总应变 − ε0·[1,1,0]；仅匹配的小应变弹性中心应力可按层刚度反解。
 """
-function recover_bulk_strain(node, element, u)
+function recover_bulk_strain(node, element, u; geo_nl::Bool=false)
+    if geo_nl
+        node isa AbstractMatrix && size(node, 2) == 2 || throw(DimensionMismatch("recover_bulk_strain: node must have two columns"))
+        element isa AbstractMatrix && size(element, 2) == 4 || throw(DimensionMismatch("recover_bulk_strain: element must have four columns"))
+        u isa AbstractVector && length(u) == 2 * size(node, 1) || throw(DimensionMismatch("recover_bulk_strain: u must have 2*nnode entries"))
+        all(n -> n isa Integer && 1 <= n <= size(node, 1), element) || throw(DimensionMismatch("recover_bulk_strain: node index out of bounds"))
+        all(isfinite, node) && all(isfinite, u) || error("recover_bulk_strain: non-finite geometry or displacement")
+    end
     ne = size(element, 1)
     eps_xx = zeros(Float64, ne)
     eps_yy = zeros(Float64, ne)
@@ -187,9 +258,16 @@ function recover_bulk_strain(node, element, u)
     @inbounds for e in 1:ne
         nodes = element[e, :]
         dNdx, dNdy, _ = q4_center_gradients(node, nodes)
-        eps_xx[e] = sum(dNdx[i] * u[2 * nodes[i] - 1] for i in 1:4)
-        eps_yy[e] = sum(dNdy[i] * u[2 * nodes[i]] for i in 1:4)
-        gam_xy[e] = sum(dNdy[i] * u[2 * nodes[i] - 1] + dNdx[i] * u[2 * nodes[i]] for i in 1:4)
+        if geo_nl
+            ue = [u[d] for n in nodes for d in (2*n-1, 2*n)]
+            k = bulk_gl_kinematics(ue, dNdx, dNdy)
+            all(isfinite, (k.E11,k.E22,k.g12)) || error("recover_bulk_strain: non-finite Green-Lagrange strain at element $e")
+            eps_xx[e] = k.E11; eps_yy[e] = k.E22; gam_xy[e] = k.g12
+        else
+            eps_xx[e] = sum(dNdx[i] * u[2 * nodes[i] - 1] for i in 1:4)
+            eps_yy[e] = sum(dNdy[i] * u[2 * nodes[i]] for i in 1:4)
+            gam_xy[e] = sum(dNdy[i] * u[2 * nodes[i] - 1] + dNdx[i] * u[2 * nodes[i]] for i in 1:4)
+        end
     end
     return eps_xx, eps_yy, gam_xy
 end

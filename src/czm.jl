@@ -562,6 +562,23 @@ function bulk_element_kernel!(ke::Array{Float64, 3}, fe::Matrix{Float64}, e::Int
     return nothing
 end
 
+"""Pure Q4 scalar kinematics from interleaved u_e and reference gradients; returns ∇u, F and E11/E22/2E12."""
+@inline function bulk_gl_kinematics(u_e, dNdx, dNdy)
+    # Preserve the production gradient accumulation and expanded GL arithmetic.
+    uxx = 0.0; uxy = 0.0; uyx = 0.0; uyy = 0.0
+    for i in 1:4
+        uxx += dNdx[i] * u_e[2*i-1]
+        uxy += dNdy[i] * u_e[2*i-1]
+        uyx += dNdx[i] * u_e[2*i]
+        uyy += dNdy[i] * u_e[2*i]
+    end
+    E11 = uxx + 0.5 * (uxx * uxx + uyx * uyx)
+    E22 = uyy + 0.5 * (uxy * uxy + uyy * uyy)
+    g12 = (uxy + uyx) + (uxx * uxy + uyx * uyy)
+    return (; uxx, uxy, uyx, uyy, F11=1.0 + uxx, F12=uxy,
+            F21=uyx, F22=1.0 + uyy, E11, E22, g12)
+end
+
 """
     gl_element_residual_tangent(x_e, y_e, u_e, D_mat, ε0, gsorder) -> (f_e, K_e)
 
@@ -609,18 +626,9 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
     gp = 0
     run_gp = (w, dNdx, dNdy, detJ) -> begin
         gp += 1
-        # ∇u
-        uxx = 0.0; uxy = 0.0; uyx = 0.0; uyy = 0.0
-        for i in 1:4
-            uxx += dNdx[i] * u_e[2*i-1]
-            uxy += dNdy[i] * u_e[2*i-1]
-            uyx += dNdx[i] * u_e[2*i]
-            uyy += dNdy[i] * u_e[2*i]
-        end
-        # 完全 GL 应变（E = ½(FᵀF − I)）
-        E11 = uxx + 0.5 * (uxx * uxx + uyx * uyx)
-        E22 = uyy + 0.5 * (uxy * uxy + uyy * uyy)
-        g12 = (uxy + uyx) + (uxx * uxy + uyx * uyy)
+        kin = bulk_gl_kinematics(u_e, dNdx, dNdy)
+        uxx, uxy, uyx, uyy = kin.uxx, kin.uxy, kin.uyx, kin.uyy
+        E11, E22, g12 = kin.E11, kin.E22, kin.g12
         # 应力与（塑性时的）算法一致切线
         local S1::Float64, S2::Float64, S3::Float64, D_tan::Matrix{Float64}
         if committed_gp_states === nothing
