@@ -729,7 +729,7 @@ function ShapeFunction2D(element::Matrix{Int64}, type::String, node::Matrix{Floa
             x_e = node[sctr, 1:2]
             J = transpose(dN_dxi) * x_e
             invJ = inv(J)
-            dN_dx = dN_dxi * invJ
+            dN_dx = dN_dxi * transpose(invJ)
             Ni[g, :] = vec(Nloc)'
             dNidx[g, 1:4] = dN_dx[:,1]'
             dNidx[g, 5:8] = dN_dx[:,2]'

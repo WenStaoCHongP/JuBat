@@ -49,7 +49,7 @@ function thermal_anisotropic_conductivity_2d(param::Params,fks::Matrix{Float64},
 		c, s = cos(theta), sin(theta)
 		lr, lt = lam_r_e[ele_of_gp[g]], lam_t_e[ele_of_gp[g]]
 		k_xx[g] = lr * c * c + lt * s * s
-		k_xy[g] = (lt - lr) * s * c
+		k_xy[g] = (lr - lt) * s * c
 		k_yy[g] = lr * s * s + lt * c * c
 	end
 
