@@ -47,7 +47,9 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
     end
 
     if case.opt.thermalmodel == "lumped"
-        result["thermal lumped internal heat [W/m^3]"] = vec(variables["thermal lumped internal heat"][1, 1:v]) * case.param.scale.q
+        power=vec(variables["thermal lumped internal heat"][1,1:v])*case.param.scale.P_ref
+        result["thermal lumped internal heat [W]"]=power
+        result["thermal lumped internal heat [W/m^3]"]=power/case.param_dim.cell.volume
     elseif case.opt.thermalmodel == "distributed2D"
         # ── 热源物理单位还原 ──
         result["thermal2D Q_rxn_NE [W/m3]"] = variables["thermal2D q_rxn_ne"][:, 1:v] * case.param.scale.q
@@ -79,7 +81,7 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
 
         # ── 热源场与总热源 ──
         result["heat_source_fields"] = variables["heat_source_fields"][:, 1:v]
-        result["total heat source [W]"] = vec(variables["total heat source"][1, 1:v])
+        result["total heat source [W]"] = vec(variables["total heat source"][1, 1:v]) * (case.param.scale.P_ref*case.param_dim.cell.width/case.param.scale.L)
 
         # ── 单元级变量（无量纲直传）──
         for key in ["thermal2D element current", "thermal2D eta_n_e", "thermal2D eta_p_e",
