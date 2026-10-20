@@ -108,6 +108,7 @@ function StandardVariables(case::Case, num::Int64)
         variables["thermal2D q_ohm_e_pe"] = zeros(Float64, ne, num)
         variables["thermal2D q_pcc"] = zeros(Float64, ne, num)
         variables["thermal2D q_ncc"] = zeros(Float64, ne, num)
+        variables["thermal2D q_el"] = zeros(Float64, ne, num)
         variables["thermal2D element current"] = zeros(Float64, ne, num)
         if case.opt.per_element_spme
             variables["thermal2D branch area factor"] = zeros(Float64, ne, num)

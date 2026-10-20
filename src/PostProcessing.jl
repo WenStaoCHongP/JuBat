@@ -63,6 +63,7 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
         result["thermal2D Q_ohm_e_PE [W/m3]"] = variables["thermal2D q_ohm_e_pe"][:, 1:v] * case.param.scale.q
         result["thermal2D Q_PCC [W/m3]"] = variables["thermal2D q_pcc"][:, 1:v] * case.param.scale.q
         result["thermal2D Q_NCC [W/m3]"] = variables["thermal2D q_ncc"][:, 1:v] * case.param.scale.q
+        result["thermal2D Q_EL [W/m3]"] = variables["thermal2D q_el"][:, 1:v] * case.param.scale.q
 
         # ── 温度还原 ──
         result["thermal2D temperature at nodes [K]"] = variables["thermal2D temperature at nodes"][:, 1:v] * case.param_dim.scale.T_ref
