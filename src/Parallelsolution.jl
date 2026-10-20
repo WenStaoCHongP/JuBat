@@ -401,6 +401,8 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 		ci = detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
 		voltage_in_bounds, cutoff_type_global, _, _ = check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, zeros(ne), I_e)
 
+		variables["thermal2D branch weight"] = zeros(Float64, ne)
+		variables["thermal2D effective area"] = A_eff
 		variables["thermal2D element current"] = I_e
 		variables["thermal2D element current A"] = zeros(Float64, ne)
 		variables["thermal2D common voltage"] = V
