@@ -20,11 +20,12 @@ end
 scalarize(x) = isa(x, Number) ? Float64(x) : Float64(x[1])
 
 """计算电化学预因子"""
-function compute_prefactors(variables, param, mesh_ne, mesh_pe)
+function compute_prefactors(variables, param, mesh_ne, mesh_pe, mesh_sp)
 	cn_surf = variables["negative particle surface lithium concentration"]
 	cp_surf = variables["positive particle surface lithium concentration"]
 	ce_n_gs = variables["electrolyte lithium concentration at negative electrode Gauss point"]
 	ce_p_gs = variables["electrolyte lithium concentration at positive electrode Gauss point"]
+	ce_sp_gs = variables["electrolyte lithium concentration at separator Gauss point"]
     
 	# 预因子计算
 	prefactor_n = IntV(abs.(cn_surf .* (1.0 .- cn_surf) .* ce_n_gs) .^ 0.5, mesh_ne) / param.NE.thickness
@@ -52,7 +53,8 @@ function compute_prefactors(variables, param, mesh_ne, mesh_pe)
 			u_n_ref_val=u_n_ref_val, u_p_ref_val=u_p_ref_val,
 			du_n_dT_val=du_n_dT_val, du_p_dT_val=du_p_dT_val,
 			c_sigma=c_sigma,
-			cn_surf=cn_surf, cp_surf=cp_surf, ce_n_gs=ce_n_gs, ce_p_gs=ce_p_gs)
+			cn_surf=cn_surf, cp_surf=cp_surf, ce_n_gs=ce_n_gs, ce_p_gs=ce_p_gs,
+			ce_sp_gs=ce_sp_gs, mesh_ne=mesh_ne, mesh_pe=mesh_pe, mesh_sp=mesh_sp)
 end
 
 """计算单个单元的电化学系数"""
@@ -63,10 +65,10 @@ function compute_element_coefficients(e, T_e, param, prefactors, T_ref)
 	j0_n = param.NE.k * arr_n * prefactors.prefactor_n
 	j0_p = param.PE.k * arr_p * prefactors.prefactor_p
     
-	# 电解液电导率
-	kappa_ne = param.EL.kappa(param.EL.ce0, T_e) * param.NE.eps^param.NE.brugg
-	kappa_pe = param.EL.kappa(param.EL.ce0, T_e) * param.PE.eps^param.PE.brugg
-	kappa_sp = param.EL.kappa(param.EL.ce0, T_e) * param.SP.eps^param.SP.brugg
+	# 与局部 SPMe 一致：在当前 Gauss 浓度和支路温度上评价后积分平均。
+	kappa_ne = IntV(param.EL.kappa(prefactors.ce_n_gs, T_e) * param.NE.eps^param.NE.brugg, prefactors.mesh_ne) / param.NE.thickness
+	kappa_pe = IntV(param.EL.kappa(prefactors.ce_p_gs, T_e) * param.PE.eps^param.PE.brugg, prefactors.mesh_pe) / param.PE.thickness
+	kappa_sp = IntV(param.EL.kappa(prefactors.ce_sp_gs, T_e) * param.SP.eps^param.SP.brugg, prefactors.mesh_sp) / param.SP.thickness
 	R_EL = param.NE.thickness / (3.0 * kappa_ne) + param.SP.thickness / kappa_sp + param.PE.thickness / (3.0 * kappa_pe)
     
 	# 开路电位（温度相关）
@@ -290,6 +292,10 @@ function newton_iteration(I_e, V, ne, w, I_total, coeffs; tol_V=1e-8, tol_I=1e-1
 		V = V_trial
 	end
     
+	# 最后一次更新后的实际返回量必须同时满足两类残差；不再事后缩放电流。
+	res_V = maximum(abs(branch_voltage(coeffs[e], I_e[e]) - V) for e in active_idx)
+	res_I = sum(w .* I_e) - I_total
+	converged = res_V <= tol_V && abs(res_I) <= tol_I
 	return V, converged, last_iter
 end
 
@@ -326,13 +332,15 @@ end
 # ========================================================================
 
 """
-	solve_branch_currents(case, variables, yt, t, I_total, areas, Te_prev, x_prev; D_elem=nothing)
+	solve_branch_currents(case, variables, yt, t, I_total, areas, Te_prev, x_prev; yt_chem, D_elem=nothing)
 
 非线性分流求解器（精简版）。活动集 = 面积活跃 ∩ 电压截止活跃。
 
 使用牛顿法求解电流分配问题：
 - 未知量：各单元电流 I_e 和公共端电压 V
-- 约束：V_e(I_e, T_e) = V (每个活跃单元) 和 Σ(w_e*I_e) = I_total
+- 约束：V_e(I_e, yt_chem[e], T_e) = V (每个活跃单元) 和 Σ(w_e*I_e) = I_total
+- 活动面积非零时，静置沿用同一 Newton，仅将总电流设为零，允许内部均衡电流。
+- yt_chem 为必需输入；逐支路直接提取浓度，不回退到平均状态。
 
 # 面积损失（任务59 P1，无阈值）
 `area_loss_enabled=true` 且传入 `D_elem` 时：A_eff = areas·(1−D_elem)，
@@ -355,13 +363,14 @@ NaN/越界 D 显式失败，不当作无损或零面积。
 - `Te_prev`: 各单元温度
 - `x_prev`: 上一步的电流分配（可选）
 - `D_elem`: 热单元 max(D) 映射（可选，仅 area_loss_enabled 时消费）
+- `yt_chem`: 各支路电化学状态（必需，长度与单元数一致）
 
 # 返回
 - `variables`: 更新后的变量字典
 - `I_e`: 各单元电流
 - `V`: 公共端电压（全失活静置时为 OCV 均值诊断值）
 """
-function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, yt::Array{Float64}, t::Float64, I_total::Float64, areas::Vector{Float64}, Te_prev::Vector{Float64}, x_prev::Union{Nothing,Vector{Float64}}=nothing; D_elem::Union{Nothing,Vector{Float64}}=nothing)
+function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Float64},Float64}}, yt::Array{Float64}, t::Float64, I_total::Float64, areas::Vector{Float64}, Te_prev::Vector{Float64}, x_prev::Union{Nothing,Vector{Float64}}=nothing; yt_chem, D_elem::Union{Nothing,Vector{Float64}}=nothing)
 	ne = length(areas)
 	# 渐进式有效面积损失：无阈值 factor = 1 - D（仅开关开启时消费 D）
 	if case.opt.czm.area_loss_enabled && D_elem !== nothing
@@ -379,9 +388,24 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 	# 伏特/phi_scale = 无量纲，单位一致；不引入第二套阈值。
 	V_MIN, V_MAX = case.param.cell.v_l / phi_scale, case.param.cell.v_h / phi_scale
 
-	# 电化学预因子 + 各单元系数
-	prefactors = compute_prefactors(variables, case.param, case.mesh["negative electrode"], case.mesh["positive electrode"])
-	coeffs = compute_all_coefficients(ne, Te_prev, case.param, prefactors, case.param.cell.T0)
+	# 沿用现有系数函数；生产路径逐支路消费与 SPMe_element 相同的状态、温度。
+	mesh_ne, mesh_pe, mesh_sp = case.mesh["negative electrode"], case.mesh["positive electrode"], case.mesh["separator"]
+	length(yt_chem) == ne || throw(DimensionMismatch("local chemistry branch count"))
+	coeffs = Vector{NamedTuple{(:C1,:C2,:alpha_p,:alpha_n,:C5)}}(undef, ne)
+	local_concentrations = Dict{String,Union{Array{Float64},Float64}}()
+	for e in 1:ne
+		yt_e = yt_chem[e]
+		local_concentrations["negative particle surface lithium concentration"] = yt_e[case.index["negative particle surface lithium concentration"]]
+		local_concentrations["positive particle surface lithium concentration"] = yt_e[case.index["positive particle surface lithium concentration"]]
+		ce_n = yt_e[case.index["electrolyte lithium concentration in negative electrode"]]
+		ce_p = yt_e[case.index["electrolyte lithium concentration in positive electrode"]]
+		ce_sp = yt_e[case.index["electrolyte lithium concentration in separator"]]
+		local_concentrations["electrolyte lithium concentration at negative electrode Gauss point"] = sum(mesh_ne.gs.Ni .* ce_n[mesh_ne.element[mesh_ne.gs.ele, :]], dims = 2)
+		local_concentrations["electrolyte lithium concentration at positive electrode Gauss point"] = sum(mesh_pe.gs.Ni .* ce_p[mesh_pe.element[mesh_pe.gs.ele, :]], dims = 2)
+		local_concentrations["electrolyte lithium concentration at separator Gauss point"] = sum(mesh_sp.gs.Ni .* ce_sp[mesh_sp.element[mesh_sp.gs.ele, :]], dims = 2)
+		prefactors = compute_prefactors(local_concentrations, case.param, mesh_ne, mesh_pe, mesh_sp)
+		coeffs[e] = compute_element_coefficients(e, Te_prev[e], case.param, prefactors, case.param.cell.T0)
+	end
 
 	deactivated_mask = .!area_active
 	inactive_reason = zeros(Float64, ne)
@@ -434,48 +458,6 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 	variables["thermal2D branch weight"] = w
 	variables["thermal2D effective area"] = A_eff
 
-	# 任务63 R0 严格零支路契约（用户 2026-10-11 裁决）：I_total==0（静置）时所有支路电流
-	# 严格为 0——在源头跳过共同电压 Newton（其零和方程只约束 Σw·I_e，会解出正负抵消的
-	# 小支路电流）与总量归一化。扩散/电解液松弛/导热/力学演化由调用方照常推进，本函数
-	# 只负责分流。代表性端电压 = 活动支路零电流电压（OCV）的算术平均（与全失活诊断路径
-	# 同一定义口径；不声称逐支路电压方程已满足——静置无平衡电流，局部 OCV 允许不同）。
-	if I_total == 0.0 && any(area_active)
-		ci = detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
-		active_mask = ci.active_mask .& area_active
-		I_e = zeros(Float64, ne)
-		V = mean([coeffs[e].C1 for e in findall(active_mask)])
-		isfinite(V) || error(
-			"solve_branch_currents: 静置严格零支路的 OCV 均值非有限（NaN/Inf），拒绝发布诊断电压")
-		voltage_in_bounds, cutoff_type_global, _, _ = check_voltage_bounds(
-			V, V_MIN, V_MAX, phi_scale, I_total, w, I_e)
-		variables["thermal2D element current"] = I_e
-		variables["thermal2D element current A"] = zeros(Float64, ne)
-		variables["thermal2D common voltage"] = V
-		variables["thermal2D common voltage V"] = V * phi_scale
-		variables["thermal2D Vsolve status"] = 3.0
-		variables["thermal2D Vsolve iters"] = 0.0
-		variables["thermal2D Vsolve converged"] = 1.0
-		variables["thermal2D n_active_elements"] = Float64(sum(active_mask))
-		variables["thermal2D n_cutoff_elements"] = Float64(ci.n_cutoff)
-		variables["thermal2D n_deactivated_elements"] = Float64(sum(deactivated_mask))
-		variables["thermal2D active_mask"] = Float64.(active_mask)
-		variables["thermal2D deactivated_mask"] = Float64.(deactivated_mask)
-		for e in 1:ne
-			inactive_reason[e] = !area_active[e] ? 2.0 : (!active_mask[e] ? 1.0 : 0.0)
-		end
-		variables["thermal2D inactive_reason"] = inactive_reason
-		variables["thermal2D voltage_in_bounds"] = voltage_in_bounds ? 1.0 : 0.0
-		variables["thermal2D cutoff_type_global"] = Float64(cutoff_type_global)
-		variables["thermal2D element OCV"] = ci.all_ocv
-		variables["thermal2D cutoff_elements"] = Float64.(ci.cutoff_elements)
-		variables["thermal2D cutoff_ocv"] = ci.cutoff_ocv
-		variables["thermal2D cutoff_type"] = Float64.(ci.cutoff_type)
-		variables["thermal2D nearest_cutoff_element"] = Float64(ci.nearest_element)
-		variables["thermal2D nearest_cutoff_ocv"] = ci.nearest_ocv
-		variables["thermal2D margin_to_cutoff"] = ci.margin
-		return variables, I_e, V
-	end
-
 	# 截止检测 + 面积活跃合并
 	ci = detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
 	active_mask = ci.active_mask .& area_active
@@ -497,18 +479,6 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 		V, converged, last_iter = newton_iteration(I_e, V, ne, w, I_total, coeffs; active_mask=active_mask)
 	end
 	converged || error("branch-current Newton solver failed to converge after $last_iter iterations")
-
-	# 归一化：活跃单元满足总电流约束（活动集空时跳过——R2 返工：带载混合耗尽由 Solve 按电压截止终止）
-	if !isempty(active_idx)
-		sx = sum(w[e] * I_e[e] for e in active_idx)
-		if abs(sx) > 1e-12
-			sf = I_total / sx
-			for e in active_idx; I_e[e] *= sf; end
-		elseif abs(I_total) > 1e-12
-			w_sum = sum(w[active_idx])
-			w_sum > 0 && (for e in active_idx; I_e[e] = I_total * w[e] / w_sum; end)
-		end
-	end
 
 	# 边界检查
 	voltage_in_bounds, cutoff_type_global, _, _ = check_voltage_bounds(V, V_MIN, V_MAX, phi_scale, I_total, w, I_e)

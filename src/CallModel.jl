@@ -94,8 +94,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     variables["thermal2D temperature at nodes"] = T_nodes
     variables["thermal2D element area"] = areas
     
-    # 分流求解需要代表性的全局状态（用于计算 prefactor）。
-    # 这里使用所有单元的平均状态，并先生成与之匹配的电化学变量，确保标度一致。
+    # 平均状态仅用于顶层代表量；分流电压显式使用各支路 yt_chem[e] 和 Te_prev[e]。
     yt_representative = mean(yt_chem)
     T_rep = mean(Te_prev)
     vars_rep = SPMe_variables(case, yt_representative, t; I_app=I_total, T_e=T_rep)
@@ -124,7 +123,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     end
 
     t_branch_ns = time_ns()
-    variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, nothing; D_elem=D_elem_area_loss)
+    variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, nothing; D_elem=D_elem_area_loss, yt_chem=yt_chem)
     t_branch_s = (time_ns() - t_branch_ns) * 1e-9
 
     # 任务63 B2（R4/5.5）：可选分流消费观察点——每次实际消费后原位回调，惰性无开销。
@@ -242,6 +241,11 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
 
     # 可选：添加单元电压分布（用于诊断）
     variables["thermal2D element voltages"] = [variables_elems[e]["cell voltage"] for e in 1:ne]
+    active_idx = findall(==(1.0), variables["thermal2D active_mask"])
+    if !isempty(active_idx)
+        residual = maximum(abs(variables["thermal2D element voltages"][e] - Vc) for e in active_idx)
+        residual <= 1e-8 || error("MultiSPMe local voltage mismatch: residual=$residual")
+    end
     variables["timing branch solver [s]"] = t_branch_s
     variables["timing spme solve [s]"] = t_spme_s
     variables["timing thermal distributed [s]"] = t_thermal_s
