@@ -1,4 +1,4 @@
-function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing,return_final_state::Bool=false,thermal_variables::Union{Dict{String,Any},Nothing}=nothing,thermal_update_fn::Union{Function,Nothing}=nothing,thermal_record::Bool=false,polar_mesh_data::Any=nothing,czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing,czm_cycle::Int=1,czm_phase::String="unknown",chemical_step_observer::Union{Nothing,Function}=nothing)
+function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing,return_final_state::Bool=false,thermal_variables::Union{Dict{String,Any},Nothing}=nothing,thermal_update_fn::Union{Function,Nothing}=nothing,thermal_record::Bool=false,polar_mesh_data::Any=nothing,czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing,czm_cycle::Int=1,czm_phase::String="unknown",phase_type::Union{Nothing,PhaseType}=nothing,chemical_step_observer::Union{Nothing,Function}=nothing)
     if case.opt.model == "thermal"
             if thermal_variables === nothing
                 error("Solve: model==\"thermal\" requires thermal_variables keyword argument")
@@ -73,6 +73,10 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             result = (time = times, T_nodes = T_nodes, T_hist = T_hist)
             return result
         end
+    # Every phase reads the same physical-voltage window; never overwrite param.
+    v_l, v_h = case.param.cell.v_l, case.param.cell.v_h
+    isfinite(v_l) && isfinite(v_h) && v_l < v_h ||
+        throw(ArgumentError("invalid param.cell.v_l/v_h voltage window"))
         # Electrochemical time still scaled by t0
         dt_min = case.opt.dt[1] / case.param.scale.t0
         dt_max = case.opt.dt[2] / case.param.scale.t0
@@ -369,8 +373,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         # 任务59 Q4：面积全失活静置诊断（status=4.0 且 I_total==0）绕过电压截止
         # ====================================================================
         V_cell = variables["cell voltage"] * case.param.scale.phi
-        v_l = case.param.cell.v_l
-        v_h = case.param.cell.v_h
+        isfinite(V_cell) || error("non-finite terminal voltage")
         t_phys = t * case.param.scale.t0  # 物理时间 (s)
         area_diag = multi_spme_enabled && get(variables, "thermal2D Vsolve status", 0.0) == 4.0
 
@@ -412,12 +415,20 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             end
         end
 
-        # 整体电压截止检测（备用；诊断电压不得驱动截止）
+        # 双侧越界检查与相位方向目标独立；诊断值不充当公共端电压。
         if !area_diag && V_cell < v_l
             termination_reason = "voltage_cutoff_low"
             break
         elseif !area_diag && V_cell > v_h
             termination_reason = "voltage_cutoff_high"
+            break
+        end
+
+        if !area_diag && phase_type === PHASE_DISCHARGE && V_cell <= v_l
+            termination_reason = "phase_target_low"
+            break
+        elseif !area_diag && phase_type === PHASE_CHARGE && V_cell >= v_h
+            termination_reason = "phase_target_high"
             break
         end
     end

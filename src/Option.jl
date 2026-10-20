@@ -12,9 +12,6 @@ using Parameters
     # 电流设置 (A)，均为正值
     I_charge::Float64 = 5.0                 # 充电电流
     I_discharge::Float64 = 5.0              # 放电电流
-    # 截止条件
-    V_upper::Float64 = 4.2                  # 充电截止电压
-    V_lower::Float64 = 2.5                  # 放电截止电压
     # 初始状态
     SOC_init::Float64 = 0.05                # 初始SOC
     # 温度重置

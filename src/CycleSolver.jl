@@ -13,7 +13,7 @@ mutable struct PhaseResult
     V_start::Float64                    # 起始电压 (V)
     V_end::Float64                      # 结束电压 (V)
     capacity::Float64                   # 容量 (Ah)
-    terminated_by::Symbol               # 截止原因 :time 或 :voltage
+    terminated_by::Symbol               # :time / :voltage目标 / 实际异常原因
     
     # 热
     T_max::Float64                      # 最高温度 (K)
@@ -115,7 +115,7 @@ end
 # 2. 单阶段求解器
 # ========================================================================
 
-function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, V_limit::Float64, initial_state::Union{Dict{String,Any},Nothing}; ms=nothing, dt_range::Vector{Float64}=[1.0, 10.0], czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing, czm_cycle::Int=1, chemical_step_observer::Union{Nothing,Function}=nothing)
+function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, initial_state::Union{Dict{String,Any},Nothing}; ms=nothing, dt_range::Vector{Float64}=[1.0, 10.0], czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing, czm_cycle::Int=1, chemical_step_observer::Union{Nothing,Function}=nothing)
     result = PhaseResult()
     result.phase_type = phase_type
     result.t_start = initial_state === nothing ? 0.0 : initial_state["t_global"]
@@ -133,58 +133,44 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, I_curren
     case.opt.time = [0.0, t_max]
     case.opt.dt = dt_range
 
-    old_v_l = case.param.cell.v_l
-    old_v_h = case.param.cell.v_h
-    try
-        # 将跨循环力学状态挂载到 case 上，以便求解循环访问
-        if ms !== nothing
-            case.mech = ms
-        end
-
-        if phase_type == PHASE_DISCHARGE
-            case.param.cell.v_l = V_limit
-            case.param.cell.v_h = 1.0e6
-        elseif phase_type == PHASE_CHARGE
-            case.param.cell.v_l = -1.0e6
-            case.param.cell.v_h = V_limit
-        else
-            case.param.cell.v_l = -1.0e6
-            case.param.cell.v_h = 1.0e6
-        end
-
-        solve_result = Solve(case; initial_state=initial_state, return_final_state=true,
-                             czm_snapshots=czm_snapshots, czm_cycle=czm_cycle,
-                             czm_phase=string(phase_type),
-                             chemical_step_observer=chemical_step_observer)
-
-        # CZM 损伤已由 Solve 主循环每步更新（Solve.jl:270-285），此处不再冗余调用。
-        # 旧版在此处调用 update_czm_damage!(..., u_czm_prev=nothing) 会导致：
-        #   1. 位移场从零重解，产生不一致的应力-位移解
-        #   2. 每阶段额外浪费 ~12s 计算
-
-        phase_data = postprocess_phase_result(
-            case, phase_type, solve_result, initial_state,
-            I_current, result.t_start,
-            D_max_init, D_mean_init, ms
-        )
-
-        result.t_end = result.t_start + phase_data["duration"]
-        result.duration = phase_data["duration"]
-        result.V_start = phase_data["V_start"]
-        result.V_end = phase_data["V_end"]
-        result.capacity = phase_data["capacity"]
-        result.terminated_by = phase_data["terminated_by"]
-        result.T_max = phase_data["T_max"]
-        result.T_mean_end = phase_data["T_mean_end"]
-        result.D_max = phase_data["D_max"]
-        result.D_mean = phase_data["D_mean"]
-        result.ΔD_max = phase_data["ΔD_max"]
-        result.final_state = phase_data["final_state"]
-        result.solve_result = solve_result
-    finally
-        case.param.cell.v_l = old_v_l
-        case.param.cell.v_h = old_v_h
+    # 将跨循环力学状态挂载到 case 上，以便求解循环访问
+    if ms !== nothing
+        case.mech = ms
     end
+
+    solve_result = Solve(case; initial_state=initial_state, return_final_state=true,
+                         czm_snapshots=czm_snapshots, czm_cycle=czm_cycle,
+                         czm_phase=string(phase_type), phase_type=phase_type,
+                         chemical_step_observer=chemical_step_observer)
+
+    reason = solve_result["termination_reason"]
+    reason in ("time_limit", "phase_target_low", "phase_target_high") ||
+        error("$(phase_type) stopped with $(reason); refusing to continue cycling")
+
+    # CZM 损伤已由 Solve 主循环每步更新（Solve.jl:270-285），此处不再冗余调用。
+    # 旧版在此处调用 update_czm_damage!(..., u_czm_prev=nothing) 会导致：
+    #   1. 位移场从零重解，产生不一致的应力-位移解
+    #   2. 每阶段额外浪费 ~12s 计算
+
+    phase_data = postprocess_phase_result(
+        case, phase_type, solve_result, initial_state,
+        I_current, result.t_start,
+        D_max_init, D_mean_init, ms
+    )
+
+    result.t_end = result.t_start + phase_data["duration"]
+    result.duration = phase_data["duration"]
+    result.V_start = phase_data["V_start"]
+    result.V_end = phase_data["V_end"]
+    result.capacity = phase_data["capacity"]
+    result.terminated_by = phase_data["terminated_by"]
+    result.T_max = phase_data["T_max"]
+    result.T_mean_end = phase_data["T_mean_end"]
+    result.D_max = phase_data["D_max"]
+    result.D_mean = phase_data["D_mean"]
+    result.ΔD_max = phase_data["ΔD_max"]
+    result.final_state = phase_data["final_state"]
+    result.solve_result = solve_result
 
     return result
 end
@@ -239,9 +225,9 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, ms=nothing;verbose::B
         @printf("  初始SOC: %.1f%%\n", soc_init * 100)
         println("  循环顺序: 放电 → 静置 → 充电 → 静置")
         @printf("  放电: %.0fs (%.1fC), 截止 %.2fV\n", 
-                cycle_opt.t_discharge, cycle_opt.I_discharge/5.0, cycle_opt.V_lower)
+                cycle_opt.t_discharge, cycle_opt.I_discharge/5.0, case.param.cell.v_l)
         @printf("  充电: %.0fs (%.1fC), 截止 %.2fV\n", 
-                cycle_opt.t_charge, cycle_opt.I_charge/5.0, cycle_opt.V_upper)
+                cycle_opt.t_charge, cycle_opt.I_charge/5.0, case.param.cell.v_h)
         @printf("  静置: %.0fs + %.0fs\n", cycle_opt.t_rest1, cycle_opt.t_rest2)
     end
     
@@ -291,7 +277,6 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, ms=nothing;verbose::B
             case, PHASE_DISCHARGE,
             cycle_opt.t_discharge,
             cycle_opt.I_discharge,  # 正电流表示放电
-            cycle_opt.V_lower,
             current_state;
             ms=ms,
             dt_range=cycle_opt.dt_cycle,
@@ -319,7 +304,6 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, ms=nothing;verbose::B
                 case, PHASE_REST,
                 cycle_opt.t_rest1,
                 0.0,  # 零电流：仅进行锂扩散
-                0.0,  # 无电压限制
                 current_state;  # 继承上一步状态
                 ms=ms,
                 dt_range=cycle_opt.dt_cycle,
@@ -357,7 +341,6 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, ms=nothing;verbose::B
             case, PHASE_CHARGE,
             cycle_opt.t_charge,
             -cycle_opt.I_charge,  # 负电流表示充电
-            cycle_opt.V_upper,
             current_state;
             ms=ms,
             dt_range=cycle_opt.dt_cycle,
@@ -384,7 +367,6 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, ms=nothing;verbose::B
                 case, PHASE_REST,
                 cycle_opt.t_rest2,
                 0.0,  # 零电流：仅进行锂扩散
-                0.0,
                 current_state;  # 继承上一步状态
                 ms=ms,
                 dt_range=cycle_opt.dt_cycle,

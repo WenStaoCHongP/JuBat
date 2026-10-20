@@ -160,7 +160,7 @@ end
 
 function diagnostic_cycle_options()
     return JuBat.CycleOption(n_cycles=1,I_charge=5.0,I_discharge=5.0,t_charge=1800.0,
-        t_discharge=1800.0,t_rest1=600.0,t_rest2=600.0,V_upper=4.2,V_lower=2.5,
+        t_discharge=1800.0,t_rest1=600.0,t_rest2=600.0,
         SOC_init=0.65,reset_T_each_cycle=false,reset_T_before_charge=true)
 end
 
@@ -223,11 +223,11 @@ function collect_input_packet(settings, outdir, sources)
     cycle_opt = diagnostic_cycle_options()
     try
         JuBat.mechanical_step_observer[] = observer
-        specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge,cycle_opt.I_discharge,cycle_opt.V_lower),
-            ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1,0.0,0.0),
-            ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge,-cycle_opt.I_charge,cycle_opt.V_upper),
-            ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2,0.0,0.0))
-        for (label,phase,duration,current,limit) in specs
+        specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge,cycle_opt.I_discharge),
+            ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1,0.0),
+            ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge,-cycle_opt.I_charge),
+            ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2,0.0))
+        for (label,phase,duration,current) in specs
             if settings.window_seconds !== nothing && label != "discharge"
                 stop_reason = "explicit_partial_discharge_window"
                 break
@@ -239,7 +239,7 @@ function collect_input_packet(settings, outdir, sources)
             phase_offset[] = chemical_thermal_state===nothing ? 0.0 : Float64(chemical_thermal_state["t_global"])
             t_max = settings.window_seconds===nothing ? duration : settings.window_seconds
             previous_state_hash = serialized_hash(chemical_thermal_state)
-            phase_result = JuBat.solve_phase(case,phase,t_max,current,limit,chemical_thermal_state;
+            phase_result = JuBat.solve_phase(case,phase,t_max,current,chemical_thermal_state;
                 ms=case.mech,dt_range=cycle_opt.dt_cycle)
             chemical_thermal_state = phase_result.final_state
             push!(phases,(; phase=label,start_s=phase_result.t_start,end_s=phase_result.t_end,

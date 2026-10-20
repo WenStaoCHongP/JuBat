@@ -2,13 +2,12 @@
 
 
 function phase_termination_symbol(phase_type::PhaseType, reason::String)
-    if phase_type == PHASE_REST
-        return :time
-    end
     if reason == "time_limit"
         return :time
-    elseif reason == "voltage_cutoff_low" || reason == "voltage_cutoff_high" || reason == "all_elements_cutoff"
+    elseif reason == "phase_target_low" || reason == "phase_target_high"
         return :voltage
+    elseif reason == "voltage_cutoff_low" || reason == "voltage_cutoff_high" || reason == "all_elements_cutoff"
+        return Symbol(reason)
     end
     error("Unknown phase termination reason: $reason")
 end

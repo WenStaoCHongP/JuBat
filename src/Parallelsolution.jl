@@ -391,8 +391,7 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 	area_active = A_eff .> 0.0
 
 	phi_scale = case.param.scale.phi
-	# 任务59 R2-B 返工：截止集读取与 Solve 全局门同一当前有效相位界限（case.param.cell，
-	# solve_phase 期间为相位界限、finally 恢复；NormaliseParam 为 deepcopy，SetCase 后两者同源）。
+	# 截止集与 Solve 始终读取同一 param 电压窗口，充电/放电/静置不改写边界。
 	# 伏特/phi_scale = 无量纲，单位一致；不引入第二套阈值。
 	V_MIN, V_MAX = case.param.cell.v_l / phi_scale, case.param.cell.v_h / phi_scale
 

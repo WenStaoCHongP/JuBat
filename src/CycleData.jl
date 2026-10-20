@@ -29,13 +29,16 @@ struct CycleExportData
     nT::Int                         # 节点数
 end
 
-function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, V_limit::Float64, initial_state::Union{Nothing, Dict};czm_mesh=nothing, czm_params=nothing,dt_range::Vector{Float64}=[1.0, 10.0],export_interval::Int=1)
+function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, initial_state::Union{Nothing, Dict};czm_mesh=nothing, czm_params=nothing,dt_range::Vector{Float64}=[1.0, 10.0],export_interval::Int=1)
     if case.opt.czm.enabled || czm_mesh !== nothing || czm_params !== nothing
         throw(ArgumentError(
             "solve_phase_with_export does not implement CZM damage evolution; use solve_phase or solve_cycling for CZM simulations"
         ))
     end
     
+    v_l, v_h = case.param.cell.v_l, case.param.cell.v_h
+    isfinite(v_l) && isfinite(v_h) && v_l < v_h ||
+        throw(ArgumentError("invalid param.cell.v_l/v_h voltage window"))
     timestep_data = TimeStepData[]
     
     # 时间缩放
@@ -232,11 +235,20 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
 
         T_nodes_prev_export = copy(T_nodes_carry)
         
-        # 检查截止条件
-        if phase_type == PHASE_CHARGE && V_current >= V_limit
+        isfinite(V_current) || error("non-finite terminal voltage")
+        # All phases retain both param bounds, including REST.
+        area_diag = multi_spme && variables_new["thermal2D Vsolve status"] == 4.0
+        if !area_diag && V_current < v_l
+            terminated_by = :voltage_cutoff_low
+            break
+        elseif !area_diag && V_current > v_h
+            terminated_by = :voltage_cutoff_high
+            break
+        end
+        if !area_diag && phase_type == PHASE_CHARGE && V_current >= v_h
             terminated_by = :voltage
             break
-        elseif phase_type == PHASE_DISCHARGE && V_current <= V_limit
+        elseif !area_diag && phase_type == PHASE_DISCHARGE && V_current <= v_l
             terminated_by = :voltage
             break
         end
@@ -262,6 +274,8 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
         end
     end
     
+    terminated_by in (:time, :voltage) ||
+        error("$(phase_type) stopped with $(terminated_by); refusing to continue cycling")
     # 构建阶段结果
     result = PhaseResult()
     result.phase_type = phase_type
@@ -331,7 +345,6 @@ function solve_cycle_with_export(case::Case, cycle_opt::CycleOption;verbose::Boo
         case, PHASE_DISCHARGE,
         cycle_opt.t_discharge,
         cycle_opt.I_discharge,
-        cycle_opt.V_lower,
         current_state;
         dt_range=cycle_opt.dt_cycle,
         export_interval=export_interval
@@ -355,7 +368,6 @@ function solve_cycle_with_export(case::Case, cycle_opt::CycleOption;verbose::Boo
             case, PHASE_REST,
             cycle_opt.t_rest1,
             0.0,
-            0.0,
             current_state;
             dt_range=cycle_opt.dt_cycle,
             export_interval=export_interval
@@ -378,7 +390,6 @@ function solve_cycle_with_export(case::Case, cycle_opt::CycleOption;verbose::Boo
         case, PHASE_CHARGE,
         cycle_opt.t_charge,
         -cycle_opt.I_charge,
-        cycle_opt.V_upper,
         current_state;
         dt_range=cycle_opt.dt_cycle,
         export_interval=export_interval
@@ -401,7 +412,6 @@ function solve_cycle_with_export(case::Case, cycle_opt::CycleOption;verbose::Boo
         rest2_result, rest2_data = solve_phase_with_export(
             case, PHASE_REST,
             cycle_opt.t_rest2,
-            0.0,
             0.0,
             current_state;
             dt_range=cycle_opt.dt_cycle,

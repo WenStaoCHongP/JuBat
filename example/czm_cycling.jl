@@ -138,8 +138,6 @@ function main()
         t_discharge = 1800.0,
         t_rest1 = 600.0,
         t_rest2 = 600.0,
-        V_upper = 4.2,
-        V_lower = 2.5,
         SOC_init = 0.65,
         reset_T_each_cycle = false,
         reset_T_before_charge = true,

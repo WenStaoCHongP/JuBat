@@ -93,20 +93,20 @@ function run_boundary_case(spec, outdir)
     ne_thermal, coords_meters, coord_factor = export_case_geometry(case, outdir)
 
     cycle_opt = diagnostic_cycle_options()
-    specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge,cycle_opt.I_discharge,cycle_opt.V_lower),
-        ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1,0.0,0.0),
-        ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge,-cycle_opt.I_charge,cycle_opt.V_upper),
-        ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2,0.0,0.0))
+    specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge,cycle_opt.I_discharge),
+        ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1,0.0),
+        ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge,-cycle_opt.I_charge),
+        ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2,0.0))
     state = nothing
     rows, snapshots = Any[], Any[]
     status, error_text = "completed_4_phases", ""
-    for (label,phase,duration,current,limit) in specs
+    for (label,phase,duration,current) in specs
         if label=="charge" && cycle_opt.reset_T_before_charge && case.opt.thermalmodel != "none"
             JuBat.reset_cycle_temperature!(case,state)
         end
         println("[$(spec.id)] phase=$label start t_max=$duration current=$current")
         try
-            pr = JuBat.solve_phase(case,phase,duration,current,limit,state;
+            pr = JuBat.solve_phase(case,phase,duration,current,state;
                 ms=case.mech,dt_range=cycle_opt.dt_cycle)
             state = pr.final_state
             sr = pr.solve_result

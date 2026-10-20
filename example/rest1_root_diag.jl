@@ -160,17 +160,17 @@ function run_diag(t_all, last_stage, last_phase, last_accepted_step)
     old_obs = JuBat.mechanical_step_observer[]
     JuBat.mechanical_step_observer[] = capture
     cycle_opt = diagnostic_cycle_options()
-    specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge,cycle_opt.I_discharge,cycle_opt.V_lower),
-        ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1,0.0,0.0),
-        ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge,-cycle_opt.I_charge,cycle_opt.V_upper),
-        ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2,0.0,0.0))
+    specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge,cycle_opt.I_discharge),
+        ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1,0.0),
+        ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge,-cycle_opt.I_charge),
+        ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2,0.0))
     state = nothing
     soc_avgs = Any[]      # ① 12 列满行
     radial_rows = Any[]   # ③ 径向节点表
     gp_rows = Any[]       # ③ 完整 GP 表
     stepwise_avgs = Any[] # ④ 全场逐步两种平均
     try
-        for (label,phase,dur,cur,limit) in specs
+        for (label,phase,dur,cur) in specs
             phase_ref[] = label
             last_phase[] = label
             label == "charge" && JuBat.reset_cycle_temperature!(case, state)
@@ -184,7 +184,7 @@ function run_diag(t_all, last_stage, last_phase, last_accepted_step)
             else
                 nothing
             end
-            pr = JuBat.solve_phase(case, phase, dur, cur, limit, state;
+            pr = JuBat.solve_phase(case, phase, dur, cur, state;
                 ms=case.mech, dt_range=cycle_opt.dt_cycle, chemical_step_observer=chem_obs)
             state = pr.final_state
             phase_end_state[label] = deepcopy(state)
@@ -366,7 +366,7 @@ function run_diag(t_all, last_stage, last_phase, last_accepted_step)
         for f in fieldnames(typeof(case.opt)))
     cyc_dump = Dict{String,Any}("I_charge"=>cycle_opt.I_charge, "I_discharge"=>cycle_opt.I_discharge,
         "t_charge"=>cycle_opt.t_charge, "t_discharge"=>cycle_opt.t_discharge, "t_rest1"=>cycle_opt.t_rest1,
-        "t_rest2"=>cycle_opt.t_rest2, "V_upper"=>cycle_opt.V_upper, "V_lower"=>cycle_opt.V_lower,
+        "t_rest2"=>cycle_opt.t_rest2, "V_upper"=>case.param.cell.v_h, "V_lower"=>case.param.cell.v_l,
         "SOC_init"=>cycle_opt.SOC_init, "n_cycles"=>cycle_opt.n_cycles,
         "reset_T_each_cycle"=>cycle_opt.reset_T_each_cycle, "reset_T_before_charge"=>cycle_opt.reset_T_before_charge,
         "dt_cycle"=>cycle_opt.dt_cycle)

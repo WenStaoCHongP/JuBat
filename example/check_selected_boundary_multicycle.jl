@@ -232,10 +232,10 @@ function run_case(spec, outdir)
         println(f, "case,cycle,capacity_charge_Ah,capacity_discharge_Ah,coulombic_efficiency,D_max_end,n_fractured,T_max,SOH,Q_abs_Ah,EFC,stop_reason") end
 
     cycle_opt = diagnostic_cycle_options()
-    phase_specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge,cycle_opt.I_discharge,cycle_opt.V_lower),
-        ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1,0.0,0.0),
-        ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge,-cycle_opt.I_charge,cycle_opt.V_upper),
-        ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2,0.0,0.0))
+    phase_specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge,cycle_opt.I_discharge),
+        ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1,0.0),
+        ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge,-cycle_opt.I_charge),
+        ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2,0.0))
     state = nothing
     completed_cycles, stop_reason, error_text, last_phase_done = 0, "all_cycles_complete", "", ""
     Q_abs_Ah = 0.0
@@ -246,7 +246,7 @@ function run_case(spec, outdir)
     try
         for cycle in 1:spec.cycles
             cycle_phases = Dict{String,Any}()
-            for (label,phase,dur,cur,limit) in phase_specs
+            for (label,phase,dur,cur) in phase_specs
                 cur_cycle[], cur_phase[] = cycle, label
                 # t_cycle 修正（2026-10-10）：全局偏移取上一相位末电化学状态（无状态=首相位 0），
                 # 相位内累计复位；观察点写出的 t_phase_s/t_cycle_s 由此恢复各自语义。
@@ -261,7 +261,7 @@ function run_case(spec, outdir)
                     println("[$(spec.id)] cycle=$cycle temperature reset before charge: mean T $T_pre -> $T_post K")
                 end
                 t0p = time()
-                pr = JuBat.solve_phase(case, phase, dur, cur, limit, state;
+                pr = JuBat.solve_phase(case, phase, dur, cur, state;
                     ms=case.mech, dt_range=cycle_opt.dt_cycle, czm_cycle=cycle)
                 wall = time() - t0p
                 state = pr.final_state

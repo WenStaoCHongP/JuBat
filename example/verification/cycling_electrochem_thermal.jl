@@ -108,8 +108,6 @@ function main()
         t_rest2 = 1000.0,       # 充电后静置 (s) - 锂扩散
         I_discharge = 5.0,      # 放电电流 (A) - 1C
         I_charge = 5.0,         # 充电电流 (A) - 1C
-        V_lower = 2.5,          # 放电截止电压 (V)
-        V_upper = 4.2,          # 充电截止电压 (V)
         SOC_init = 0.65,         # 初始SOC设为65%（避免过高初始SOC导致的异常库伦效率）
         reset_T_each_cycle = false,  # 循环内温度继承
         dt_cycle = [1.0, 10.0]  # 时间步长范围 [min, max] (s)
@@ -119,10 +117,10 @@ function main()
     @printf("  循环次数: %d\n", cycle_opt.n_cycles)
     @printf("  初始SOC: %.1f%%\n", cycle_opt.SOC_init * 100)
     @printf("  放电: %.0fs, %.1fC, 截止 %.2fV\n", 
-            cycle_opt.t_discharge, cycle_opt.I_discharge/5.0, cycle_opt.V_lower)
+            cycle_opt.t_discharge, cycle_opt.I_discharge/5.0, case.param.cell.v_l)
     @printf("  静置1: %.0fs (锂扩散过程)\n", cycle_opt.t_rest1)
     @printf("  充电: %.0fs, %.1fC, 截止 %.2fV\n", 
-            cycle_opt.t_charge, cycle_opt.I_charge/5.0, cycle_opt.V_upper)
+            cycle_opt.t_charge, cycle_opt.I_charge/5.0, case.param.cell.v_h)
     @printf("  静置2: %.0fs (锂扩散过程)\n", cycle_opt.t_rest2)
     
     total_time = cycle_opt.n_cycles * (cycle_opt.t_discharge + cycle_opt.t_rest1 + 
