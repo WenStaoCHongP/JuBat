@@ -402,24 +402,25 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
         q_ncc[e] = fks[e,5] * Q_NCC
         q_el[e] = (fks[e,1]+fks[e,3]) * Q_EL
 
-        # 总热源
-        q_total[e] = q_rxn_ne[e] + q_rev_ne[e] + q_ohm_s_ne[e] + q_ohm_e_ne[e] + q_sp[e] + q_rxn_pe[e] + q_rev_pe[e] + q_ohm_s_pe[e] + q_ohm_e_pe[e] + q_pcc[e] + q_ncc[e] + q_el[e]
+        # 密度热源小计；Q_EL 的功率分配另批处理
+        q_total[e] = q_rxn_ne[e] + q_rev_ne[e] + q_ohm_s_ne[e] + q_ohm_e_ne[e] + q_sp[e] + q_rxn_pe[e] + q_rev_pe[e] + q_ohm_s_pe[e] + q_ohm_e_pe[e] + q_pcc[e] + q_ncc[e]
     end
 
     # 写入 variables
-    variables["heat_source_fields"] = q_total * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_rxn_ne"] = q_rxn_ne * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_rev_ne"] = q_rev_ne * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_ohm_s_ne"] = q_ohm_s_ne * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_ohm_e_ne"] = q_ohm_e_ne * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_sp"] = q_sp * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_rxn_pe"] = q_rxn_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_rev_pe"] = q_rev_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_ohm_s_pe"] = q_ohm_s_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_ohm_e_pe"] = q_ohm_e_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_pcc"] = q_pcc * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_ncc"] = q_ncc * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["total heat source"] = [dot(q_total, areas) * case.param_dim.scale.L^3 / case.param_dim.cell.volume]
+    # Density sources use P_ref/(A_cell L); Q_EL retains its old contribution pending separate allocation.
+    variables["heat_source_fields"] = q_total * case.param_dim.scale.L^2 / case.param_dim.cell.area + q_el * case.param_dim.scale.L^3 / case.param_dim.cell.volume
+    variables["thermal2D q_rxn_ne"] = q_rxn_ne * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_rev_ne"] = q_rev_ne * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_ohm_s_ne"] = q_ohm_s_ne * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_ohm_e_ne"] = q_ohm_e_ne * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_sp"] = q_sp * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_rxn_pe"] = q_rxn_pe * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_rev_pe"] = q_rev_pe * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_ohm_s_pe"] = q_ohm_s_pe * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_ohm_e_pe"] = q_ohm_e_pe * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_pcc"] = q_pcc * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_ncc"] = q_ncc * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["total heat source"] = [dot(variables["heat_source_fields"], areas)]
 
     return variables
 end
