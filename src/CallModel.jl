@@ -133,6 +133,9 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         D_elem=D_elem_area_loss, I_e=copy(I_e), Vc=Vc, Te_prev=copy(Te_prev),
         w=copy(variables["thermal2D branch weight"]),
         A_eff=copy(variables["thermal2D effective area"]),
+        a=copy(variables["thermal2D branch area factor"]),
+        gamma=variables["thermal2D total effective area factor"],
+        I_branch=copy(variables["thermal2D element branch current [A]"]),
         active_mask=copy(variables["thermal2D active_mask"]),
         deactivated_mask=copy(variables["thermal2D deactivated_mask"]),
         inactive_reason=copy(variables["thermal2D inactive_reason"])))

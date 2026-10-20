@@ -113,17 +113,17 @@ end
 
 # 初始化和边界检查
 """初始化单元电流猜测"""
-function initialize_currents(ne, w, I_total, x_prev)
-	I_e = x_prev !== nothing && length(x_prev) == ne ? copy(x_prev) : (w .* I_total)
-    
-	# 归一化到满足总电流约束
-	sx = sum(w .* I_e)
-	if sx != 0.0
-		I_e .*= (I_total / sx)
-	else
-		I_e .= w .* I_total
-	end
-    
+function initialize_currents(ne, w, I_total, x_prev; active_mask=trues(ne))
+	I_e = x_prev === nothing ? zeros(Float64, ne) : copy(x_prev)
+	length(I_e) == ne || throw(DimensionMismatch("branch current initial guess length"))
+	all(isfinite, I_e) || error("nonfinite branch current initial guess")
+	I_e[.!active_mask] .= 0.0
+	active_idx = findall(active_mask)
+	isempty(active_idx) && return I_e
+	# Uniform density shift satisfies the linear constraint without erasing rest balancing currents.
+	correction = (I_total - sum(w .* I_e)) / sum(w[active_idx])
+	I_e[active_idx] .+= correction
+	all(isfinite, I_e) || error("nonfinite branch current initial guess")
 	return I_e
 end
 
@@ -338,13 +338,14 @@ end
 
 使用牛顿法求解电流分配问题：
 - 未知量：各单元电流 I_e 和公共端电压 V
-- 约束：V_e(I_e, yt_chem[e], T_e) = V (每个活跃单元) 和 Σ(w_e*I_e) = I_total
+- 约束：V_e(I_e, yt_chem[e], T_e) = V (每个活跃单元) 和 Σ(a_e*I_e) = I_total（a=A_eff/Σareas）
 - 活动面积非零时，静置沿用同一 Newton，仅将总电流设为零，允许内部均衡电流。
 - yt_chem 为必需输入；逐支路直接提取浓度，不回退到平均状态。
 
 # 面积损失（任务59 P1，无阈值）
 `area_loss_enabled=true` 且传入 `D_elem` 时：A_eff = areas·(1−D_elem)，
-w = A_eff/ΣA_eff。A_eff==0 的支路从 Newton 活动集排除、I_e 严格为 0。
+a=A_eff/Σareas，γ=ΣA_eff/Σareas，w=A_eff/ΣA_eff；Newton目标为I_total/γ。
+A_eff==0 的支路从 Newton 活动集排除、I_e 严格为 0。
 NaN/越界 D 显式失败，不当作无损或零面积。
 
 # 全失活（ΣA_eff == 0）
@@ -380,6 +381,13 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 	else
 		A_eff = areas
 	end
+	area_sum = sum(areas)
+	all(x -> isfinite(x) && x > 0.0, areas) && isfinite(area_sum) && area_sum > 0.0 ||
+		throw(ArgumentError("branch reference areas must be finite and positive"))
+	a = A_eff ./ area_sum
+	gamma = sum(A_eff) / area_sum
+	variables["thermal2D branch area factor"] = a
+	variables["thermal2D total effective area factor"] = gamma
 	area_active = A_eff .> 0.0
 
 	phi_scale = case.param.scale.phi
@@ -429,6 +437,7 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 		variables["thermal2D effective area"] = A_eff
 		variables["thermal2D element current"] = I_e
 		variables["thermal2D element current A"] = zeros(Float64, ne)
+		variables["thermal2D element branch current [A]"] = zeros(Float64, ne)
 		variables["thermal2D common voltage"] = V
 		variables["thermal2D common voltage V"] = V * phi_scale
 		variables["thermal2D Vsolve status"] = 4.0
@@ -457,6 +466,8 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 	# 任务63 B2：暴露真实消费权重/有效面积（ON=A_eff/ΣA_eff，OFF=几何权重），供诊断观察点与结果导出
 	variables["thermal2D branch weight"] = w
 	variables["thermal2D effective area"] = A_eff
+	I_density_target = I_total / gamma
+	isfinite(I_density_target) || error("unrepresentable branch density target for effective area factor $gamma")
 
 	# 截止检测 + 面积活跃合并
 	ci = detect_cutoff_elements(coeffs, ne, V_MIN, V_MAX, I_total, phi_scale)
@@ -464,10 +475,7 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 	active_idx = findall(active_mask)
 
 	# 初始化电流（非活跃单元置零）
-	I_e = initialize_currents(ne, w, I_total, x_prev)
-	for e in 1:ne
-		!active_mask[e] && (I_e[e] = 0.0)
-	end
+	I_e = initialize_currents(ne, w, I_density_target, x_prev; active_mask=active_mask)
 
 	# 初始电压（活跃单元平均，无活跃单元则用 OCV 均值——既有全截止路径，保留原语义）
 	V = isempty(active_idx) ? mean([coeffs[e].C1 for e in 1:ne]) :
@@ -476,7 +484,8 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 	# 牛顿迭代（统一路径，active_mask 为空时直接跳过）
 	converged, last_iter = true, 0
 	if !isempty(active_idx)
-		V, converged, last_iter = newton_iteration(I_e, V, ne, w, I_total, coeffs; active_mask=active_mask)
+		V, converged, last_iter = newton_iteration(I_e, V, ne, w, I_density_target, coeffs; active_mask=active_mask)
+		converged = converged && abs(sum(a .* I_e) - I_total) <= 1e-10
 	end
 	converged || error("branch-current Newton solver failed to converge after $last_iter iterations")
 
@@ -485,7 +494,8 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 
 	# 写入 variables
 	variables["thermal2D element current"] = I_e
-	variables["thermal2D element current A"] = case.param.scale.I_typ .* I_e
+	variables["thermal2D element current A"] = case.param.scale.I_typ .* I_e # legacy equivalent-current alias
+	variables["thermal2D element branch current [A]"] = case.param.scale.I_typ .* a .* I_e
 	variables["thermal2D common voltage"] = V
 	variables["thermal2D common voltage V"] = V * phi_scale
 	variables["thermal2D Vsolve status"] = converged ? 3.0 : 3.5

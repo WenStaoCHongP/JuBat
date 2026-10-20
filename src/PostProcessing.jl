@@ -93,6 +93,12 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
             result[key] = variables[key][:, 1:v]
         end
 
+        if case.opt.per_element_spme
+            result["thermal2D branch area factor"] = variables["thermal2D branch area factor"][:, 1:v]
+            result["thermal2D total effective area factor"] = vec(variables["thermal2D total effective area factor"][1, 1:v])
+            result["thermal2D element branch current [A]"] = variables["thermal2D element branch current [A]"][:, 1:v]
+        end
+
         # ── 截止与激活信息（含任务59 Q4 面积失活状态接线）──
         result["thermal2D active_mask"] = variables["thermal2D active_mask"][:, 1:v]
         result["thermal2D deactivated_mask"] = variables["thermal2D deactivated_mask"][:, 1:v]
