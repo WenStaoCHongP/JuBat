@@ -12,7 +12,7 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,<:Any})
     ele_of_gp = mesh.gs.ele
 
     # setup_thermal2D_mesh guarantees the precomputed geometry.
-    fks = case.geometry.layer_weights
+    fks = case.mesh["thermal2D layer weights"]
 
     # ========== 质量矩阵 ==========
     rho_c_weights = thermal_capacity_weights_2d(param, fks, ele_of_gp, wJ)
@@ -227,7 +227,7 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64)
     # end
 
     # 使用 setup_thermal2D_mesh 预计算的边界缓存。
-    K, F = apply_convection_bc(K, F, mesh, nothing, case; edge_cache=case.geometry.boundary_edges)
+    K, F = apply_convection_bc(K, F, mesh, nothing, case; edge_cache=case.mesh["thermal2D boundary edges"])
     K, F = apply_cool_method(K, F, mesh, case, t)
     return K, F
 end
@@ -297,7 +297,7 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
     ne = size(mesh.element, 1)
     param = case.param
 
-    fks = case.geometry.layer_weights
+    fks = case.mesh["thermal2D layer weights"]
     area_sum = sum(areas)
     length(areas) == ne && all(x -> isfinite(x) && x > 0.0, areas) && isfinite(area_sum) && area_sum > 0.0 ||
         throw(ArgumentError("Q_EL requires positive parent element areas"))

@@ -13,7 +13,7 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
         mesh_np = SetMesh([0, param.NE.rs], opt.Nrn, opt.meshType, opt.gsorder)
         # positive particle
         mesh_pp = SetMesh([0, param.PE.rs], opt.Nrp, opt.meshType, opt.gsorder)
-        mesh = Dict("negative particle"=> mesh_np, "positive particle"=>mesh_pp)
+        mesh = Dict{String,Any}("negative particle"=> mesh_np, "positive particle"=>mesh_pp)
         index = Dict(
             "negative particle lithium concentration"=> collect(1:mesh_np.nlen),
             "positive particle lithium concentration"=> mesh_np.nlen .+ collect(1:mesh_pp.nlen),
@@ -53,7 +53,7 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
         mesh_nps = MultipleMesh(mesh_np, mesh_el_ne.nlen)
         mesh_pps = MultipleMesh(mesh_pp, mesh_el_pe.nlen)
 
-        mesh = Dict(
+        mesh = Dict{String,Any}(
             "negative particle" => mesh_nps, 
             "positive particle" => mesh_pps,
             "electrolyte" => mesh_el,
@@ -99,15 +99,13 @@ mutable struct Case
     param_dim::Params                      # dimensional parameters
     param::Params                          # dimensionless parameters
     opt::Option                            # solver options
-    mesh::Dict{String, Mesh}               # discretisation meshes
+    mesh::Dict{String, Any}               # discretisation meshes
     index::Dict{String, Union{Array{Int64}, Int64}} # indices of unknowns
-    layout::Union{Nothing, MultiSPMeLayout}   # 布局索引（初始化后不变）
-    geometry::Union{Nothing, MeshGeometry}   # 几何拓扑（构建后不变）
     czm_mesh::Union{Nothing, CohesiveMesh}   # CZM 网格（演化但类型明确）
     mech::Union{Nothing, MechState}      # CZM 布局+u_prev（跨时间步）
 end
 
 # 5 参数兼容构造器
 function Case(param_dim, param, opt, mesh, index)
-    Case(param_dim, param, opt, mesh, index, nothing, nothing, nothing, nothing)
+    Case(param_dim, param, opt, mesh, index, nothing, nothing)
 end

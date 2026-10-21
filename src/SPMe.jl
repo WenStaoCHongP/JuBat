@@ -113,16 +113,16 @@ function SPMe_variables!(ws::Dict{String, Union{Array{Float64},Float64}},case::C
     mesh_pe = case.mesh["positive electrode"]
     mesh_sp = case.mesh["separator"]
 
-    # 状态提取：仅覆写 ws 中已有的键（跳过 thermal2D 键）
-    # 使用替换赋值（与原始 SPMe_variables 行为一致），保留原始类型
-    var_list = collect(keys(case.index))
-    if T_e !== nothing
-        var_list = filter(k -> k != "temperature", var_list)
-    end
-    for i in var_list
-        if haskey(ws, i)
-            ws[i] = yt[case.index[i]]
-        end
+    # 单元向量只含化学状态；全局温度索引不能用于局部向量。
+    for i in ("negative particle lithium concentration",
+        "positive particle lithium concentration",
+        "negative particle surface lithium concentration",
+        "positive particle surface lithium concentration",
+        "electrolyte lithium concentration",
+        "electrolyte lithium concentration in negative electrode",
+        "electrolyte lithium concentration in positive electrode",
+        "electrolyte lithium concentration in separator")
+        ws[i] = yt[case.index[i]]
     end
 
     # 温度：单元温度注入优先；未注入时热模型关闭取环境初温、启用取状态平均温度
@@ -228,11 +228,14 @@ function SPMe_variables(case::Case, yt::AbstractVector{Float64}, t::Float64; I_a
     mesh_ne = case.mesh["negative electrode"]
     mesh_pe = case.mesh["positive electrode"]
     mesh_sp = case.mesh["separator"]
-    var_list = collect(keys(case.index))
-    if T_e !== nothing
-        var_list = filter(k -> k != "temperature", var_list)
-    end
-    for i in var_list
+    for i in ("negative particle lithium concentration",
+        "positive particle lithium concentration",
+        "negative particle surface lithium concentration",
+        "positive particle surface lithium concentration",
+        "electrolyte lithium concentration",
+        "electrolyte lithium concentration in negative electrode",
+        "electrolyte lithium concentration in positive electrode",
+        "electrolyte lithium concentration in separator")
         variables[i] = yt[case.index[i]]
     end
     # 温度：单元温度注入优先；未注入时热模型关闭取环境初温、启用取状态平均温度

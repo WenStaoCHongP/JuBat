@@ -111,10 +111,6 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             n_chem = Nrn + Nrp + Nel
             expected_multi_len = ne * n_chem + nT
 
-            if case.layout === nothing
-                case.layout = MultiSPMeLayout(ne, n_chem, nT, case.mesh["thermal2D"])
-            end
-
             if length(y0) != expected_multi_len
                 throw(DimensionMismatch("external state length $(length(y0)) does not match multi-SPMe layout length $expected_multi_len"))
             end
@@ -176,7 +172,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         T_nodes_initial = variables["thermal2D temperature at nodes"]
         T_nodes_initial isa AbstractArray || error("multi-SPMe thermal node temperatures must be an array")
         T_nodes_initial = vec(T_nodes_initial)
-        length(T_nodes_initial) == case.layout.nT || throw(DimensionMismatch("initial thermal node count $(length(T_nodes_initial)) does not match layout count $(case.layout.nT)"))
+        length(T_nodes_initial) == case.mesh["thermal2D"].nlen || throw(DimensionMismatch("initial thermal node count $(length(T_nodes_initial)) does not match layout count $(case.mesh["thermal2D"].nlen)"))
         copy(T_nodes_initial)
     else
         Float64[]
@@ -250,9 +246,10 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
 
         # multi-SPMe：求解后提取温度自由度，用于记录/后处理
         if multi_spme_enabled
-            nT = case.layout.nT
-            length(y_c) == case.layout.n_total || throw(DimensionMismatch("time-step state length $(length(y_c)) does not match multi-SPMe layout length $(case.layout.n_total)"))
-            T_nodes = y_c[(end - nT + 1):end]
+            nT = case.mesh["thermal2D"].nlen
+            expected_multi_len = size(case.mesh["thermal2D"].element, 1) * case.index["SPMe chemical block length"] + nT
+            length(y_c) == expected_multi_len || throw(DimensionMismatch("time-step state length $(length(y_c)) does not match multi-SPMe layout length $expected_multi_len"))
+            T_nodes = get_thermal_dofs(y_c, case)
             variables["thermal2D temperature at nodes"] = T_nodes
             T_nodes_carry = T_nodes
         end

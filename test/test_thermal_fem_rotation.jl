@@ -141,9 +141,8 @@ function case66(X, E; kind=:ratio)
     m = JuBat.Mesh("Q4",2,X,size(X,1),E,gs)
     c.mesh["thermal2D"] = m
     ne = size(E,1)
-    c.geometry = JuBat.MeshGeometry(ones(Int,ne),falses(ne),weights66(p,ne,kind),
-        Tuple{Int,Int}[],Dict{Int,Vector{Int}}(),Int[],Int[],
-        JuBat.BoundaryEdgeCache(Tuple{Int,Int}[],Float64[]))
+    c.mesh["thermal2D layer weights"] = weights66(p,ne,kind)
+    c.mesh["thermal2D boundary edges"] = JuBat.BoundaryEdgeCache(Tuple{Int,Int}[],Float64[])
     return c
 end
 
@@ -155,7 +154,7 @@ end
 
 # Independent test-only algebra permits four mechanism combinations; production has no switch.
 function ref66(c; gradient=true, tensor=true)
-    m = c.mesh["thermal2D"]; f = c.geometry.layer_weights[1,:]
+    m = c.mesh["thermal2D"]; f = c.mesh["thermal2D layer weights"][1,:]
     ls = [c.param.NE.lambda,c.param.SP.lambda,c.param.PE.lambda,
           c.param.PCC.lambda,c.param.NCC.lambda]
     lr, lt = inv(sum(f./ls)), sum(f.*ls)
@@ -211,7 +210,7 @@ function consumer66()
         "thermal2D element soc_p"=>fill(c.param.PE.cs0+0.02,ne))
     K,F = JuBat.assemble_bonded_elastic(c,v)
     bulk = JuBat.assemble_bulk_stiffness(c.czm_mesh,c.param)
-    oneD = Dict(k=>(copy(mm.gs.Ni),copy(mm.gs.dNidx),copy(mm.gs.detJ)) for (k,mm) in c.mesh if mm.dimension==1)
+    oneD = Dict(k=>(copy(mm.gs.Ni),copy(mm.gs.dNidx),copy(mm.gs.detJ)) for (k,mm) in c.mesh if mm isa JuBat.Mesh && mm.dimension==1)
     for typ in ("L2","L3")
         mm=JuBat.SetMesh([0.,1.],4,typ,2)
         oneD[typ]=(mm.gs.Ni,mm.gs.dNidx,mm.gs.detJ)
@@ -276,11 +275,11 @@ try
         end
         for kind in (:ratio,:default)
             c = case66(X0,E0;kind=kind); p = c.param
-            f = c.geometry.layer_weights[1,:]
+            f = c.mesh["thermal2D layer weights"][1,:]
             ls = [p.NE.lambda,p.SP.lambda,p.PE.lambda,p.PCC.lambda,p.NCC.lambda]
             lr,lt = inv(sum(f./ls)),sum(f.*ls)
             for theta in (0.,pi/8,pi/4,.63)
-                kx,kxy,ky = JuBat.thermal_anisotropic_conductivity_2d(p,c.geometry.layer_weights,[1],[cos(theta)],[sin(theta)])
+                kx,kxy,ky = JuBat.thermal_anisotropic_conductivity_2d(p,c.mesh["thermal2D layer weights"],[1],[cos(theta)],[sin(theta)])
                 k = [kx[1] kxy[1];kxy[1] ky[1]]
                 er,et = [cos(theta),sin(theta)],[-sin(theta),cos(theta)]
                 push!(TENSOR66,(kind,theta,lr,lt,dot(er,k*er),dot(et,k*et),dot(er,k*et)))
@@ -288,7 +287,7 @@ try
                 @test abs(dot(et,k*et)-lt)/lt <= 1e-12
                 @test abs(dot(er,k*et))/lt <= 1e-12
                 for a in ROT66
-                    x,y,z = JuBat.thermal_anisotropic_conductivity_2d(p,c.geometry.layer_weights,[1],[cos(theta+a)],[sin(theta+a)])
+                    x,y,z = JuBat.thermal_anisotropic_conductivity_2d(p,c.mesh["thermal2D layer weights"],[1],[cos(theta+a)],[sin(theta+a)])
                     @test rel66([x[1] y[1];y[1] z[1]],rot66(a)*k*rot66(a)') <= 1e-12
                 end
             end

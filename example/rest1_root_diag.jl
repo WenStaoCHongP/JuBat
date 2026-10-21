@@ -207,7 +207,7 @@ function run_diag(t_all, last_stage, last_phase, last_accepted_step)
             end
             # ④ 径向剖面：elem1 的 NE/PE 粒子径向 c/r/FE 权重（相位末，来自 final_state y）
             y = state["y"]
-            nc_chem = case.layout.n_chem
+            nc_chem = case.index["SPMe chemical block length"]
             off1 = 0 * nc_chem   # elem1 偏移
             idx_n = case.index["negative particle lithium concentration"]
             idx_p = case.index["positive particle lithium concentration"]

@@ -109,47 +109,52 @@ function ModelInitialisation_MultiSPMe(case::Case; initial_soc_distribution::Uni
     
     # 6) 组装全局状态向量
     y0 = [y0_chem_all; T0_nodes]
-    # 7) 缓存布局信息
-    case.layout = MultiSPMeLayout(ne, n_chem, nT, case.mesh["thermal2D"])
+    # 固定布局在 setup_thermal2D_mesh 建立；自定义 opt.y0 仍按原样逐单元复制。
+    n_chem == case.index["SPMe chemical block length"] || throw(DimensionMismatch(
+        "initial chemical block length $n_chem does not match configured multi-SPMe index"))
 
     return y0
 end
 
 """
-    extract_element_state(y, e, layout)
+    extract_element_state(y, e, case)
 
 从多SPMe全局状态向量中提取单个单元的电化学状态。
 """
-function extract_element_state(y::AbstractVector, e::Int, layout::MultiSPMeLayout)
-    offset = (e - 1) * layout.n_chem
-    return y[(offset + 1):(offset + layout.n_chem)]
+function extract_element_state(y::AbstractVector, e::Int, case::Case)
+    n_chem = case.index["SPMe chemical block length"]
+    offset = (e - 1) * n_chem
+    return y[(offset + 1):(offset + n_chem)]
 end
 
 """
-    get_thermal_dofs(y, layout)
+    get_thermal_dofs(y, case)
 
 从多SPMe全局状态向量中提取热场节点温度。
 """
-function get_thermal_dofs(y::AbstractVector, layout::MultiSPMeLayout)
-    return y[layout.thermal_range]
+function get_thermal_dofs(y::AbstractVector, case::Case)
+    return y[case.index["thermal2D temperature"]]
 end
 
 """
-    update_state(y, layout; element_index, element_state, thermal_nodes)
+    update_state(y, case; element_index, element_state, thermal_nodes)
 
 更新多SPMe全局状态向量（返回新向量）。
 """
-function update_state(y::AbstractVector, layout::MultiSPMeLayout;element_index::Union{Nothing,Int}=nothing,element_state::Union{Nothing,Vector{Float64}}=nothing,thermal_nodes::Union{Nothing,Vector{Float64}}=nothing)
+function update_state(y::AbstractVector, case::Case;element_index::Union{Nothing,Int}=nothing,element_state::Union{Nothing,Vector{Float64}}=nothing,thermal_nodes::Union{Nothing,Vector{Float64}}=nothing)
+    ne = size(case.mesh["thermal2D"].element, 1)
+    nT = case.mesh["thermal2D"].nlen
+    n_chem = case.index["SPMe chemical block length"]
     y_new = copy(y)
     if element_index !== nothing
-        @assert 1 <= element_index <= layout.ne "element_index $element_index out of range [1, $(layout.ne)]"
-        @assert length(element_state) == layout.n_chem "element_state length $(length(element_state)) != n_chem $(layout.n_chem)"
-        offset = (element_index - 1) * layout.n_chem
-        y_new[(offset + 1):(offset + layout.n_chem)] .= element_state
+        @assert 1 <= element_index <= ne "element_index $element_index out of range [1, $(ne)]"
+        @assert length(element_state) == n_chem "element_state length $(length(element_state)) != n_chem $(n_chem)"
+        offset = (element_index - 1) * n_chem
+        y_new[(offset + 1):(offset + n_chem)] .= element_state
     end
     if thermal_nodes !== nothing
-        @assert length(thermal_nodes) == layout.nT "thermal_nodes length $(length(thermal_nodes)) != nT $(layout.nT)"
-        y_new[layout.thermal_range] .= thermal_nodes
+        @assert length(thermal_nodes) == nT "thermal_nodes length $(length(thermal_nodes)) != nT $(nT)"
+        y_new[case.index["thermal2D temperature"]] .= thermal_nodes
     end
     return y_new
 end

@@ -5,7 +5,7 @@ include("Option.jl")
 include("SetMesh.jl")
 include("SetParams.jl")
 include("CzmPlasticity.jl")  # 平面应力 J2 塑性（Batch 3）
-include("CouplingState.jl")  # MultiSPMeLayout + MeshGeometry 类型定义
+include("CouplingState.jl")  # 固定边界几何及 CZM 工作区类型定义
 include("SetCase.jl")
 include("CzmBC.jl")  # CZM 边界条件（含支承/端点约束解析、方向投影与刚体转动规范）
 include("czm.jl")  # CZM 本构与系统装配
@@ -46,7 +46,7 @@ export Mesh1D, Mesh2D, GetGS, LagrangeBasis, GSweight, ShapeFunction1D, Normalis
 export SPM, Solve, SPMe, SPMe_element, ModelInitialisation
 export ModelInitialisation_MultiSPMe, extract_element_state, get_thermal_dofs
 export update_state
-export MultiSPMeLayout, MeshGeometry, CohesiveElementGeom, CZMAssemblyWorkspace
+export CohesiveElementGeom, CZMAssemblyWorkspace
 export Arrhenius, IntV, IntQ4
 export jellyroll_collector_seed_mesh, jellyroll_element_properties
 export jellyroll_tab_node_indices, edge_boundary

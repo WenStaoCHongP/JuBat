@@ -81,10 +81,6 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
             n_chem = Nrn + Nrp + Nel
             expected_multi_len = ne * n_chem + nT
 
-            if case.layout === nothing
-                case.layout = MultiSPMeLayout(ne, n_chem, nT, case.mesh["thermal2D"])
-            end
-
             length(y0) == expected_multi_len || throw(DimensionMismatch(
                 "external state length $(length(y0)) does not match multi-SPMe layout length $expected_multi_len"
             ))
@@ -95,11 +91,11 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
     if T_nodes_init !== nothing
         T_nodes_carry = copy(T_nodes_init)
         if multi_spme
-            thermal_range = case.layout.thermal_range
+            thermal_range = case.index["thermal2D temperature"]
             y0[thermal_range] .= T_nodes_carry
         end
     elseif multi_spme
-        thermal_range = case.layout.thermal_range
+        thermal_range = case.index["thermal2D temperature"]
         T_nodes_carry = y0[thermal_range]
     else
         nT_mesh = case.mesh["thermal2D"].nlen
@@ -185,7 +181,7 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
         # 提取温度场
         if case.opt.thermal_enabled
             if multi_spme
-                T_nodes_carry = get_thermal_dofs(y_new, case.layout)
+                T_nodes_carry = get_thermal_dofs(y_new, case)
             else
                 nT = mesh_th.nlen
                 T_nodes_carry = y_c[(end - nT + 1):end]

@@ -161,7 +161,7 @@ function export_cycling_csv(result, case, czm_mesh;
     end
 
     # 6. cohesive_driving_force.csv
-    if !isempty(result.czm_snapshots) && case.geometry !== nothing
+    if !isempty(result.czm_snapshots) && haskey(case.mesh, "thermal2D interface pairs")
         if !("cohesive_driving_force.csv" in csv_opt.skip_files)
             write_csv_guarded!("cohesive_driving_force.csv", files_written, files_skipped) do
                 write_cohesive_driving_force_csv(result, case, czm_mesh, output_dir, overwrite, csv_opt)
@@ -472,15 +472,14 @@ function write_cohesive_driving_force_csv(result, case, czm_mesh,
         return
     end
 
-    geo = case.geometry
-    if geo === nothing
+    if !haskey(case.mesh, "thermal2D interface pairs")
         println("  Skipping $filepath (no geometry data)")
         return
     end
 
     # Build cohesive-to-thermal-element mapping
     # interface_pairs is Vector{Tuple{Int,Int}}
-    interface_pairs = geo.interface_pairs
+    interface_pairs = case.mesh["thermal2D interface pairs"]
     coh_thermal_map = Dict{Int, Tuple{Int,Int}}()
     for (idx, pair) in enumerate(interface_pairs)
         if idx <= n_coh

@@ -428,7 +428,7 @@ function reset_cycle_temperature!(case::Case, state::Dict{String,Any})
 
     y = state["y"]
     thermal_indices = if case.opt.per_element_spme
-        case.layout.thermal_range
+        case.index["thermal2D temperature"]
     elseif case.opt.thermalmodel == "lumped"
         case.index["temperature"]
     else

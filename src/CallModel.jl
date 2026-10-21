@@ -51,16 +51,10 @@ function particle_volume_average(c::AbstractVector{Float64}, mesh::Mesh)
 end
 
 function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
-    # 验证前提条件
-    if case.layout === nothing
-        error("CallModel_MultiSPMe requires case.layout to be set. Did you call ModelInitialisation_MultiSPMe?")
-    end
-    
-    layout = case.layout
-    ne = layout.ne
-    n_chem = layout.n_chem
-    nT = layout.nT
     mesh_th = case.mesh["thermal2D"]
+    ne = size(mesh_th.element, 1)
+    n_chem = case.index["SPMe chemical block length"]
+    nT = mesh_th.nlen
     param = case.param
     
     # 初始化 variables（提前，以便后续缓存/读取中使用）
@@ -68,16 +62,16 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     
     # 1) 解析状态向量
     # 提取热场
-    T_nodes = get_thermal_dofs(yt, case.layout)
+    T_nodes = get_thermal_dofs(yt, case)
     # 提取每个单元的电化学状态（使用 @views 消除拷贝）
     yt_chem = Vector{SubArray{Float64,1}}(undef, ne)
     for e in 1:ne
-        offset = (e - 1) * layout.n_chem
-        yt_chem[e] = @view yt[(offset + 1):(offset + layout.n_chem)]
+        offset = (e - 1) * n_chem
+        yt_chem[e] = @view yt[(offset + 1):(offset + n_chem)]
     end
     
     # 2) 使用缓存的元素面积（网格不变量）
-    areas = layout.areas
+    areas = case.mesh["thermal2D element area"]
     variables["thermal2D element area"] = areas
     
     Te_prev = zeros(Float64, ne)

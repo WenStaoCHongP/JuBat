@@ -21,10 +21,8 @@ function state_concentration_variance(case::Case, y_state)
     Nrp = case.mesh["positive particle"].nlen
 
     if multi_spme
-        layout = case.layout
-        layout === nothing && error("state_concentration_variance requires case.layout in multi-SPMe mode")
-        ne = layout.ne
-        n_chem = layout.n_chem
+        ne = size(case.mesh["thermal2D"].element, 1)
+        n_chem = case.index["SPMe chemical block length"]
         length(y) >= ne * n_chem || throw(DimensionMismatch("state vector length $(length(y)) is smaller than the multi-SPMe chemical state length $(ne * n_chem)"))
         cs_n_all = Float64[]
         cs_p_all = Float64[]
