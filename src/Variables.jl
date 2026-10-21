@@ -271,7 +271,7 @@ function create_element_workspace(case::Case)
     return ws
 end
 
-function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Float64}}, variables::Dict{String, Union{Array{Float64},Float64}}, v::Int64)
+function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Float64}}, variables::Dict{String, Union{Array{Float64},Float64}}, v::Int64; debug_coupling::Bool=false)
     # 检查是否需要扩展数组（动态增长）
     for k in keys(variables_hist)
         if isa(variables_hist[k], Array{Float64}) && ndims(variables_hist[k]) == 2
@@ -292,36 +292,40 @@ function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Floa
         k in hist_keys || continue
         hist_val = variables_hist[k]
         if isa(hist_val, Array{Float64})
-            ndims(hist_val) == 2 || throw(DimensionMismatch("history variable \"$k\" must be a matrix"))
+            if debug_coupling
+                ndims(hist_val) == 2 || throw(DimensionMismatch("history variable \"$k\" must be a matrix"))
+            end
             nrows = size(hist_val, 1)
             if isa(val, Array{Float64})
-                if ndims(val) == 1
-                    col = val
-                elseif ndims(val) == 2
-                    size(val, 2) == 1 || throw(DimensionMismatch(
-                        "variable \"$k\" must have exactly one column, got size $(size(val))"
-                    ))
-                    col = @view val[:, 1]
-                else
-                    throw(DimensionMismatch(
-                        "variable \"$k\" must be a vector or single-column matrix, got $(ndims(val)) dimensions"
+                if debug_coupling
+                    if ndims(val) == 2
+                        size(val, 2) == 1 || throw(DimensionMismatch(
+                            "variable \"$k\" must have exactly one column, got size $(size(val))"
+                        ))
+                    elseif ndims(val) != 1
+                        throw(DimensionMismatch(
+                            "variable \"$k\" must be a vector or single-column matrix, got $(ndims(val)) dimensions"
+                        ))
+                    end
+                    length(val) == nrows || throw(DimensionMismatch(
+                        "variable \"$k\" length $(length(val)) does not match history row count $nrows"
                     ))
                 end
-
-                length(col) == nrows || throw(DimensionMismatch(
-                    "variable \"$k\" length $(length(col)) does not match history row count $nrows"
-                ))
-                hist_val[:, v] = col
+                hist_val[:, v] = vec(val)
             elseif isa(val, Float64)
-                nrows == 1 || throw(DimensionMismatch(
-                    "scalar variable \"$k\" cannot populate history with $nrows rows"
-                ))
+                if debug_coupling
+                    nrows == 1 || throw(DimensionMismatch(
+                        "scalar variable \"$k\" cannot populate history with $nrows rows"
+                    ))
+                end
                 hist_val[1, v] = val
             end
         elseif isa(hist_val, Float64)
-            isa(val, Float64) || throw(ArgumentError(
-                "scalar history variable \"$k\" requires a Float64 value, got $(typeof(val))"
-            ))
+            if debug_coupling
+                isa(val, Float64) || throw(ArgumentError(
+                    "scalar history variable \"$k\" requires a Float64 value, got $(typeof(val))"
+                ))
+            end
             variables_hist[k] = val
         end
     end

@@ -91,6 +91,6 @@ end
     collector_seeded::Bool = false     # use collector-seeded band mesh semantics (layer_weights)
     per_element_spme::Bool = false     # allow passing per-element I_app and T to SPMe
     czm::CzmOptions = CzmOptions()     # CZM (Cohesive Zone Model) 模块选项（嵌套收敛，2026-08-30 重构）
-    debug_coupling::Bool = false       # print detailed logs for electro-thermal coupling
+    debug_coupling::Bool = false       # enable coupling diagnostic checks and detailed logs
     debug_log_path::String = "output/debug.log"  # debug log file path
 end

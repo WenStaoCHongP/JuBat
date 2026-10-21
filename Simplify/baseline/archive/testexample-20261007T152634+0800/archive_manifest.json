@@ -1,0 +1,22 @@
+[
+  {
+    "file": "metrics.toml",
+    "sha256": "6bff5ffba5f4c6203d3487bcd85ca6ff0de7cf685a9fb0dbe3d084654406a859"
+  },
+  {
+    "file": "preflight.log",
+    "sha256": "1feb6180fed6a4fde727c77632d0701aff2ca0073b1b06ec82797daea7d81e41"
+  },
+  {
+    "file": "README.md",
+    "sha256": "b9169eba15ffb65a262f194584456d495e608194d3908ad560d789b37b936797"
+  },
+  {
+    "file": "run.log",
+    "sha256": "15dd1b8de5c28d16b383bb0327832f363cecb980839078fd90b79aa462d07afd"
+  },
+  {
+    "file": "source_manifest.tsv",
+    "sha256": "df77ebd70af67396358fbb1460895500b34cde35922e3454712535a15fc397cf"
+  }
+]

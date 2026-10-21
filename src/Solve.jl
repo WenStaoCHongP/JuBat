@@ -208,7 +208,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         chemical_step_observer((; kind = :init_BE, h = dt_init, t_eval = t,
             M = M_old, K = K_old, F = F_old, y_before = y0[vc], y_after = y_c))
     end
-    Variable_update!(variables_hist, variables, v)
+    Variable_update!(variables_hist, variables, v; debug_coupling=case.opt.debug_coupling)
     latest_macro_stress === nothing ||
         write_macro_stress!(variables_hist, v, latest_macro_stress)
     t += dt
@@ -317,7 +317,7 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             # record the results
             if case.opt.outputType == "auto" || abs(t - RunTime[vt]) < 1e-7
                 v = v + 1
-                Variable_update!(variables_hist, variables, v)
+                Variable_update!(variables_hist, variables, v; debug_coupling=case.opt.debug_coupling)
                 latest_macro_stress === nothing ||
                     write_macro_stress!(variables_hist, v, latest_macro_stress)
                 if abs(t - RunTime[vt]) < 1e-7
