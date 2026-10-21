@@ -309,8 +309,8 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
     end
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
-    case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th, case.param)
-    case.mech = JuBat.MechState(case.czm_mesh)
+    case.mesh["czm"] = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th, case.param)
+    case.mech = JuBat.MechState(case.mesh["czm"])
 
     # 极耳窗口节点组核对（空组=极耳物理静默，必须在结果中可见）
     pos_groups, neg_groups = JuBat.jellyroll_tab_node_groups(mesh_th, case.param)
@@ -345,8 +345,8 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
     if status == "OK"
         k = length(result.cycle_idx)
         fm = result.final_mech === nothing ? case.mech : result.final_mech
-        idx_pcc = findall(e -> e.interface_type == :PE_PCC, case.czm_mesh.cohesive_elements)
-        idx_ncc = findall(e -> e.interface_type == :NE_NCC, case.czm_mesh.cohesive_elements)
+        idx_pcc = findall(e -> e.interface_type == :PE_PCC, case.mesh["czm"].cohesive_elements)
+        idx_ncc = findall(e -> e.interface_type == :NE_NCC, case.mesh["czm"].cohesive_elements)
         pcc_dmg = count(s -> s.D > 1e-8, fm.damage_states[idx_pcc])
         ncc_dmg = count(s -> s.D > 1e-8, fm.damage_states[idx_ncc])
         @printf("  OK: 墙钟 %.1f s ｜ T_max=%.2f K ｜ D_max=%.3e（PCC %d / NCC %d 损伤）｜ 放电 %.3f Ah\n",
@@ -378,10 +378,10 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
             n_coh = length(result.czm_snapshots[1].damage)
             open(joinpath(casedir, "element_map.csv"), "w") do io
                 println(io, "elem_id,interface,x_m,y_m")
-                for (j, elem) in enumerate(case.czm_mesh.cohesive_elements)
+                for (j, elem) in enumerate(case.mesh["czm"].cohesive_elements)
                     ns = vcat(elem.nodes_bottom, elem.nodes_top)
-                    x = sum(case.czm_mesh.node[ns, 1]) / length(ns) * case.param.scale.L
-                    y = sum(case.czm_mesh.node[ns, 2]) / length(ns) * case.param.scale.L
+                    x = sum(case.mesh["czm"].node[ns, 1]) / length(ns) * case.param.scale.L
+                    y = sum(case.mesh["czm"].node[ns, 2]) / length(ns) * case.param.scale.L
                     println(io, "$j,$(string(elem.interface_type)),$x,$y")
                 end
             end
@@ -473,10 +473,10 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
             init_xy = if e_init == 0
                 (NaN, NaN)
             else
-                ns = vcat(case.czm_mesh.cohesive_elements[e_init].nodes_bottom,
-                          case.czm_mesh.cohesive_elements[e_init].nodes_top)
-                (sum(case.czm_mesh.node[ns, 1]) / length(ns) * L_scale,
-                 sum(case.czm_mesh.node[ns, 2]) / length(ns) * L_scale)
+                ns = vcat(case.mesh["czm"].cohesive_elements[e_init].nodes_bottom,
+                          case.mesh["czm"].cohesive_elements[e_init].nodes_top)
+                (sum(case.mesh["czm"].node[ns, 1]) / length(ns) * L_scale,
+                 sum(case.mesh["czm"].node[ns, 2]) / length(ns) * L_scale)
             end
             # 温度/电流：逐相位 solve_result 时间序列中取 |t−t_sel| 最近步
             node_T = fill(NaN, size(mesh_th.node, 1))

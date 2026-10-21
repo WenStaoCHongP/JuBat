@@ -60,8 +60,8 @@ function main()
     ne = size(mesh_th.element, 1)
 
     czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th, case.param)
-    case.czm_mesh = czm_mesh
-    n_coh = czm_mesh.n_cohesive
+    case.mesh["czm"] = czm_mesh
+    n_coh = length(czm_mesh.cohesive_elements)
 
     @printf("  热单元: %d,  节点: %d,  CZM单元: %d\n", ne, mesh_th.nlen, n_coh)
 

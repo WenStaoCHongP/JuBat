@@ -206,7 +206,7 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64)
     # 恢复前提：恢复未合并热网格拓扑，启用本块，并重新验证双向耦合与收敛行为。
     # =========================================================================================
     # if case.opt.czm.enabled
-    #     czm_mesh = case.czm_mesh
+    #     czm_mesh = case.mesh["czm"]
     #     param = case.param
     #     for (elem_idx, czm_elem) in enumerate(czm_mesh.cohesive_elements)
     #         state = case.mech.damage_states[elem_idx]

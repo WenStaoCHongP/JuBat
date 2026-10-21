@@ -15,7 +15,7 @@ if "--capture-baseline" in ARGS
     loading="include(joinpath(@__DIR__, \"../src/JuBat.jl\"))"
     needle="result = JuBat.Solve(case)"
     @assert count(loading,original)==1 && count(needle,original)==1
-    capture="chemistry66 = NamedTuple[]\n    result = JuBat.Solve(case; return_final_state=true, chemical_step_observer=ev -> begin\n        ev.kind == :accepted_commit || return\n        push!(chemistry66, (;t_eval=ev.t_eval, y_before=copy(ev.y_before), y_after=copy(ev.y_after)))\n    end)\n    serialize(joinpath(OUT66, \"baseline-result.bin\"), (;result, chemistry=chemistry66, final=deepcopy(case.mech)))\n    serialize(joinpath(OUT66, \"baseline-geometry.bin\"), (thermal_nodes=case.mesh[\"thermal2D\"].node, thermal_elements=case.mesh[\"thermal2D\"].element, mechanical_nodes=case.czm_mesh.node, mechanical_elements=case.czm_mesh.bulk_element))"
+    capture="chemistry66 = NamedTuple[]\n    result = JuBat.Solve(case; return_final_state=true, chemical_step_observer=ev -> begin\n        ev.kind == :accepted_commit || return\n        push!(chemistry66, (;t_eval=ev.t_eval, y_before=copy(ev.y_before), y_after=copy(ev.y_after)))\n    end)\n    serialize(joinpath(OUT66, \"baseline-result.bin\"), (;result, chemistry=chemistry66, final=deepcopy(case.mech)))\n    serialize(joinpath(OUT66, \"baseline-geometry.bin\"), (thermal_nodes=case.mesh[\"thermal2D\"].node, thermal_elements=case.mesh[\"thermal2D\"].element, mechanical_nodes=case.mesh[\"czm\"].node, mechanical_elements=case.mesh[\"czm\"].bulk_element))"
     instrumented=replace(replace(original,loading=>""),needle=>capture)
     write(joinpath(OUT66,"baseline-original-sha256.txt"),bytes2hex(sha256(original)))
     write(joinpath(OUT66,"baseline-instrumented.jl"),instrumented)
@@ -202,14 +202,14 @@ function consumer66()
         thermal_enabled=true,thermalmodel="distributed2D",per_element_spme=true))
     md = JuBat.jellyroll_collector_seed_mesh(c.param;nθ=12,czm_enabled=true,gsorder=2)
     c = JuBat.setup_thermal2D_mesh(c,md)
-    c.czm_mesh = JuBat.create_czm_mesh(md.czm_submesh,c.mesh["thermal2D"],c.param)
-    c.mech = JuBat.MechState(c.czm_mesh)
+    c.mesh["czm"] = JuBat.create_czm_mesh(md.czm_submesh,c.mesh["thermal2D"],c.param)
+    c.mech = JuBat.MechState(c.mesh["czm"])
     m = c.mesh["thermal2D"]; ne = size(m.element,1)
     v = Dict{String,Union{Array{Float64},Float64}}("T_nodes"=>fill(c.param.cell.T0+0.001,m.nlen),
         "thermal2D element soc_n"=>fill(c.param.NE.cs0-0.02,ne),
         "thermal2D element soc_p"=>fill(c.param.PE.cs0+0.02,ne))
     K,F = JuBat.assemble_bonded_elastic(c,v)
-    bulk = JuBat.assemble_bulk_stiffness(c.czm_mesh,c.param)
+    bulk = JuBat.assemble_bulk_stiffness(c.mesh["czm"],c.param)
     oneD = Dict(k=>(copy(mm.gs.Ni),copy(mm.gs.dNidx),copy(mm.gs.detJ)) for (k,mm) in c.mesh if mm isa JuBat.Mesh && mm.dimension==1)
     for typ in ("L2","L3")
         mm=JuBat.SetMesh([0.,1.],4,typ,2)

@@ -172,8 +172,8 @@ function main()
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
 
-    case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
-    case.mech = JuBat.MechState(case.czm_mesh)
+    case.mesh["czm"] = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
+    case.mech = JuBat.MechState(case.mesh["czm"])
 
     ne = size(mesh_th.element, 1)
     println("OK: Jellyroll网格创建完成")
@@ -215,7 +215,7 @@ function main()
                 count(s -> s.D >= 0.99, gp), count(s -> s.fractured, gp), length(gp))
         end
         for (iface,) in ((:PE_PCC,), (:NE_NCC,))
-            idx = findall(e -> e.interface_type == iface, case.czm_mesh.cohesive_elements)
+            idx = findall(e -> e.interface_type == iface, case.mesh["czm"].cohesive_elements)
             states = mech.damage_states[idx]
             @printf("  %s: fractured=%d, D>0.9=%d, D>0.99=%d, D_max=%.6f / %d\n",
                 string(iface), count(s -> s.fractured, states),
@@ -293,10 +293,10 @@ function main()
         n_coh = length(result.czm_snapshots[1].damage)
         open(joinpath(outdir, "element_map.csv"), "w") do io
             println(io, "elem_id,interface,x_m,y_m")
-            for (j, elem) in enumerate(case.czm_mesh.cohesive_elements)
+            for (j, elem) in enumerate(case.mesh["czm"].cohesive_elements)
                 ns = vcat(elem.nodes_bottom, elem.nodes_top)
-                x = sum(case.czm_mesh.node[ns, 1]) / length(ns) * case.param.scale.L
-                y = sum(case.czm_mesh.node[ns, 2]) / length(ns) * case.param.scale.L
+                x = sum(case.mesh["czm"].node[ns, 1]) / length(ns) * case.param.scale.L
+                y = sum(case.mesh["czm"].node[ns, 2]) / length(ns) * case.param.scale.L
                 println(io, "$j,$(string(elem.interface_type)),$x,$y")
             end
         end
@@ -356,7 +356,7 @@ function main()
             open(joinpath(outdir, "node_displacement.csv"), "w") do f
                 println(f, "cycle,phase,time_s,node_id,ux,uy")
                 for s in result.czm_snapshots
-                    nn = case.czm_mesh.nnode
+                    nn = size(case.mesh["czm"].node, 1)
                     for n in 1:nn
                         println(f, "$(s.cycle),$(s.phase),$(s.time_s),$n,$(s.displacement[2n-1]*L),$(s.displacement[2n]*L)")
                     end
@@ -419,7 +419,7 @@ function main()
 
         # element_strain.csv（快照时刻单元中心总机械应变，无量纲；弹性应变=总应变−ε0）
         if !isempty(result.czm_snapshots)
-            cm = case.czm_mesh
+            cm = case.mesh["czm"]
             open(joinpath(outdir, "element_strain.csv"), "w") do f
                 println(f, "cycle,phase,time_s,elem_id,eps_xx,eps_yy,gam_xy")
                 for s in result.czm_snapshots
@@ -454,7 +454,7 @@ function main()
     end
 
     for (iface, ip) in ((:PE_PCC, case.param.PCC), (:NE_NCC, case.param.NCC))
-        idx = findall(e -> e.interface_type == iface, case.czm_mesh.cohesive_elements)
+        idx = findall(e -> e.interface_type == iface, case.mesh["czm"].cohesive_elements)
         states = fm.damage_states[idx]
         @printf("  %s 最终: D>0单元数=%d, D>=0.99单元数=%d, D_mean=%.4e\n",
             string(iface), count(s -> s.D > 1e-8, states),

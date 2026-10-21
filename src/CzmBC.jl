@@ -108,7 +108,7 @@ function apply_bc_czm(K::SparseMatrixCSC{Float64,Int64}, F::Vector{Float64}; bc_
 end
 
 function identify_bc_nodes_czm(czm_mesh::CohesiveMesh, param; opt=nothing, fix_inner::Bool=true)
-    nnode = czm_mesh.nnode
+    nnode = size(czm_mesh.node, 1)
     bc_nodes = Dict{Int64, Symbol}()
 
     is_inner, is_outer = identify_boundary_nodes(czm_mesh, param, opt)

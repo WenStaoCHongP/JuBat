@@ -73,7 +73,7 @@ function run_czm_case(param_dim, nθ)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
 
     czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
-    case.czm_mesh = czm_mesh
+    case.mesh["czm"] = czm_mesh
 
     result = JuBat.Solve(case)
     return result, czm_mesh, mesh_data
@@ -166,7 +166,7 @@ function main()
     for (i, nθ) in enumerate(nθ_list)
         r = all_results[nθ]
         t_c = r["time [s]"]
-        n_coh = all_czm[nθ].n_cohesive
+        n_coh = length(all_czm[nθ].cohesive_elements)
 
         if i == ref_idx
             push!(D_l2, 0.0); push!(nfrac_l2, 0.0); push!(delta_l2, 0.0)

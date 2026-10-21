@@ -95,7 +95,7 @@ end
     # Its unreachable row body is unchanged except for the mesh-owned pair lookup.
     for (tag, obj) in (("merged",c),("unmerged",unmerged))
         dir = joinpath(OUT_A,tag); mkpath(dir)
-        JuBat.write_cohesive_driving_force_csv(nothing,obj,(n_cohesive=1,),dir,true,JuBat.CsvExportOptions())
+        JuBat.write_cohesive_driving_force_csv(nothing,obj,(cohesive_elements=[nothing],),dir,true,JuBat.CsvExportOptions())
         @test !isfile(joinpath(dir,"cohesive_driving_force.csv"))
     end
 end

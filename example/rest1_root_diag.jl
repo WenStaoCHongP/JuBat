@@ -54,7 +54,7 @@ function committed_gp_separations(czm_mesh, u, elem_id, param)
     n1, n2 = elem.nodes_bottom
     n4, n3 = elem.nodes_top          # 生产节点序：dofs=[n1,n2,n3,n4]
     _, _, _, R = JuBat.cohesive_local_frame(czm_mesh, elem)
-    order = czm_mesh.bulk_mesh.gs.order
+    order = czm_mesh.czm_submesh.mesh_bonded.gs.order
     _, pts = JuBat.NCweight(order)   # 5.7.3-①：NCweight 返回 (w, q)，旧版误接为 (pts, w)
     order == 2 && (pts == [-1.0, 1.0] || error("committed_gp_separations: NC order2 pts != [-1,1]"))
     Λ = param.scale.L / param.scale.δ_czm
@@ -125,8 +125,8 @@ function run_diag(t_all, last_stage, last_phase, last_accepted_step)
     czm.fix_inner, czm.fix_start, czm.fix_end = false, false, true
     czm.endpoint_variant = :omit_a
     czm.area_loss_enabled = true
-    boundary = JuBat.resolve_mechanical_bc(case.czm_mesh, case.param, czm; opt=case.opt)
-    cm, param = case.czm_mesh, case.param
+    boundary = JuBat.resolve_mechanical_bc(case.mesh["czm"], case.param, czm; opt=case.opt)
+    cm, param = case.mesh["czm"], case.param
     δ_czm, σ_czm = param.scale.δ_czm, param.scale.σ_czm
 
     steps = Any[]
@@ -301,10 +301,11 @@ function run_diag(t_all, last_stage, last_phase, last_accepted_step)
     last_stage[] = "BASE"
     last_phase[] = "rest1"           # 5.7.3-④：重放阶段为 rest1
     ms_base = deepcopy(phase_end_ms["discharge"])
+    workspace_base = JuBat.CZMWorkspace(cm,param)
     base_rows = Any[]
     for (k,s) in enumerate(rest1_steps)
         last_accepted_step[] = k     # 5.7.3-④：BASE 自己的索引，非 capture 计数
-        r = JuBat.solve_czm_step(cm, ms_base, param, s.F_ext, czm;
+        r = JuBat.solve_czm_step(cm, ms_base, param, s.F_ext, czm; czm_workspace=workspace_base,
             dT_elem = s.dT, Δsoc_n_elem = s.dsn, Δsoc_p_elem = s.dsp,
             dt_seconds = s.dt, boundary = boundary)
         r.converged || error("R_BASE step $k did not converge")
@@ -333,11 +334,12 @@ function run_diag(t_all, last_stage, last_phase, last_accepted_step)
     # --- C: R_HOLD_ALL ---
     last_stage[] = "HOLD"
     ms_hold = deepcopy(phase_end_ms["discharge"])
+    workspace_hold = JuBat.CZMWorkspace(cm,param)
     hold_rows = Any[]
     t_acc = 0.0
     for (k,s) in enumerate(rest1_steps)
         last_accepted_step[] = k     # 5.7.3-④：HOLD 自己的索引
-        r = JuBat.solve_czm_step(cm, ms_hold, param, last_dis.F_ext, czm;
+        r = JuBat.solve_czm_step(cm, ms_hold, param, last_dis.F_ext, czm; czm_workspace=workspace_hold,
             dT_elem = last_dis.dT, Δsoc_n_elem = last_dis.dsn, Δsoc_p_elem = last_dis.dsp,
             dt_seconds = s.dt, boundary = boundary)
         r.converged || error("R_HOLD_ALL step $k did not converge")

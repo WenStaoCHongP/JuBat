@@ -153,9 +153,9 @@ function StandardVariables(case::Case, num::Int64)
         if case.opt.czm.winding_prestress
             variables["winding prestress"] = zeros(Float64, 1, num)
         end
-        if case.czm_mesh !== nothing
-            n_coh = case.czm_mesh.n_cohesive
-            n_czm_nodes = case.czm_mesh.nnode
+        if haskey(case.mesh, "czm")
+            n_coh = length(case.mesh["czm"].cohesive_elements)
+            n_czm_nodes = size(case.mesh["czm"].node, 1)
             variables["czm damage"] = zeros(Float64, n_coh, num)
             variables["czm displacement x"] = zeros(Float64, n_czm_nodes, num)
             variables["czm displacement y"] = zeros(Float64, n_czm_nodes, num)
@@ -164,7 +164,7 @@ function StandardVariables(case::Case, num::Int64)
             variables["czm separation normal"] = zeros(Float64, n_coh, num)
             variables["czm separation tangent"] = zeros(Float64, n_coh, num)
             variables["czm separation effective"] = zeros(Float64, n_coh, num)
-            ne_czm = size(case.czm_mesh.bulk_element, 1)
+            ne_czm = size(case.mesh["czm"].bulk_element, 1)
             if case.opt.czm.j2_plasticity
                 variables["diffusion stress xx"] = fill(NaN, ne_czm, num)
                 variables["diffusion stress yy"] = fill(NaN, ne_czm, num)
@@ -263,8 +263,8 @@ function create_element_workspace(case::Case)
         ws["czm D_max"] = 0.0
         ws["czm D_mean"] = 0.0
         ws["czm n_fractured"] = 0.0
-        if case.czm_mesh !== nothing
-            ws["czm damage"] = zeros(Float64, case.czm_mesh.n_cohesive, 1)
+        if haskey(case.mesh, "czm")
+            ws["czm damage"] = zeros(Float64, length(case.mesh["czm"].cohesive_elements), 1)
         end
     end
 

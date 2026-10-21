@@ -345,7 +345,7 @@ function write_cohesive_damage_csv(result, case, czm_mesh,
     end
 
     scale = case.param.scale
-    n_coh = czm_mesh.n_cohesive
+    n_coh = length(czm_mesh.cohesive_elements)
 
     # Precompute element properties
     # θ 用半径反解累计角（同 edge_boundary：θ_cum = (r−a)/b，r = a + b·θ_cum），
@@ -413,7 +413,7 @@ function write_node_displacement_csv(result, case, czm_mesh,
     end
 
     scale = case.param.scale
-    nnode = czm_mesh.nnode
+    nnode = size(czm_mesh.node, 1)
     node_x = czm_mesh.node[:, 1] * scale.L
     node_y = czm_mesh.node[:, 2] * scale.L
 
@@ -457,7 +457,7 @@ function write_cohesive_driving_force_csv(result, case, czm_mesh,
     end
 
     scale = case.param.scale
-    n_coh = czm_mesh.n_cohesive
+    n_coh = length(czm_mesh.cohesive_elements)
     T_ref = scale.T_ref
 
     # CZM effective params (thermal/diffusion strain coupling)

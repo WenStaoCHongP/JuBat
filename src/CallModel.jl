@@ -9,14 +9,14 @@
 非法输入显式失败，不得吞并为无损或静默跳过。）
 """
 function map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, damage_states::AbstractVector{DamageState}, ne_thermal::Int)
-	czm_mesh.cohesive_to_thermal !== nothing || error(
+	czm_mesh.czm_submesh !== nothing || error(
 		"map_czm_damage_to_thermal: cohesive_to_thermal 映射缺失（结构非法，不得静默回退）")
-	n_coh = czm_mesh.n_cohesive
+	n_coh = length(czm_mesh.cohesive_elements)
 	length(damage_states) == n_coh || error(
 		"map_czm_damage_to_thermal: damage_states 长度 $(length(damage_states)) != n_cohesive $n_coh")
 	D_per_thermal = zeros(ne_thermal)
 	for e_coh in 1:n_coh
-		e_thermal = czm_mesh.cohesive_to_thermal[e_coh]
+		e_thermal = czm_mesh.czm_submesh.thermal_elem_map[czm_mesh.cohesive_elements[e_coh].host_outer_elem]
 		1 <= e_thermal <= ne_thermal || error(
 			"map_czm_damage_to_thermal: cohesive $e_coh 映射越界 e_thermal=$e_thermal（ne_thermal=$ne_thermal）")
 		D = damage_states[e_coh].D
@@ -104,12 +104,12 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 不再按 czm.enabled 分叉；完全没有反馈源（未挂 czm_mesh 且 CZM 关）才是合法几何权重路径。
     D_elem_area_loss = nothing
     if case.opt.czm.area_loss_enabled
-        if case.czm_mesh !== nothing
+        if haskey(case.mesh, "czm")
             case.mech !== nothing || error(
                 "CallModel_MultiSPMe: area_loss_enabled 且存在 czm_mesh（反馈源），但 case.mech 缺失（非法状态）")
-            case.czm_mesh.cohesive_to_thermal !== nothing || error(
+            case.mesh["czm"].czm_submesh !== nothing || error(
                 "CallModel_MultiSPMe: area_loss_enabled 且反馈源存在，但 cohesive_to_thermal 映射缺失（非法状态，不得静默回退几何权重）")
-            D_elem_area_loss = map_czm_damage_to_thermal(case.czm_mesh, case.mech.damage_states, ne)
+            D_elem_area_loss = map_czm_damage_to_thermal(case.mesh["czm"], case.mech.damage_states, ne)
         elseif case.opt.czm.enabled
             error("CallModel_MultiSPMe: area_loss_enabled 且 CZM 启用，但缺少 czm_mesh（非法状态，不得静默回退几何权重）")
         end
@@ -168,9 +168,9 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 6) 计算逐单元热源（调用 ThermalDistributed.jl 中的统一函数)
     t_thermal_ns = time_ns()
     t_czm_model_s = 0.0
-    if case.opt.czm.enabled == true && case.czm_mesh !== nothing
+    if case.opt.czm.enabled == true && haskey(case.mesh, "czm")
         t_czm_ns = time_ns()
-        variables = compute_heat_sources_with_czm(case, variables, variables_elems, I_e, Te_prev, areas, case.czm_mesh, mesh_th)
+        variables = compute_heat_sources_with_czm(case, variables, variables_elems, I_e, Te_prev, areas, case.mesh["czm"], mesh_th)
         t_czm_model_s = (time_ns() - t_czm_ns) * 1e-9
         # 记录 CZM 摘要统计
         stats = get_damage_statistics(case.mech.damage_states)

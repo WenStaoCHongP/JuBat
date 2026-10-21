@@ -31,7 +31,7 @@ function audit_mesh(pd, param, ntheta)
     cross_areas, _ = JuBat.jellyroll_element_properties(thermal, param)
     cross_areas .*= L^2
     @assert all(>(0.0), cross_areas)
-    @assert czm.n_cohesive == 4ne
+    @assert length(czm.cohesive_elements) == 4ne
 
     first_inner = thermal.element[1, 1]
     last_inner = thermal.element[end, 4]
@@ -49,7 +49,7 @@ function audit_mesh(pd, param, ntheta)
     face_areas = zeros(ne, 4)
     face_counts = zeros(Int, ne, 4)
     for (j, elem) in enumerate(czm.cohesive_elements)
-        e = czm.cohesive_to_thermal[j]
+        e = czm.czm_submesh.thermal_elem_map[czm.cohesive_elements[j].host_outer_elem]
         inner_material = data.czm_submesh.material_type[elem.host_inner_elem]
         column = if elem.interface_type == :PE_PCC
             inner_material == :PE ? 1 : inner_material == :PCC ? 2 : error("Invalid PE face")

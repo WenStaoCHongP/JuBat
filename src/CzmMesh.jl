@@ -79,7 +79,6 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)
     bulk_element_new = Matrix{Int}(sub_mesh.element)
 
     cohesive_elements = CohesiveElement[]
-    cohesive_to_thermal = Vector{Int}(undef, n_cohesive)
     sizehint!(cohesive_elements, n_cohesive)
 
     for (i, (e_inner, e_outer, iface)) in enumerate(interface_pairs)
@@ -136,25 +135,13 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh, param)
         thermal_elem_of_outer = czm_submesh.thermal_elem_map[e_outer]
         @assert thermal_elem_of_outer > 0 "外层单元 $e_outer 的 thermal_elem_map 无效"
         @assert thermal_elem_of_outer <= n_thermal "外层单元 $e_outer thermal_elem_map=$thermal_elem_of_outer 超出热网格范围 $n_thermal"
-        cohesive_to_thermal[i] = thermal_elem_of_outer
     end
 
     # 裁剪 extended_node
     extended_node = extended_node[1:new_node_count, :]
 
     # Step 4: 组装 CohesiveMesh（损伤状态自 2026-08-30 重构起存于 MechState，不在网格上）
-    czm_mesh = CohesiveMesh()
-    czm_mesh.bulk_mesh = sub_mesh
-    czm_mesh.node = extended_node
-    czm_mesh.nnode = new_node_count
-    czm_mesh.bulk_element = bulk_element_new
-    czm_mesh.cohesive_elements = cohesive_elements
-    czm_mesh.n_cohesive = n_cohesive
-    czm_mesh.n_layers = 2   # 遗留字段：N_type^coh=2；真实面数/重复单元=4，总离散数=4*n_segments
-    czm_mesh.node_map = Dict(n => [n, c] for (n, c) in node_copy)
-    czm_mesh.interface_nodes = [[]]   # 旧字段，保留兼容
-    czm_mesh.czm_submesh = czm_submesh
-    czm_mesh.cohesive_to_thermal = cohesive_to_thermal
+    czm_mesh = CohesiveMesh(extended_node, bulk_element_new, cohesive_elements, czm_submesh)
 
     # 正确性自检（spec §4.3）
     for coh in cohesive_elements

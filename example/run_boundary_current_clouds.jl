@@ -43,7 +43,7 @@ function export_case_geometry(case, outdir)
     write_csv(joinpath(outdir,"thermal_elements.csv"),("element","n1","n2","n3","n4"),
         ((e, tm.element[e,1], tm.element[e,2], tm.element[e,3], tm.element[e,4])
          for e in 1:size(tm.element,1)))
-    cm = case.czm_mesh
+    cm = case.mesh["czm"]
     write_csv(joinpath(outdir,"cohesive_elements.csv"),
         ("element","iface","bottom1","bottom2","host_inner_bulk","host_outer_bulk"),
         ((c.id, c.interface_type, c.nodes_bottom[1], c.nodes_bottom[2],
@@ -56,11 +56,11 @@ function export_thermal_damage(case, outdir, tag)
     tm = case.mesh["thermal2D"]
     n_t = size(tm.element,1)
     td = zeros(n_t)
-    for (k,c) in enumerate(case.czm_mesh.cohesive_elements)
+    for (k,c) in enumerate(case.mesh["czm"].cohesive_elements)
         D = case.mech.damage_states[k].D
         D > 0 || continue
         for bulk in (c.host_inner_elem, c.host_outer_elem)
-            te = case.czm_mesh.czm_submesh.thermal_elem_map[bulk]
+            te = case.mesh["czm"].czm_submesh.thermal_elem_map[bulk]
             D > td[te] && (td[te] = D)
         end
     end
@@ -87,7 +87,7 @@ function run_boundary_case(spec, outdir)
     czm = case.opt.czm
     czm.fix_inner, czm.fix_start, czm.fix_end = spec.fix_inner, spec.fix_start, spec.fix_end
     czm.outer_bc, czm.endpoint_variant = spec.outer, spec.variant
-    boundary = JuBat.resolve_mechanical_bc(case.czm_mesh, case.param, czm; opt=case.opt)
+    boundary = JuBat.resolve_mechanical_bc(case.mesh["czm"], case.param, czm; opt=case.opt)
     write_csv(joinpath(outdir,"constraint_nodes.csv"),("node","mode","sources"),
         ((n,m,join(get(boundary.provenance,n,Symbol[]),"|")) for (n,m) in sort(collect(boundary.nodes))))
     ne_thermal, coords_meters, coord_factor = export_case_geometry(case, outdir)

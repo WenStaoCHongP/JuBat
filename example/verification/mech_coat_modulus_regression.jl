@@ -108,7 +108,7 @@ println("="^60)
 
 mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=20, czm_enabled=true, gsorder=2)
 case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
+case.mesh["czm"] = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
 
 variables = Dict{String, Union{Array{Float64},Float64}}()
 thermal_mesh = case.mesh["thermal2D"]

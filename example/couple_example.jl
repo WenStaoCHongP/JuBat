@@ -157,8 +157,8 @@ function main()
 
     # 创建 CZM 网格与演化状态（czm_enabled = true 时必须）
     if opt.czm.enabled
-        case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
-        case.mech = JuBat.MechState(case.czm_mesh)
+        case.mesh["czm"] = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
+        case.mech = JuBat.MechState(case.mesh["czm"])
     end
 
     ne = size(mesh_th.element, 1)
@@ -279,7 +279,7 @@ function main()
     sigma_yy_MPa = result["diffusion stress yy [Pa]"][:, end] .* 1e-6
     sigma_xy_MPa = result["diffusion stress xy [Pa]"][:, end] .* 1e-6
 
-    mechanical_mesh = case.czm_mesh
+    mechanical_mesh = case.mesh["czm"]
     sigma_theta_theta_MPa, tau_r_theta_MPa = rotate_stress_to_polar(
         mechanical_mesh.node,
         mechanical_mesh.bulk_element,

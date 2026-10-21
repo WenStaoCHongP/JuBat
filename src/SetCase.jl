@@ -101,11 +101,10 @@ mutable struct Case
     opt::Option                            # solver options
     mesh::Dict{String, Any}               # discretisation meshes
     index::Dict{String, Union{Array{Int64}, Int64}} # indices of unknowns
-    czm_mesh::Union{Nothing, CohesiveMesh}   # CZM 网格（演化但类型明确）
     mech::Union{Nothing, MechState}      # CZM 布局+u_prev（跨时间步）
 end
 
 # 5 参数兼容构造器
 function Case(param_dim, param, opt, mesh, index)
-    Case(param_dim, param, opt, mesh, index, nothing, nothing)
+    Case(param_dim, param, opt, mesh, index, nothing)
 end

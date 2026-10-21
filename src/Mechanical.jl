@@ -184,24 +184,24 @@ end
 σ_czm；保留现有二维平面应力约定，不主张完整三维厚度伸长。仅可惰性填充参考
 mesh 几何缓存，不调用返回映射，不创建或提交塑性/损伤状态。
 """
-function recover_bulk_stress_geo(czm_mesh, u, param, ε0; prestress=nothing)
+function recover_bulk_stress_geo(czm_mesh, u, param, ε0; czm_workspace::CZMWorkspace, prestress=nothing)
     node, element = czm_mesh.node, czm_mesh.bulk_element
     ne = size(element, 1)
-    size(node) == (czm_mesh.nnode, 2) || throw(DimensionMismatch("recover_bulk_stress_geo: node shape must be (nnode, 2)"))
+    size(node) == (size(czm_mesh.node, 1), 2) || throw(DimensionMismatch("recover_bulk_stress_geo: node shape must be (nnode, 2)"))
     size(element, 2) == 4 || throw(DimensionMismatch("recover_bulk_stress_geo: bulk connectivity must have four columns"))
-    u isa AbstractVector && length(u) == 2 * czm_mesh.nnode || throw(DimensionMismatch("recover_bulk_stress_geo: u must have 2*nnode entries"))
+    u isa AbstractVector && length(u) == 2 * size(czm_mesh.node, 1) || throw(DimensionMismatch("recover_bulk_stress_geo: u must have 2*nnode entries"))
     ε0 isa AbstractVector && length(ε0) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: ε0 must have one entry per bulk element"))
     czm_mesh.czm_submesh === nothing && error("recover_bulk_stress_geo: missing bulk material source")
     mt = czm_mesh.czm_submesh.material_type
     length(mt) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: material count must equal bulk element count"))
-    all(n -> 1 <= n <= czm_mesh.nnode, element) || throw(DimensionMismatch("recover_bulk_stress_geo: bulk node index out of bounds"))
+    all(n -> 1 <= n <= size(czm_mesh.node, 1), element) || throw(DimensionMismatch("recover_bulk_stress_geo: bulk node index out of bounds"))
     all(isfinite, node) && all(isfinite, u) && all(isfinite, ε0) || error("recover_bulk_stress_geo: non-finite geometry, displacement or eigenstrain")
     if prestress !== nothing
         prestress isa AbstractVector && length(prestress) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: S0 must have one entry per bulk element"))
         all(s -> length(s) == 3, prestress) || throw(DimensionMismatch("recover_bulk_stress_geo: each S0 must have three components"))
         all(s -> all(isfinite, s), prestress) || error("recover_bulk_stress_geo: non-finite S0")
     end
-    geom = bulk_gauss_geometry(czm_mesh; gsorder=2)
+    geom = bulk_gauss_geometry(czm_mesh; czm_workspace=czm_workspace, gsorder=2)
     length(geom) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: reference geometry element count mismatch"))
     xx = zeros(ne); yy = zeros(ne); xy = zeros(ne); vm = zeros(ne)
     for e in 1:ne
@@ -282,7 +282,7 @@ alphaT(mt)·dT + Ω(mt)/3·Δsoc(mt)，α/β 分层分辨率）；dT 按父热�
 function macro_eigenstrain(case, variables, T_nodes)
     param = case.param
     strain_in = compute_czm_strain_inputs(case, variables, T_nodes)
-    mt = case.czm_mesh.czm_submesh.material_type
+    mt = case.mesh["czm"].czm_submesh.material_type
     return [eigenstrain_of(param, mt[e], strain_in.dT_czm[e],
                            strain_in.Δsoc_n_czm[e], strain_in.Δsoc_p_czm[e])
             for e in eachindex(mt)]
@@ -307,7 +307,7 @@ function project_bulk_stress(czm_mesh, plastic_states)
     gp_count = zeros(Int, ne)
     max_vm = -Inf
     max_kappa = -Inf
-    gs = czm_mesh.bulk_mesh.gs
+    gs = czm_mesh.czm_submesh.mesh_bonded.gs
     for q in eachindex(gs.weight)
         e = gs.ele[q]
         1 <= e <= ne || error(
@@ -351,9 +351,9 @@ function compute_macro_stress(case, variables, T_nodes)
     if case.opt.czm.j2_plasticity
         case.mech.plastic_states === nothing && error(
             "compute_macro_stress: J2 state is unavailable before the first converged mechanical solve")
-        return project_bulk_stress(case.czm_mesh, case.mech.plastic_states)
+        return project_bulk_stress(case.mesh["czm"], case.mech.plastic_states)
     end
-    czm_mesh = case.czm_mesh
+    czm_mesh = case.mesh["czm"]
     ε0 = macro_eigenstrain(case, variables, T_nodes)
     sigma_xx, sigma_yy, sigma_xy, sigma_vm = recover_bulk_stress(
         czm_mesh.node, czm_mesh.bulk_element, czm_mesh.czm_submesh.material_type,
@@ -382,7 +382,7 @@ J2 路径读取 committed 高斯点状态；无 J2 状态的其他非线性路�
 此处按既有门控原样返回。
 """
 function export_macro_stress(case, variables, variables_hist, v, T_nodes)
-    (case.opt.czm.enabled && case.czm_mesh !== nothing) || return variables_hist
+    (case.opt.czm.enabled && haskey(case.mesh, "czm")) || return variables_hist
     haskey(variables_hist, "diffusion stress xx") || return variables_hist
     stress = compute_macro_stress(case, variables, T_nodes)
     write_macro_stress!(variables_hist, v, stress)
@@ -397,7 +397,7 @@ end
 与逐层特征应变求解线性弹性静力平衡，返回有量纲结果。
 
 # 输入
-- `case.czm_mesh`：需由 `jellyroll_collector_seed_mesh(czm_enabled=true)` +
+- `case.mesh["czm"]`：需由 `jellyroll_collector_seed_mesh(czm_enabled=true)` +
   `create_czm_mesh` 构建（`opt.czm.enabled` 可保持 false，在线 CZM 路径不受影响）
 - `variables["T_nodes"]`：归一化节点温度（T/T_ref；向量或历史矩阵取末列）
 - `variables["thermal2D element soc_n/soc_p"]`：归一化化学计量比
@@ -461,7 +461,7 @@ end
 # 供自由 DOF 平衡残差独立验收；不改变装配本身、材料、罚或求解）。
 function assemble_bonded_elastic(case::Case, variables::Dict{String, Union{Array{Float64},Float64}})
     param = case.param
-    submesh = case.czm_mesh.czm_submesh
+    submesh = case.mesh["czm"].czm_submesh
     mesh = submesh.mesh_bonded
     T_nodes = variables["T_nodes"]
     T_nodes = isa(T_nodes, AbstractVector) ? T_nodes : T_nodes[:, end]
@@ -543,7 +543,7 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     @assert case.param_dim.PE.E_coat > 0 && case.param_dim.NE.E_coat > 0 "宏观力学分析需要 PE/NE.E_coat > 0；当前参数集未定义极片模量（E_coat=0）。请在参数文件中补全 PE/PE.nu_coat/NE.E_coat/NE.nu_coat，或禁用 mechanicalmodel=\"full\"。"
 
     param = case.param
-    submesh = case.czm_mesh.czm_submesh
+    submesh = case.mesh["czm"].czm_submesh
     mesh = submesh.mesh_bonded
     K_mech, F_mech = assemble_bonded_elastic(case, variables)
     T_nodes = variables["T_nodes"]

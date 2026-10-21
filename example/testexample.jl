@@ -122,8 +122,8 @@ function main()
 
     # 创建 CZM 网格（czm_enabled = true 时必须）与演化状态
     if opt.czm.enabled
-        case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
-        case.mech = JuBat.MechState(case.czm_mesh)
+        case.mesh["czm"] = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
+        case.mech = JuBat.MechState(case.mesh["czm"])
     end
 
     ne = size(mesh_th.element, 1)
@@ -234,8 +234,8 @@ function main()
     sigma_yy_MPa = result["diffusion stress yy [Pa]"][:, end] .* 1e-6
     sigma_xy_MPa = result["diffusion stress xy [Pa]"][:, end] .* 1e-6
     sigma_theta_theta_MPa, tau_r_theta_MPa = rotate_stress_to_polar(
-        case.czm_mesh.node,
-        case.czm_mesh.bulk_element,
+        case.mesh["czm"].node,
+        case.mesh["czm"].bulk_element,
         sigma_xx_MPa, sigma_yy_MPa, sigma_xy_MPa)
 
     @printf("  最终环向应力范围: %.4e ~ %.4e MPa\n",

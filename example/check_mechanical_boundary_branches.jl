@@ -96,16 +96,11 @@ function static_mesh_identity(mesh)
         thermal_map=sub.thermal_elem_map, material=sub.material_type,
         winding_turn=sub.winding_turn, phi_pairs=sub.phi_pairs, phi_keep=sub.phi_keep,
         bonded_nodes=sub.mesh_bonded.node, bonded_elements=sub.mesh_bonded.element,
-        gsorder=mesh.bulk_mesh.gs.order)
+        gsorder=mesh.czm_submesh.mesh_bonded.gs.order)
 end
 
 function clone_static_mesh(mesh)
     result = deepcopy(mesh)
-    result.K_bulk = nothing
-    result.cohesive_geom = nothing
-    result.bulk_gp_geom = nothing
-    result.bulk_asm = nothing
-    result.ws = nothing
     return result
 end
 
@@ -152,8 +147,8 @@ function build_collection_case(outdir)
     case = JuBat.SetCase(pd, opt)
     mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=80, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-    case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
-    case.mech = JuBat.MechState(case.czm_mesh)
+    case.mesh["czm"] = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
+    case.mech = JuBat.MechState(case.mesh["czm"])
     JuBat.apply_initial_soc!(case, case.param_dim, 0.65)
     return case
 end
@@ -261,7 +256,7 @@ function collect_input_packet(settings, outdir, sources)
     end
     # 失败输入单独保留，不能冒充已接受时间窗口。
     failed_input = failed[] === nothing ? pending[] : failed[]
-    mesh = clone_static_mesh(case.czm_mesh)
+    mesh = clone_static_mesh(case.mesh["czm"])
     param = captured_param[] === nothing ? deepcopy(case.param) : captured_param[]
     options = captured_options[] === nothing ? deepcopy(case.opt.czm) : captured_options[]
     config = (; origin="example/czm_cycling.jl one complete cycle", ntheta=80, current_A=5.0,
@@ -357,9 +352,9 @@ function unfolded_angles(mesh, param)
     return theta
 end
 
-function gp_fields(mesh, param, ms, options, theta; only_damaged=false)
+function gp_fields(mesh, param, ms, options, theta; czm_workspace, only_damaged=false)
     ms.gp_damage_states === nothing && error("GP fields require committed GP states")
-    geom = JuBat.cohesive_geometry(mesh)
+    geom = JuBat.cohesive_geometry(mesh; czm_workspace=czm_workspace)
     nseg = length(theta)-1
     theta_span = theta[end]-theta[1]
     fields = Any[]
@@ -399,8 +394,8 @@ function gp_fields(mesh, param, ms, options, theta; only_damaged=false)
     return fields
 end
 
-function compact_GP_metrics(mesh,ms,theta)
-    geom = JuBat.cohesive_geometry(mesh)
+function compact_GP_metrics(mesh,ms,theta; czm_workspace)
+    geom = JuBat.cohesive_geometry(mesh; czm_workspace=czm_workspace)
     region_max = zeros(3)
     weighted,total_length = 0.0,0.0
     d_max,dv_max,damaged,fractured = 0.0,0.0,0,0
@@ -426,11 +421,11 @@ function compact_GP_metrics(mesh,ms,theta)
         element_max=maximum(s.D for s in ms.damage_states))
 end
 
-function committed_equilibrium(mesh, param, ms, options, input, boundary)
-    _,fint,_,_ = JuBat.assemble_coupled_system(mesh, ms.u_prev,param;
+function committed_equilibrium(mesh, param, ms, options, input, boundary; czm_workspace)
+    _,fint,_,_ = JuBat.assemble_coupled_system(mesh, ms.u_prev,param; czm_workspace=czm_workspace,
         damage_states=ms.damage_states,gp_damage_states=ms.gp_damage_states,
-        K_bulk_cached=JuBat.bulk_stiffness(mesh,param),geom_cache=JuBat.cohesive_geometry(mesh),
-        ws=JuBat.assembly_workspace(mesh),visc_beta=0.0,czm_model=options.model)
+        K_bulk_cached=JuBat.bulk_stiffness(mesh,param; czm_workspace=czm_workspace),geom_cache=JuBat.cohesive_geometry(mesh; czm_workspace=czm_workspace),
+        ws=JuBat.assembly_workspace(mesh; czm_workspace=czm_workspace),visc_beta=0.0,czm_model=options.model)
     thermal = JuBat.assemble_thermal_chemical_load(mesh,param,input.dT_elem,input.Δsoc_n_elem,input.Δsoc_p_elem)
     raw_residual = input.F_ext + thermal - fint
     return raw_residual, JuBat.mechanical_boundary_diagnostics(ms.u_prev,raw_residual,boundary)
@@ -438,7 +433,7 @@ end
 
 function export_geometry(mesh, param, theta, outdir)
     write_csv(joinpath(outdir,"mesh_nodes.csv"),("node","x_m","y_m"),
-        ((n,mesh.node[n,1]*param.scale.L,mesh.node[n,2]*param.scale.L) for n in 1:mesh.nnode))
+        ((n,mesh.node[n,1]*param.scale.L,mesh.node[n,2]*param.scale.L) for n in 1:size(mesh.node, 1)))
     write_csv(joinpath(outdir,"mesh_bulk_elements.csv"),("element","n1","n2","n3","n4","material","parent_thermal","winding_turn"),
         ((e,mesh.bulk_element[e,:]...,mesh.czm_submesh.material_type[e],mesh.czm_submesh.thermal_elem_map[e],mesh.czm_submesh.winding_turn[e]) for e in axes(mesh.bulk_element,1)))
     write_csv(joinpath(outdir,"mesh_cohesive_elements.csv"),("element","interface","bottom1","bottom2","top1","top2","host_inner","host_outer","parent_thermal","length_m"),
@@ -586,7 +581,7 @@ function export_candidate_boundaries(candidates,boundaries,owners,operators,mesh
             gauge_dir = joinpath(outdir,"numerical_gauges")
             mkpath(gauge_dir)
             write_csv(joinpath(gauge_dir,candidate.id*".csv"),("node","gauge_x","gauge_y"),
-                ((n,gauge[2n-1],gauge[2n]) for n in 1:mesh.nnode))
+                ((n,gauge[2n-1],gauge[2n]) for n in 1:size(mesh.node, 1)))
         end
     end
     write_csv(joinpath(outdir,"candidate_options.csv"),("candidate","unique_owner","outer_bc_raw","fix_inner_raw","fix_start_raw",
@@ -611,7 +606,7 @@ function export_reactions(branch_dir,mesh,param,ms,raw,diagnostics,boundary)
             support[2n-1],support[2n],
             dot(support[2n-1:2n],mesh.node[n,:])/hypot(mesh.node[n,1],mesh.node[n,2]),
             dot(support[2n-1:2n],[-mesh.node[n,2],mesh.node[n,1]])/hypot(mesh.node[n,1],mesh.node[n,2]),
-            raw[2n-1],raw[2n],join(string.(get(boundary.provenance,n,Symbol[])),"|")) for n in 1:mesh.nnode))
+            raw[2n-1],raw[2n],join(string.(get(boundary.provenance,n,Symbol[])),"|")) for n in 1:size(mesh.node, 1)))
 end
 
 function replay_branch(candidate,boundary,packet,theta,outdir)
@@ -619,6 +614,7 @@ function replay_branch(candidate,boundary,packet,theta,outdir)
     mkpath(branch_dir)
     mesh = clone_static_mesh(packet.mesh)
     param,ms,options = packet.param,deepcopy(packet.inputs[1].ms_before),deepcopy(candidate.options)
+    czm_workspace = JuBat.CZMWorkspace(mesh,param)
     accepted,end_time,status,error_text,last_residual = 0,0.0,"completed","",nothing
     step_rows,history_rows,compact_rows = Any[],Any[],Any[]
     onset_snapshot,peak_snapshot = nothing,nothing
@@ -632,7 +628,7 @@ function replay_branch(candidate,boundary,packet,theta,outdir)
         result = nothing
         local solve_error = nothing
         try
-            result = JuBat.solve_czm_step(mesh,ms,param,copy(input.F_ext),options;
+            result = JuBat.solve_czm_step(mesh,ms,param,copy(input.F_ext),options; czm_workspace=czm_workspace,
                 dT_elem=copy(input.dT_elem),Δsoc_n_elem=copy(input.Δsoc_n_elem),Δsoc_p_elem=copy(input.Δsoc_p_elem),
                 eigenstrain=input.eigenstrain,prestress=input.prestress,dt_seconds=input.dt_seconds,
                 boundary=candidate.id=="legacy" ? nothing : boundary)
@@ -656,16 +652,16 @@ function replay_branch(candidate,boundary,packet,theta,outdir)
             break
         end
         accepted,end_time,last_residual = k,input.time_s,result.residual_norm
-        raw,diagnostics = committed_equilibrium(mesh,param,ms,options,input,boundary)
+        raw,diagnostics = committed_equilibrium(mesh,param,ms,options,input,boundary; czm_workspace=czm_workspace)
         last_diagnostics,last_raw = diagnostics,raw
         exact = candidate.id=="legacy" ?
             isequal(mechanical_state_identity(ms),mechanical_state_identity(packet.baseline_after[k])) : nothing
         push!(step_rows,(k,input.phase,input.time_s,input.phase_time_s,input.dt_seconds,true,result.iterations,result.residual_norm,
             diagnostics.free_residual,diagnostics.constraint_violation,diagnostics.gauge_coordinate,
             diagnostics.gauge_moment,nothing,exact,""))
-        metrics = compact_GP_metrics(mesh,ms,theta)
+        metrics = compact_GP_metrics(mesh,ms,theta; czm_workspace=czm_workspace)
         push!(compact_rows,(k,input.phase,input.time_s,input.phase_time_s,Tuple(metrics)...))
-        fields = gp_fields(mesh,param,ms,options,theta;only_damaged=true)
+        fields = gp_fields(mesh,param,ms,options,theta;czm_workspace=czm_workspace,only_damaged=true)
         # 保存损伤GP的逐步模式/历史，保留热点驱动力而不生成虚构均值GP。
         for field in fields
             if field.D > 1e-8 || field.D_visc > 1e-8
@@ -685,7 +681,7 @@ function replay_branch(candidate,boundary,packet,theta,outdir)
             snapshot_dir = joinpath(branch_dir,"snapshots","phase_final_"*input.phase)
             mkpath(snapshot_dir)
             save_binary(joinpath(snapshot_dir,"committed_state.bin"),(;index=k,phase=input.phase,time_s=input.time_s,ms=deepcopy(ms)))
-            export_branch_fields(snapshot_dir,gp_fields(mesh,param,ms,options,theta),ms.damage_states)
+            export_branch_fields(snapshot_dir,gp_fields(mesh,param,ms,options,theta;czm_workspace=czm_workspace),ms.damage_states)
         end
         if exact === false
             status,error_text = "failed_legacy_identity","legacy replay differs from captured committed MechState at step $k"
@@ -700,14 +696,14 @@ function replay_branch(candidate,boundary,packet,theta,outdir)
     wall_seconds = (time_ns()-t_start)*1e-9
     save_binary(joinpath(branch_dir,"last_committed_state.bin"),(;ms,last_accepted_input_index=accepted,
         last_accepted_time_s=end_time,status,error=error_text,options))
-    fields = ms.gp_damage_states === nothing ? Any[] : gp_fields(mesh,param,ms,options,theta)
+    fields = ms.gp_damage_states === nothing ? Any[] : gp_fields(mesh,param,ms,options,theta;czm_workspace=czm_workspace)
     export_branch_fields(branch_dir,fields,ms.damage_states)
     for (label,snapshot) in (("damage_onset",onset_snapshot),("global_GP_peak",peak_snapshot))
         snapshot===nothing && continue
         snapshot_dir = joinpath(branch_dir,"snapshots",label)
         mkpath(snapshot_dir)
         save_binary(joinpath(snapshot_dir,"committed_state.bin"),snapshot)
-        export_branch_fields(snapshot_dir,gp_fields(mesh,param,snapshot.ms,options,theta),snapshot.ms.damage_states)
+        export_branch_fields(snapshot_dir,gp_fields(mesh,param,snapshot.ms,options,theta;czm_workspace=czm_workspace),snapshot.ms.damage_states)
     end
     write_csv(joinpath(branch_dir,"step_metrics.csv"),("step","phase","input_time_s","phase_time_s","dt_seconds","accepted","iterations",
         "solver_residual","committed_free_residual","constraint_violation","gauge_coordinate","gauge_moment",

@@ -49,8 +49,8 @@ function export_selected_element_identity(case, outdir)
     L = case.param.scale.L
     xs = [tm.node[n, 1] for n in nodes] .* L
     ys = [tm.node[n, 2] for n in nodes] .* L
-    cm = case.czm_mesh
-    coh_ids = findall(==(e), cm.cohesive_to_thermal)
+    cm = case.mesh["czm"]
+    coh_ids = findall(==(e), [cm.czm_submesh.thermal_elem_map[c.host_outer_elem] for c in cm.cohesive_elements])
     open(joinpath(outdir, "selected_element_identity.csv"), "w") do f
         println(f, "thermal_elem,node1,node2,node3,node4,x_min_m,x_max_m,y_min_m,y_max_m,centroid_r_m")
         println(f, "$e,$(nodes[1]),$(nodes[2]),$(nodes[3]),$(nodes[4]),$(minimum(xs)),$(maximum(xs)),$(minimum(ys)),$(maximum(ys)),$(hypot(mean(xs), mean(ys)))")
@@ -69,7 +69,7 @@ end
 function export_gp_phaseend(case, outdir, cycle, label, last_result)
     ms = case.mech
     G = ms.gp_damage_states
-    cm = case.czm_mesh
+    cm = case.mesh["czm"]
     L, δ_czm, σ_czm = case.param.scale.L, case.param.scale.δ_czm, case.param.scale.σ_czm
     rmin, rmax = extrema(hypot.(cm.node[:,1], cm.node[:,2])) .* L
     open(joinpath(outdir, "gp_snapshots_phaseend.csv"), "a") do f
@@ -103,7 +103,7 @@ function run_case(spec, outdir)
     czm.fix_inner, czm.fix_start, czm.fix_end = false, false, true
     czm.endpoint_variant = :omit_a
     czm.area_loss_enabled = spec.area_loss
-    boundary = JuBat.resolve_mechanical_bc(case.czm_mesh, case.param, czm; opt=case.opt)
+    boundary = JuBat.resolve_mechanical_bc(case.mesh["czm"], case.param, czm; opt=case.opt)
     length(boundary.nodes) == 92 || error("boundary node count $(length(boundary.nodes)) != 92 (nθ=80 baseline)")
     haskey(boundary.nodes, boundary.a) && error("baseline requires a free")
     write_csv(joinpath(outdir, "constraint_nodes.csv"), ("node","mode","sources"),
@@ -184,7 +184,7 @@ function run_case(spec, outdir)
         te_global = phase_offset[] + te
         last_commit = isempty(commit_times) ? 0 : searchsortedlast(commit_times, te_global + 1e-9)
         d_state = ev.D_elem === nothing ?
-            JuBat.map_czm_damage_to_thermal(case.czm_mesh, case.mech.damage_states,
+            JuBat.map_czm_damage_to_thermal(case.mesh["czm"], case.mech.damage_states,
                 length(ev.areas))[SBM_SELECTED_THERMAL_ELEM] : ev.D_elem[SBM_SELECTED_THERMAL_ELEM]
         d_used = ev.D_elem === nothing ? "" : string(ev.D_elem[SBM_SELECTED_THERMAL_ELEM])
         ie = ev.I_e[SBM_SELECTED_THERMAL_ELEM]
@@ -286,7 +286,7 @@ function run_case(spec, outdir)
                 flush_last_branch_row()
                 export_gp_phaseend(case, outdir, cycle, label, last_result[])
                 # 区域损伤（半径三分）
-                cm = case.czm_mesh
+                cm = case.mesh["czm"]
                 rs = [hypot(cm.node[c.nodes_bottom[1],1], cm.node[c.nodes_bottom[1],2]) * case.param.scale.L
                       for c in cm.cohesive_elements]
                 rmin, rmax = extrema(hypot.(cm.node[:,1], cm.node[:,2])) .* case.param.scale.L
@@ -344,7 +344,7 @@ function run_case(spec, outdir)
             "Q_abs_Ah"=>Q_abs_Ah, "EFC"=>Q_abs_Ah / 10.0)
     end
     # 选定单元身份核对（5.5）：损伤映射位置须仍在此热单元
-    D_elem_check = JuBat.map_czm_damage_to_thermal(case.czm_mesh, case.mech.damage_states,
+    D_elem_check = JuBat.map_czm_damage_to_thermal(case.mesh["czm"], case.mech.damage_states,
         size(case.mesh["thermal2D"].element,1))
     open(joinpath(outdir, "run_manifest.toml"), "w") do io
         TOML.print(io, merge(Dict("schema"=>"JuBat selected-boundary multicycle v1 (review1 rework)",
@@ -357,8 +357,8 @@ function run_case(spec, outdir)
             "a_node"=>boundary.a, "a_fixed"=>haskey(boundary.nodes,boundary.a),
             "b_node"=>boundary.b, "b_fixed"=>haskey(boundary.nodes,boundary.b),
             "ntheta"=>80, "thermal_elements"=>size(case.mesh["thermal2D"].element,1),
-            "cohesive_elements"=>length(case.czm_mesh.cohesive_elements),
-            "bulk_elements"=>size(case.czm_mesh.bulk_element,1),
+            "cohesive_elements"=>length(case.mesh["czm"].cohesive_elements),
+            "bulk_elements"=>size(case.mesh["czm"].bulk_element,1),
             "source_hash"=>bytes2hex(sha256(string(sources))),
             "runner_sha256"=>bytes2hex(sha256(read(@__FILE__))),
             "config_hash"=>serialized_hash(options_identity(czm)),

@@ -1,3 +1,22 @@
+"""Session-owned CZM caches; never part of the accepted physical state."""
+mutable struct CZMWorkspace
+    mesh::CohesiveMesh
+    param::Params
+    K_bulk::Union{Nothing, SparseMatrixCSC}
+    cohesive_geom::Union{Nothing, Vector}
+    bulk_gp_geom::Union{Nothing, Vector}
+    bulk_asm::Any
+    ws::Any
+end
+
+CZMWorkspace(mesh::CohesiveMesh, param::Params) =
+    CZMWorkspace(mesh, param, nothing, nothing, nothing, nothing, nothing)
+
+function check_czm_workspace(mesh::CohesiveMesh, workspace::CZMWorkspace)
+    workspace.mesh === mesh || throw(ArgumentError("CZM workspace belongs to a different mesh; create a new session workspace"))
+    return workspace
+end
+
 using Parameters: @with_kw
 
 """
@@ -142,7 +161,7 @@ end
     MechState
 
 CZM 求解的演化状态聚合（2026-08-30 重构：吸收 CzmLayout；损伤态从 czm_mesh 迁入）。
-缓存随网格（CohesiveMesh.K_bulk/标架/ws），演化状态随求解（本结构）。
+缓存归会话 CZMWorkspace，演化状态随求解（本结构）。
 求解器在收敛后原位提交；失败/试探不触碰本结构。
 """
 mutable struct MechState
@@ -157,9 +176,9 @@ end
 
 """便捷构造器：从 czm_mesh 初始化"""
 function MechState(czm_mesh::CohesiveMesh)
-    ndof = 2 * czm_mesh.nnode
+    ndof = 2 * size(czm_mesh.node, 1)
     MechState(zeros(Float64, ndof),
-              [DamageState() for _ in 1:czm_mesh.n_cohesive],
+              [DamageState() for _ in 1:length(czm_mesh.cohesive_elements)],
               nothing, nothing, nothing, nothing, nothing)
 end
 
@@ -170,7 +189,7 @@ end
 """
 function ensure_node_ref!(case)
     if case.mech.node_ref === nothing
-        case.mech.node_ref = copy(case.czm_mesh.node)
+        case.mech.node_ref = copy(case.mesh["czm"].node)
     end
     return case.mech.node_ref
 end
@@ -228,7 +247,7 @@ end
 - soc_p/n, cs0, Δsoc: 无量纲 c/c_max；Omega 已乘 cs_max，ΩΔsoc/3 的尺度契约不变。
 """
 function compute_czm_strain_inputs(case, variables, T_nodes)
-    czm_mesh = case.czm_mesh
+    czm_mesh = case.mesh["czm"]
     submesh = czm_mesh.czm_submesh
     param = case.param
     ne_czm = size(submesh.mesh.element, 1)
@@ -323,7 +342,7 @@ end
 更新 CZM 网格的损伤状态。
 
 使用牛顿-拉弗森迭代求解力学平衡方程，通过载荷子步法处理软化收敛问题。
-从 case.czm_mesh、case.param、case.mech 与 case.opt.czm 获取拓扑、参数、演化状态和求解选项。
+从 case.mesh["czm"]、case.param、case.mech 与 case.opt.czm 获取拓扑、参数、演化状态和求解选项。
 
 # 参数
 - `case`: Case 对象（需已设置 czm_mesh 和 mech）
@@ -335,8 +354,8 @@ end
 
 输入或求解结果包含非有限值、或非线性求解未收敛时抛出异常。
 """
-function update_czm_damage!(case, variables, T_nodes_carry; dt_seconds::Union{Nothing, Real}=nothing)
-    czm_mesh = case.czm_mesh
+function update_czm_damage!(case, variables, T_nodes_carry; czm_workspace::CZMWorkspace, dt_seconds::Union{Nothing, Real}=nothing)
+    czm_mesh = case.mesh["czm"]
     param = case.param
     czm_opt = case.opt.czm
 
@@ -347,7 +366,7 @@ function update_czm_damage!(case, variables, T_nodes_carry; dt_seconds::Union{No
     Δsoc_p_elem = strain_in.Δsoc_p_czm
 
     # 外力向量（一般为零）
-    ndof = 2 * czm_mesh.nnode
+    ndof = 2 * size(czm_mesh.node, 1)
     F_ext = zeros(Float64, ndof)
 
     all(isfinite, T_nodes_carry) || throw(ArgumentError("CZM temperature input contains non-finite values"))
@@ -378,7 +397,7 @@ function update_czm_damage!(case, variables, T_nodes_carry; dt_seconds::Union{No
 
     # 求解器收敛后在 case.mech 上原位提交损伤/位移（失败不触碰）
     result = solve_czm_step(
-        czm_mesh, case.mech, param, F_ext, czm_opt;
+        czm_mesh, case.mech, param, F_ext, czm_opt; czm_workspace=czm_workspace,
         dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
         eigenstrain=eig, prestress=prestress, dt_seconds=dt_seconds
     )

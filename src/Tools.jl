@@ -48,7 +48,7 @@ function identify_boundary_nodes(mesh, param, opt=nothing)
     if mesh isa Mesh
         nnode = mesh.nlen
     elseif mesh isa CohesiveMesh
-        nnode = mesh.nnode
+        nnode = size(mesh.node, 1)
     else
         error("identify_boundary_nodes: unsupported mesh type $(typeof(mesh))")
     end

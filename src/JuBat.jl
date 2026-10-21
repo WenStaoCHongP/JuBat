@@ -46,7 +46,7 @@ export Mesh1D, Mesh2D, GetGS, LagrangeBasis, GSweight, ShapeFunction1D, Normalis
 export SPM, Solve, SPMe, SPMe_element, ModelInitialisation
 export ModelInitialisation_MultiSPMe, extract_element_state, get_thermal_dofs
 export update_state
-export CohesiveElementGeom, CZMAssemblyWorkspace
+export CohesiveElementGeom, CZMAssemblyWorkspace, CZMWorkspace
 export Arrhenius, IntV, IntQ4
 export jellyroll_collector_seed_mesh, jellyroll_element_properties
 export jellyroll_tab_node_indices, edge_boundary
