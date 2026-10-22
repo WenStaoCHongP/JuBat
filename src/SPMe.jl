@@ -103,8 +103,6 @@ function SPMe_variables!(ws::Dict{String, Union{Array{Float64},Float64}},case::C
 
     if isnothing(I_app)
         I_app = case.opt.Current(t * case.param.scale.t0) / param.scale.I_typ
-    else
-        I_app = Float64(I_app)
     end
 
     j_n = I_app / param.NE.as / param.NE.thickness
@@ -219,8 +217,6 @@ function SPMe_variables(case::Case, yt::AbstractVector{Float64}, t::Float64; I_a
     # 允许外部覆盖无量纲电流与温度
     if isnothing(I_app)
         I_app = case.opt.Current(t * case.param.scale.t0) / param.scale.I_typ
-    else
-        I_app = Float64(I_app)
     end
 
     j_n = I_app / param.NE.as / param.NE.thickness

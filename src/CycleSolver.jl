@@ -131,12 +131,24 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, initial_
     case.opt.time=[0.0 t_max]
     result = PhaseResult()
     result.phase_type = phase_type
-    result.t_start = initial_state === nothing ? 0.0 : initial_state.t_global
+    result.t_start = if initial_state === nothing
+        0.0
+    else
+        initial_state.t_global
+    end
 
 
     phase_state=initial_state
-    D_max_init=phase_state===nothing || phase_state.mech===nothing ? 0.0 : maximum(s.D for s in phase_state.mech.damage_states)
-    D_mean_init=phase_state===nothing || phase_state.mech===nothing ? 0.0 : mean(s.D for s in phase_state.mech.damage_states)
+    D_max_init = if phase_state === nothing || phase_state.mech === nothing
+        0.0
+    else
+        maximum(s.D for s in phase_state.mech.damage_states)
+    end
+    D_mean_init = if phase_state === nothing || phase_state.mech === nothing
+        0.0
+    else
+        mean(s.D for s in phase_state.mech.damage_states)
+    end
     solve_result = Solve(case; initial_state=phase_state,variables=variables, return_final_state=true,
                          czm_snapshots=czm_snapshots, czm_cycle=czm_cycle,
                          czm_phase=czm_phase, phase_type=phase_type,
@@ -213,7 +225,11 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, mechanical_seed=nothi
     want_snapshots = haskey(case.mesh,"czm") && (save_detailed || !isempty(snapshot_cycles))
 
     # CZM snapshots vector (shared across all phases)
-    czm_snaps = want_snapshots ? CZMSnapshot[] : nothing
+    czm_snaps = if want_snapshots
+        CZMSnapshot[]
+    else
+        nothing
+    end
 
     # 应用初始SOC设置
     soc_init = cycle_opt.SOC_init
@@ -238,8 +254,21 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, mechanical_seed=nothi
     end
     
     # 初始状态
-    current_state=(y=copy(case.opt.per_element_spme ? ModelInitialisation_MultiSPMe(case) : ModelInitialisation(case)),
-        mech=mechanical_seed===nothing ? (haskey(case.mesh,"czm") ? MechState(case.mesh["czm"]) : nothing) : deepcopy(mechanical_seed),t_global=0.0)
+    current_state = (y=copy(if case.opt.per_element_spme
+            ModelInitialisation_MultiSPMe(case)
+        else
+            ModelInitialisation(case)
+        end),
+        mech=if mechanical_seed === nothing
+            if haskey(case.mesh,"czm")
+                MechState(case.mesh["czm"])
+            else
+                nothing
+            end
+        else
+            deepcopy(mechanical_seed)
+        end,
+        t_global=0.0)
     variables["accepted"]=deepcopy(current_state)
     
     
@@ -250,8 +279,15 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, mechanical_seed=nothi
 
     # 循环主体（cycle_snaps 按循环号门控：仅选定循环采集全历史快照）
     for cycle in 1:n_cycles
-        cycle_snaps = czm_snaps === nothing ? nothing :
-            (save_detailed || cycle in snapshot_cycles ? czm_snaps : nothing)
+        cycle_snaps = if czm_snaps === nothing
+            nothing
+        else
+            if save_detailed || cycle in snapshot_cycles
+                czm_snaps
+            else
+                nothing
+            end
+        end
         if verbose
             println("\n" * "-"^40)
             @printf("循环 %d/%d\n", cycle, n_cycles)

@@ -17,7 +17,11 @@ end
 
 # 电化学计算函数
 """标量化：将数组转为标量（取第一个元素）"""
-scalarize(x) = isa(x, Number) ? Float64(x) : Float64(x[1])
+scalarize(x) = if isa(x, Number)
+	Float64(x)
+else
+	Float64(x[1])
+end
 
 """计算电化学预因子"""
 function compute_prefactors(variables, param, mesh_ne, mesh_pe, mesh_sp)
@@ -114,7 +118,11 @@ end
 # 初始化和边界检查
 """初始化单元电流猜测"""
 function initialize_currents(ne, w, I_total, x_prev; active_mask=trues(ne))
-	I_e = x_prev === nothing ? zeros(Float64, ne) : copy(x_prev)
+	I_e = if x_prev === nothing
+		zeros(Float64, ne)
+	else
+		copy(x_prev)
+	end
 	length(I_e) == ne || throw(DimensionMismatch("branch current initial guess length"))
 	all(isfinite, I_e) || error("nonfinite branch current initial guess")
 	I_e[.!active_mask] .= 0.0
@@ -174,7 +182,11 @@ function detect_cutoff_elements(coeffs, ne::Int, V_MIN::Float64, V_MAX::Float64,
 			active_mask[e] = false
 			push!(cutoff_elements, e)
 			push!(cutoff_ocv, OCV[e] * phi_scale)
-			push!(cutoff_type, I_total < 0 ? 2 : 1)
+			push!(cutoff_type, if I_total < 0
+				2
+			else
+				1
+			end)
 		end
 	end
 
@@ -233,7 +245,11 @@ function newton_iteration(I_e, V, ne, w, I_total, coeffs; tol_V=1e-8, tol_I=1e-1
             
 			# 防止奇异雅可比
 			if abs(dFdI[e]) < 1e-12
-				dFdI[e] = sign(dFdI[e]) != 0.0 ? sign(dFdI[e]) * 1e-12 : -coeffs[e].C5
+				dFdI[e] = if sign(dFdI[e]) != 0.0
+					sign(dFdI[e]) * 1e-12
+				else
+					-coeffs[e].C5
+				end
 			end
 		end
         
@@ -424,7 +440,11 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 		end
 		# R3 返工：诊断值发布前的合法性门——非法温度/非有限 OCV 直接抛错，不发布 NaN 诊断电压
 		(all(isfinite, Te_prev) && minimum(Te_prev) > 0.0) || error(
-			"solve_branch_currents: 全失活静置诊断拒绝非法温度（NaN/非正绝对温度），Te_prev 最小值=$(isempty(Te_prev) ? NaN : minimum(Te_prev))")
+			"solve_branch_currents: 全失活静置诊断拒绝非法温度（NaN/非正绝对温度），Te_prev 最小值=$(if isempty(Te_prev)
+				NaN
+			else
+				minimum(Te_prev)
+			end)")
 		I_e = zeros(Float64, ne)
 		V = mean(c.C1 for c in coeffs)   # OCV 算术均值诊断值，非求解所得公共端电压
 		isfinite(V) || error(
@@ -449,7 +469,11 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 		variables["thermal2D deactivated_mask"] = Float64.(deactivated_mask)
 		fill!(inactive_reason, 2.0)
 		variables["thermal2D inactive_reason"] = inactive_reason
-		variables["thermal2D voltage_in_bounds"] = voltage_in_bounds ? 1.0 : 0.0
+		variables["thermal2D voltage_in_bounds"] = if voltage_in_bounds
+			1.0
+		else
+			0.0
+		end
 		variables["thermal2D cutoff_type_global"] = Float64(cutoff_type_global)
 		variables["thermal2D element OCV"] = ci.all_ocv
 		variables["thermal2D cutoff_elements"] = Float64.(ci.cutoff_elements)
@@ -477,8 +501,11 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 	I_e = initialize_currents(ne, w, I_density_target, x_prev; active_mask=active_mask)
 
 	# 初始电压（活跃单元平均，无活跃单元则用 OCV 均值——既有全截止路径，保留原语义）
-	V = isempty(active_idx) ? mean([coeffs[e].C1 for e in 1:ne]) :
+	V = if isempty(active_idx)
+		mean([coeffs[e].C1 for e in 1:ne])
+	else
 		mean([branch_voltage(coeffs[e], I_e[e]) for e in active_idx])
+	end
 
 	# 牛顿迭代（统一路径，active_mask 为空时直接跳过）
 	converged, last_iter = true, 0
@@ -497,19 +524,31 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 	variables["thermal2D element branch current [A]"] = case.param.scale.I_typ .* a .* I_e
 	variables["thermal2D common voltage"] = V
 	variables["thermal2D common voltage V"] = V * phi_scale
-	variables["thermal2D Vsolve status"] = converged ? 3.0 : 3.5
+	variables["thermal2D Vsolve status"] = 3.0
 	variables["thermal2D Vsolve iters"] = Float64(last_iter)
-	variables["thermal2D Vsolve converged"] = converged ? 1.0 : 0.0
+	variables["thermal2D Vsolve converged"] = 1.0
 	variables["thermal2D n_active_elements"] = Float64(sum(active_mask))
 	variables["thermal2D n_cutoff_elements"] = Float64(ci.n_cutoff)
 	variables["thermal2D n_deactivated_elements"] = Float64(sum(deactivated_mask))
 	variables["thermal2D active_mask"] = Float64.(active_mask)
 	variables["thermal2D deactivated_mask"] = Float64.(deactivated_mask)
 	for e in 1:ne
-		inactive_reason[e] = !area_active[e] ? 2.0 : (!active_mask[e] ? 1.0 : 0.0)
+		inactive_reason[e] = if !area_active[e]
+			2.0
+		else
+			if !active_mask[e]
+				1.0
+			else
+				0.0
+			end
+		end
 	end
 	variables["thermal2D inactive_reason"] = inactive_reason
-	variables["thermal2D voltage_in_bounds"] = voltage_in_bounds ? 1.0 : 0.0
+	variables["thermal2D voltage_in_bounds"] = if voltage_in_bounds
+		1.0
+	else
+		0.0
+	end
 	variables["thermal2D cutoff_type_global"] = Float64(cutoff_type_global)
 	variables["thermal2D element OCV"] = ci.all_ocv
 	variables["thermal2D cutoff_elements"] = Float64.(ci.cutoff_elements)

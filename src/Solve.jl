@@ -25,7 +25,11 @@ function Solve(case::Case;initial_state::Union{NamedTuple,Nothing}=nothing,retur
             T_nodes = vars["thermal2D temperature at nodes"]
 
             times = collect(range(t0, step=dt, length=Int(cld(t_end - t0, dt)) + 1))
-            T_hist = record ? zeros(Float64, nnode, length(times)) : zeros(Float64, 0, 0)
+            T_hist = if record
+                zeros(Float64, nnode, length(times))
+            else
+                zeros(Float64, 0, 0)
+            end
             record && (T_hist[:, 1] .= T_nodes)
 
             update_fn !== nothing && update_fn(t0, vars)
@@ -65,7 +69,6 @@ function Solve(case::Case;initial_state::Union{NamedTuple,Nothing}=nothing,retur
 
                 record && (T_hist[:, step + 1] .= T_nodes)
 
-                MT_old = MT_new
                 KT_old = KT_new
                 FT_old = FT_new
             end
@@ -90,11 +93,35 @@ function Solve(case::Case;initial_state::Union{NamedTuple,Nothing}=nothing,retur
     if case.opt.czm.enabled
         case.mesh["czm"] # Enabled mechanics requires its real topology.
     end
-    global_time=initial_state===nothing ? 0.0 : initial_state.t_global
+    global_time = if initial_state === nothing
+        0.0
+    else
+        initial_state.t_global
+    end
     phase_time_origin=global_time
-    y0=initial_state===nothing ? copy(case.opt.per_element_spme ? ModelInitialisation_MultiSPMe(case) : ModelInitialisation(case)) : copy(initial_state.y)
-    mech0=initial_state===nothing ? (haskey(case.mesh,"czm") ? MechState(case.mesh["czm"]) : nothing) : deepcopy(initial_state.mech)
-    expected_length=case.opt.per_element_spme ? size(case.mesh["thermal2D"].element,1)*case.index["SPMe chemical block length"]+case.mesh["thermal2D"].nlen : length(ModelInitialisation(case))
+    y0 = if initial_state === nothing
+        copy(if case.opt.per_element_spme
+            ModelInitialisation_MultiSPMe(case)
+        else
+            ModelInitialisation(case)
+        end)
+    else
+        copy(initial_state.y)
+    end
+    mech0 = if initial_state === nothing
+        if haskey(case.mesh,"czm")
+            MechState(case.mesh["czm"])
+        else
+            nothing
+        end
+    else
+        deepcopy(initial_state.mech)
+    end
+    expected_length = if case.opt.per_element_spme
+        size(case.mesh["thermal2D"].element,1)*case.index["SPMe chemical block length"]+case.mesh["thermal2D"].nlen
+    else
+        length(ModelInitialisation(case))
+    end
     y0 isa Vector{Float64} || throw(ArgumentError("restored chemistry must be a Float64 vector"))
     length(y0)==expected_length || throw(DimensionMismatch("restored chemistry length $(length(y0)) != $expected_length"))
     all(isfinite,y0) || throw(ArgumentError("restored chemistry is non-finite"))
@@ -124,7 +151,11 @@ function Solve(case::Case;initial_state::Union{NamedTuple,Nothing}=nothing,retur
     # 计算预期时间步数，添加安全限制避免内存溢出
     num_estimated = round(Int64, (t_end - t0)/dt * 1.5)
     # 限制最大预分配步数（避免内存溢出）
-    max_steps = multi_spme_enabled ? 50000 : 100000
+    max_steps = if multi_spme_enabled
+        50000
+    else
+        100000
+    end
     num = min(num_estimated, max_steps)
 
     if num_estimated > max_steps
@@ -133,7 +164,11 @@ function Solve(case::Case;initial_state::Union{NamedTuple,Nothing}=nothing,retur
     end
 
     history = StandardVariables(case, num)
-    czm_workspace = haskey(case.mesh,"czm") ? CZMWorkspace(case.mesh["czm"],case.param) : nothing
+    czm_workspace = if haskey(case.mesh,"czm")
+        CZMWorkspace(case.mesh["czm"],case.param)
+    else
+        nothing
+    end
 
     t = t0
     vt = 2
@@ -229,8 +264,11 @@ function Solve(case::Case;initial_state::Union{NamedTuple,Nothing}=nothing,retur
         timing_call_count += 1
         accumulate_callmodel_timing!(timing_totals, step_variables)
         # CallModel 返回当前 t 的 SOC 与温度；在求解覆盖活动温度前保留同一时间层。
-        T_nodes_czm_current = multi_spme_enabled ?
-            copy(vec(step_variables["thermal2D temperature at nodes"])) : T_nodes_carry
+        T_nodes_czm_current = if multi_spme_enabled
+            copy(vec(step_variables["thermal2D temperature at nodes"]))
+        else
+            T_nodes_carry
+        end
         Mt = M_new - theta * K_new * dt
         Kt = (1 - theta) * K_old * dt + M_new
         Ft = theta * F_new * dt + (1 - theta) * F_old * dt
@@ -343,7 +381,11 @@ function Solve(case::Case;initial_state::Union{NamedTuple,Nothing}=nothing,retur
             # Publish only after chemistry, mechanics, stress, history and snapshot preparation succeed.
             candidate=(y=copy(y_new),mech=candidate_mech,t_global=phase_time_origin+(t+dt)*case.param.scale.t0)
             prepared_K_old=copy(K_new);prepared_F_old=copy(F_new)
-            prepared_T_nodes=multi_spme_enabled ? get_thermal_dofs(candidate.y,case) : T_nodes_carry
+            prepared_T_nodes = if multi_spme_enabled
+                get_thermal_dofs(candidate.y,case)
+            else
+                T_nodes_carry
+            end
             y_before_ref=y_old[vc]
             y_after_ref=candidate.y[vc]
             K_old_ref=K_old; F_old_ref=F_old
@@ -409,7 +451,11 @@ function Solve(case::Case;initial_state::Union{NamedTuple,Nothing}=nothing,retur
                Int(get(step_variables, "thermal2D n_active_elements", 0.0)) == 0
                 I_now = get(step_variables, "cell current", 0.0)
                 if I_now != 0.0
-                    termination_reason = I_now > 0 ? "voltage_cutoff_low" : "voltage_cutoff_high"
+                    termination_reason = if I_now > 0
+                        "voltage_cutoff_low"
+                    else
+                        "voltage_cutoff_high"
+                    end
                     break
                 end
             end
