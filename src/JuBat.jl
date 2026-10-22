@@ -37,8 +37,6 @@ include("Jellyrollmodel.jl")
 include("ring.jl")
 include("CycleSolver.jl")  # 充放电循环求解器
 include("CyclePostProcess.jl")  # 循环结果汇总、终止判据与绘图
-include("CycleData.jl")
-include("CsvExport.jl")  # CZM CSV export (after CycleSolver for type availability)
 
 
 export Assemble, ElectrodeDiffusion, ElectrolyteDiffusion, PostProcessing, SetCase, SetMesh, ChooseCell
@@ -81,10 +79,6 @@ export CycleOption, PhaseType, PHASE_CHARGE, PHASE_REST, PHASE_DISCHARGE
 export PhaseResult, CycleResult, CyclingResult
 export solve_phase, solve_cycling, plot_cycling_results
 export compute_cs0_from_soc, apply_initial_soc!
-# Cycle data export
-export TimeStepData, CycleExportData
-export solve_phase_with_export, solve_cycle_with_export
-export export_cycle_data_to_csv
-# CSV export for cycling results
-export CZMSnapshot, export_cycling_csv, CsvExportOptions
+# Mechanical snapshots used by the cycling examples' CSV writers
+export CZMSnapshot
 end

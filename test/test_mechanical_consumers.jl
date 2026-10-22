@@ -57,7 +57,7 @@ end
     end
     c=fixture_c("export");y=JuBat.ModelInitialisation_MultiSPMe(c);y[1]=NaN
     old=(y=[-99.0],mech=nothing,t_global=-1.0);h=Any[:sentinel];rt=Dict{String,Any}("accepted"=>old,"history"=>h)
-    @test_throws ArgumentError JuBat.solve_phase_with_export(c,JuBat.PHASE_REST,0.01,(y=y,mech=nothing,t_global=0.0);dt_range=[0.01,0.01],variables=rt)
+    @test_throws ArgumentError JuBat.solve_phase(c,JuBat.PHASE_REST,0.01,(y=y,mech=nothing,t_global=0.0);dt_range=[0.01,0.01],variables=rt)
     @test rt["accepted"]===old && rt["history"]===h && h==Any[:sentinel]
 end
 @testset "Unused histories are deferred until their real consumer" begin

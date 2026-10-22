@@ -3,6 +3,8 @@ Jellyroll 电池长循环仿真：多 SPMe 并行电化学-热-CZM 循环（文�
 
 自由设定循环次数（JUBAT_CYCLES 环境变量，默认 5），一次运行产出后处理所需的
 全部 CSV（逐循环汇总 / 逐相位明细 / 选定循环逐元素全历史 / 选定循环场数据长表）。
+CSV 时间均为整个循环序列的绝对秒数；快照按真实 cycle/phase 映射，rest1/rest2 分开标记。
+原始求解器的重复时间记录原样保留，不合并或均分重建时间轴。
 
 界面参数口径（2026-09-27 定版，KB jubat-czm-dev-playbook）：
 基线文件不动（σ_max 82e6/92e6、K_n 2.4e17/1.2e17、G_c 25.3/6.2），脚本内
@@ -35,6 +37,7 @@ using Printf
 using Profile
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
+include(joinpath(@__DIR__, "cycling_csv_time.jl"))
 
 # JUBAT_SNAPSHOT_CYCLES 解析（空=不采集全历史）
 function czm_snapshot_cycles()
@@ -43,7 +46,7 @@ function czm_snapshot_cycles()
     return Set(parse(Int, strip(x)) for x in split(raw, ","))
 end
 
-function main()
+function main(; n_theta=80, phase_times=(discharge=1800.0, rest1=600.0, charge=1800.0, rest2=600.0), dt_cycle=[1.0, 10.0])
     run_tag = get(ENV, "JUBAT_RUN_TAG", "debug_a0.9_gc2")
     outdir = joinpath(@__DIR__, "..", "output", "czm_cycling", run_tag)
     mkpath(outdir)
@@ -132,16 +135,17 @@ function main()
 
     cycle_opt = JuBat.CycleOption(
         n_cycles = n_cycles,
-        t_charge = 1800.0,
-        t_discharge = 1800.0,
-        t_rest1 = 600.0,
-        t_rest2 = 600.0,
+        t_charge = phase_times.charge,
+        t_discharge = phase_times.discharge,
+        t_rest1 = phase_times.rest1,
+        t_rest2 = phase_times.rest2,
         SOC_init = 0.65,
+        dt_cycle = dt_cycle,
     )
 
     println("OK: 参数设置完成")
     @printf("  电流: %.2f A（充放同幅）\n", i)
-    @printf("  循环: %d 次（放电 1800 s → 静置 600 s → 充电 1800 s → 静置 600 s）\n", n_cycles)
+    @printf("  循环: %d 次（放电 %g s → 静置 %g s → 充电 %g s → 静置 %g s）\n", n_cycles, phase_times.discharge, phase_times.rest1, phase_times.charge, phase_times.rest2)
     @printf("  初始SOC: 0.65（solve_cycling 内部施加）\n")
     @printf("  等效界面参数: σ_max=%.2f/%.2f MPa, K=%.1e/%.1e, G_c=%.1f/%.1f J/m²\n",
         param_dim.PCC.σ_max * 1e-6, param_dim.NCC.σ_max * 1e-6,
@@ -163,7 +167,6 @@ function main()
 
     case = JuBat.SetCase(param_dim, opt)
 
-    n_theta = 80
     mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=n_theta, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
@@ -286,6 +289,8 @@ function main()
     end
     println("\n  cycle_summary.csv / phase_summary.csv 已导出")
 
+    snapshot_rows = cycling_csv_snapshots(result)
+
     # --- 逐元素全历史导出（选定循环）：element_map + damage/sep_n/sep_t 宽表 ---
     if !isempty(result.czm_snapshots)
         n_coh = length(result.czm_snapshots[1].damage)
@@ -303,7 +308,7 @@ function main()
         snap_cycles_present = sort(unique([s.cycle for s in result.czm_snapshots]))
         header = "t_s," * join(("e$j" for j in 1:n_coh), ",")
         for cyc in snap_cycles_present
-            snaps = sort(filter(s -> s.cycle == cyc, result.czm_snapshots), by = s -> s.time_s)
+            snaps = filter(row -> row.snapshot.cycle == cyc, snapshot_rows)
             for (fname, getcol) in (
                     ("damage_history_cyc$cyc.csv", s -> s.damage),
                     ("sep_n_history_cyc$cyc.csv", s -> s.separation_n .* δ_czm),
@@ -312,8 +317,8 @@ function main()
                     ("traction_t_history_cyc$cyc.csv", s -> s.traction_t .* σ_czm))
                 open(joinpath(outdir, fname), "w") do io
                     println(io, header)
-                    for s in snaps
-                        println(io, string(s.time_s) * "," * join(getcol(s), ","))
+                    for row in snaps
+                        println(io, string(row.time_s) * "," * join(getcol(row.snapshot), ","))
                     end
                 end
             end
@@ -334,14 +339,10 @@ function main()
                     (("discharge", cr.discharge), ("rest1", cr.rest1),
                      ("charge", cr.charge), ("rest2", cr.rest2))
                 ph === nothing && continue
-                raw = ph.solve_result === nothing ? nothing :
-                    get(ph.solve_result, "thermal2D temperature at nodes [K]", nothing)
-                raw === nothing && continue
-                tvec = ph.solve_result === nothing ? nothing :
-                    get(ph.solve_result, "time [s]", nothing)
+                raw = ph.solve_result["thermal2D temperature at nodes [K]"]
+                tvec = cycling_csv_times(ph, size(raw, 2))
                 for k in axes(raw, 2)
-                    t = tvec === nothing ? k * (ph.duration / size(raw, 2)) :
-                        ph.t_start + tvec[k] - tvec[1]
+                    t = tvec[k]
                     for n in 1:size(raw, 1)
                         println(f, "$(cr.cycle_idx),$pname,$t,$n,$(raw[n, k])")
                     end
@@ -353,10 +354,11 @@ function main()
         if !isempty(result.czm_snapshots)
             open(joinpath(outdir, "node_displacement.csv"), "w") do f
                 println(f, "cycle,phase,time_s,node_id,ux,uy")
-                for s in result.czm_snapshots
+                for row in snapshot_rows
+                    s = row.snapshot
                     nn = size(case.mesh["czm"].node, 1)
                     for n in 1:nn
-                        println(f, "$(s.cycle),$(s.phase),$(s.time_s),$n,$(s.displacement[2n-1]*L),$(s.displacement[2n]*L)")
+                        println(f, "$(s.cycle),$(row.phase),$(row.time_s),$n,$(s.displacement[2n-1]*L),$(s.displacement[2n]*L)")
                     end
                 end
             end
@@ -369,14 +371,10 @@ function main()
                     (("discharge", cr.discharge), ("rest1", cr.rest1),
                      ("charge", cr.charge), ("rest2", cr.rest2))
                 ph === nothing && continue
-                raw = ph.solve_result === nothing ? nothing :
-                    get(ph.solve_result, "thermal2D element current", nothing)
-                raw === nothing && continue
-                tvec = ph.solve_result === nothing ? nothing :
-                    get(ph.solve_result, "time [s]", nothing)
+                raw = ph.solve_result["thermal2D element current"]
+                tvec = cycling_csv_times(ph, size(raw, 2))
                 for k in axes(raw, 2)
-                    t = tvec === nothing ? k * (ph.duration / size(raw, 2)) :
-                        ph.t_start + tvec[k] - tvec[1]
+                    t = tvec[k]
                     for e in 1:size(raw, 1)
                         println(f, "$(cr.cycle_idx),$pname,$t,$e,$(raw[e, k])")
                     end
@@ -388,9 +386,10 @@ function main()
         if !isempty(result.czm_snapshots)
             open(joinpath(outdir, "cohesive_damage.csv"), "w") do f
                 println(f, "cycle,phase,time_s,coh_id,D,sep_n_m,sep_t_m,traction_n_Pa,traction_t_Pa")
-                for s in result.czm_snapshots
+                for row in snapshot_rows
+                    s = row.snapshot
                     for j in 1:length(s.damage)
-                        println(f, "$(s.cycle),$(s.phase),$(s.time_s),$j,$(s.damage[j]),$(s.separation_n[j]*δ_czm),$(s.separation_t[j]*δ_czm),$(s.traction_n[j]*σ_czm),$(s.traction_t[j]*σ_czm)")
+                        println(f, "$(s.cycle),$(row.phase),$(row.time_s),$j,$(s.damage[j]),$(s.separation_n[j]*δ_czm),$(s.separation_t[j]*δ_czm),$(s.traction_n[j]*σ_czm),$(s.traction_t[j]*σ_czm)")
                     end
                 end
             end
@@ -420,10 +419,11 @@ function main()
             cm = case.mesh["czm"]
             open(joinpath(outdir, "element_strain.csv"), "w") do f
                 println(f, "cycle,phase,time_s,elem_id,eps_xx,eps_yy,gam_xy")
-                for s in result.czm_snapshots
+                for row in snapshot_rows
+                    s = row.snapshot
                     exx, eyy, gxy = JuBat.recover_bulk_strain(cm.node, cm.bulk_element, s.displacement)
                     for e in eachindex(exx)
-                        println(f, "$(s.cycle),$(s.phase),$(s.time_s),$e,$(exx[e]),$(eyy[e]),$(gxy[e])")
+                        println(f, "$(s.cycle),$(row.phase),$(row.time_s),$e,$(exx[e]),$(eyy[e]),$(gxy[e])")
                     end
                 end
             end
@@ -470,6 +470,9 @@ function main()
     println("\n" * "="^80)
     println("全部完成")
     println("="^80)
+    return (; result, case, outdir)
 end
 
-main()
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end

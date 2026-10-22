@@ -28,32 +28,10 @@ if !("--dt-scope-only" in ARGS)
         @test maximum(JuBat.get_thermal_dofs(r.final_state.y,c))>T0+0.01
         a=r.final_state
     end
-    # Both public entries restore the identical function when initialization fails.
+    # The phase entry restores the identical function when initialization fails.
     bad=(;a...,y=a.y[1:end-1])
     @test_throws DimensionMismatch JuBat.solve_phase(c,JuBat.PHASE_CHARGE,0.03,bad;dt_range=[0.01,0.01])
     @test c.opt.Current===wave
-    @test_throws DimensionMismatch JuBat.solve_phase_with_export(c,JuBat.PHASE_REST,0.03,bad;dt_range=[0.01,0.01])
-    @test c.opt.Current===wave
-end
-
-@testset "Export uses physical amperes and inherited accepted temperature" begin
-    c=fixture_c("export");wave=t->0.5+2t;c.opt.Current=wave
-    @test c.param.scale.I_typ!=1
-    a=(y=copy((c.opt.per_element_spme ? JuBat.ModelInitialisation_MultiSPMe(c) : JuBat.ModelInitialisation(c))),mech=deepcopy((haskey(c.mesh,"czm") ? JuBat.MechState(c.mesh["czm"]) : nothing)),t_global=0.0);idx=c.index["thermal2D temperature"];a.y[idx].+=0.02
-    oldT=copy(a.y[idx]);T0=c.param.cell.T0
-    for (phase,sgn) in ((JuBat.PHASE_DISCHARGE,1),(JuBat.PHASE_REST,0),(JuBat.PHASE_CHARGE,-1))
-        rt=Dict{String,Any}();r,samples=JuBat.solve_phase_with_export(c,phase,0.03,a;dt_range=[0.01,0.01],variables=rt)
-        @test c.opt.Current===wave
-        local_times=[s.time-a.t_global for s in samples]
-        @test all(isapprox.([s.I for s in samples],sgn.*wave.(local_times);rtol=8eps(Float64),atol=0.0))
-        expected=sgn==0 ? 0.0 : (0.5*0.03+0.03^2)/3600
-        @test isapprox(r.capacity,expected;rtol=8eps(Float64),atol=0.0)
-        @test c.param.cell.T0==T0
-        @test a.y[idx]==oldT
-        @test minimum(r.final_state.y[idx])>T0+0.01
-        @test rt["accepted"].y==r.final_state.y
-        a=r.final_state;oldT=copy(a.y[idx])
-    end
 end
 
 @testset "Two real microcycles inherit every phase and cycle seam" begin
@@ -97,7 +75,7 @@ end
 end
 
 @testset "Phase time and dt scope restore original configuration references" begin
-    for exported in (false,true)
+    let
         c=fixture_c("export");original_dt=[0.01 0.02];c.opt.dt=original_dt
         original_time=[2.0 3.0];c.opt.time=original_time;original_time_contents=copy(original_time)
         original_contents=copy(original_dt);a=nothing
@@ -108,23 +86,19 @@ end
                 0.5
             end
             original_current=c.opt.Current
-            result=exported ? JuBat.solve_phase_with_export(c,phase,0.02,a;dt_range=phase_dt) : JuBat.solve_phase(c,phase,0.02,a;dt_range=phase_dt)
+            result=JuBat.solve_phase(c,phase,0.02,a;dt_range=phase_dt)
             @test !isempty(seen) && all(seen)
             @test c.opt.dt===original_dt && c.opt.dt==original_contents
             @test c.opt.time===original_time && c.opt.time==original_time_contents
             @test phase_dt==[0.005,0.005] && c.opt.Current===original_current
-            times=exported ? [x.time for x in result[2]] : vec(result.solve_result["time [s]"])
+            times=vec(result.solve_result["time [s]"])
             @test length(times)>=3 && all(isapprox.(diff(times),0.005;rtol=8eps(Float64),atol=0.0))
-            phase_result=exported ? result[1] : result
+            phase_result=result
             @test isapprox(phase_result.duration,0.02;rtol=8eps(Float64),atol=0.0)
             a=phase_result.final_state
         end
         bad=(;a...,y=a.y[1:end-1]);phase_dt=[0.005,0.005]
-        if exported
-            @test_throws DimensionMismatch JuBat.solve_phase_with_export(c,JuBat.PHASE_CHARGE,0.02,bad;dt_range=phase_dt)
-        else
-            @test_throws DimensionMismatch JuBat.solve_phase(c,JuBat.PHASE_CHARGE,0.02,bad;dt_range=phase_dt)
-        end
+        @test_throws DimensionMismatch JuBat.solve_phase(c,JuBat.PHASE_CHARGE,0.02,bad;dt_range=phase_dt)
         @test c.opt.dt===original_dt && c.opt.dt==original_contents
         @test c.opt.time===original_time && c.opt.time==original_time_contents
         times_seen=Float64[]
@@ -134,11 +108,7 @@ end
             0.5
         end
         c.opt.Current=wave
-        if exported
-            @test_throws ErrorException JuBat.solve_phase_with_export(c,JuBat.PHASE_DISCHARGE,0.02,a;dt_range=phase_dt)
-        else
-            @test_throws ErrorException JuBat.solve_phase(c,JuBat.PHASE_DISCHARGE,0.02,a;dt_range=phase_dt)
-        end
+        @test_throws ErrorException JuBat.solve_phase(c,JuBat.PHASE_DISCHARGE,0.02,a;dt_range=phase_dt)
         @test any(>(0.0),times_seen)
         @test c.opt.dt===original_dt && c.opt.dt==original_contents
         @test c.opt.time===original_time && c.opt.time==original_time_contents

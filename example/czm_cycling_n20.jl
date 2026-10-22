@@ -70,8 +70,10 @@ postprocess/plot_tab_study_clouds.py 绘图）。
 """
 
 using Printf
+# CSV 时间使用相位起点加真实局部时间；相位身份来自求解器，保留重复时间记录。
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
+include(joinpath(@__DIR__, "cycling_csv_time.jl"))
 
 # ── 工况矩阵定义（W/L 单位 m；theta_kind 在求值期以 rng 解释） ──
 struct TabCase
@@ -221,7 +223,8 @@ end
 
 function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
         outdir::String, mesh_data; n_theta, n_cycles, strength_scale,
-        stiffness_scale, gc_scale, iter_method, tau_seconds)
+        stiffness_scale, gc_scale, iter_method, tau_seconds,
+        phase_times=(discharge=1800.0, rest1=600.0, charge=1800.0, rest2=600.0), dt_cycle=[1.0, 10.0])
     casedir = joinpath(outdir, "case$(tc.id)")
     mkpath(casedir)
     println("\n" * "-"^78)
@@ -291,11 +294,12 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
 
     cycle_opt = JuBat.CycleOption(
         n_cycles = n_cycles,
-        t_charge = 1800.0,
-        t_discharge = 1800.0,
-        t_rest1 = 600.0,
-        t_rest2 = 600.0,
+        t_charge = phase_times.charge,
+        t_discharge = phase_times.discharge,
+        t_rest1 = phase_times.rest1,
+        t_rest2 = phase_times.rest2,
         SOC_init = 0.65,
+        dt_cycle = dt_cycle,
     )
 
     # 2. 案例 + 网格（几何与极耳无关 → 首工况构建后复用）
@@ -321,7 +325,7 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
 
     # 3. 求解（失败不中断矩阵，状态记录后继续）
     t0 = time_ns()
-    local result
+    local result = nothing
     status = "OK"
     err_msg = ""
     try
@@ -385,37 +389,10 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
             end
             δ_czm = case.param.scale.δ_czm
             σ_czm = case.param.scale.σ_czm
-            # 快照 time_s 为相位内局部时间：按插入顺序分块（局部时间回落=新相位），
-            # 用 phase.t_start 映射绝对时间；相位名按分块序（rest1/rest2 可区分）
-            snaps = result.czm_snapshots
-            blocks = Vector{Vector{Int}}()
-            cur_blk = [1]
-            for i in 2:length(snaps)
-                if snaps[i].time_s < snaps[i - 1].time_s
-                    push!(blocks, cur_blk)
-                    cur_blk = [i]
-                else
-                    push!(cur_blk, i)
-                end
-            end
-            push!(blocks, cur_blk)
-            phase_list = [ph for ph in (result.cycle_results[1].discharge,
-                result.cycle_results[1].rest1, result.cycle_results[1].charge,
-                result.cycle_results[1].rest2) if ph !== nothing]
-            length(blocks) == length(phase_list) ||
-                @warn "快照分块数与相位数不一致，绝对时间映射可能偏移" n_blocks = length(blocks) n_phases = length(phase_list)
-            phase_names = ("discharge", "rest1", "charge", "rest2")
-            t_abs = Vector{Float64}(undef, length(snaps))
-            for (b, idxs) in enumerate(blocks)
-                b > length(phase_list) && break
-                for i in idxs
-                    t_abs[i] = phase_list[b].t_start + snaps[i].time_s
-                end
-            end
-            phase_of_snap(i) = begin
-                b = findfirst(bl -> i in bl, blocks)
-                (b === nothing || b > length(phase_list)) ? "NA" : string(phase_names[b])
-            end
+            snapshot_rows = cycling_csv_snapshots(result)
+            snaps = [row.snapshot for row in snapshot_rows]
+            t_abs = [row.time_s for row in snapshot_rows]
+            phase_of_snap(i) = snapshot_rows[i].phase
             header = "t_s," * join(("e$j" for j in 1:n_coh), ",")
             for (fname, getcol) in (
                     ("damage_history_cyc1.csv", s -> s.damage),
@@ -476,25 +453,17 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
                 (sum(case.mesh["czm"].node[ns, 1]) / length(ns) * L_scale,
                  sum(case.mesh["czm"].node[ns, 2]) / length(ns) * L_scale)
             end
-            # 温度/电流：逐相位 solve_result 时间序列中取 |t−t_sel| 最近步
-            node_T = fill(NaN, size(mesh_th.node, 1))
-            elem_I = fill(NaN, size(mesh_th.element, 1))
-            best_dt = Inf
-            for cr in result.cycle_results, ph in (cr.discharge, cr.rest1, cr.charge, cr.rest2)
-                ph === nothing && continue
-                sr = ph.solve_result
-                (sr === nothing || !haskey(sr, "time [s]")) && continue
-                tvec = sr["time [s]"]
-                raw_T = get(sr, "thermal2D temperature at nodes [K]", nothing)
-                raw_I = get(sr, "thermal2D element current", nothing)
-                for kk in eachindex(tvec)
-                    dt = abs(ph.t_start + tvec[kk] - tvec[1] - t_sel)
-                    dt < best_dt || continue
-                    best_dt = dt
-                    raw_T === nothing || (node_T .= raw_T[:, kk])
-                    raw_I === nothing || (elem_I .= raw_I[:, kk])
-                end
-            end
+            # Sample only the selected snapshot's real cycle/phase, including at phase seams.
+            selected = snaps[i_sel]
+            ph = cycling_csv_phases(result)[(selected.cycle, selected.phase)]
+            sr = ph.solve_result
+            raw_T = sr["thermal2D temperature at nodes [K]"]
+            raw_I = sr["thermal2D element current"]
+            size(raw_T, 2) == size(raw_I, 2) || throw(DimensionMismatch("cloud field times differ"))
+            tvec = cycling_csv_times(ph, size(raw_T, 2))
+            k_sel = argmin(abs.(tvec .- t_sel))
+            node_T = raw_T[:, k_sel]
+            elem_I = raw_I[:, k_sel]
             open(joinpath(casedir, "cloud_damage.csv"), "w") do io
                 println(io, "coh_id,D")
                 for j in eachindex(D_sel)
@@ -547,7 +516,9 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
             n_pos_nodes, n_neg_nodes,
             NaN, NaN, NaN, NaN, 0, 0, 0, NaN, status, wall_s, err_msg)
     end
-    return summary, mesh_data
+    return (; summary, mesh_data, result, case, casedir)
 end
 
-main()
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end

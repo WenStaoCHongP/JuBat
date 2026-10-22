@@ -57,30 +57,6 @@ if !("--entry-only" in ARGS)
     end
 end
 
-@testset "C export continuation inherits temperature" begin
-    c=fixture_c("export"); rt=Dict{String,Any}()
-    first,data=JuBat.solve_phase_with_export(c,JuBat.PHASE_DISCHARGE,0.03,nothing;dt_range=[0.01,0.01],variables=rt)
-    old=state_numbers(first.final_state)
-    same,sd=JuBat.solve_phase_with_export(c,JuBat.PHASE_REST,0.03,first.final_state;dt_range=[0.01,0.01])
-    fresh=fixture_c("export"); nr=Dict{String,Any}()
-    other,nd=JuBat.solve_phase_with_export(fresh,JuBat.PHASE_REST,0.03,first.final_state;dt_range=[0.01,0.01],variables=nr)
-    @test state_numbers(same.final_state)==state_numbers(other.final_state)
-    @test state_numbers(other.final_state)==state_numbers(nr["accepted"])
-    @test isequal(sd,nd) || all(Tuple(getfield(s,f) for f in fieldnames(typeof(s)))==Tuple(getfield(n,f) for f in fieldnames(typeof(n))) for (s,n) in zip(sd,nd))
-    @test state_numbers(first.final_state)==old
-    # Exact target: obtain the first production voltage, then use it as the inclusive target.
-    probe=fixture_c("export")
-    pr,pd=JuBat.solve_phase_with_export(probe,JuBat.PHASE_DISCHARGE,0.01,nothing;dt_range=[0.01,0.01])
-    target=pd[1].V
-    edge=fixture_c("export"); edge.param.cell.v_l=target
-    er=Dict{String,Any}()
-    r,d=JuBat.solve_phase_with_export(edge,JuBat.PHASE_DISCHARGE,0.03,nothing;dt_range=[0.01,0.01],variables=er)
-    @test r.terminated_by==:voltage
-    @test r.final_state.t_global==r.t_end
-    @test r.final_state.y==pr.final_state.y
-    @test state_numbers(r.final_state)==state_numbers(er["accepted"])
-end
-
 @testset "C production preparation failure leaves prior acceptance" begin
     c=fixture_c("gp");c.opt.debug_coupling=true;original_current=c.opt.Current
     rt=Dict{String,Any}(); shots=JuBat.CZMSnapshot[]; before=Ref{Any}(); hist=Ref{Any}(); observed=Ref(false)

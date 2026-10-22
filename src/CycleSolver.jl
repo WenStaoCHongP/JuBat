@@ -115,7 +115,7 @@ end
 # 2. 单阶段求解器
 # ========================================================================
 
-function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, initial_state::Union{NamedTuple,Nothing}; dt_range::Vector{Float64}=[1.0, 10.0], czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing, czm_cycle::Int=1, chemical_step_observer::Union{Nothing,Function}=nothing,variables::Dict{String,Any}=Dict{String,Any}())
+function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, initial_state::Union{NamedTuple,Nothing}; dt_range::Vector{Float64}=[1.0, 10.0], czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing, czm_cycle::Int=1, czm_phase::String=string(phase_type), chemical_step_observer::Union{Nothing,Function}=nothing,variables::Dict{String,Any}=Dict{String,Any}())
     configured_current=case.opt.Current
     configured_dt=case.opt.dt
     configured_time=case.opt.time
@@ -139,7 +139,7 @@ function solve_phase(case::Case, phase_type::PhaseType, t_max::Float64, initial_
     D_mean_init=phase_state===nothing || phase_state.mech===nothing ? 0.0 : mean(s.D for s in phase_state.mech.damage_states)
     solve_result = Solve(case; initial_state=phase_state,variables=variables, return_final_state=true,
                          czm_snapshots=czm_snapshots, czm_cycle=czm_cycle,
-                         czm_phase=string(phase_type), phase_type=phase_type,
+                         czm_phase=czm_phase, phase_type=phase_type,
                          chemical_step_observer=chemical_step_observer)
 
     reason = solve_result["termination_reason"]
@@ -278,7 +278,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, mechanical_seed=nothi
             cycle_opt.t_discharge,
             current_state;
             dt_range=cycle_opt.dt_cycle,variables=variables,
-            czm_snapshots=cycle_snaps, czm_cycle=cycle
+            czm_snapshots=cycle_snaps, czm_cycle=cycle, czm_phase="discharge"
         )
         cycle_result.discharge = discharge_result
         current_state = discharge_result.final_state
@@ -303,7 +303,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, mechanical_seed=nothi
                 cycle_opt.t_rest1,
                 current_state;  # 继承上一步状态
                     dt_range=cycle_opt.dt_cycle,variables=variables,
-                czm_snapshots=cycle_snaps, czm_cycle=cycle
+                czm_snapshots=cycle_snaps, czm_cycle=cycle, czm_phase="rest1"
             )
             cycle_result.rest1 = rest1_result
             current_state = rest1_result.final_state
@@ -330,7 +330,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, mechanical_seed=nothi
             cycle_opt.t_charge,
             current_state;
             dt_range=cycle_opt.dt_cycle,variables=variables,
-            czm_snapshots=cycle_snaps, czm_cycle=cycle
+            czm_snapshots=cycle_snaps, czm_cycle=cycle, czm_phase="charge"
         )
         cycle_result.charge = charge_result
         current_state = charge_result.final_state
@@ -354,7 +354,7 @@ function solve_cycling(case::Case, cycle_opt::CycleOption, mechanical_seed=nothi
                 cycle_opt.t_rest2,
                 current_state;  # 继承上一步状态
                     dt_range=cycle_opt.dt_cycle,variables=variables,
-                czm_snapshots=cycle_snaps, czm_cycle=cycle
+                czm_snapshots=cycle_snaps, czm_cycle=cycle, czm_phase="rest2"
             )
             cycle_result.rest2 = rest2_result
             current_state = rest2_result.final_state

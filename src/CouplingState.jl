@@ -443,7 +443,7 @@ All physical values are stored in NORMALIZED (dimensionless) form.
 Denormalization happens at CSV write time using `case.param.scale`.
 """
 mutable struct CZMSnapshot
-    time_s::Float64                     # physical time (already denormalized)
+    time_s::Float64                     # phase-local physical time [s]; add PhaseResult.t_start for global CSV time
     cycle::Int                          # cycle number
     phase::String                       # phase name
     displacement::Vector{Float64}       # ndof-length, normalized

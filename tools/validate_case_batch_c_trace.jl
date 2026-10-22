@@ -53,17 +53,6 @@ function phase_trace(kind)
     return (;events,mechanics,branches,phases)
 end
 
-function export_trace()
-    c=fixture_c("export");state=nothing;phases=Any[]
-    for (phase,I) in ((JuBat.PHASE_DISCHARGE,0.5),(JuBat.PHASE_REST,0.0))
-        result,data=JuBat.solve_phase_with_export(c,phase,0.03,state;dt_range=[0.01,0.01])
-        state=result.final_state
-        push!(phases,(;y=copy(state.y),T=JuBat.get_thermal_dofs(state.y,c),V=result.V_end,t=state.t_global,
-            samples=[Tuple(getfield(s,f) for f in fieldnames(typeof(s))) for s in data]))
-    end
-    return phases
-end
-
 function reject_trace()
     p=JuBat.ChooseCell("Jellyroll");o=JuBat.Option(model="SPMe",Nn=3,Ns=2,Np=3,Nrn=4,Nrp=4,
         thermalmodel="none",per_element_spme=false)
