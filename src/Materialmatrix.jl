@@ -60,6 +60,39 @@ end
 # CZM bilinear constitutive model
 # ========================================================================
 
+# Opening interpolation (not an energy BK law). This same mapping supplies
+# the traction history and its full directional derivative.
+function bilinear_opening_envelope(δ_n::Float64, δ_t::Float64,
+        ip::CurrentCollector, czm_model::String)
+    δn_pos = max(δ_n, 0.0)
+    if czm_model == "model1"
+        return (e=δn_pos, a=ip.δ_0, c=ip.δ_c,
+            e_n=Float64(δ_n > 0.0), e_t=0.0,
+            a_n=0.0, a_t=0.0, c_n=0.0, c_t=0.0)
+    end
+    czm_model == "mix" || throw(ArgumentError("unknown CZM model: $czm_model"))
+    e = hypot(δn_pos, δ_t)
+    if e == 0.0
+        return (e=e, a=ip.δ_0, c=ip.δ_c,
+            e_n=0.0, e_t=0.0, a_n=0.0, a_t=0.0, c_n=0.0, c_t=0.0)
+    end
+    β = abs(δ_t) / e
+    a = sqrt(ip.δ_0^2 + (ip.δ_0_t^2 - ip.δ_0^2) * β^ip.eta)
+    c = sqrt(ip.δ_c^2 + (ip.δ_c_t^2 - ip.δ_c^2) * β^ip.eta)
+    e_n = δn_pos / e
+    e_t = δ_t / e
+    a_n = a_t = c_n = c_t = 0.0
+    if δ_t != 0.0
+        β_n = -β * e_n / e
+        β_t = sign(δ_t) / e - β * e_t / e
+        a_β = (ip.δ_0_t^2 - ip.δ_0^2) * ip.eta * β^(ip.eta - 1.0) / (2a)
+        c_β = (ip.δ_c_t^2 - ip.δ_c^2) * ip.eta * β^(ip.eta - 1.0) / (2c)
+        a_n, a_t = a_β * β_n, a_β * β_t
+        c_n, c_t = c_β * β_n, c_β * β_t
+    end
+    return (; e, a, c, e_n, e_t, a_n, a_t, c_n, c_t)
+end
+
 """
 	bilinear_traction_state(δ_n, δ_t, damage_state, ip, czm_model)
 
@@ -69,6 +102,18 @@ Compute bilinear traction and return updated damage state.
 2026-08-30 重构）；`czm_model`（"model1"/"mix"）为显式参数，来源 `opt.czm.model`。
 """
 function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::DamageState, ip::CurrentCollector, czm_model::String; visc_beta::Float64=1.0)
+	# Accepted history must already be canonical. Never repair a lost or
+	# inconsistent history from its fracture flag at the material boundary.
+	0.0 <= damage_state.D_visc <= damage_state.D <= 1.0 ||
+		throw(ArgumentError("CZM history requires 0 <= D_visc <= D <= 1"))
+	if damage_state.fractured
+		(damage_state.D == 1.0 && damage_state.D_visc == 1.0) ||
+			throw(ArgumentError("fractured CZM history requires D = D_visc = 1"))
+	elseif damage_state.D == 1.0 && damage_state.D_visc >= 1.0 - 1e-10
+		throw(ArgumentError("noncanonical CZM saturation history; explicit migration required"))
+	end
+	0.0 <= visc_beta <= 1.0 || throw(ArgumentError("CZM visc_beta must be in [0, 1]"))
+	envelope = bilinear_opening_envelope(δ_n, δ_t, ip, czm_model)
 	new_state = DamageState()
 	new_state.D = damage_state.D
 	new_state.D_visc = damage_state.D_visc
@@ -82,64 +127,29 @@ function bilinear_traction_state(δ_n::Float64, δ_t::Float64, damage_state::Dam
 	new_state.δ_max_n = max(new_state.δ_max_n, δ_n_pos)
 	new_state.δ_max_t = max(new_state.δ_max_t, abs(δ_t))
 
-	if damage_state.fractured
-		new_state.D = 1.0
-		new_state.D_visc = 1.0
-		new_state.fractured = true
-		# 2026-09-22 裂纹闭合（Abaqus 标准行为：压缩刚度永不损伤，完全断裂后作为防
-		# 相互穿透的罚刚度）——与非断裂分支的压缩路径 T_n = K_n·δ_n 保持一致。
-		# 张开方向保持零牵引；model1 的切向保留与既有行为一致。
-		T_n = δ_n >= 0 ? 0.0 : ip.K_n * δ_n
-		if czm_model == "model1"
-			T_t = ip.K_t * δ_t
-		else
-			T_t = 0.0
-		end
-		return T_n, T_t, 1.0, new_state
-	end
-	if czm_model == "model1"
-		δ_eff = δ_n_pos
-		δ_0_eff = ip.δ_0
-		δ_c_eff = ip.δ_c
+	e, a, c = envelope.e, envelope.a, envelope.c
+	d = if e <= a
+		0.0
+	elseif e >= c
+		1.0
 	else
-		δ_eff = sqrt(δ_n_pos^2 + δ_t^2)
-		if δ_eff > 1e-15
-			β = abs(δ_t) / δ_eff
-			δ_0_eff = sqrt(ip.δ_0^2 + (ip.δ_0_t^2 - ip.δ_0^2) * β^ip.eta)
-			δ_c_eff = sqrt(ip.δ_c^2 + (ip.δ_c_t^2 - ip.δ_c^2) * β^ip.eta)
-		else
-			δ_0_eff = ip.δ_0
-			δ_c_eff = ip.δ_c
-		end
+		c * (e - a) / (e * (c - a))
 	end
-
-	δ_max_hist = damage_state.δ_max_eff
-	D_eq = damage_state.D
-
-	if δ_eff > δ_max_hist
-		if δ_eff <= δ_0_eff
-			D_eq = 0.0
-		elseif δ_eff >= δ_c_eff
-			D_eq = 1.0
-		else
-			D_eq = δ_c_eff * (δ_eff - δ_0_eff) / (δ_eff * (δ_c_eff - δ_0_eff))
-		end
-		# A change of mode mix can raise the effective threshold while the
-		# separation norm grows. The equilibrium history is irreversible too.
-		D_eq = max(damage_state.D, D_eq)
-
-		new_state.δ_max_eff = δ_eff
-		new_state.D = D_eq
-		new_state.accumulated_damage = max(new_state.accumulated_damage, D_eq)
-	end
+	# Geometry peaks are diagnostics; irreversibility acts on damage itself.
+	D_eq = max(damage_state.D, d)
+	new_state.δ_max_eff = max(damage_state.δ_max_eff, e)
+	new_state.D = D_eq
+	new_state.accumulated_damage = max(new_state.accumulated_damage, D_eq)
 
 	# Viscous damage: D_visc = D_visc_committed + visc_beta * (D_eq - D_visc_committed)
 	D_visc = damage_state.D_visc + visc_beta * (D_eq - damage_state.D_visc)
-	D_visc = max(damage_state.D_visc, D_visc)  # monotonicity
+	# Canonical saturation is part of this same traction map. A near-one D
+	# still follows the true softening derivative and is never truncated.
+	new_state.fractured = D_eq == 1.0 && D_visc >= 1.0 - 1e-10
+	if new_state.fractured
+		D_visc = 1.0
+	end
 	new_state.D_visc = D_visc
-	# With viscous regularization, equilibrium damage may reach one before
-	# traction damage does. Keep the cohesive branch until traction vanishes.
-	new_state.fractured = D_visc >= 1.0 - 1e-10
 
 	# Traction uses D_visc (not D_eq)
 	if δ_n >= 0
@@ -176,41 +186,9 @@ function bilinear_damage_gradient(δ_n::Float64, δ_t::Float64,
         czm_model::String, visc_beta::Float64)
     zero_grad = (0.0, 0.0)
     (previous.fractured || trial.fractured) && return zero_grad, zero_grad
-    δn_pos = max(δ_n, 0.0)
-    if czm_model == "model1"
-        e = δn_pos
-        a, c = ip.δ_0, ip.δ_c
-        e_n = if δ_n > 0.0
-            1.0
-        else
-            0.0
-        end
-        e_t = 0.0
-        a_n = a_t = c_n = c_t = 0.0
-    else
-        e = hypot(δn_pos, δ_t)
-        e > 1e-15 || return zero_grad, zero_grad
-        β = abs(δ_t) / e
-        βη = β^ip.eta
-        a = sqrt(ip.δ_0^2 + (ip.δ_0_t^2 - ip.δ_0^2) * βη)
-        c = sqrt(ip.δ_c^2 + (ip.δ_c_t^2 - ip.δ_c^2) * βη)
-        e_n = if δ_n > 0.0
-            δn_pos / e
-        else
-            0.0
-        end
-        e_t = δ_t / e
-        a_n = a_t = c_n = c_t = 0.0
-        if δ_t != 0.0
-            β_n = -β * e_n / e
-            β_t = sign(δ_t) / e - β * e_t / e
-            a_β = (ip.δ_0_t^2 - ip.δ_0^2) * ip.eta * β^(ip.eta - 1.0) / (2.0a)
-            c_β = (ip.δ_c_t^2 - ip.δ_c^2) * ip.eta * β^(ip.eta - 1.0) / (2.0c)
-            a_n, a_t = a_β * β_n, a_β * β_t
-            c_n, c_t = c_β * β_n, c_β * β_t
-        end
-    end
-    (e > previous.δ_max_eff && a < e < c && trial.D > previous.D) ||
+    (; e, a, c, e_n, e_t, a_n, a_t, c_n, c_t) =
+        bilinear_opening_envelope(δ_n, δ_t, ip, czm_model)
+    (a < e < c && trial.D > previous.D) ||
         return zero_grad, zero_grad
 
     den = c - a
@@ -219,12 +197,7 @@ function bilinear_damage_gradient(δ_n::Float64, δ_t::Float64,
     D_c = -a * (e - a) / (e * den^2)
     q_eq = (D_e * e_n + D_a * a_n + D_c * c_n,
             D_e * e_t + D_a * a_t + D_c * c_t)
-    raw_visc = previous.D_visc + visc_beta * (trial.D - previous.D_visc)
-    q_visc = if raw_visc > previous.D_visc
-        (visc_beta * q_eq[1], visc_beta * q_eq[2])
-    else
-        zero_grad
-    end
+    q_visc = (visc_beta * q_eq[1], visc_beta * q_eq[2])
     return q_eq, q_visc
 end
 
@@ -233,23 +206,9 @@ function bilinear_tangent(δ_n::Float64, δ_t::Float64,
         damage_state::DamageState, ip::CurrentCollector, czm_model::String;
         visc_beta::Float64=1.0)
     dT_dδ = zeros(Float64, 2, 2)
-    if damage_state.fractured
-        dT_dδ[1, 1] = if δ_n >= 0.0
-            1e-10 * ip.K_n
-        else
-            ip.K_n
-        end
-        dT_dδ[2, 2] = if czm_model == "model1"
-            ip.K_t
-        else
-            1e-10 * ip.K_t
-        end
-        return dT_dδ
-    end
-
     _, _, _, trial = bilinear_traction_state(δ_n, δ_t, damage_state,
         ip, czm_model; visc_beta=visc_beta)
-    retained = max(1e-10, 1.0 - trial.D_visc)
+    retained = 1.0 - trial.D_visc
     dT_dδ[1, 1] = if δ_n >= 0.0
         retained * ip.K_n
     else

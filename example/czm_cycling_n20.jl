@@ -221,7 +221,7 @@ struct TabCaseSummary
     capacity_Ah::Float64; status::String; wall_s::Float64; note::String
 end
 
-function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
+function build_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
         outdir::String, mesh_data; n_theta, n_cycles, strength_scale,
         stiffness_scale, gc_scale, iter_method, tau_seconds,
         phase_times=(discharge=1800.0, rest1=600.0, charge=1800.0, rest2=600.0), dt_cycle=[1.0, 10.0])
@@ -311,6 +311,18 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
     mesh_th = case.mesh["thermal2D"]
     case.mesh["czm"] = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th, case.param)
     mechanical_seed=JuBat.MechState(case.mesh["czm"])
+    return (; case, mesh_data, mechanical_seed, cycle_opt, casedir)
+end
+
+function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
+        outdir::String, mesh_data; n_theta, n_cycles, strength_scale,
+        stiffness_scale, gc_scale, iter_method, tau_seconds,
+        phase_times=(discharge=1800.0, rest1=600.0, charge=1800.0, rest2=600.0), dt_cycle=[1.0, 10.0])
+    (; case, mesh_data, mechanical_seed, cycle_opt, casedir) =
+        build_tab_case(tc, thetas, h_tab, outdir, mesh_data;
+            n_theta, n_cycles, strength_scale, stiffness_scale, gc_scale,
+            iter_method, tau_seconds, phase_times, dt_cycle)
+    mesh_th = case.mesh["thermal2D"]
     runtime=Dict{String,Any}()
 
 

@@ -1,0 +1,135 @@
+damage_count_threshold = "D > 0.0 (strictly positive)"
+exit_code = 0
+run_directory = "D:\\OneDrive\\Desktop\\Jubat For Cursor\\JuBat\\output\\check_czm_n20_halfcycle\\20261022_190021_ca21e2"
+scope = "Single Case2 discharge/rest baseline; not full physical acceptance or 73/74 acceptance"
+source_head = "57755d4681b3719ad36f5d3672f36c95e01f6b2f"
+stress_definition = "element-center recovered stress; vonMises history is not J2 GP maximum"
+
+[first_recorded_nonzero_element_damage_snapshot]
+global_s = 2011.0
+max_element_D = 0.0005901158647954551
+meaning = "first recorded nonzero-damage snapshot, not exact continuous initiation time"
+phase = "rest1"
+phase_local_s = 210.99999999999991
+snapshot_index = 265
+
+[initial]
+T_max_K = 298.15
+T_min_K = 298.15
+element_D_max = 0.0
+element_Dv_max = 0.0
+gp_history_present = false
+mechanics_initialized = false
+t_global_s = 0.0
+
+[interfaces.discharge_NE_NCC]
+element_D_max = 0.0
+element_D_mean = 0.0
+element_Dv_max = 0.0
+gp_D_max = 0.0
+gp_D_mean = 0.0
+gp_Dv_max = 0.0
+n_elements = 840
+n_elements_D_gt0 = 0
+n_elements_fractured = 0
+n_gp = 1680
+n_gp_D_gt0 = 0
+n_gp_fractured = 0
+
+[interfaces.discharge_PE_PCC]
+element_D_max = 0.0
+element_D_mean = 0.0
+element_Dv_max = 0.0
+gp_D_max = 0.0
+gp_D_mean = 0.0
+gp_Dv_max = 0.0
+n_elements = 840
+n_elements_D_gt0 = 0
+n_elements_fractured = 0
+n_gp = 1680
+n_gp_D_gt0 = 0
+n_gp_fractured = 0
+
+[interfaces.rest1_NE_NCC]
+element_D_max = 0.0
+element_D_mean = 0.0
+element_Dv_max = 0.0
+gp_D_max = 0.0
+gp_D_mean = 0.0
+gp_Dv_max = 0.0
+n_elements = 840
+n_elements_D_gt0 = 0
+n_elements_fractured = 0
+n_gp = 1680
+n_gp_D_gt0 = 0
+n_gp_fractured = 0
+
+[interfaces.rest1_PE_PCC]
+element_D_max = 0.3175081217681377
+element_D_mean = 0.0015301269453038208
+element_Dv_max = 0.3133819674474213
+gp_D_max = 0.6350162435362754
+gp_D_mean = 0.0015301269453038208
+gp_Dv_max = 0.6267639348948426
+n_elements = 840
+n_elements_D_gt0 = 10
+n_elements_fractured = 0
+n_gp = 1680
+n_gp_D_gt0 = 10
+n_gp_fractured = 0
+
+[mesh]
+cohesive_elements = 1680
+mechanical_bulk_elements = 3360
+mechanical_nodes = 5072
+n_theta = 20
+thermal_elements = 420
+thermal_nodes = 441
+
+[phases.discharge]
+D_max_element = 0.0
+D_max_gp = 0.0
+D_mean_element = 0.0
+Dv_max_gp = 0.0
+T_max_K = 306.93091925753527
+T_mean_end_K = 306.80655798854093
+V_end_V = 3.22617285171737
+V_start_V = 3.7674739081440656
+capacity_Ah = 2.499999999999995
+duration_s = 1800.0
+hoop_max_Pa = 1.985370604193464e8
+hoop_min_Pa = -1.951711300423301e7
+n_fractured_gp = 0
+n_recorded_mechanical_snapshots = 209
+n_recorded_times = 210
+n_time_intervals_excluding_initial = 209
+recovered_element_vm_max_history_Pa = 1.9711064026655713e8
+shear_max_Pa = 3.0372132408883207e7
+shear_min_Pa = -2.507629737593405e7
+t_end_s = 1800.0
+t_start_s = 0.0
+termination_reason = "time_limit"
+
+[phases.rest1]
+D_max_element = 0.3175081217681377
+D_max_gp = 0.6350162435362754
+D_mean_element = 0.0007650634726519105
+Dv_max_gp = 0.6267639348948426
+T_max_K = 306.93091925753527
+T_mean_end_K = 301.062717273598
+V_end_V = 3.4486740696871747
+V_start_V = 3.3422373454389236
+capacity_Ah = 0.0
+duration_s = 600.0
+hoop_max_Pa = 1.9797936042177087e8
+hoop_min_Pa = -1.065232475604358e7
+n_fractured_gp = 0
+n_recorded_mechanical_snapshots = 95
+n_recorded_times = 96
+n_time_intervals_excluding_initial = 95
+recovered_element_vm_max_history_Pa = 1.9776517645940796e8
+shear_max_Pa = 2.913570122651421e7
+shear_min_Pa = -2.3714714713721912e7
+t_end_s = 2400.0
+t_start_s = 1800.0
+termination_reason = "time_limit"

@@ -106,7 +106,7 @@ end
     δ_0_t::Float64 = 0.0
     G_c_t::Float64 = 0.0
     δ_c_t::Float64 = 0.0
-    eta::Float64 = 1.0      # BK 混合模式指数 [-]
+    eta::Float64 = 1.0      # mix 方向开度阈值插值指数（非能量 BK）[-]
     h_c0::Float64 = 1e7     # 界面热阻（md/07）
     k_air::Float64 = 0.026
     lambda_m::Float64 = 70e-9
