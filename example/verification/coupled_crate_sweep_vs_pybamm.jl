@@ -130,7 +130,7 @@ function run_case(param_dim, crate, t_end; ntheta=80)
 
 	initial_state = nothing
 	_, timestep_data = JuBat.solve_phase_with_export(
-		case, JuBat.PHASE_DISCHARGE, t_end, I, initial_state;
+		case, JuBat.PHASE_DISCHARGE, t_end, initial_state;
 		dt_range=opt.dt,
 		export_interval=1
 	)

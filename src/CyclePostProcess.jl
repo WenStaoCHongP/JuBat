@@ -42,7 +42,7 @@ function state_concentration_variance(case::Case, y_state)
     return var(cs_n), var(cs_p)
 end
 
-function postprocess_phase_result(case::Case, phase_type::PhaseType, solve_result::Dict, initial_state::Union{Dict{String,Any},Nothing},I_current::Float64, t_start::Float64,D_max_init::Float64, D_mean_init::Float64, ms)
+function postprocess_phase_result(case::Case, phase_type::PhaseType, solve_result::Dict, initial_state::Union{NamedTuple,Nothing}, t_start::Float64,D_max_init::Float64, D_mean_init::Float64)
     time_hist = solve_result["time [s]"]
     voltage_hist = solve_result["cell voltage [V]"]
     isempty(time_hist) && error("postprocess_phase_result requires a non-empty time history")
@@ -67,9 +67,10 @@ function postprocess_phase_result(case::Case, phase_type::PhaseType, solve_resul
     end
 
     final_state = solve_result["final_state"]
-    final_state isa AbstractDict || error("postprocess_phase_result requires final_state to be a dictionary")
-    haskey(final_state, "y") || error("postprocess_phase_result requires final_state[\"y\"]")
-    final_state["t_global"] = t_start + duration
+    final_state isa NamedTuple || error("postprocess_phase_result requires NamedTuple")
+    final_state=(;final_state...,t_global=t_start+duration)
+    solve_result["final_state"]=final_state
+    ms=final_state.mech
 
     D_max_end = D_max_init
     D_mean_end = D_mean_init
@@ -80,20 +81,20 @@ function postprocess_phase_result(case::Case, phase_type::PhaseType, solve_resul
     end
 
     terminated_by = phase_termination_symbol(phase_type, solve_result["termination_reason"])
-    capacity = abs(I_current) * duration / 3600.0
+    current_A=solve_result["cell current [A]"]
+    capacity=sum((0.5*(abs(current_A[k-1])+abs(current_A[k]))*(time_hist[k]-time_hist[k-1])/3600.0 for k in 2:length(time_hist));init=0.0)
 
     if phase_type == PHASE_REST
         initial_state === nothing && error("REST post-processing requires an initial state")
-        haskey(initial_state, "y") || error("REST post-processing requires initial_state[\"y\"]")
-        y_start = initial_state["y"]
-        y_end = final_state["y"]
+        y_start = initial_state.y
+        y_end = final_state.y
         cs_n_init_var, cs_p_init_var = state_concentration_variance(case, y_start)
         cs_n_final_var, cs_p_final_var = state_concentration_variance(case, y_end)
         cs_relaxation_n = cs_n_init_var > 1e-12 ? 100.0 * (1.0 - cs_n_final_var / cs_n_init_var) : 0.0
         cs_relaxation_p = cs_p_init_var > 1e-12 ? 100.0 * (1.0 - cs_p_final_var / cs_p_init_var) : 0.0
-        final_state["diffusion_active"] = true
-        final_state["cs_relaxation_n"] = cs_relaxation_n
-        final_state["cs_relaxation_p"] = cs_relaxation_p
+        solve_result["diffusion_active"]=true
+        solve_result["cs_relaxation_n"]=cs_relaxation_n
+        solve_result["cs_relaxation_p"]=cs_relaxation_p
     end
 
     return Dict(

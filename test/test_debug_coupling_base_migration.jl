@@ -87,18 +87,18 @@ end
         end
     end
 
-    @testset "valid copies aliases growth and partial updates retain native contracts" begin
+    @testset "valid copies aliases growth and complete updates retain native contracts" begin
         finals = H[]
         for debug in (false,true), matrix_input in (false,true)
             hist=H("x"=>[1.0 3.0;2.0 4.0],"scalar"=>[5.0 6.0],"latest"=>7.0,"untouched"=>[20.0 21.0])
             before=deepcopy(hist); old_alias=hist["x"]
             data=matrix_input ? reshape([8.0,9.0],2,1) : [8.0,9.0]
-            vars=H("x"=>data,"scalar"=>10.0,"latest"=>11.0,"extra"=>[1.0])
+            vars=H("x"=>data,"scalar"=>10.0,"latest"=>11.0,"extra"=>[1.0],"untouched"=>[20.0])
             result=captured(() -> JuBat.Variable_update!(hist,vars,2;debug_coupling=debug))
             @test result.error === nothing && result.value === hist
             @test hist["x"]==[1.0 8.0;2.0 9.0] && hist["x"]===old_alias
             @test hist["scalar"]==[5.0 10.0] && hist["latest"]==11.0
-            @test hist["untouched"]==before["untouched"] && !haskey(hist,"extra")
+            @test hist["untouched"]==[20.0 20.0] && !haskey(hist,"extra")
             data .= -100.0
             @test hist["x"][:,2]==[8.0,9.0]
             data .= 12.0
@@ -118,7 +118,7 @@ end
             @test result.error === nothing && result.value===empty
             hist=H("x"=>zeros(1,1),"y"=>zeros(1,2))
             result=captured(() -> JuBat.Variable_update!(hist,H("x"=>[1.0]),1;debug_coupling=debug))
-            @test result.error === nothing && hist["x"][1]==1.0 && hist["y"]==zeros(1,2)
+            @test result.error isa KeyError && hist["x"]==zeros(1,1) && hist["y"]==zeros(1,2)
             for bad in (NaN,Inf)
                 hist=H("x"=>zeros(1,1))
                 result=captured(() -> JuBat.Variable_update!(hist,H("x"=>[bad]),1;debug_coupling=debug))
@@ -134,8 +134,8 @@ end
     @testset "source and model legality gates remain unconditional" begin
         for debug in (false,true)
             @test_throws ArgumentError JuBat.Solve(simple_case(debug;invalid_window=true))
-            @test_throws ArgumentError JuBat.Solve(simple_case(debug);initial_state=Dict{String,Any}())
-            @test_throws ArgumentError JuBat.Solve(simple_case(debug);initial_state=Dict{String,Any}("y"=>1.0))
+            @test_throws TypeError JuBat.Solve(simple_case(debug);initial_state=Dict{String,Any}())
+            @test_throws TypeError JuBat.Solve(simple_case(debug);initial_state=Dict{String,Any}("y"=>1.0))
             case=simple_case(debug)
             mesh=JuBat.jellyroll_collector_seed_mesh(case.param;nθ=8,czm_enabled=false,gsorder=2)
             case=JuBat.setup_thermal2D_mesh(case,mesh)
@@ -153,7 +153,7 @@ end
         case.opt.Current=t->(push!(calls,t);0.5)
         result=JuBat.Solve(case;return_final_state=true,
             chemical_step_observer=e->push!(events,deepcopy(e)))
-        push!(outputs,Dict(k=>v for (k,v) in result if !startswith(k,"timing ") || k=="timing CallModel calls"))
+        push!(outputs,Dict(k=>v for (k,v) in result if k!="final_state" && (!startswith(k,"timing ") || k=="timing CallModel calls")))
         push!(current_calls,calls);push!(observer_events,events)
         @test all(isfinite,result["cell voltage [V]"])
         @test result["termination_reason"]=="time_limit"

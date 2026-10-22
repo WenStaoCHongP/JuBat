@@ -123,7 +123,7 @@ function main()
     # 创建 CZM 网格（czm_enabled = true 时必须）与演化状态
     if opt.czm.enabled
         case.mesh["czm"] = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
-        case.mech = JuBat.MechState(case.mesh["czm"])
+
     end
 
     ne = size(mesh_th.element, 1)

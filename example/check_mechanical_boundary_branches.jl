@@ -84,8 +84,7 @@ damage_identity(s) = Tuple(getfield(s, f) for f in fieldnames(typeof(s)))
 function mechanical_state_identity(ms)
     return (; u=ms.u_prev, element=map(damage_identity, ms.damage_states),
         gp=ms.gp_damage_states === nothing ? nothing : map(damage_identity, ms.gp_damage_states),
-        plastic=ms.plastic_states, prestress=ms.winding_prestress, node_ref=ms.node_ref,
-        contact=ms.contact)
+        plastic=ms.plastic_states, prestress=ms.winding_prestress, node_ref=ms.node_ref, initialized=ms.mechanics_initialized)
 end
 
 function static_mesh_identity(mesh)
@@ -148,20 +147,21 @@ function build_collection_case(outdir)
     mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=80, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     case.mesh["czm"] = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
-    case.mech = JuBat.MechState(case.mesh["czm"])
+
     JuBat.apply_initial_soc!(case, case.param_dim, 0.65)
     return case
 end
 
 function diagnostic_cycle_options()
-    return JuBat.CycleOption(n_cycles=1,I_charge=5.0,I_discharge=5.0,t_charge=1800.0,
+    return JuBat.CycleOption(n_cycles=1,t_charge=1800.0,
         t_discharge=1800.0,t_rest1=600.0,t_rest2=600.0,
-        SOC_init=0.65,reset_T_each_cycle=false,reset_T_before_charge=true)
+        SOC_init=0.65)
 end
 
 function collect_input_packet(settings, outdir, sources)
     isdefined(JuBat, :mechanical_step_observer) || error("internal mechanical_step_observer seam is required")
     case = build_collection_case(outdir)
+    runtime = Dict{String,Any}()
     inputs, baseline_after, baseline_results = Any[], Any[], Any[]
     pending = Ref{Any}(nothing)
     elapsed = Ref(0.0)
@@ -217,30 +217,43 @@ function collect_input_packet(settings, outdir, sources)
     chemical_thermal_state = nothing
     cycle_opt = diagnostic_cycle_options()
     try
-        JuBat.mechanical_step_observer[] = observer
-        specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge,cycle_opt.I_discharge),
-            ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1,0.0),
-            ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge,-cycle_opt.I_charge),
-            ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2,0.0))
-        for (label,phase,duration,current) in specs
+        pending_committed_event = Ref{Any}(nothing)
+    mechanical_capture = function(event)
+        if event.phase == :after && event.result.converged
+            pending_committed_event[] = event
+        else
+            observer(event)
+        end
+        return nothing
+    end
+    accepted_capture = function(event)
+        if event.kind == :accepted_commit && pending_committed_event[] !== nothing
+            observer(pending_committed_event[])
+            pending_committed_event[] = nothing
+        end
+        return nothing
+    end
+    JuBat.mechanical_step_observer[] = mechanical_capture
+        specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge),
+            ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1),
+            ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge),
+            ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2))
+        for (label,phase,duration) in specs
             if settings.window_seconds !== nothing && label != "discharge"
                 stop_reason = "explicit_partial_discharge_window"
                 break
             end
-            if label=="charge" && cycle_opt.reset_T_before_charge && case.opt.thermalmodel != "none"
-                JuBat.reset_cycle_temperature!(case,chemical_thermal_state)
-            end
             phase_label[],phase_elapsed[] = label,0.0
-            phase_offset[] = chemical_thermal_state===nothing ? 0.0 : Float64(chemical_thermal_state["t_global"])
+            phase_offset[] = chemical_thermal_state===nothing ? 0.0 : Float64(chemical_thermal_state.t_global)
             t_max = settings.window_seconds===nothing ? duration : settings.window_seconds
             previous_state_hash = serialized_hash(chemical_thermal_state)
-            phase_result = JuBat.solve_phase(case,phase,t_max,current,chemical_thermal_state;
-                ms=case.mech,dt_range=cycle_opt.dt_cycle)
+            phase_result = JuBat.solve_phase(case,phase,t_max,chemical_thermal_state;
+                variables=runtime,dt_range=cycle_opt.dt_cycle, chemical_step_observer=accepted_capture)
             chemical_thermal_state = phase_result.final_state
             push!(phases,(; phase=label,start_s=phase_result.t_start,end_s=phase_result.t_end,
-                duration_s=phase_result.duration,current_A=current,terminated_by=string(phase_result.terminated_by),
+                duration_s=phase_result.duration,current_A=only(unique(phase_result.solve_result["cell current [A]"])),terminated_by=string(phase_result.terminated_by),
                 initial_chemical_thermal_hash=previous_state_hash,final_chemical_thermal_hash=serialized_hash(chemical_thermal_state),
-                case_initial_SOC_setting=cycle_opt.SOC_init,reset_T_before_phase=(label=="charge" && cycle_opt.reset_T_before_charge)))
+                case_initial_SOC_setting=cycle_opt.SOC_init,reset_T_before_phase=false))
             println("CAPTURE_PHASE=$label COMPLETED_PHASES=$(length(phases))/4 TIME_S=$(phase_result.t_end) ACCEPTED_MECHANICAL_STEPS=$(length(inputs))")
         end
         completed_cycles = length(phases)==4 ? 1 : 0
@@ -263,13 +276,13 @@ function collect_input_packet(settings, outdir, sources)
         SOC_init=0.65, dt_cycle=cycle_opt.dt_cycle, phase_duration_s=(1800.0,600.0,1800.0,600.0),
         requested_window_s=settings.window_seconds,
         max_accepted_steps=settings.max_steps, strength_scale=0.09, stiffness_scale=0.1,
-        fracture_energy_scale=2.0, area_loss_enabled=true, reset_T_each_cycle=false,reset_T_before_charge=true,
+        fracture_energy_scale=2.0, area_loss_enabled=true, temperature_policy="inherit",
         czm_options=options_identity(options))
     packet = (; schema="JuBat mechanical boundary packet v1", created_at=string(now()),
         sources, source_hash=serialized_hash(sources), config, config_hash=serialized_hash(config),
         mesh, mesh_hash=serialized_hash(static_mesh_identity(mesh)), param,
         param_hash=serialized_hash(param), options, inputs, baseline_after, baseline_results,
-        failed_input, last_committed=deepcopy(case.mech), actual_end_time_s=elapsed[],
+        failed_input, last_committed=deepcopy(runtime["accepted"].mech), actual_end_time_s=elapsed[],
         completed_cycles,completed_phases=phases,final_chemical_thermal_state=chemical_thermal_state,
         stop_reason, collection_error=capture_error[])
     sha = save_binary(joinpath(outdir, "input_packet.bin"), packet)

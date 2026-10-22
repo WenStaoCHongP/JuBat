@@ -2,10 +2,10 @@
 任务63前置诊断（用户2026-10-10指令）：多种力学边界 × 真实耦合一圈，
 采集"带载相位损伤最大时刻"的支路电流分布，供电流云图绘制。
 
-协议与任务62采集口径一致（=任务63 BRIDGE_1）：SPMe 逐单元、distributed2D、
+基于任务62/63的参数，2026-10-21改为温度逐相位继承：SPMe 逐单元、distributed2D、
 surface 冷却、SOC 0.65、±5 A、1800/600/1800/600 s、dt_cycle=[1,10]、
 gp_basic+粘性τ=5 s、geo/J2 关、界面强度×0.09/刚度×0.1/Gc×2、
-area_loss_enabled=true（损伤→面积→分流电流真实耦合）、reset_T_before_charge=true。
+area_loss_enabled=true（损伤→面积→分流电流真实耦合）、温度逐相位继承，不重置。
 机械边界经公开 CzmOptions 字段（endpoint_variant 等）进入耦合链路；
 每工况导出解析后的约束集合作入口核验证据。
 
@@ -51,13 +51,13 @@ function export_case_geometry(case, outdir)
     return size(tm.element,1), coords_are_meters, factor
 end
 
-function export_thermal_damage(case, outdir, tag)
+function export_thermal_damage(case, accepted, outdir, tag)
     # 热单元损伤 = 其映射 cohesive 单元 D 均值的最大值（生产分流消费同口径的粗化）
     tm = case.mesh["thermal2D"]
     n_t = size(tm.element,1)
     td = zeros(n_t)
     for (k,c) in enumerate(case.mesh["czm"].cohesive_elements)
-        D = case.mech.damage_states[k].D
+        D = accepted.mech.damage_states[k].D
         D > 0 || continue
         for bulk in (c.host_inner_elem, c.host_outer_elem)
             te = case.mesh["czm"].czm_submesh.thermal_elem_map[bulk]
@@ -69,8 +69,8 @@ function export_thermal_damage(case, outdir, tag)
     return td
 end
 
-function export_gp_damage(case, outdir, tag)
-    ms = case.mech
+function export_gp_damage(case, accepted, outdir, tag)
+    ms = accepted.mech
     ms.gp_damage_states === nothing && error("gp_basic state missing at $tag")
     G = ms.gp_damage_states
     size(G,1) == length(ms.damage_states) ||
@@ -84,6 +84,7 @@ end
 function run_boundary_case(spec, outdir)
     mkpath(outdir)
     case = build_collection_case(outdir)
+    runtime = Dict{String,Any}()
     czm = case.opt.czm
     czm.fix_inner, czm.fix_start, czm.fix_end = spec.fix_inner, spec.fix_start, spec.fix_end
     czm.outer_bc, czm.endpoint_variant = spec.outer, spec.variant
@@ -93,21 +94,18 @@ function run_boundary_case(spec, outdir)
     ne_thermal, coords_meters, coord_factor = export_case_geometry(case, outdir)
 
     cycle_opt = diagnostic_cycle_options()
-    specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge,cycle_opt.I_discharge),
-        ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1,0.0),
-        ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge,-cycle_opt.I_charge),
-        ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2,0.0))
+    specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge),
+        ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1),
+        ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge),
+        ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2))
     state = nothing
     rows, snapshots = Any[], Any[]
     status, error_text = "completed_4_phases", ""
-    for (label,phase,duration,current) in specs
-        if label=="charge" && cycle_opt.reset_T_before_charge && case.opt.thermalmodel != "none"
-            JuBat.reset_cycle_temperature!(case,state)
-        end
-        println("[$(spec.id)] phase=$label start t_max=$duration current=$current")
+    for (label,phase,duration) in specs
+        println("[$(spec.id)] phase=$label start t_max=$duration")
         try
-            pr = JuBat.solve_phase(case,phase,duration,current,state;
-                ms=case.mech,dt_range=cycle_opt.dt_cycle)
+            pr = JuBat.solve_phase(case,phase,duration,state;
+                variables=runtime,dt_range=cycle_opt.dt_cycle)
             state = pr.final_state
             sr = pr.solve_result
             t = sr["time [s]"]; V = sr["cell voltage [V]"]; D = sr["czm D_max"]
@@ -121,12 +119,12 @@ function run_boundary_case(spec, outdir)
             # 相位末快照：带载相位末同时保留电流列与损伤场
             Iend = I[:,end]
             snapshot = (; phase=label, t_end=pr.t_end, D_end=D[end], terminated_by=string(pr.terminated_by),
-                currents=copy(Iend), damage=copy(case.mech.damage_states))
+                currents=copy(Iend), damage=copy(runtime["accepted"].mech.damage_states))
             push!(snapshots,snapshot)
             # I_e 为无量纲契约字段（Σw·I_e=I_total）；物理等效 I_eq_A=I_e·I_typ（R3 单位修正）
             write_csv(joinpath(outdir,"current_phase_end_$label.csv"),("element","I_e","I_eq_A"),
                 ((e,Iend[e],Iend[e]*case.param.scale.I_typ) for e in 1:length(Iend)))
-            export_thermal_damage(case,outdir,label)
+            export_thermal_damage(case,runtime["accepted"],outdir,label)
             println("[$(spec.id)] CAPTURE_PHASE=$label t_end=$(pr.t_end) terminated_by=$(pr.terminated_by) D_end=$(D[end]) steps=$(length(t))")
         catch err
             status = "failed_in_$label"
@@ -137,7 +135,7 @@ function run_boundary_case(spec, outdir)
     end
     write_csv(joinpath(outdir,"steps.csv"),
         ("phase","step","time_s","voltage_V","D_max","I_min_A","I_max_A","I_mean_abs_A"),rows)
-    export_gp_damage(case,outdir,"final_state")
+    export_gp_damage(case,runtime["accepted"],outdir,"final_state")
 
     # 带载相位损伤最大时刻：放电/充电相位末 D_end 最大者
     loaded = [s for s in snapshots if s.phase in ("discharge","charge")]
@@ -153,7 +151,8 @@ function run_boundary_case(spec, outdir)
         "chosen_D_max"=>chosen===nothing ? 0.0 : chosen.D_end,
         "chosen_terminated_by"=>chosen===nothing ? "" : chosen.terminated_by,
         "note"=>"chosen instant = loaded phase end with max D (damage monotone); current field in current_phase_end_<phase>.csv",
-        "protocol"=>"task62 capture recipe: SPMe per-element, gp_basic, tau=5s, area_loss on, reset_T_before_charge=true, ntheta=80",
+        "temperature_policy"=>"inherit; no reset",
+        "protocol"=>"based on task62/63 parameters; temperature inherited since 2026-10-21: SPMe per-element, gp_basic, tau=5s, area_loss on, ntheta=80",
         "created_at"=>string(now()))
     open(joinpath(outdir,"manifest.toml"),"w") do io
         TOML.print(io,manifest)

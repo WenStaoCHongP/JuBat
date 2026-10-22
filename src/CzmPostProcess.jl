@@ -17,7 +17,11 @@ function get_damage_statistics(damage_states::AbstractVector{DamageState})
         return (max_D=0.0, mean_D=0.0, min_D=0.0, n_fractured=0, fraction_damaged=0.0, total_accumulated=0.0)
     end
 
-    D_vals = [s.D for s in damage_states]
+    D_vals = map(damage_states) do s
+        isfinite(s.D) && 0<=s.D<=1 && isfinite(s.accumulated_damage) ||
+            throw(ArgumentError("invalid damage statistics source"))
+        s.D
+    end
     n_fractured = count(s -> s.fractured, damage_states)
     n_damaged = count(d -> d > 0.01, D_vals)
     accumulated = [s.accumulated_damage for s in damage_states]

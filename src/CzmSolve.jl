@@ -196,6 +196,7 @@ function gp_history_for_step(ms::MechState, czm_mesh::CohesiveMesh)
     weights, _ = NCweight(czm_mesh.czm_submesh.mesh_bonded.gs.order)
     shape = (length(czm_mesh.cohesive_elements), length(weights))
     if ms.gp_damage_states === nothing
+        ms.mechanics_initialized && throw(ArgumentError("initialized mechanics lacks required GP history"))
         any(s -> s.D != 0.0 || s.D_visc != 0.0 || s.δ_max_eff != 0.0 ||
                  s.δ_max_n != 0.0 || s.δ_max_t != 0.0 ||
                  s.accumulated_damage != 0.0 || s.fractured,
@@ -205,6 +206,7 @@ function gp_history_for_step(ms::MechState, czm_mesh::CohesiveMesh)
     end
     size(ms.gp_damage_states) == shape || throw(DimensionMismatch(
         "GP damage history size $(size(ms.gp_damage_states)) must equal $shape"))
+    all(s->all(f->isfinite(getfield(s,f)),fieldnames(typeof(s))) && 0<=s.D<=1 && 0<=s.D_visc<=1,ms.gp_damage_states) || throw(ArgumentError("invalid GP damage history"))
     return clone_damage_states(ms.gp_damage_states)
 end
 
@@ -234,10 +236,15 @@ function prepare_plastic_state_buffers(ms::MechState, czm_mesh::CohesiveMesh,
                                        plasticity::Bool)
     plasticity || return nothing, nothing
     ne = size(czm_mesh.bulk_element, 1)
-    committed = ms.plastic_states === nothing ?
-        [PlasticState() for _ in 1:ne, _ in 1:4] : ms.plastic_states
+    committed = if ms.plastic_states === nothing
+        ms.mechanics_initialized && throw(ArgumentError("initialized mechanics lacks required plastic history"))
+        [PlasticState() for _ in 1:ne, _ in 1:4]
+    else
+        ms.plastic_states
+    end
     size(committed) == (ne, 4) || throw(DimensionMismatch(
         "plastic state size $(size(committed)) must equal ($ne, 4)"))
+    all(s->all(isfinite,s.eps_p) && isfinite(s.kappa),committed) || throw(ArgumentError("invalid committed plastic history"))
     return committed, clone_plastic_states(committed)
 end
 
@@ -264,6 +271,12 @@ function solve_czm_step(czm_mesh::CohesiveMesh, ms::MechState, param,
         dT_elem=nothing, Δsoc_n_elem=nothing, Δsoc_p_elem=nothing,
         eigenstrain=nothing, prestress=nothing, dt_seconds::Union{Nothing,Real}=nothing,
         boundary=nothing)
+    length(ms.u_prev)==2size(czm_mesh.node,1) || throw(DimensionMismatch("CZM displacement length"))
+    all(isfinite,ms.u_prev) || throw(ArgumentError("non-finite CZM displacement"))
+    length(ms.damage_states)==length(czm_mesh.cohesive_elements) || throw(DimensionMismatch("element damage history length"))
+    all(s->all(f->isfinite(getfield(s,f)),fieldnames(typeof(s))) && 0<=s.D<=1 && 0<=s.D_visc<=1,ms.damage_states) || throw(ArgumentError("invalid element damage history"))
+    czm_opt.winding_prestress && prestress===nothing && throw(ArgumentError(
+        "winding_prestress=true requires explicit prestress input"))
     check_czm_workspace(czm_mesh, czm_workspace)
     czm_workspace.param === param || throw(ArgumentError("CZM workspace belongs to different frozen parameters"))
     czm_opt.outer_bc === :radial_slide && czm_opt.geo_nonlinear && throw(ArgumentError(
@@ -281,9 +294,11 @@ function solve_czm_step(czm_mesh::CohesiveMesh, ms::MechState, param,
     end
     observer = mechanical_step_observer[]
     if observer === nothing
-        return _solve_czm_step_impl(czm_mesh,ms,param,F_ext,czm_opt; czm_workspace=czm_workspace,
+        result = _solve_czm_step_impl(czm_mesh,ms,param,F_ext,czm_opt; czm_workspace=czm_workspace,
             dT_elem=dT_elem,Δsoc_n_elem=Δsoc_n_elem,Δsoc_p_elem=Δsoc_p_elem,
             eigenstrain=eigenstrain,prestress=prestress,dt_seconds=dt_seconds,boundary=boundary)
+        result.converged && (ms.mechanics_initialized=true)
+        return result
     end
     event = (;czm_mesh,ms,param,F_ext,czm_opt,dT_elem,Δsoc_n_elem,Δsoc_p_elem,
               eigenstrain,prestress,dt_seconds)
@@ -296,6 +311,7 @@ function solve_czm_step(czm_mesh::CohesiveMesh, ms::MechState, param,
         observer(merge(event,(phase=:error,result=nothing,error=err)))
         rethrow()
     end
+    result.converged && (ms.mechanics_initialized=true)
     observer(merge(event,(phase=:after,result=result,error=nothing)))
     return result
 end

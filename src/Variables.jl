@@ -272,61 +272,55 @@ function create_element_workspace(case::Case)
 end
 
 function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Float64}}, variables::Dict{String, Union{Array{Float64},Float64}}, v::Int64; debug_coupling::Bool=false)
-    # 检查是否需要扩展数组（动态增长）
-    for k in keys(variables_hist)
-        if isa(variables_hist[k], Array{Float64}) && ndims(variables_hist[k]) == 2
-            current_size = size(variables_hist[k], 2)
-            if v > current_size
-                # 需要扩展
-                expansion_size = max(1000, current_size ÷ 2)
-                @warn "时间步 $(v) 超过预分配 $(current_size)，扩展 $(expansion_size) 步（变量: $(k)）"
-                n_rows = size(variables_hist[k], 1)
-                new_cols = zeros(Float64, n_rows, expansion_size)
-                variables_hist[k] = hcat(variables_hist[k], new_cols)
-            end
-        end
-    end
-
-    hist_keys = Set(keys(variables_hist))
-    for (k, val) in pairs(variables)
-        k in hist_keys || continue
-        hist_val = variables_hist[k]
-        if isa(hist_val, Array{Float64})
-            if debug_coupling
-                ndims(hist_val) == 2 || throw(DimensionMismatch("history variable \"$k\" must be a matrix"))
-            end
-            nrows = size(hist_val, 1)
-            if isa(val, Array{Float64})
+    v >= 1 || throw(BoundsError(variables_hist,v))
+    # Resolve a complete column and all growth before touching any existing history.
+    updates = Tuple{String,Union{Matrix{Float64},Float64},Union{Vector{Float64},Float64}}[]
+    for (k,hist_val) in variables_hist
+        val = variables[k]
+        if hist_val isa Array{Float64}
+            ndims(hist_val) == 2 || throw(DimensionMismatch("history variable \"$k\" must be a matrix"))
+            nrows,ncols = size(hist_val)
+            column = if val isa Array{Float64}
                 if debug_coupling
                     if ndims(val) == 2
-                        size(val, 2) == 1 || throw(DimensionMismatch(
-                            "variable \"$k\" must have exactly one column, got size $(size(val))"
-                        ))
+                        size(val,2) == 1 || throw(DimensionMismatch(
+                            "variable \"$k\" must have exactly one column, got size $(size(val))"))
                     elseif ndims(val) != 1
                         throw(DimensionMismatch(
-                            "variable \"$k\" must be a vector or single-column matrix, got $(ndims(val)) dimensions"
-                        ))
+                            "variable \"$k\" must be a vector or single-column matrix, got $(ndims(val)) dimensions"))
                     end
-                    length(val) == nrows || throw(DimensionMismatch(
-                        "variable \"$k\" length $(length(val)) does not match history row count $nrows"
-                    ))
                 end
-                hist_val[:, v] = vec(val)
-            elseif isa(val, Float64)
-                if debug_coupling
-                    nrows == 1 || throw(DimensionMismatch(
-                        "scalar variable \"$k\" cannot populate history with $nrows rows"
-                    ))
-                end
-                hist_val[1, v] = val
+                length(val) == nrows || throw(DimensionMismatch(
+                    "variable \"$k\" length $(length(val)) does not match history row count $nrows"))
+                copy(vec(val))
+            else
+                nrows == 1 || throw(DimensionMismatch(
+                    "scalar variable \"$k\" cannot populate history with $nrows rows"))
+                [val]
             end
-        elseif isa(hist_val, Float64)
-            if debug_coupling
-                isa(val, Float64) || throw(ArgumentError(
-                    "scalar history variable \"$k\" requires a Float64 value, got $(typeof(val))"
-                ))
+            target = hist_val
+            if v > ncols
+                expansion = max(1000,ncols÷2)
+                v <= ncols+expansion || throw(BoundsError(hist_val,(:,v)))
+                @warn "时间步 $(v) 超过预分配 $(ncols)，扩展 $(expansion) 步（变量: $(k)）"
+                target = hcat(hist_val,zeros(nrows,expansion))
             end
-            variables_hist[k] = val
+            push!(updates,(k,target,column))
+        else
+            val isa Float64 || throw(ArgumentError(
+                "scalar history variable \"$k\" requires a Float64 value, got $(typeof(val))"))
+            push!(updates,(k,hist_val,val))
+        end
+    end
+    # Only checked scalar assignments remain; no callbacks or allocations in publication.
+    for (k,target,column) in updates
+        if target isa Matrix{Float64}
+            for i in eachindex(column)
+                target[i,v] = column[i]
+            end
+            variables_hist[k] = target
+        else
+            variables_hist[k] = column
         end
     end
     return variables_hist

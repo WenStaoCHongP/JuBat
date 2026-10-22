@@ -209,7 +209,7 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64)
     #     czm_mesh = case.mesh["czm"]
     #     param = case.param
     #     for (elem_idx, czm_elem) in enumerate(czm_mesh.cohesive_elements)
-    #         state = case.mech.damage_states[elem_idx]
+    #         state = accepted.mech.damage_states[elem_idx]
     #         D = state.D
     #         δ_n = state.δ_max_n
     #         ip = collector_params(param, czm_elem.interface_type)

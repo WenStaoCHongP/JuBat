@@ -121,6 +121,7 @@ end
 
 function run_diag(t_all, last_stage, last_phase, last_accepted_step)
     case = build_collection_case(DIAG_OUT)
+    runtime = Dict{String,Any}()
     czm = case.opt.czm
     czm.fix_inner, czm.fix_start, czm.fix_end = false, false, true
     czm.endpoint_variant = :omit_a
@@ -158,22 +159,37 @@ function run_diag(t_all, last_stage, last_phase, last_accepted_step)
         return nothing
     end
     old_obs = JuBat.mechanical_step_observer[]
-    JuBat.mechanical_step_observer[] = capture
+    pending_committed_event = Ref{Any}(nothing)
+    mechanical_capture = function(event)
+        if event.phase == :after && event.result.converged
+            pending_committed_event[] = event
+        else
+            capture(event)
+        end
+        return nothing
+    end
+    accepted_capture = function(event)
+        if event.kind == :accepted_commit && pending_committed_event[] !== nothing
+            capture(pending_committed_event[])
+            pending_committed_event[] = nothing
+        end
+        return nothing
+    end
+    JuBat.mechanical_step_observer[] = mechanical_capture
     cycle_opt = diagnostic_cycle_options()
-    specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge,cycle_opt.I_discharge),
-        ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1,0.0),
-        ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge,-cycle_opt.I_charge),
-        ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2,0.0))
+    specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge),
+        ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1),
+        ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge),
+        ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2))
     state = nothing
     soc_avgs = Any[]      # ① 12 列满行
     radial_rows = Any[]   # ③ 径向节点表
     gp_rows = Any[]       # ③ 完整 GP 表
     stepwise_avgs = Any[] # ④ 全场逐步两种平均
     try
-        for (label,phase,dur,cur) in specs
+        for (label,phase,dur) in specs
             phase_ref[] = label
             last_phase[] = label
-            label == "charge" && JuBat.reset_cycle_temperature!(case, state)
             # 5.7.4：化学步观察点透传（库存预算采集，正式回调非空回调）
             chem_obs = if chem_observer_enabled[]
                 ev -> push!(chem_events, (phase = label, kind = ev.kind,
@@ -184,8 +200,12 @@ function run_diag(t_all, last_stage, last_phase, last_accepted_step)
             else
                 nothing
             end
-            pr = JuBat.solve_phase(case, phase, dur, cur, state;
-                ms=case.mech, dt_range=cycle_opt.dt_cycle, chemical_step_observer=chem_obs)
+            pr = JuBat.solve_phase(case, phase, dur, state;
+                variables=runtime, dt_range=cycle_opt.dt_cycle,
+                chemical_step_observer=ev->begin
+                    accepted_capture(ev)
+                    chem_obs === nothing || chem_obs(ev)
+                end)
             state = pr.final_state
             phase_end_state[label] = deepcopy(state)
             sr = pr.solve_result
@@ -206,7 +226,7 @@ function run_diag(t_all, last_stage, last_phase, last_accepted_step)
                 end
             end
             # ④ 径向剖面：elem1 的 NE/PE 粒子径向 c/r/FE 权重（相位末，来自 final_state y）
-            y = state["y"]
+            y = state.y
             nc_chem = case.index["SPMe chemical block length"]
             off1 = 0 * nc_chem   # elem1 偏移
             idx_n = case.index["negative particle lithium concentration"]
@@ -224,7 +244,7 @@ function run_diag(t_all, last_stage, last_phase, last_accepted_step)
                     push!(gp_rows, (label, side, g, mesh.gs.ele[g], mesh.gs.x[g], q[g], c_gs[g]))
                 end
             end
-            println("[DIAG] phase=$label done t_end=$(pr.t_end) GP3365 D=$(round(gp_key_quantities(case.mech).D; digits=10))")
+            println("[DIAG] phase=$label done t_end=$(pr.t_end) GP3365 D=$(round(gp_key_quantities(runtime["accepted"].mech).D; digits=10))")
         end
     finally
         JuBat.mechanical_step_observer[] = old_obs
@@ -366,11 +386,11 @@ function run_diag(t_all, last_stage, last_phase, last_accepted_step)
     last_stage[] = "report"
     opt_dump = Dict{String,Any}(string(f) => (v = getfield(case.opt, f); v isa Function ? "callable" : string(v))
         for f in fieldnames(typeof(case.opt)))
-    cyc_dump = Dict{String,Any}("I_charge"=>cycle_opt.I_charge, "I_discharge"=>cycle_opt.I_discharge,
+    cyc_dump = Dict{String,Any}("current_source"=>"case.opt.Current; phase sign/zero", "temperature_policy"=>"inherit",
         "t_charge"=>cycle_opt.t_charge, "t_discharge"=>cycle_opt.t_discharge, "t_rest1"=>cycle_opt.t_rest1,
         "t_rest2"=>cycle_opt.t_rest2, "V_upper"=>case.param.cell.v_h, "V_lower"=>case.param.cell.v_l,
         "SOC_init"=>cycle_opt.SOC_init, "n_cycles"=>cycle_opt.n_cycles,
-        "reset_T_each_cycle"=>cycle_opt.reset_T_each_cycle, "reset_T_before_charge"=>cycle_opt.reset_T_before_charge,
+
         "dt_cycle"=>cycle_opt.dt_cycle)
     write_manifest("completed"; extra = Dict(
         "source_hash" => bytes2hex(sha256(string(source_identity()))),

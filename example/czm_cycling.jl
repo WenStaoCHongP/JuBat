@@ -132,15 +132,11 @@ function main()
 
     cycle_opt = JuBat.CycleOption(
         n_cycles = n_cycles,
-        I_charge = i,
-        I_discharge = i,
         t_charge = 1800.0,
         t_discharge = 1800.0,
         t_rest1 = 600.0,
         t_rest2 = 600.0,
         SOC_init = 0.65,
-        reset_T_each_cycle = false,
-        reset_T_before_charge = true,
     )
 
     println("OK: 参数设置完成")
@@ -173,7 +169,9 @@ function main()
     mesh_th = case.mesh["thermal2D"]
 
     case.mesh["czm"] = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
-    case.mech = JuBat.MechState(case.mesh["czm"])
+    mechanical_seed=JuBat.MechState(case.mesh["czm"])
+    runtime=Dict{String,Any}()
+
 
     ne = size(mesh_th.element, 1)
     println("OK: Jellyroll网格创建完成")
@@ -195,7 +193,7 @@ function main()
     profile_on = get(ENV, "JUBAT_PROFILE", "0") == "1"
     local result
     try
-        solve_fn = () -> JuBat.solve_cycling(case, cycle_opt, case.mech;
+        solve_fn = () -> JuBat.solve_cycling(case, cycle_opt, mechanical_seed; variables=runtime,
             save_detailed = export_field)
         if profile_on
             Profile.init(n = 10_000_000, delay = 0.01)
@@ -206,7 +204,7 @@ function main()
     catch err
         println("\n[诊断] solve_cycling 失败，原位状态转储：")
         println("  错误: " * first(sprint(showerror, err), 200))
-        mech = case.mech
+        mech = runtime["accepted"].mech
         u = mech.u_prev
         if mech.gp_damage_states !== nothing
             gp = mech.gp_damage_states
@@ -439,7 +437,7 @@ function main()
     n_frac_all = isempty(result.n_fractured) ? 0 : maximum(result.n_fractured)
     @printf("  全程 D_max = %.4e ｜ 断裂单元峰值 = %d\n", D_max_all, n_frac_all)
 
-    fm = result.final_mech === nothing ? case.mech : result.final_mech
+    fm = result.final_mech
     if fm.gp_damage_states !== nothing
         gp = fm.gp_damage_states
         @printf("  最终GP: D_max=%.4e, D_visc_max=%.4e, D>=0.99点数=%d, fractured点数=%d / %d\n",

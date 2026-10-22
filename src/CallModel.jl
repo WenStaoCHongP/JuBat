@@ -50,7 +50,7 @@ function particle_volume_average(c::AbstractVector{Float64}, mesh::Mesh)
     return c_bar
 end
 
-function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
+function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String, mech::Union{Nothing,MechState})
     mesh_th = case.mesh["thermal2D"]
     ne = size(mesh_th.element, 1)
     n_chem = case.index["SPMe chemical block length"]
@@ -105,11 +105,11 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     D_elem_area_loss = nothing
     if case.opt.czm.area_loss_enabled
         if haskey(case.mesh, "czm")
-            case.mech !== nothing || error(
-                "CallModel_MultiSPMe: area_loss_enabled 且存在 czm_mesh（反馈源），但 case.mech 缺失（非法状态）")
+            mech !== nothing || error(
+                "CallModel_MultiSPMe: area_loss_enabled 且存在 czm_mesh（反馈源），但 mech 缺失（非法状态）")
             case.mesh["czm"].czm_submesh !== nothing || error(
                 "CallModel_MultiSPMe: area_loss_enabled 且反馈源存在，但 cohesive_to_thermal 映射缺失（非法状态，不得静默回退几何权重）")
-            D_elem_area_loss = map_czm_damage_to_thermal(case.mesh["czm"], case.mech.damage_states, ne)
+            D_elem_area_loss = map_czm_damage_to_thermal(case.mesh["czm"], mech.damage_states, ne)
         elseif case.opt.czm.enabled
             error("CallModel_MultiSPMe: area_loss_enabled 且 CZM 启用，但缺少 czm_mesh（非法状态，不得静默回退几何权重）")
         end
@@ -152,7 +152,7 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     Threads.@threads for e in 1:ne
         tid = Threads.threadid()
         ws_e = ws_pool[tid]
-        M_e, K_e, F_e, vars_e = SPMe_element(case, yt_chem[e], t, e;I_e=I_e[e], T_e=Te_prev[e],jacobi=jacobi, workspace=ws_e)
+        M_e, K_e, F_e, vars_e = SPMe_element(case, yt_chem[e], t, e; I_e=I_e[e], T_e=Te_prev[e],jacobi=jacobi, workspace=ws_e)
         M_elems[e] = M_e
         K_elems[e] = K_e
         F_elems[e] = vec(F_e)
@@ -173,14 +173,16 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         variables = compute_heat_sources_with_czm(case, variables, variables_elems, I_e, Te_prev, areas, case.mesh["czm"], mesh_th)
         t_czm_model_s = (time_ns() - t_czm_ns) * 1e-9
         # 记录 CZM 摘要统计
-        stats = get_damage_statistics(case.mech.damage_states)
+        length(mech.damage_states)==length(case.mesh["czm"].cohesive_elements) || throw(DimensionMismatch("CZM summary damage count"))
+        stats = get_damage_statistics(mech.damage_states)
         variables["czm D_max"] = [stats.max_D]
         if case.opt.czm.winding_prestress
             variables["winding prestress"] = [1.0]   # 浮点历史标记；最终结果再解释为功能开启
         end
         variables["czm D_mean"] = [stats.mean_D]
-        δ_max_n_vals = [s.δ_max_n for s in case.mech.damage_states]
-        δ_max_eff_vals = [s.δ_max_eff for s in case.mech.damage_states]
+        δ_max_n_vals = [s.δ_max_n for s in mech.damage_states]
+        δ_max_eff_vals = [s.δ_max_eff for s in mech.damage_states]
+        all(isfinite,δ_max_n_vals) && all(isfinite,δ_max_eff_vals) || throw(ArgumentError("non-finite CZM separation history"))
         variables["czm δ_max_n"] = [maximum(δ_max_n_vals)]
         variables["czm δ_max_eff"] = [maximum(δ_max_eff_vals)]
         variables["czm δ_mean_n"] = [mean(δ_max_n_vals)]
@@ -252,10 +254,10 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     
     return M, K, F, variables, y_phi
 end
-function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
+function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String, mech::Union{Nothing,MechState}=nothing)
     # 多SPMe模式：由 per_element_spme 控制，直接委托给 CallModel_MultiSPMe
     if case.opt.per_element_spme
-        return CallModel_MultiSPMe(case, yt, t, jacobi=jacobi)
+        return CallModel_MultiSPMe(case, yt, t; jacobi=jacobi,mech=mech)
     end
 
     # 单模型模式：与 main 分支逻辑一致

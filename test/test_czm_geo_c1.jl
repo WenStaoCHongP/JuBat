@@ -18,7 +18,7 @@ function build_c1_fixture(; nθ::Int=8)
     mesh_data = JuBat.jellyroll_collector_seed_mesh(case.param; nθ=nθ, czm_enabled=true, gsorder=2)
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     case.mesh["czm"] = JuBat.create_czm_mesh(mesh_data.czm_submesh, case.mesh["thermal2D"], case.param)
-    case.mech = JuBat.MechState(case.mesh["czm"])
+
     return case
 end
 

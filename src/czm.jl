@@ -601,6 +601,7 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
                                      split_KG::Bool=false,
                                      gp_geom=nothing,
                                      scratch=nothing)
+    all(isfinite,sigma0) || throw(ArgumentError("non-finite reference prestress"))
     (committed_gp_states === nothing) == (trial_gp_states === nothing) ||
         error("gl_element_residual_tangent: committed/trial Gauss-point states must be supplied together")
     if committed_gp_states !== nothing

@@ -76,6 +76,7 @@ function main()
     # ========================================================================
     println("\n[2/5] 创建网格...")
     
+    opt.Current = _ -> 5.0
     case = JuBat.SetCase(param_dim, opt)
     
     # 热网格（使用较少单元数以加快验证速度）
@@ -106,21 +107,18 @@ function main()
         t_rest1 = 1000.0,       # 放电后静置 (s) - 锂扩散
         t_charge = 1800.0,      # 充电时长 (s)
         t_rest2 = 1000.0,       # 充电后静置 (s) - 锂扩散
-        I_discharge = 5.0,      # 放电电流 (A) - 1C
-        I_charge = 5.0,         # 充电电流 (A) - 1C
         SOC_init = 0.65,         # 初始SOC设为65%（避免过高初始SOC导致的异常库伦效率）
-        reset_T_each_cycle = false,  # 循环内温度继承
         dt_cycle = [1.0, 10.0]  # 时间步长范围 [min, max] (s)
     )
     
     println("OK: 循环参数设置完成")
     @printf("  循环次数: %d\n", cycle_opt.n_cycles)
     @printf("  初始SOC: %.1f%%\n", cycle_opt.SOC_init * 100)
-    @printf("  放电: %.0fs, %.1fC, 截止 %.2fV\n", 
-            cycle_opt.t_discharge, cycle_opt.I_discharge/5.0, case.param.cell.v_l)
+    @printf("  放电: %.0fs, 截止 %.2fV\n",
+            cycle_opt.t_discharge, case.param.cell.v_l)
     @printf("  静置1: %.0fs (锂扩散过程)\n", cycle_opt.t_rest1)
-    @printf("  充电: %.0fs, %.1fC, 截止 %.2fV\n", 
-            cycle_opt.t_charge, cycle_opt.I_charge/5.0, case.param.cell.v_h)
+    @printf("  充电: %.0fs, 截止 %.2fV\n",
+            cycle_opt.t_charge, case.param.cell.v_h)
     @printf("  静置2: %.0fs (锂扩散过程)\n", cycle_opt.t_rest2)
     
     total_time = cycle_opt.n_cycles * (cycle_opt.t_discharge + cycle_opt.t_rest1 + 
@@ -168,7 +166,7 @@ function main()
     if length(cycles) > 0
         # 图1: 容量和温度（主要验证图）
         p1 = plot(layout=(2, 1), size=(800, 600))
-        
+
         # 子图1: 容量
         plot!(p1[1], cycles, result.capacity_discharge,
               xlabel="", ylabel="Capacity (Ah)",
@@ -176,16 +174,16 @@ function main()
               title="Cycle Capacity and Temperature")
         plot!(p1[1], cycles, result.capacity_charge,
               label="Charge", linewidth=2, marker=:square, markersize=6, linestyle=:dash)
-        
+
         # 子图2: 温度
         plot!(p1[2], cycles, result.T_max,
               xlabel="Cycle Number", ylabel="T_max (K)",
               label="Max Temperature", linewidth=2, marker=:circle, markersize=6,
               color=:red)
-        
+
         savefig(p1, joinpath(OUTPUT_DIR, "cycle_example_results.png"))
         println("  OK: 保存 ", joinpath(OUTPUT_DIR, "cycle_example_results.png"))
-        
+
         # 图2: 库伦效率
         if length(cycles) > 0
             p2 = plot(cycles, result.coulombic_efficiency,
@@ -193,7 +191,7 @@ function main()
                       label="CE", linewidth=2, marker=:circle, markersize=6,
                       title="Coulombic Efficiency",
                       legend=:bottomleft)
-            
+
             savefig(p2, joinpath(OUTPUT_DIR, "cycle_example_ce.png"))
             println("  OK: 保存 ", joinpath(OUTPUT_DIR, "cycle_example_ce.png"))
         end
@@ -208,16 +206,16 @@ function main()
     
     if length(cycles) > 0
         @printf("\n  完成循环数: %d\n", result.n_cycles)
-        
+
         println("\n  【容量信息】")
         @printf("    放电容量: %.4f Ah\n", result.capacity_discharge[1])
         @printf("    充电容量: %.4f Ah\n", result.capacity_charge[1])
         @printf("    库伦效率: %.2f%%\n", result.coulombic_efficiency[1])
-        
+
         println("\n  【温度信息】")
         @printf("    最高温度: %.2f K (%.2f C)\n", 
                 result.T_max[1], result.T_max[1] - 273.15)
-        
+
         println("\n  【循环验证】")
         if result.n_cycles >= 1
             println("    OK: 放电阶段完成")
@@ -226,7 +224,7 @@ function main()
             println("    OK: 静置2阶段完成（锂扩散）")
             println("    OK: 状态正确传递")
         end
-        
+
         # 如果有详细结果，打印各阶段信息
         if !isempty(result.cycle_results)
             cycle1 = result.cycle_results[1]

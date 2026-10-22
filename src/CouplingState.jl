@@ -171,7 +171,7 @@ mutable struct MechState
     plastic_states::Union{Nothing, Matrix{PlasticState}}  # PCC/NCC 高斯点塑性状态（Batch 3，[ne,4]；收敛才提交 D-B3-2）
     winding_prestress::Union{Nothing, Vector{NTuple{3, Float64}}}  # 卷绕预应力 σ₀（Batch 2'；几何固定一次计算持久持有）
     node_ref::Union{Nothing, Matrix{Float64}}   # 初始螺旋节点快照（Δ_core 基准，永不重置）
-    contact::Nothing                      # SP–涂层接触预留位（AGENTS §9.8）
+    mechanics_initialized::Bool            # true after an actual successful mechanical advance
 end
 
 """便捷构造器：从 czm_mesh 初始化"""
@@ -179,19 +179,20 @@ function MechState(czm_mesh::CohesiveMesh)
     ndof = 2 * size(czm_mesh.node, 1)
     MechState(zeros(Float64, ndof),
               [DamageState() for _ in 1:length(czm_mesh.cohesive_elements)],
-              nothing, nothing, nothing, nothing, nothing)
+              nothing, nothing, nothing, nothing, false)
 end
 
 """
-    ensure_node_ref!(case) -> Matrix{Float64}
+    ensure_node_ref!(case, mech) -> Matrix{Float64}
 
 初始螺旋节点快照（惰性建立、永不重置）：Δ_core 始终相对初始完美螺旋计算（spec §3.5）。
 """
-function ensure_node_ref!(case)
-    if case.mech.node_ref === nothing
-        case.mech.node_ref = copy(case.mesh["czm"].node)
-    end
-    return case.mech.node_ref
+function ensure_node_ref!(case, mech::MechState)
+    ref = mech.node_ref === nothing ? copy(case.mesh["czm"].node) : mech.node_ref
+    size(ref)==size(case.mesh["czm"].node) || throw(DimensionMismatch("reference-node shape"))
+    all(isfinite,ref) || throw(ArgumentError("non-finite reference nodes"))
+    mech.node_ref=ref
+    return ref
 end
 
 """
@@ -342,7 +343,7 @@ end
 更新 CZM 网格的损伤状态。
 
 使用牛顿-拉弗森迭代求解力学平衡方程，通过载荷子步法处理软化收敛问题。
-从 case.mesh["czm"]、case.param、case.mech 与 case.opt.czm 获取拓扑、参数、演化状态和求解选项。
+从 case.mesh["czm"]、case.param、mech 与 case.opt.czm 获取拓扑、参数、演化状态和求解选项。
 
 # 参数
 - `case`: Case 对象（需已设置 czm_mesh 和 mech）
@@ -354,7 +355,7 @@ end
 
 输入或求解结果包含非有限值、或非线性求解未收敛时抛出异常。
 """
-function update_czm_damage!(case, variables, T_nodes_carry; czm_workspace::CZMWorkspace, dt_seconds::Union{Nothing, Real}=nothing)
+function update_czm_damage!(case, mech::MechState, variables, T_nodes_carry; czm_workspace::CZMWorkspace, dt_seconds::Union{Nothing, Real}=nothing)
     czm_mesh = case.mesh["czm"]
     param = case.param
     czm_opt = case.opt.czm
@@ -384,10 +385,11 @@ function update_czm_damage!(case, variables, T_nodes_carry; czm_workspace::CZMWo
         geo_nl || error("update_czm_damage!: winding_prestress=true 需要 geo_nonlinear=true（D-B2'-2）。")
         (param.cell.winding_T_ne > 0.0 || param.cell.winding_T_pe > 0.0) || error(
             "update_czm_damage!: winding_prestress=true 但 cell.winding_T_ne/pe 均为 0（未设置）。缺参即拦截（AGENTS 9.4/9.7）。")
-        if case.mech.winding_prestress === nothing
-            case.mech.winding_prestress = winding_prestress_field(czm_mesh, param)
+        if mech.winding_prestress === nothing
+            mech.mechanics_initialized && throw(ArgumentError("initialized mechanics lacks winding prestress"))
+            mech.winding_prestress = winding_prestress_field(czm_mesh, param)
         end
-        prestress = case.mech.winding_prestress
+        prestress = mech.winding_prestress
     end
     if czm_opt.j2_plasticity
         geo_nl || error("update_czm_damage!: j2_plasticity=true 需要 geo_nonlinear=true（D-B3-1）。")
@@ -395,9 +397,9 @@ function update_czm_damage!(case, variables, T_nodes_carry; czm_workspace::CZMWo
             "update_czm_damage!: j2_plasticity=true 但 PCC/NCC 的 sigma_y ≤ 0（未设置）。缺参即拦截，不默认、不置零（AGENTS 9.4/9.7）。")
     end
 
-    # 求解器收敛后在 case.mech 上原位提交损伤/位移（失败不触碰）
+    # 求解器收敛后在 mech 上原位提交损伤/位移（失败不触碰）
     result = solve_czm_step(
-        czm_mesh, case.mech, param, F_ext, czm_opt; czm_workspace=czm_workspace,
+        czm_mesh, mech, param, F_ext, czm_opt; czm_workspace=czm_workspace,
         dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
         eigenstrain=eig, prestress=prestress, dt_seconds=dt_seconds
     )
@@ -412,7 +414,7 @@ function update_czm_damage!(case, variables, T_nodes_carry; czm_workspace::CZMWo
     result.converged || error("CZM solve did not converge after $(result.iterations) iterations (residual=$(result.residual_norm))")
 
     if case.opt.debug_coupling
-        stats = get_damage_statistics(case.mech.damage_states)
+        stats = get_damage_statistics(mech.damage_states)
         max_delta_n = isempty(result.separation_n) ? 0.0 : maximum(result.separation_n)
         max_delta_eff = 0.0
         for (δ_n, δ_t) in zip(result.separation_n, result.separation_t)
@@ -422,7 +424,7 @@ function update_czm_damage!(case, variables, T_nodes_carry; czm_workspace::CZMWo
                 max_delta_eff = max(max_delta_eff, sqrt(max(δ_n, 0.0)^2 + δ_t^2))
             end
         end
-        D_visc_max = isempty(case.mech.damage_states) ? 0.0 : maximum(ds.D_visc for ds in case.mech.damage_states)
+        D_visc_max = isempty(mech.damage_states) ? 0.0 : maximum(ds.D_visc for ds in mech.damage_states)
         println("[CZM-Debug] max(δ_n)=$(round(max_delta_n; digits=6)), max(δ_eff)=$(round(max_delta_eff; digits=6)), converged=$(result.converged), D_max(commit)=$(round(stats.max_D; digits=6)), D_visc_max=$(round(D_visc_max; digits=6))")
     end
 

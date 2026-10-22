@@ -150,6 +150,8 @@ D 由 `moduli_of(param, material_type[e])` 逐层给出；`u` 为 L 归一化位
 （按 [u1x,u1y,u2x,u2y,...] 排布），`ε0` 为逐单元特征应变。
 """
 function recover_bulk_stress(node, element, material_type, u, ε0, param)
+    length(u)==2size(node,1) || throw(DimensionMismatch("recover_bulk_stress: displacement length"))
+    all(isfinite,u) || throw(ArgumentError("recover_bulk_stress: non-finite displacement"))
     ne = size(element, 1)
     sigma_xx = zeros(Float64, ne)
     sigma_yy = zeros(Float64, ne)
@@ -342,22 +344,22 @@ function project_bulk_stress(czm_mesh, plastic_states)
 end
 
 """
-    compute_macro_stress(case, variables, T_nodes)
+    compute_macro_stress(case, mech, variables, T_nodes)
 
-以当前已收敛 `case.mech.u_prev` 和同一时间层载荷恢复四个层分辨应力分量。
+以当前已收敛 `mech.u_prev` 和同一时间层载荷恢复四个层分辨应力分量。
 返回归一化到 `scale.σ_czm` 的 NamedTuple；调用方负责决定历史记录时刻。
 """
-function compute_macro_stress(case, variables, T_nodes)
+function compute_macro_stress(case, mech::MechState, variables, T_nodes)
     if case.opt.czm.j2_plasticity
-        case.mech.plastic_states === nothing && error(
+        mech.plastic_states === nothing && error(
             "compute_macro_stress: J2 state is unavailable before the first converged mechanical solve")
-        return project_bulk_stress(case.mesh["czm"], case.mech.plastic_states)
+        return project_bulk_stress(case.mesh["czm"], mech.plastic_states)
     end
     czm_mesh = case.mesh["czm"]
     ε0 = macro_eigenstrain(case, variables, T_nodes)
     sigma_xx, sigma_yy, sigma_xy, sigma_vm = recover_bulk_stress(
         czm_mesh.node, czm_mesh.bulk_element, czm_mesh.czm_submesh.material_type,
-        case.mech.u_prev, ε0, case.param)
+        mech.u_prev, ε0, case.param)
     return (xx=sigma_xx, yy=sigma_yy, xy=sigma_xy, vonMises=sigma_vm)
 end
 
@@ -381,10 +383,10 @@ end
 J2 路径读取 committed 高斯点状态；无 J2 状态的其他非线性路径不分配历史键，
 此处按既有门控原样返回。
 """
-function export_macro_stress(case, variables, variables_hist, v, T_nodes)
+function export_macro_stress(case, mech::MechState, variables, variables_hist, v, T_nodes)
     (case.opt.czm.enabled && haskey(case.mesh, "czm")) || return variables_hist
     haskey(variables_hist, "diffusion stress xx") || return variables_hist
-    stress = compute_macro_stress(case, variables, T_nodes)
+    stress = compute_macro_stress(case, mech, variables, T_nodes)
     write_macro_stress!(variables_hist, v, stress)
     return variables_hist
 end

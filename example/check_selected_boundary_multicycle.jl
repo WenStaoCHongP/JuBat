@@ -24,12 +24,12 @@ const SBM_OUTPUT = normpath(joinpath(@__DIR__, "..", "output", "check_selected_b
 const SBM_SELECTED_THERMAL_ELEM = 1
 
 const SBM_CASES = [
-    (; id="BRIDGE_1",    cycles=1,  area_loss=true,  reset_T_each_cycle=false, reset_T_before_charge=true),
-    (; id="BRIDGE_OFF_1",cycles=1,  area_loss=false, reset_T_each_cycle=false, reset_T_before_charge=true),
-    (; id="MAIN_ON_5",   cycles=5,  area_loss=true,  reset_T_each_cycle=false, reset_T_before_charge=false),
-    (; id="CTRL_OFF_5",  cycles=5,  area_loss=false, reset_T_each_cycle=false, reset_T_before_charge=false),
-    (; id="MAIN_ON_12",  cycles=12, area_loss=true,  reset_T_each_cycle=false, reset_T_before_charge=false),
-    (; id="CTRL_OFF_12", cycles=12, area_loss=false, reset_T_each_cycle=false, reset_T_before_charge=false),
+    (; id="BRIDGE_1",    cycles=1,  area_loss=true),
+    (; id="BRIDGE_OFF_1",cycles=1,  area_loss=false),
+    (; id="MAIN_ON_5",   cycles=5,  area_loss=true),
+    (; id="CTRL_OFF_5",  cycles=5,  area_loss=false),
+    (; id="MAIN_ON_12",  cycles=12, area_loss=true),
+    (; id="CTRL_OFF_12", cycles=12, area_loss=false),
 ]
 
 mutable struct SohCarrier
@@ -66,8 +66,8 @@ function export_selected_element_identity(case, outdir)
     return length(coh_ids)
 end
 
-function export_gp_phaseend(case, outdir, cycle, label, last_result)
-    ms = case.mech
+function export_gp_phaseend(case, accepted, outdir, cycle, label, last_result)
+    ms = accepted.mech
     G = ms.gp_damage_states
     cm = case.mesh["czm"]
     L, δ_czm, σ_czm = case.param.scale.L, case.param.scale.δ_czm, case.param.scale.σ_czm
@@ -99,6 +99,7 @@ function run_case(spec, outdir)
     mkpath(outdir)
     t_all = time()
     case = build_collection_case(outdir)
+    runtime = Dict{String,Any}()
     czm = case.opt.czm
     czm.fix_inner, czm.fix_start, czm.fix_end = false, false, true
     czm.endpoint_variant = :omit_a
@@ -172,7 +173,7 @@ function run_case(spec, outdir)
                     (; F_ext=copy(pending_input[].F_ext), dt_seconds=pending_input[].dt_seconds,
                        dT_elem=copy(pending_input[].dT_elem), Δsoc_n_elem=copy(pending_input[].Δsoc_n_elem),
                        Δsoc_p_elem=copy(pending_input[].Δsoc_p_elem), ms_before=deepcopy(pending_input[].ms)))
-                save_binary(joinpath(fdir, "last_committed_state.bin"), deepcopy(case.mech))
+                save_binary(joinpath(fdir, "last_committed_state.bin"), deepcopy(runtime["accepted"].mech))
             end
         end
         return nothing
@@ -184,7 +185,7 @@ function run_case(spec, outdir)
         te_global = phase_offset[] + te
         last_commit = isempty(commit_times) ? 0 : searchsortedlast(commit_times, te_global + 1e-9)
         d_state = ev.D_elem === nothing ?
-            JuBat.map_czm_damage_to_thermal(case.mesh["czm"], case.mech.damage_states,
+            JuBat.map_czm_damage_to_thermal(case.mesh["czm"], runtime["accepted"].mech.damage_states,
                 length(ev.areas))[SBM_SELECTED_THERMAL_ELEM] : ev.D_elem[SBM_SELECTED_THERMAL_ELEM]
         d_used = ev.D_elem === nothing ? "" : string(ev.D_elem[SBM_SELECTED_THERMAL_ELEM])
         ie = ev.I_e[SBM_SELECTED_THERMAL_ELEM]
@@ -232,42 +233,50 @@ function run_case(spec, outdir)
         println(f, "case,cycle,capacity_charge_Ah,capacity_discharge_Ah,coulombic_efficiency,D_max_end,n_fractured,T_max,SOH,Q_abs_Ah,EFC,stop_reason") end
 
     cycle_opt = diagnostic_cycle_options()
-    phase_specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge,cycle_opt.I_discharge),
-        ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1,0.0),
-        ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge,-cycle_opt.I_charge),
-        ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2,0.0))
+    phase_specs = (("discharge",JuBat.PHASE_DISCHARGE,cycle_opt.t_discharge),
+        ("rest1",JuBat.PHASE_REST,cycle_opt.t_rest1),
+        ("charge",JuBat.PHASE_CHARGE,cycle_opt.t_charge),
+        ("rest2",JuBat.PHASE_REST,cycle_opt.t_rest2))
     state = nothing
     completed_cycles, stop_reason, error_text, last_phase_done = 0, "all_cycles_complete", "", ""
     Q_abs_Ah = 0.0
     old_mech_obs = JuBat.mechanical_step_observer[]
     old_branch_obs = JuBat.branch_consumption_observer[]
-    JuBat.mechanical_step_observer[] = mech_observer
+    pending_committed_event = Ref{Any}(nothing)
+    mechanical_capture = function(event)
+        if event.phase == :after && event.result.converged
+            pending_committed_event[] = event
+        else
+            mech_observer(event)
+        end
+        return nothing
+    end
+    accepted_capture = function(event)
+        if event.kind == :accepted_commit && pending_committed_event[] !== nothing
+            mech_observer(pending_committed_event[])
+            pending_committed_event[] = nothing
+        end
+        return nothing
+    end
+    JuBat.mechanical_step_observer[] = mechanical_capture
     JuBat.branch_consumption_observer[] = branch_observer
     try
         for cycle in 1:spec.cycles
             cycle_phases = Dict{String,Any}()
-            for (label,phase,dur,cur) in phase_specs
+            for (label,phase,dur) in phase_specs
                 cur_cycle[], cur_phase[] = cycle, label
                 # t_cycle 修正（2026-10-10）：全局偏移取上一相位末电化学状态（无状态=首相位 0），
                 # 相位内累计复位；观察点写出的 t_phase_s/t_cycle_s 由此恢复各自语义。
-                phase_offset[] = state === nothing ? 0.0 : Float64(state["t_global"])
+                phase_offset[] = state === nothing ? 0.0 : Float64(state.t_global)
                 phase_elapsed[] = 0.0
-                do_reset = label == "charge" && spec.reset_T_before_charge && state !== nothing
-                T_pre = T_post = ""
-                if do_reset
-                    T_pre = string(mean(state["T_nodes"]) * case.param.scale.T_ref)
-                    JuBat.reset_cycle_temperature!(case, state)
-                    T_post = string(mean(state["T_nodes"]) * case.param.scale.T_ref)
-                    println("[$(spec.id)] cycle=$cycle temperature reset before charge: mean T $T_pre -> $T_post K")
-                end
                 t0p = time()
-                pr = JuBat.solve_phase(case, phase, dur, cur, state;
-                    ms=case.mech, dt_range=cycle_opt.dt_cycle, czm_cycle=cycle)
+                pr = JuBat.solve_phase(case, phase, dur, state;
+                    variables=runtime, dt_range=cycle_opt.dt_cycle, czm_cycle=cycle, chemical_step_observer=accepted_capture)
                 wall = time() - t0p
                 state = pr.final_state
                 cycle_phases[label] = pr
                 last_phase_done = label
-                Q_abs_Ah += abs(cur) * pr.duration / 3600.0
+                Q_abs_Ah += pr.capacity
                 sr = pr.solve_result
                 tvec, V, D = sr["time [s]"], sr["cell voltage [V]"], sr["czm D_max"]
                 for k in eachindex(tvec)
@@ -279,12 +288,13 @@ function run_case(spec, outdir)
                         println(f, "$cycle,$label,$e,$(Ie[e]),$(Ie[e]*I_typ)")
                     end
                 end
-                Dm = maximum(s.D for s in case.mech.damage_states)
-                Dmean = mean(s.D for s in case.mech.damage_states)
+                Dm = maximum(s.D for s in runtime["accepted"].mech.damage_states)
+                Dmean = mean(s.D for s in runtime["accepted"].mech.damage_states)
+                T_entry=mean(sr["thermal2D temperature at nodes [K]"][:,1])
                 println(phase_io, "$cycle,$label,$(pr.t_start),$(pr.t_end),$(pr.duration),$(pr.terminated_by)," *
-                        "$(pr.V_start),$(pr.V_end),$(pr.T_max),$Dm,$Dmean,$(round(wall;digits=1)),$do_reset,$T_pre,$T_post")
+                        "$(pr.V_start),$(pr.V_end),$(pr.T_max),$Dm,$Dmean,$(round(wall;digits=1)),false,$T_entry,$T_entry")
                 flush_last_branch_row()
-                export_gp_phaseend(case, outdir, cycle, label, last_result[])
+                export_gp_phaseend(case, runtime["accepted"], outdir, cycle, label, last_result[])
                 # 区域损伤（半径三分）
                 cm = case.mesh["czm"]
                 rs = [hypot(cm.node[c.nodes_bottom[1],1], cm.node[c.nodes_bottom[1],2]) * case.param.scale.L
@@ -293,7 +303,7 @@ function run_case(spec, outdir)
                 buckets = Dict{Tuple{Symbol,String},Vector{Float64}}()
                 for (k,c) in enumerate(cm.cohesive_elements)
                     push!(get!(buckets, (c.interface_type, region_of(rs[k], rmin, rmax)), Float64[]),
-                        case.mech.damage_states[k].D)
+                        runtime["accepted"].mech.damage_states[k].D)
                 end
                 open(joinpath(outdir, "regional_damage_phaseend.csv"), "a") do f
                     for key in sort(collect(keys(buckets)); by = k -> (string(k[1]), k[2]))
@@ -308,13 +318,13 @@ function run_case(spec, outdir)
                 cycle_phases["discharge"], cycle_phases["rest2"],
                 cycle_phases["charge"].capacity, cycle_phases["discharge"].capacity,
                 cycle_phases["discharge"].capacity / max(cycle_phases["charge"].capacity, eps()) * 100.0,
-                maximum(s.D for s in case.mech.damage_states),
-                mean(s.D for s in case.mech.damage_states),
-                count(s.fractured for s in case.mech.damage_states),
+                maximum(s.D for s in runtime["accepted"].mech.damage_states),
+                mean(s.D for s in runtime["accepted"].mech.damage_states),
+                count(s.fractured for s in runtime["accepted"].mech.damage_states),
                 maximum(cycle_phases[p].T_max for p in ("discharge","rest1","charge","rest2")))
             initial_capacity, current_soh = JuBat.update_soh_and_capacity!(soh_carrier, cycle, cycle_result, soh_carrier.initial_capacity)
             efc = Q_abs_Ah / (2.0 * 5.0)
-            should_stop, soh_hit = JuBat.check_cycle_termination(cycle, cycle_result, case.mech,
+            should_stop, soh_hit = JuBat.check_cycle_termination(cycle, cycle_result, runtime["accepted"].mech,
                 current_soh, case.opt.czm.soh_threshold)
             stop_label = should_stop ? (soh_hit ? "soh_threshold" : "fractured_majority") : "continue"
             open(joinpath(outdir, "cycle_summary.csv"), "a") do f
@@ -344,13 +354,13 @@ function run_case(spec, outdir)
             "Q_abs_Ah"=>Q_abs_Ah, "EFC"=>Q_abs_Ah / 10.0)
     end
     # 选定单元身份核对（5.5）：损伤映射位置须仍在此热单元
-    D_elem_check = JuBat.map_czm_damage_to_thermal(case.mesh["czm"], case.mech.damage_states,
+    D_elem_check = JuBat.map_czm_damage_to_thermal(case.mesh["czm"], runtime["accepted"].mech.damage_states,
         size(case.mesh["thermal2D"].element,1))
     open(joinpath(outdir, "run_manifest.toml"), "w") do io
         TOML.print(io, merge(Dict("schema"=>"JuBat selected-boundary multicycle v1 (review1 rework)",
             "case"=>spec.id, "created_at"=>string(now()), "cycles_requested"=>spec.cycles,
-            "area_loss_enabled"=>spec.area_loss, "reset_T_each_cycle"=>spec.reset_T_each_cycle,
-            "reset_T_before_charge"=>spec.reset_T_before_charge,
+            "area_loss_enabled"=>spec.area_loss, "temperature_policy"=>"inherit",
+
             "boundary"=>Dict("outer_bc"=>"fixed_xy","fix_inner"=>false,"fix_start"=>false,
                 "fix_end"=>true,"endpoint_variant"=>"omit_a"),
             "constrained_nodes"=>length(boundary.nodes), "outer_count"=>boundary.outer_count,
@@ -375,7 +385,7 @@ function run_case(spec, outdir)
         println(f, "- Boundary: fixed_xy / S0 / E1 / omit_a; constrained nodes $(length(boundary.nodes)) (a free, b via end).")
         println(f, "- Cycles: $completed_cycles/$(spec.cycles); stop=$stop_reason; wall $(round(time()-t_all;digits=1)) s; "
                   * "mech commits=$commit_idx, branch consumptions=$branch_count.")
-        println(f, "- area_loss=$(spec.area_loss), reset_T_before_charge=$(spec.reset_T_before_charge); nθ=80; gp_basic+τ=5 s.")
+        println(f, "- area_loss=$(spec.area_loss), 温度逐相位继承; nθ=80; gp_basic+τ=5 s.")
         println(f, "- Selected thermal elem $SBM_SELECTED_THERMAL_ELEM: $n_coh_map cohesive elements mapped; final D_elem=$(D_elem_check[SBM_SELECTED_THERMAL_ELEM]).")
         if error_text != ""
             println(f, "- Error: ```$(error_text)```")

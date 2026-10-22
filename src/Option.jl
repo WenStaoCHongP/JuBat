@@ -9,14 +9,8 @@ using Parameters
     t_rest1::Float64 = 600.0                # 充电后静置
     t_discharge::Float64 = 3600.0           # 放电时长
     t_rest2::Float64 = 600.0                # 放电后静置
-    # 电流设置 (A)，均为正值
-    I_charge::Float64 = 5.0                 # 充电电流
-    I_discharge::Float64 = 5.0              # 放电电流
     # 初始状态
     SOC_init::Float64 = 0.05                # 初始SOC
-    # 温度重置
-    reset_T_each_cycle::Bool = true         # 每循环重置温度
-    reset_T_before_charge::Bool = true      # 充电前重置温度（循环内）
     # 时间步长
     dt_cycle::Vector{Float64} = [1.0, 10.0] # [dt_min, dt_max]
 end

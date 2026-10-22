@@ -52,9 +52,9 @@ end
     @test_throws AssertionError JuBat.update_state(y,c; thermal_nodes=ones(nT-1))
     @test_throws BoundsError JuBat.get_thermal_dofs(y[1:end-1],c)
     missing = deepcopy(c); delete!(missing.index,"SPMe chemical block length")
-    @test_throws KeyError JuBat.CallModel_MultiSPMe(missing,y,0.0;jacobi="update")
-    @test_throws DimensionMismatch JuBat.Solve(c; initial_state=Dict{String,Any}("y"=>y[1:end-1]))
-    @test_throws DimensionMismatch JuBat.solve_phase_with_export(c,JuBat.PHASE_REST,0.02,0.0,Dict{String,Any}("y"=>y[1:end-1]))
+    @test_throws KeyError JuBat.CallModel(missing,y,0.0;jacobi="update",mech=nothing)
+    @test_throws DimensionMismatch JuBat.Solve(c; initial_state=(y=copy(y[1:end-1]),mech=deepcopy((haskey(c.mesh,"czm") ? JuBat.MechState(c.mesh["czm"]) : nothing)),t_global=0.0))
+    @test_throws DimensionMismatch JuBat.solve_phase_with_export(c,JuBat.PHASE_REST,0.02,(y=copy(y[1:end-1]),mech=deepcopy((haskey(c.mesh,"czm") ? JuBat.MechState(c.mesh["czm"]) : nothing)),t_global=0.0))
 
     custom = chem .* 0.99
     cc, _ = case_a(y0=reshape(custom,:,1))
@@ -80,15 +80,14 @@ end
     end
     # Normal/external Solve paths exercise global assembly and temperature extraction.
     a = JuBat.Solve(deepcopy(c);return_final_state=true)
-    b = JuBat.Solve(deepcopy(c);initial_state=Dict{String,Any}("y"=>copy(y)),return_final_state=true)
-    @test a["final_state"]["y"] == b["final_state"]["y"]
+    b = JuBat.Solve(deepcopy(c);initial_state=(y=copy(copy(y)),mech=deepcopy((haskey(c.mesh,"czm") ? JuBat.MechState(c.mesh["czm"]) : nothing)),t_global=0.0),return_final_state=true)
+    @test a["final_state"].y == b["final_state"].y
     @test a["cell voltage [V]"] == b["cell voltage [V]"]
-    phase = JuBat.solve_phase_with_export(deepcopy(c),JuBat.PHASE_REST,0.02,0.0,
-        Dict{String,Any}("y"=>copy(y),"t_global"=>0.0);dt_range=[0.01,0.01])
-    @test length(phase[1].final_state["y"]) == length(y)
-    state = Dict{String,Any}("y"=>copy(yn))
-    JuBat.reset_cycle_temperature!(c,state)
-    @test JuBat.get_thermal_dofs(state["y"],c) == fill(c.param.cell.T0,nT)
+    phase = JuBat.solve_phase_with_export(deepcopy(c),JuBat.PHASE_REST,0.02,
+        (y=copy(copy(y)),mech=deepcopy((haskey(c.mesh,"czm") ? JuBat.MechState(c.mesh["czm"]) : nothing)),t_global=0.0);dt_range=[0.01,0.01])
+    @test length(phase[1].final_state.y) == length(y)
+    state = (y=copy(copy(yn)),mech=deepcopy((haskey(c.mesh,"czm") ? JuBat.MechState(c.mesh["czm"]) : nothing)),t_global=0.0)
+    @test JuBat.get_thermal_dofs(state.y,c) == fill(1.01,nT)
     @test all(isfinite,JuBat.state_concentration_variance(c,y))
 
     # Current production CSV is intentionally skipped for zero effective parameters.

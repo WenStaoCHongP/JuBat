@@ -29,7 +29,20 @@ struct CycleExportData
     nT::Int                         # 节点数
 end
 
-function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float64, I_current::Float64, initial_state::Union{Nothing, Dict};czm_mesh=nothing, czm_params=nothing,dt_range::Vector{Float64}=[1.0, 10.0],export_interval::Int=1)
+function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float64, initial_state::Union{Nothing,NamedTuple};variables::Dict{String,Any}=Dict{String,Any}(),czm_mesh=nothing, czm_params=nothing,dt_range::Vector{Float64}=[1.0, 10.0],export_interval::Int=1)
+    configured_current=case.opt.Current
+    configured_dt=case.opt.dt
+    configured_time=case.opt.time
+    if phase_type == PHASE_DISCHARGE
+        case.opt.Current=configured_current
+    elseif phase_type == PHASE_CHARGE
+        case.opt.Current=t -> -configured_current(t)
+    elseif phase_type == PHASE_REST
+        case.opt.Current=t -> 0.0
+    end
+    try
+    case.opt.dt=dt_range
+    case.opt.time=[0.0 t_max]
     if case.opt.czm.enabled || czm_mesh !== nothing || czm_params !== nothing
         throw(ArgumentError(
             "solve_phase_with_export does not implement CZM damage evolution; use solve_phase or solve_cycling for CZM simulations"
@@ -43,65 +56,35 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
     
     # 时间缩放
     t0_scale = case.param.scale.t0
-    dt_min = dt_range[1] / t0_scale
-    dt_max = dt_range[2] / t0_scale
-    t_end_nd = t_max / t0_scale
+    dt_min = case.opt.dt[1] / t0_scale
+    dt_max = case.opt.dt[2] / t0_scale
+    t_end_nd = case.opt.time[end] / t0_scale
     T_ref = case.param_dim.scale.T_ref
     phi_scale = case.param.scale.phi
-    I_scale = case.param.scale.I_typ
     
-    # 静置阶段特殊处理
-    if phase_type == PHASE_REST
-        I_current = 0.0
-    end
     # 检测多SPMe模式
     multi_spme = case.opt.model == "SPMe" &&case.opt.per_element_spme &&case.opt.thermalmodel == "distributed2D"
     
-    # 仅显式传入 nothing 时初始化；状态字典必须包含有效状态向量
-    if initial_state === nothing
-        T_nodes_init = nothing
-        if multi_spme
-            y0 = ModelInitialisation_MultiSPMe(case)
-        else
-            y0 = ModelInitialisation(case)
-        end
+    global_time=initial_state===nothing ? 0.0 : initial_state.t_global
+    y0=initial_state===nothing ? copy(case.opt.per_element_spme ? ModelInitialisation_MultiSPMe(case) : ModelInitialisation(case)) : copy(initial_state.y)
+    mech0=initial_state===nothing ? (haskey(case.mesh,"czm") ? MechState(case.mesh["czm"]) : nothing) : deepcopy(initial_state.mech)
+    expected_length=case.opt.per_element_spme ? size(case.mesh["thermal2D"].element,1)*case.index["SPMe chemical block length"]+case.mesh["thermal2D"].nlen : length(ModelInitialisation(case))
+    y0 isa Vector{Float64} || throw(ArgumentError("restored chemistry must be a Float64 vector"))
+    length(y0)==expected_length || throw(DimensionMismatch("restored chemistry length $(length(y0)) != $expected_length"))
+    all(isfinite,y0) || throw(ArgumentError("restored chemistry is non-finite"))
+    isfinite(global_time) || throw(ArgumentError("non-finite restored global time"))
+    if haskey(case.mesh,"czm")
+        mech0===nothing && throw(ArgumentError("CZM topology requires mechanics"))
     else
-        haskey(initial_state, "y") || throw(ArgumentError("initial_state must contain key \"y\""))
-        y_from_state = initial_state["y"]
-        y_from_state isa AbstractArray || throw(ArgumentError("initial_state[\"y\"] must be an array"))
-        y0 = vec(y_from_state)
-        T_nodes_init = get(initial_state, "T_nodes", nothing)
-
-        if multi_spme
-            ne = size(case.mesh["thermal2D"].element, 1)
-            nT = case.mesh["thermal2D"].nlen
-            Nrn = case.mesh["negative particle"].nlen
-            Nrp = case.mesh["positive particle"].nlen
-            Nel = case.mesh["electrolyte"].nlen
-            n_chem = Nrn + Nrp + Nel
-            expected_multi_len = ne * n_chem + nT
-
-            length(y0) == expected_multi_len || throw(DimensionMismatch(
-                "external state length $(length(y0)) does not match multi-SPMe layout length $expected_multi_len"
-            ))
-        end
+        mech0===nothing || throw(ArgumentError("mechanics requires CZM topology"))
     end
-
-    # 初始化温度场
-    if T_nodes_init !== nothing
-        T_nodes_carry = copy(T_nodes_init)
-        if multi_spme
-            thermal_range = case.index["thermal2D temperature"]
-            y0[thermal_range] .= T_nodes_carry
-        end
-    elseif multi_spme
-        thermal_range = case.index["thermal2D temperature"]
-        T_nodes_carry = y0[thermal_range]
+    a=(y=y0,mech=mech0,t_global=global_time)
+    T_nodes_carry=if multi_spme
+        get_thermal_dofs(y0,case)
     else
-        nT_mesh = case.mesh["thermal2D"].nlen
-        T_nodes_carry = y0[(end - nT_mesh + 1):end]
+        firstT=only(case.index["temperature"])
+        copy(y0[firstT:firstT+case.mesh["thermal2D"].nlen-1])
     end
-    
     # 时间离散格式必须显式受支持
     if case.opt.solveType == "Crank-Nicolson"
         theta = 0.5
@@ -113,16 +96,15 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
         throw(ArgumentError("unsupported solveType: $(repr(case.opt.solveType))"))
     end
     
-    # 设置电流
-    case.opt.Current = x -> I_current
     
     # 初始调用
-    t = 0.0
+    t = case.opt.time[1] / t0_scale
     dt = dt_min
     
-    M_old, K_old, F_old, variables, y_phi = CallModel(case, y0, t, jacobi="update")
+    M_old, K_old, F_old, step_variables, y_phi = CallModel(case, y0, t; jacobi="update",mech=a.mech)
     
-    V_current = variables["cell voltage"] * phi_scale
+    V_current = step_variables["cell voltage"] * phi_scale
+    isfinite(V_current) || error("non-finite initial terminal voltage")
     V_start_actual = V_current
     capacity = 0.0
     T_max_phase = maximum(T_nodes_carry) * T_ref
@@ -134,15 +116,7 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
     terminated_by = :time
     t_actual = 0.0
     step_count = 0
-    if initial_state === nothing
-        global_time = 0.0
-    else
-        haskey(initial_state, "t_global") || throw(ArgumentError("initial_state must contain key \"t_global\""))
-        t_global = initial_state["t_global"]
-        t_global isa Real || throw(ArgumentError("initial_state[\"t_global\"] must be a real number"))
-        isfinite(t_global) || throw(ArgumentError("initial_state[\"t_global\"] must be finite"))
-        global_time = Float64(t_global)
-    end
+    global_time=a.t_global
     T_nodes_prev_export = copy(T_nodes_carry)
     
     # 获取热网格信息
@@ -157,26 +131,28 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
     end
     area_sum = sum(elem_area)
     
+    variables["accepted"]=a
+    variables["history"]=timestep_data
     # 主循环
     while t < t_end_nd
         step_count += 1
         
-        # 更新温度影响
-        if case.opt.thermal_enabled
-            case.param.cell.T0 = mean(T_nodes_carry)
-        end
+        # 继承上一接受态的实际温度
+        a=variables["accepted"]
         
         # 电化学步
-        M_new, K_new, F_new, variables, y_phi = CallModel(case, y_old, t, jacobi="update")
+        M_new, K_new, F_new, step_variables, y_phi = CallModel(case, y_old, t; jacobi="update",mech=a.mech)
         Mt = M_new - theta * K_new * dt
         Kt = (1 - theta) * K_old * dt + M_old
         Ft = theta * F_new * dt + (1 - theta) * F_old * dt
         y_c = convert(SparseMatrixCSC{Float64,Int}, Mt) \ (Kt * y_old[vc] + Ft)
         y_new = vcat(y_c, y_phi)
+        all(isfinite,y_new) || error("non-finite numerical state")
+        h_used=dt
 
         # 以步后状态重新计算变量，避免导出时混用步前/步后状态导致的锯齿。
         t_next = t + dt
-        _, _, _, variables_new, _ = CallModel(case, y_new, t_next, jacobi="update")
+        _, _, _, variables_new, _ = CallModel(case, y_new, t_next; jacobi="update",mech=a.mech)
         
         # 提取温度场
         if case.opt.thermal_enabled
@@ -192,11 +168,15 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
         
         # 更新电压和容量
         V_current = variables_new["cell voltage"] * phi_scale
-        dt_dim = dt * t0_scale
-        capacity += abs(I_current) * dt_dim / 3600.0
+        isfinite(V_current) || error("non-finite terminal voltage")
+        dt_dim = h_used * t0_scale
+        I_before_A=step_variables["cell current"]*case.param_dim.cell.I1C
+        I_after_A=variables_new["cell current"]*case.param_dim.cell.I1C
+        capacity += 0.5*(abs(I_before_A)+abs(I_after_A))*dt_dim/3600.0
         t_actual = t_next * t0_scale
         
-        # 导出数据（按间隔）
+        # Prepare export data without changing the accepted history.
+        prepared_sample=nothing
         if step_count % export_interval == 0
             # 提取SOC数据
             soc_n_raw = variables_new["thermal2D element soc_n"]
@@ -218,7 +198,7 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
                 global_time + t_actual,
                 phase_type,
                 V_current,
-                I_current * I_scale,
+                I_after_A,
                 T_nodes_K,
                 T_max_K,
                 T_mean_K,
@@ -226,10 +206,10 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
                 soc_p,
                 mean(soc_n)
             )
-            push!(timestep_data, ts_data)
+            prepared_sample=ts_data
         end
 
-        T_nodes_prev_export = copy(T_nodes_carry)
+        prepared_T_previous = copy(T_nodes_carry)
         
         isfinite(V_current) || error("non-finite terminal voltage")
         # All phases retain both param bounds, including REST.
@@ -241,16 +221,17 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
             terminated_by = :voltage_cutoff_high
             break
         end
+        stop_at_target=false
         if !area_diag && phase_type == PHASE_CHARGE && V_current >= v_h
             terminated_by = :voltage
-            break
+            stop_at_target=true
         elseif !area_diag && phase_type == PHASE_DISCHARGE && V_current <= v_l
             terminated_by = :voltage
-            break
+            stop_at_target=true
         end
         
         # 自适应时间步长
-        if case.opt.dtType == "auto"
+        if !stop_at_target && case.opt.dtType == "auto"
             error_y = ErrorEstimation(case, y_old, y_new, dt_min/dt)
             if error_y < 0.5 * case.opt.dtThreshold
                 dt = min(dt * 2, dt_max)
@@ -259,8 +240,14 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
             end
         end
 
-        # 更新状态
-        y_old = y_new
+        # Commit the one accepted physical record only after the sample was prepared.
+        candidate=(y=copy(y_new),mech=a.mech,t_global=global_time+t_actual)
+        prepared_sample===nothing || sizehint!(timestep_data,length(timestep_data)+1)
+        variables["accepted"]=candidate
+        prepared_sample===nothing || push!(timestep_data,prepared_sample)
+        T_nodes_prev_export=prepared_T_previous
+        stop_at_target && break
+        y_old = variables["accepted"].y
         K_old = K_new
         F_old = F_new
         t = t_next
@@ -289,14 +276,14 @@ function solve_phase_with_export(case::Case, phase_type::PhaseType, t_max::Float
     result.ΔD_max = 0.0
     
     # 构建最终状态
-    result.final_state = Dict{String, Any}(
-        "y" => copy(y_old),
-        "T_nodes" => copy(T_nodes_carry),
-        "V" => V_current,
-        "t_global" => global_time + t_actual
-    )
-    
+    result.final_state=deepcopy(variables["accepted"])
+
     return result, timestep_data
+    finally
+        case.opt.Current=configured_current
+        case.opt.dt=configured_dt
+        case.opt.time=configured_time
+    end
 end
 
 """
@@ -340,7 +327,6 @@ function solve_cycle_with_export(case::Case, cycle_opt::CycleOption;verbose::Boo
     discharge_result, discharge_data = solve_phase_with_export(
         case, PHASE_DISCHARGE,
         cycle_opt.t_discharge,
-        cycle_opt.I_discharge,
         current_state;
         dt_range=cycle_opt.dt_cycle,
         export_interval=export_interval
@@ -363,7 +349,6 @@ function solve_cycle_with_export(case::Case, cycle_opt::CycleOption;verbose::Boo
         rest1_result, rest1_data = solve_phase_with_export(
             case, PHASE_REST,
             cycle_opt.t_rest1,
-            0.0,
             current_state;
             dt_range=cycle_opt.dt_cycle,
             export_interval=export_interval
@@ -385,7 +370,6 @@ function solve_cycle_with_export(case::Case, cycle_opt::CycleOption;verbose::Boo
     charge_result, charge_data = solve_phase_with_export(
         case, PHASE_CHARGE,
         cycle_opt.t_charge,
-        -cycle_opt.I_charge,
         current_state;
         dt_range=cycle_opt.dt_cycle,
         export_interval=export_interval
@@ -408,7 +392,6 @@ function solve_cycle_with_export(case::Case, cycle_opt::CycleOption;verbose::Boo
         rest2_result, rest2_data = solve_phase_with_export(
             case, PHASE_REST,
             cycle_opt.t_rest2,
-            0.0,
             current_state;
             dt_range=cycle_opt.dt_cycle,
             export_interval=export_interval

@@ -291,15 +291,11 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
 
     cycle_opt = JuBat.CycleOption(
         n_cycles = n_cycles,
-        I_charge = i,
-        I_discharge = i,
         t_charge = 1800.0,
         t_discharge = 1800.0,
         t_rest1 = 600.0,
         t_rest2 = 600.0,
         SOC_init = 0.65,
-        reset_T_each_cycle = false,
-        reset_T_before_charge = true,
     )
 
     # 2. 案例 + 网格（几何与极耳无关 → 首工况构建后复用）
@@ -310,7 +306,9 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
     case.mesh["czm"] = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th, case.param)
-    case.mech = JuBat.MechState(case.mesh["czm"])
+    mechanical_seed=JuBat.MechState(case.mesh["czm"])
+    runtime=Dict{String,Any}()
+
 
     # 极耳窗口节点组核对（空组=极耳物理静默，必须在结果中可见）
     pos_groups, neg_groups = JuBat.jellyroll_tab_node_groups(mesh_th, case.param)
@@ -327,12 +325,12 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
     status = "OK"
     err_msg = ""
     try
-        result = JuBat.solve_cycling(case, cycle_opt, case.mech; save_detailed = true)
+        result = JuBat.solve_cycling(case, cycle_opt, mechanical_seed; variables=runtime, save_detailed = true)
     catch err
         status = "失败"
         err_msg = first(sprint(showerror, err), 160)
         println("  [诊断] Case $(tc.id) solve_cycling 失败: $err_msg")
-        mech = case.mech
+        mech = runtime["accepted"].mech
         if mech.gp_damage_states !== nothing
             gp = mech.gp_damage_states
             @printf("  GP: D_max=%.4f, D>=0.99=%d / %d\n",
@@ -344,7 +342,7 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
     # 4. 结果汇总 + 导出
     if status == "OK"
         k = length(result.cycle_idx)
-        fm = result.final_mech === nothing ? case.mech : result.final_mech
+        fm = result.final_mech
         idx_pcc = findall(e -> e.interface_type == :PE_PCC, case.mesh["czm"].cohesive_elements)
         idx_ncc = findall(e -> e.interface_type == :NE_NCC, case.mesh["czm"].cohesive_elements)
         pcc_dmg = count(s -> s.D > 1e-8, fm.damage_states[idx_pcc])
