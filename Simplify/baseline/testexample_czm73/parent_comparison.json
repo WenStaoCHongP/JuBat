@@ -1,0 +1,138 @@
+{
+  "checks": [
+    {
+      "name": "theta_elements",
+      "reference": "20",
+      "candidate": "20",
+      "passed": true
+    },
+    {
+      "name": "thermal_elements",
+      "reference": "420",
+      "candidate": "420",
+      "passed": true
+    },
+    {
+      "name": "thermal_nodes",
+      "reference": "441",
+      "candidate": "441",
+      "passed": true
+    },
+    {
+      "name": "time_steps",
+      "reference": "19",
+      "candidate": "19",
+      "passed": true
+    },
+    {
+      "name": "initial_voltage_v",
+      "reference": "4.0333",
+      "candidate": "4.0333",
+      "passed": true
+    },
+    {
+      "name": "final_voltage_v",
+      "reference": "3.9387",
+      "candidate": "3.9387",
+      "passed": true
+    },
+    {
+      "name": "voltage_drop_v",
+      "reference": "0.0946",
+      "candidate": "0.0946",
+      "passed": true
+    },
+    {
+      "name": "final_capacity_ah",
+      "reference": "0.0833",
+      "candidate": "0.0833",
+      "passed": true
+    },
+    {
+      "name": "temperature_min_k",
+      "reference": "298.15",
+      "candidate": "298.15",
+      "passed": true
+    },
+    {
+      "name": "temperature_max_k",
+      "reference": "299.13",
+      "candidate": "299.13",
+      "passed": true
+    },
+    {
+      "name": "czm_d_max_percent",
+      "reference": "0.0000",
+      "candidate": "0.0000",
+      "passed": true
+    },
+    {
+      "name": "czm_d_mean_percent",
+      "reference": "0.0000",
+      "candidate": "0.0000",
+      "passed": true
+    },
+    {
+      "name": "czm_max_effective_separation_m",
+      "reference": "1.7543e-12",
+      "candidate": "1.7886e-12",
+      "passed": false
+    },
+    {
+      "name": "czm_fractured_elements",
+      "reference": "0",
+      "candidate": "0",
+      "passed": true
+    },
+    {
+      "name": "hoop_stress_min_mpa",
+      "reference": "-1.9297e+00",
+      "candidate": "-1.9297e+00",
+      "passed": true
+    },
+    {
+      "name": "hoop_stress_max_mpa",
+      "reference": "6.7378e+00",
+      "candidate": "6.7378e+00",
+      "passed": true
+    },
+    {
+      "name": "shear_stress_min_mpa",
+      "reference": "-1.0095e+00",
+      "candidate": "-1.0095e+00",
+      "passed": true
+    },
+    {
+      "name": "shear_stress_max_mpa",
+      "reference": "1.1720e+00",
+      "candidate": "1.1720e+00",
+      "passed": true
+    },
+    {
+      "name": "von_mises_max_mpa",
+      "reference": "6.7985e+00",
+      "candidate": "6.7985e+00",
+      "passed": true
+    },
+    {
+      "name": "equivalent_plastic_strain_max",
+      "reference": "0.0000e+00",
+      "candidate": "0.0000e+00",
+      "passed": true
+    },
+    {
+      "name": "exit_code",
+      "reference": "0",
+      "candidate": "0",
+      "passed": true
+    }
+  ],
+  "passed": 20,
+  "total": 21,
+  "debug_sequence_equal": true,
+  "debug_lines": {
+    "reference": 18,
+    "candidate": 18
+  },
+  "refrozen": false
+}

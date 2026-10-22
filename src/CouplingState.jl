@@ -166,8 +166,8 @@ CZM 求解的演化状态聚合（2026-08-30 重构：吸收 CzmLayout；损伤�
 """
 mutable struct MechState
     u_prev::Vector{Float64}               # 上一步收敛位移（跨时间步持有）
-    damage_states::Vector{DamageState}    # 逐 cohesive 单元损伤状态（原 czm_mesh.damage_states）
-    gp_damage_states::Union{Nothing, Matrix{DamageState}} # 可选逐 cohesive GP 历史；收敛后才提交
+    damage_states::Vector{DamageState}    # 逐 cohesive 单元输出聚合；不得反推GP恢复历史
+    gp_damage_states::Union{Nothing, Matrix{DamageState}} # 真实逐GP接受史；仅首次推进前可缺席
     plastic_states::Union{Nothing, Matrix{PlasticState}}  # PCC/NCC 高斯点塑性状态（Batch 3，[ne,4]；收敛才提交 D-B3-2）
     winding_prestress::Union{Nothing, Vector{NTuple{3, Float64}}}  # 卷绕预应力 σ₀（Batch 2'；几何固定一次计算持久持有）
     node_ref::Union{Nothing, Matrix{Float64}}   # 初始螺旋节点快照（Δ_core 基准，永不重置）

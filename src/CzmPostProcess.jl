@@ -62,41 +62,72 @@ end
 原位重置 MechState 上的损伤状态。
 """
 function reset_damage_states!(ms::MechState)
-    ms.damage_states = [DamageState() for _ in 1:length(ms.damage_states)]
-    ms.gp_damage_states = nothing
+    if ms.gp_damage_states === nothing
+        ms.mechanics_initialized && throw(ArgumentError("initialized mechanics lacks required GP history"))
+        new_gp = nothing
+    else
+        size(ms.gp_damage_states,1) == length(ms.damage_states) ||
+            throw(DimensionMismatch("GP and element damage history lengths differ"))
+        new_gp = [DamageState() for _ in axes(ms.gp_damage_states,1), _ in axes(ms.gp_damage_states,2)]
+    end
+    new_elements = [DamageState() for _ in eachindex(ms.damage_states)]
+    ms.damage_states = new_elements
+    ms.gp_damage_states = new_gp
     return ms
+end
+
+function check_cycle_gp_history(gp_states::Matrix{DamageState}, n_elements::Int)
+    size(gp_states,1) == n_elements || throw(DimensionMismatch(
+        "GP and element damage history lengths differ"))
+    # The cohesive assembler uses NCweight(order), whose order is the number
+    # of points (2–5). The actual GP shape supplies this existing rule.
+    weights = NCweight(size(gp_states,2))[1]
+    for s in gp_states
+        all(isfinite,(s.D,s.D_visc,s.δ_max_n,s.δ_max_t,s.δ_max_eff,s.accumulated_damage)) &&
+            0.0 <= s.D_visc <= s.D <= 1.0 &&
+            min(s.δ_max_n,s.δ_max_t,s.δ_max_eff,s.accumulated_damage) >= 0.0 ||
+                throw(ArgumentError("invalid cycle GP damage history"))
+        if s.fractured
+            s.D == s.D_visc == 1.0 || throw(ArgumentError(
+                "fractured GP history requires D = D_visc = 1"))
+        elseif s.D == 1.0 && s.D_visc >= 1.0 - 1e-10
+            throw(ArgumentError("noncanonical GP saturation history"))
+        end
+    end
+    return weights
 end
 
 """
     accumulate_cycle_damage!(ms, cycle_damage_increment)
 
-原位累积循环损伤（未断裂单元 accumulated_damage += 增量；累积到 1 判断裂）。
+对真实GP的 accumulated_damage 加给定非负增量；达到1则D=1。
+此接口不含物理时间，故保留D_visc；仅D和D_visc均规范饱和时标记断裂。
+零增量完整no-op；非零增量要求已有GP历史，不从元素均值重建。
 """
 function accumulate_cycle_damage!(ms::MechState, cycle_damage_increment::Float64)
-    new_damage_states = Vector{DamageState}(undef, length(ms.damage_states))
-    for (i, state) in enumerate(ms.damage_states)
-        new_state = DamageState()
-        new_state.D = state.D
-        new_state.D_visc = state.D_visc
-        new_state.δ_max_n = state.δ_max_n
-        new_state.δ_max_t = state.δ_max_t
-        new_state.δ_max_eff = state.δ_max_eff
-        new_state.fractured = state.fractured
-        new_state.accumulated_damage = state.accumulated_damage
-
-        if !new_state.fractured
-            new_state.accumulated_damage += cycle_damage_increment
-            if new_state.accumulated_damage >= 1.0
-                new_state.D = 1.0
-                new_state.fractured = true
+    isfinite(cycle_damage_increment) && cycle_damage_increment >= 0.0 ||
+        throw(ArgumentError("cycle damage increment must be finite and nonnegative"))
+    cycle_damage_increment == 0.0 && return ms
+    ms.gp_damage_states === nothing && throw(ArgumentError(
+        "nonzero cycle damage increment requires real GP history"))
+    weights = check_cycle_gp_history(ms.gp_damage_states,length(ms.damage_states))
+    new_gp = clone_damage_states(ms.gp_damage_states)
+    for s in new_gp
+        if !s.fractured
+            s.accumulated_damage += cycle_damage_increment
+            if s.accumulated_damage >= 1.0
+                s.D = 1.0
             end
+            s.fractured = s.D == 1.0 && s.D_visc >= 1.0 - 1e-10
+            s.fractured && (s.D_visc = 1.0)
         end
-
-        new_damage_states[i] = new_state
     end
+    check_cycle_gp_history(new_gp,length(ms.damage_states))
+    new_damage_states = aggregate_gp_damage_states(new_gp,weights)
+    all(s->all(isfinite,(s.D,s.D_visc,s.δ_max_n,s.δ_max_t,s.δ_max_eff,s.accumulated_damage)),
+        new_damage_states) || throw(ArgumentError("non-finite aggregated cycle damage history"))
     ms.damage_states = new_damage_states
-    # 外部按单元修改历史后，下一次逐GP求解须从该单元状态重新初始化。
-    ms.gp_damage_states = nothing
+    ms.gp_damage_states = new_gp
     return ms
 end
 
