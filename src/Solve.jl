@@ -1,4 +1,5 @@
-function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing,return_final_state::Bool=false,thermal_variables::Union{Dict{String,Any},Nothing}=nothing,thermal_update_fn::Union{Function,Nothing}=nothing,thermal_record::Bool=false,polar_mesh_data::Any=nothing,czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing,czm_cycle::Int=1,czm_phase::String="unknown",chemical_step_observer::Union{Nothing,Function}=nothing)
+function Solve(case::Case;initial_state::Union{NamedTuple,Nothing}=nothing,return_final_state::Bool=false,thermal_variables::Union{Dict{String,Any},Nothing}=nothing,thermal_update_fn::Union{Function,Nothing}=nothing,thermal_record::Bool=false,polar_mesh_data::Any=nothing,czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing,czm_cycle::Int=1,czm_phase::String="unknown",phase_type::Union{Nothing,PhaseType}=nothing,chemical_step_observer::Union{Nothing,Function}=nothing,variables::Dict{String,Any}=Dict{String,Any}())
+    check_continuous_feedback(case.opt.czm)
     if case.opt.model == "thermal"
             if thermal_variables === nothing
                 error("Solve: model==\"thermal\" requires thermal_variables keyword argument")
@@ -25,7 +26,11 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             T_nodes = vars["thermal2D temperature at nodes"]
 
             times = collect(range(t0, step=dt, length=Int(cld(t_end - t0, dt)) + 1))
-            T_hist = record ? zeros(Float64, nnode, length(times)) : zeros(Float64, 0, 0)
+            T_hist = if record
+                zeros(Float64, nnode, length(times))
+            else
+                zeros(Float64, 0, 0)
+            end
             record && (T_hist[:, 1] .= T_nodes)
 
             update_fn !== nothing && update_fn(t0, vars)
@@ -65,7 +70,6 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
 
                 record && (T_hist[:, step + 1] .= T_nodes)
 
-                MT_old = MT_new
                 KT_old = KT_new
                 FT_old = FT_new
             end
@@ -73,6 +77,10 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
             result = (time = times, T_nodes = T_nodes, T_hist = T_hist)
             return result
         end
+    # Every phase reads the same physical-voltage window; never overwrite param.
+    v_l, v_h = case.param.cell.v_l, case.param.cell.v_h
+    isfinite(v_l) && isfinite(v_h) && v_l < v_h ||
+        throw(ArgumentError("invalid param.cell.v_l/v_h voltage window"))
         # Electrochemical time still scaled by t0
         dt_min = case.opt.dt[1] / case.param.scale.t0
         dt_max = case.opt.dt[2] / case.param.scale.t0
@@ -83,39 +91,46 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     # 判断是否启用多SPMe模式：与 CallModel 保持一致，由 per_element_spme 控制
     multi_spme_enabled = case.opt.per_element_spme
 
-    # 允许从外部状态继续求解（用于循环阶段衔接）
-    y0_input = initial_state
-
-    # 检查模式并初始化（优先级：外部状态 > 多SPMe > 标准）
-    if y0_input === nothing
-        if multi_spme_enabled
-            y0 = ModelInitialisation_MultiSPMe(case)
+    if case.opt.czm.enabled
+        case.mesh["czm"] # Enabled mechanics requires its real topology.
+    end
+    global_time = if initial_state === nothing
+        case.opt.time[1]
+    else
+        initial_state.t_global
+    end
+    phase_time_origin=global_time
+    y0 = if initial_state === nothing
+        copy(if case.opt.per_element_spme
+            ModelInitialisation_MultiSPMe(case)
         else
-            y0 = ModelInitialisation(case)
+            ModelInitialisation(case)
+        end)
+    else
+        copy(initial_state.y)
+    end
+    mech0 = if initial_state === nothing
+        if haskey(case.mesh,"czm")
+            MechState(case.mesh["czm"])
+        else
+            nothing
         end
     else
-        haskey(y0_input, "y") || throw(ArgumentError("initial_state must contain key \"y\""))
-        y_from_state = y0_input["y"]
-        y_from_state isa AbstractArray || throw(ArgumentError("initial_state[\"y\"] must be an array"))
-        y0 = vec(y_from_state)
-        if multi_spme_enabled
-            ne = size(case.mesh["thermal2D"].element, 1)
-            nT = case.mesh["thermal2D"].nlen
-            Nrn = case.mesh["negative particle"].nlen
-            Nrp = case.mesh["positive particle"].nlen
-            Nel = case.mesh["electrolyte"].nlen
-            n_chem = Nrn + Nrp + Nel
-            expected_multi_len = ne * n_chem + nT
-
-            if case.layout === nothing
-                case.layout = MultiSPMeLayout(ne, n_chem, nT, case.mesh["thermal2D"])
-            end
-
-            if length(y0) != expected_multi_len
-                throw(DimensionMismatch("external state length $(length(y0)) does not match multi-SPMe layout length $expected_multi_len"))
-            end
-        end
+        deepcopy(initial_state.mech)
     end
+    y0 isa Vector{Float64} || throw(ArgumentError("restored chemistry must be a Float64 vector"))
+    all(isfinite,y0) || throw(ArgumentError("restored chemistry is non-finite"))
+    isfinite(global_time) || throw(ArgumentError("non-finite restored global time"))
+    if haskey(case.mesh,"czm")
+        mech0===nothing && throw(ArgumentError("CZM topology requires mechanics"))
+    else
+        mech0===nothing || throw(ArgumentError("mechanics requires CZM topology"))
+    end
+    a=(y=y0,mech=mech0,t_global=global_time)
+    mech0===nothing || require_mechanical_load_history(mech0)
+    # Scheduling is phase-local; every accepted physical interval is consumed.
+    pending_dt=0.0
+    mechanical_step_count=0
     if case.opt.solveType == "Crank-Nicolson"
         theta = 0.5
     elseif case.opt.solveType == "forward"
@@ -123,25 +138,31 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     elseif case.opt.solveType == "backward"
         theta = 1
     else
-        error( "Error: $(opt.solve_type) difference scheme has not been implemented!\n ")
+        error( "Error: $(case.opt.solveType) difference scheme has not been implemented!\n ")
     end
 
     dt = dt_min
-    dt_temp = 0
-    dt_temp_flag = false
     # 计算预期时间步数，添加安全限制避免内存溢出
     num_estimated = round(Int64, (t_end - t0)/dt * 1.5)
     # 限制最大预分配步数（避免内存溢出）
-    max_steps = multi_spme_enabled ? 50000 : 100000
-    num = min(num_estimated, max_steps)
+    max_steps = if multi_spme_enabled
+        50000
+    else
+        100000
+    end
+    num = min(num_estimated+2, max_steps) # initial column and real BE interval
 
     if num_estimated > max_steps
         @warn "预期时间步数 $(num_estimated) 超过最大限制 $(max_steps)，将使用动态扩展策略"
         @warn "这可能导致性能下降。建议增大时间步长 dt_min = $(dt*case.param.scale.t0) 秒"
     end
 
-    variables_hist = StandardVariables(case, num)
-    errors = zeros(num, 1)
+    history = StandardVariables(case, num)
+    czm_workspace = if haskey(case.mesh,"czm")
+        CZMWorkspace(case.mesh["czm"],case.param)
+    else
+        nothing
+    end
 
     t = t0
     vt = 2
@@ -160,19 +181,19 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         return nothing
     end
 
-    M_old, K_old, F_old, variables, y_phi= CallModel(case, y0, t, jacobi="update")
+    M_old, K_old, F_old, step_variables, y_phi= CallModel(case, y0, t; jacobi="update",mech=a.mech)
     timing_call_count += 1
-    accumulate_callmodel_timing!(timing_totals, variables)
+    accumulate_callmodel_timing!(timing_totals, step_variables)
     # 打印初始信息
-    V_init = variables["cell voltage"] * case.param.scale.phi
+    V_init = step_variables["cell voltage"] * case.param.scale.phi
     println("\n[Solve] 初始化完成: V=$V_init V, t_end=$(t_end * case.param.scale.t0)")
     # 持久化热场（跨 CallModel 迭代携带）
     T_nodes_carry = if multi_spme_enabled
-        haskey(variables, "thermal2D temperature at nodes") || error("multi-SPMe variables are missing thermal node temperatures")
-        T_nodes_initial = variables["thermal2D temperature at nodes"]
+        haskey(step_variables, "thermal2D temperature at nodes") || error("multi-SPMe step_variables are missing thermal node temperatures")
+        T_nodes_initial = step_variables["thermal2D temperature at nodes"]
         T_nodes_initial isa AbstractArray || error("multi-SPMe thermal node temperatures must be an array")
         T_nodes_initial = vec(T_nodes_initial)
-        length(T_nodes_initial) == case.layout.nT || throw(DimensionMismatch("initial thermal node count $(length(T_nodes_initial)) does not match layout count $(case.layout.nT)"))
+        length(T_nodes_initial) == case.mesh["thermal2D"].nlen || throw(DimensionMismatch("initial thermal node count $(length(T_nodes_initial)) does not match layout count $(case.mesh["thermal2D"].nlen)"))
         copy(T_nodes_initial)
     else
         Float64[]
@@ -180,34 +201,42 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
 
     # CZM 与宏观应力状态。latest_macro_stress 只在实际力学求解后刷新，
     # 其间的输出列保持最近一次有效解，禁止把预分配零当作应力结果。
-    czm_active = case.opt.czm.enabled && case.czm_mesh !== nothing
-    if czm_active && case.mech === nothing
-        case.mech = MechState(case.czm_mesh)
-    end
-    macro_stress_active = czm_active && haskey(variables_hist, "diffusion stress xx")
+    czm_active = case.opt.czm.enabled
+    macro_stress_active = czm_active && (case.opt.czm.j2_plasticity || !(case.opt.czm.geo_nonlinear || case.opt.czm.winding_prestress))
     latest_macro_stress = if !macro_stress_active
         nothing
-    elseif case.opt.czm.j2_plasticity && case.mech.plastic_states === nothing
+    elseif !a.mech.mechanics_initialized
         nothing
     else
-        compute_macro_stress(case, variables, T_nodes_carry)
+        compute_macro_stress(case, a.mech, step_variables, T_nodes_carry)
     end
-    czm_step_count = 0
-    czm_elapsed_dt = 0.0
 
-    dt_init = 1e-8
     vc = 1:size(M_old,1)
-    y_c = (M_old - K_old * dt_init) \ (M_old * y0[vc] + F_old * dt_init)
-    y_old = vcat(y_c, y_phi)
-    # 任务63 5.7.4：初始化 BE 后同步发观察点（y0→y_c + M0/K0/F0）
-    if chemical_step_observer !== nothing
-        chemical_step_observer((; kind = :init_BE, h = dt_init, t_eval = t,
-            M = M_old, K = K_old, F = F_old, y_before = y0[vc], y_after = y_c))
+    isfinite(step_variables["cell voltage"]*case.param.scale.phi) || error("non-finite initial terminal voltage")
+    # The BE startup changes physical chemistry/temperature, so it is a real
+    # first interval. Keep the original state/history at the actual start.
+    dt_init = min(1e-8,RunTime[vt]-t0,t_end-t0)
+    dt_init = min(t0+dt_init,RunTime[vt],t_end)-t0
+    initial_trial = if dt_init > 0.0
+        y_c = (M_old - K_old * dt_init) \ (M_old * y0[vc] + F_old * dt_init)
+        all(isfinite,y_c) || error("non-finite initial numerical state")
+        if chemical_step_observer !== nothing
+            chemical_step_observer((; kind=:init_BE,h=dt_init,t_eval=t,
+                t_start=t,t_end=t+dt_init,t_load=t,
+                M=M_old,K=K_old,F=F_old,y_before=y0[vc],y_after=y_c,step_variables))
+        end
+        vcat(y_c,y_phi)
+    else
+        nothing
     end
-    Variable_update!(variables_hist, variables, v)
-    latest_macro_stress === nothing ||
-        write_macro_stress!(variables_hist, v, latest_macro_stress)
-    t += dt
+    latest_macro_stress===nothing || write_macro_stress!(step_variables,1,latest_macro_stress)
+    candidate=(y=copy(y0),mech=a.mech,t_global=phase_time_origin)
+    Variable_update!(history,step_variables,v;debug_coupling=case.opt.debug_coupling)
+    variables["history"]=history
+    czm_workspace===nothing || (variables["czm_workspace"]=czm_workspace)
+    variables["accepted"]=candidate
+    y_old=candidate.y
+    first_step=true
     if case.opt.jacobi == "constant"
         RecordMatrix!(case, M_old, K_old)    # record system matrix information
     end
@@ -223,105 +252,157 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
     termination_reason = "time_limit"  # 默认终止原因
 
     # run the model
-    while t <= t_end
+    while t < t_end
         # 电化学步
         # 5.7.4 返工 P2-2：候选开始（独立计数器）
+        y_old=variables["accepted"].y
+        t_start=t
+        t_candidate=min(t+(first_step ? dt_init : dt),RunTime[vt],t_end)
+        h_used=t_candidate-t_start
+        t_eval=first_step ? t_start : t_candidate
+        theta_used=first_step ? 1.0 : theta
         chem_trial_idx += 1
         if chemical_step_observer !== nothing
-            chemical_step_observer((; kind = :attempt_begin, h = dt, t_eval = t,
+            chemical_step_observer((; kind = :attempt_begin, h = h_used, t_eval,
+                t_start,t_end=t_candidate,t_load=t_start,
                 trial_idx = chem_trial_idx))
         end
-        M_new, K_new, F_new, variables, y_phi = CallModel(case, y_old, t, jacobi="update")
-        timing_call_count += 1
-        accumulate_callmodel_timing!(timing_totals, variables)
-        # CallModel 返回当前 t 的 SOC 与温度；在求解覆盖活动温度前保留同一时间层。
-        T_nodes_czm_current = multi_spme_enabled ?
-            copy(vec(variables["thermal2D temperature at nodes"])) : T_nodes_carry
-        Mt = M_new - theta * K_new * dt
-        Kt = (1 - theta) * K_old * dt + M_new
-        Ft = theta * F_new * dt + (1 - theta) * F_old * dt
-        y_c = convert(SparseMatrixCSC{Float64,Int}, Mt) \ (Kt * y_old[vc] + Ft)
-        y_new = vcat(y_c, y_phi)
-        h_used = dt   # 5.7.4 返工：求解实际使用的步长（调步前保存，不被自适应/截断覆盖）
+        if first_step
+            M_new,K_new,F_new=M_old,K_old,F_old
+        else
+            M_new, K_new, F_new, step_variables, y_phi = CallModel(case, y_old, t_eval; jacobi="update",mech=variables["accepted"].mech)
+            timing_call_count += 1
+            accumulate_callmodel_timing!(timing_totals, step_variables)
+        end
+        # SOC/temperature are sampled from the accepted left state; forcing
+        # uses t_eval. Preserve that explicit load before recording new T.
+        T_nodes_czm_current = if multi_spme_enabled
+            copy(vec(step_variables["thermal2D temperature at nodes"]))
+        else
+            T_nodes_carry
+        end
+        Mt = M_new - theta_used * K_new * h_used
+        Kt = (1 - theta_used) * K_old * h_used + M_new
+        Ft = theta_used * F_new * h_used + (1 - theta_used) * F_old * h_used
+        y_c = first_step ? initial_trial[vc] : convert(SparseMatrixCSC{Float64,Int}, Mt) \ (Kt * y_old[vc] + Ft)
+        y_new = first_step ? initial_trial : vcat(y_c, y_phi)
+        all(isfinite,y_new) || error("non-finite numerical state")
+        isfinite(step_variables["cell voltage"]*case.param.scale.phi) || error("non-finite terminal voltage")
 
         # multi-SPMe：求解后提取温度自由度，用于记录/后处理
         if multi_spme_enabled
-            nT = case.layout.nT
-            length(y_c) == case.layout.n_total || throw(DimensionMismatch("time-step state length $(length(y_c)) does not match multi-SPMe layout length $(case.layout.n_total)"))
-            T_nodes = y_c[(end - nT + 1):end]
-            variables["thermal2D temperature at nodes"] = T_nodes
-            T_nodes_carry = T_nodes
+            nT = case.mesh["thermal2D"].nlen
+            expected_multi_len = size(case.mesh["thermal2D"].element, 1) * case.index["SPMe chemical block length"] + nT
+            length(y_c) == expected_multi_len || throw(DimensionMismatch("time-step state length $(length(y_c)) does not match multi-SPMe layout length $expected_multi_len"))
+            T_nodes = get_thermal_dofs(y_c, case)
+            step_variables["thermal2D temperature at nodes"] = T_nodes
         end
-        error_y = ErrorEstimation(case, y_old, y_new, dt_min/dt)
-        errors[v] = error_y
-        if error_y > 2 * case.opt.dtThreshold && case.opt.dtType == "auto" && dt >= dt_min * 4
+        error_y = ErrorEstimation(case, y_old, y_new, dt_min/h_used)
+        if !first_step && error_y > 2 * case.opt.dtThreshold && case.opt.dtType == "auto" && t_candidate >= t_start + dt_min * 4
             # reduce dt to dt/2 and recaculate y_new
             # 5.7.4 返工 P2-2：拒绝（独立计数，不计入库存/接受账本）
             if chemical_step_observer !== nothing
                 chemical_step_observer((; kind = :rejected, h_used = h_used,
-                    t_eval = t, error_y = error_y, trial_idx = chem_trial_idx))
+                    t_eval,t_start,t_end=t_candidate,t_load=t_start,
+                    voltage=step_variables["cell voltage"]*case.param.scale.phi,
+                    error_y = error_y, trial_idx = chem_trial_idx))
             end
-            dt = dt  /2
-            t -= dt
+            dt = h_used/2
         else
-            # CZM 在推进 t 前使用当前 CallModel 的 SOC 与当前温度场；应力与快照均
-            # 对应历史列记录的同一时刻。非更新步保留 latest_macro_stress。
+            # Cutoff decisions belong to accepted candidates. Determine the
+            # terminal interval before mechanics so its pending time is part
+            # of this same candidate transaction.
+            V_cell=step_variables["cell voltage"]*case.param.scale.phi
+            area_diag=multi_spme_enabled && step_variables["thermal2D Vsolve status"]==4.0
+            candidate_reason="time_limit"
+            if multi_spme_enabled && !area_diag
+                n_cutoff=Int(step_variables["thermal2D n_cutoff_elements"])
+                ne_total=size(case.mesh["thermal2D"].element,1)
+                if n_cutoff>0 && !first_cutoff_detected
+                    first_cutoff_detected=true
+                    first_cutoff_time=t_candidate*case.param.scale.t0
+                    first_cutoff_element=Int(step_variables["thermal2D cutoff_elements"][1])
+                    first_cutoff_ocv=step_variables["thermal2D cutoff_ocv"][1]
+                end
+                total_cutoff_count=n_cutoff
+                if ne_total>0 && n_cutoff>=ne_total
+                    candidate_reason="all_elements_cutoff"
+                elseif ne_total>0 && 0<n_cutoff<ne_total &&
+                       Int(step_variables["thermal2D n_active_elements"])==0
+                    I_now=step_variables["cell current"]
+                    if I_now!=0.0
+                        candidate_reason=I_now>0 ? "voltage_cutoff_low" : "voltage_cutoff_high"
+                    end
+                end
+            end
+            if candidate_reason=="time_limit" && !area_diag
+                if V_cell<v_l
+                    candidate_reason="voltage_cutoff_low"
+                elseif V_cell>v_h
+                    candidate_reason="voltage_cutoff_high"
+                elseif phase_type===PHASE_DISCHARGE && V_cell<=v_l
+                    candidate_reason="phase_target_low"
+                elseif phase_type===PHASE_CHARGE && V_cell>=v_h
+                    candidate_reason="phase_target_high"
+                end
+            end
+            terminal=t_candidate==t_end || candidate_reason!="time_limit"
+            # Keep the accepted left-state load; the mechanical dt accounts
+            # for elapsed accepted intervals, and its result is published at
+            # this candidate endpoint. This is explicit staggered coupling.
+            a=variables["accepted"]
+            candidate_mech=a.mech
+            candidate_stress=latest_macro_stress
+            prepared_snapshot=nothing
+            next_count=mechanical_step_count
+            candidate_pending_dt=pending_dt
             if czm_active
-                czm_step_count += 1
-                czm_elapsed_dt += dt
-                if czm_step_count % case.opt.czm.update_interval == 0
+                next_count += 1
+                candidate_pending_dt += h_used
+                if next_count % case.opt.czm.update_interval == 0 || terminal
+                    candidate_mech=deepcopy(a.mech)
                     t_czm_ns = time_ns()
                     try
-                        czm_result = update_czm_damage!(case, variables, T_nodes_czm_current;
-                            dt_seconds=czm_elapsed_dt * case.param.scale.t0)
-                        czm_elapsed_dt = 0.0
-                        variables = czm_output_to_variables(czm_result, variables)
-                        δ_max_n_vals = [s.δ_max_n for s in case.mech.damage_states]
-                        δ_max_eff_vals = [s.δ_max_eff for s in case.mech.damage_states]
-                        variables["czm δ_max_n"] = [maximum(δ_max_n_vals)]
-                        variables["czm δ_max_eff"] = [maximum(δ_max_eff_vals)]
-                        variables["czm δ_mean_n"] = [mean(δ_max_n_vals)]
+                        czm_result = update_czm_damage!(case, candidate_mech, step_variables, T_nodes_czm_current;
+                            dt_seconds=candidate_pending_dt * case.param.scale.t0,
+                            sample_time_seconds=a.t_global, czm_workspace=variables["czm_workspace"])
+                        mechanical_dt_s=candidate_pending_dt * case.param.scale.t0
+                        candidate_pending_dt=0.0
+                        step_variables = czm_output_to_variables(czm_result, step_variables;
+                            committed_states=candidate_mech.damage_states)
+                        δ_max_n_vals = [s.δ_max_n for s in candidate_mech.damage_states]
+                        step_variables["czm δ_max_n"] = [maximum(δ_max_n_vals)]
+                        step_variables["czm δ_mean_n"] = [mean(δ_max_n_vals)]
 
                         if czm_snapshots !== nothing
-                            push!(czm_snapshots, CZMSnapshot(
-                                t * case.param.scale.t0,
-                                czm_cycle,
-                                czm_phase,
-                                copy(czm_result.displacement),
-                                copy(czm_result.damage),
-                                copy(czm_result.separation_n),
-                                copy(czm_result.separation_t),
-                                copy(czm_result.traction_n),
-                                copy(czm_result.traction_t),
-                                czm_result.converged,
-                                czm_result.iterations,
-                                czm_result.residual_norm,
-                                case.opt.czm.iter_method
-                            ))
+                            prepared_snapshot = CZMSnapshot(czm_result,candidate_mech,case.mesh["czm"],case.param;
+                                time_s=(t_candidate-t0) * case.param.scale.t0,
+                                mechanical_dt_s=mechanical_dt_s,cycle=czm_cycle,phase=czm_phase,
+                                method=case.opt.czm.iter_method,czm_model=case.opt.czm.model,
+                                plasticity=case.opt.czm.j2_plasticity,czm_workspace=variables["czm_workspace"])
                         end
                     finally
                         timing_totals["czm"] += (time_ns() - t_czm_ns) * 1e-9
                     end
                     if macro_stress_active
-                        latest_macro_stress = compute_macro_stress(
-                            case, variables, T_nodes_czm_current)
+                        candidate_stress = compute_macro_stress(
+                            case, candidate_mech, step_variables, T_nodes_czm_current)
                     end
                 end
             end
 
-            # record the results
-            if case.opt.outputType == "auto" || abs(t - RunTime[vt]) < 1e-7
-                v = v + 1
-                Variable_update!(variables_hist, variables, v)
-                latest_macro_stress === nothing ||
-                    write_macro_stress!(variables_hist, v, latest_macro_stress)
-                if abs(t - RunTime[vt]) < 1e-7
-                    vt = min(vt + 1, length(RunTime))
+            step_variables["time"]=t_candidate
+            record_history = case.opt.outputType == "auto" || t_candidate==RunTime[vt] || terminal
+            if record_history
+                candidate_stress===nothing || write_macro_stress!(step_variables,1,candidate_stress)
+                if t_candidate==RunTime[vt]
+                    vt=min(vt+1,length(RunTime))
                 end
             end
+            prepared_snapshot===nothing || sizehint!(czm_snapshots,length(czm_snapshots)+1)
 
             # adjust time incremental step dt
-            if  case.opt.dtType == "auto" && dt_temp_flag == false
+            if !first_step && t_candidate==t_start+dt && case.opt.dtType == "auto"
                 if error_y < 0.5 * case.opt.dtThreshold
                     dt = min(dt * 2, dt_max)
                 elseif error_y >= 1.5 * case.opt.dtThreshold
@@ -329,118 +410,63 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
                 elseif error_y > case.opt.dtThreshold
                     dt = max(dt / 2, dt_min)
                 end
-            elseif dt_temp_flag
-                dt = dt_temp
-                dt_temp_flag = false
-            end
-            if t + dt > RunTime[vt] && t < RunTime[vt]
-                dt_temp = dt
-                dt = abs(RunTime[vt] - t)
-                dt_temp_flag = true
             end
 
-            # update system information
-            # 5.7.4 返工 P2-1/P2-2：观察者启用时暂存旧引用 → 完成原提交 → 递增接受索引 → 同步回调
-            if chemical_step_observer !== nothing
-                local y_before_ref = y_old[vc]
-                local K_old_ref = K_old
-                local F_old_ref = F_old
-                y_old = copy(y_new)
-                K_old = copy(K_new)
-                F_old = copy(F_new)
-                chem_accepted_idx += 1
-                chemical_step_observer((; kind = :accepted_commit, h_used = h_used,
-                    dt_next = dt, theta = theta,
-                    t_eval = t, trial_idx = chem_trial_idx, accepted_idx = chem_accepted_idx,
-                    M_new = M_new, K_old = K_old_ref, K_new = K_new,
-                    F_old = F_old_ref, F_new = F_new,
-                    y_before = y_before_ref, y_after = y_old[vc]))
+            # Publish only after chemistry, mechanics, stress, history and snapshot preparation succeed.
+            candidate=(y=copy(y_new),mech=candidate_mech,t_global=phase_time_origin+(t_candidate-t0)*case.param.scale.t0)
+            prepared_K_old=copy(K_new);prepared_F_old=copy(F_new)
+            prepared_T_nodes = if multi_spme_enabled
+                get_thermal_dofs(candidate.y,case)
             else
-                y_old = copy(y_new)
-                K_old = copy(K_new)
-                F_old = copy(F_new)
+                T_nodes_carry
             end
-            t += dt
+            if chemical_step_observer !== nothing
+                y_before_ref=y_old[vc]
+                y_after_ref=candidate.y[vc]
+                K_old_ref=K_old; F_old_ref=F_old
+            end
+            if record_history
+                Variable_update!(variables["history"],step_variables,v+1;debug_coupling=case.opt.debug_coupling)
+                v += 1
+            end
+            variables["accepted"]=candidate
+            pending_dt=candidate_pending_dt
+            mechanical_step_count=next_count
+            prepared_snapshot===nothing || push!(czm_snapshots,prepared_snapshot)
+            latest_macro_stress=candidate_stress
+            T_nodes_carry=prepared_T_nodes
+            y_old=candidate.y
+            K_old=prepared_K_old; F_old=prepared_F_old
+            if chemical_step_observer !== nothing
+                chem_accepted_idx += 1
+                chemical_step_observer((;kind=:accepted_commit,h_used=h_used,dt_next=dt,theta=theta_used,
+                    t_eval,t_start,t_end=t_candidate,t_load=t_start,
+                    voltage=step_variables["cell voltage"]*case.param.scale.phi,
+                    trial_idx=chem_trial_idx,accepted_idx=chem_accepted_idx,
+                    M_new=M_new,K_old=K_old_ref,K_new=K_new,F_old=F_old_ref,F_new=F_new,
+                    y_before=y_before_ref,y_after=y_after_ref))
+            end
+            t=t_candidate
+            first_step=false
+            termination_reason=candidate_reason
+            terminal && break
         end
 
-        # ====================================================================
-        # 精细化截止电压检测（单元级别）
-        # 任务59 Q4：面积全失活静置诊断（status=4.0 且 I_total==0）绕过电压截止
-        # ====================================================================
-        V_cell = variables["cell voltage"] * case.param.scale.phi
-        v_l = case.param.cell.v_l
-        v_h = case.param.cell.v_h
-        t_phys = t * case.param.scale.t0  # 物理时间 (s)
-        area_diag = multi_spme_enabled && get(variables, "thermal2D Vsolve status", 0.0) == 4.0
-
-        # 检查是否有单元截止
-        if multi_spme_enabled && !area_diag
-            n_cutoff = Int(variables["thermal2D n_cutoff_elements"])
-
-            # 记录首个截止单元信息
-            if n_cutoff > 0 && !first_cutoff_detected
-                first_cutoff_detected = true
-                first_cutoff_time = t_phys
-
-                # 获取截止单元详细信息
-                first_cutoff_element = Int(variables["thermal2D cutoff_elements"][1])
-                first_cutoff_ocv = variables["thermal2D cutoff_ocv"][1]
-            end
-
-            total_cutoff_count = n_cutoff
-
-            # 获取总单元数
-            ne_total = size(case.mesh["thermal2D"].element, 1)
-
-            # 检查是否所有单元都截止
-            if ne_total > 0 && n_cutoff >= ne_total
-                termination_reason = "all_elements_cutoff"
-                break
-            end
-
-            # 任务59 R2 返工：正面积支路存在但活动集为空（面积失活+电压截止混合耗尽）——
-            # 带载时按电流方向消费既有电压截止终止语义，不得带载零电流按时间继续；
-            # n_cutoff/n_deactivated 保持真实数量，不伪造成全截止
-            if ne_total > 0 && 0 < n_cutoff < ne_total &&
-               Int(get(variables, "thermal2D n_active_elements", 0.0)) == 0
-                I_now = get(variables, "cell current", 0.0)
-                if I_now != 0.0
-                    termination_reason = I_now > 0 ? "voltage_cutoff_low" : "voltage_cutoff_high"
-                    break
-                end
-            end
-        end
-
-        # 整体电压截止检测（备用；诊断电压不得驱动截止）
-        if !area_diag && V_cell < v_l
-            termination_reason = "voltage_cutoff_low"
-            break
-        elseif !area_diag && V_cell > v_h
-            termination_reason = "voltage_cutoff_high"
-            break
-        end
     end
 
-    # 记录终止原因和截止信息
-    # 任务59 R2-A 返工：仅当循环内未确定其他终止原因（仍为默认 time_limit）时按时间耗尽收尾；
-    # 末步触发的截止（all_elements_cutoff / voltage_cutoff_low/high / 混合耗尽）不被覆盖
-    if t >= t_end && termination_reason == "time_limit"
-        termination_reason = "time_limit"
-    end
-    result = PostProcessing(case, variables_hist, v)
+    result = PostProcessing(case, variables["history"], v)
     # 汇总耗时统计（用于识别主要瓶颈）
     timing_total = timing_totals["spme"] + timing_totals["branch"] + timing_totals["thermal"] + timing_totals["czm"]
-    call_count_safe = max(timing_call_count, 1)
 
     result["timing SPMe solve total [s]"] = timing_totals["spme"]
     result["timing branch solver total [s]"] = timing_totals["branch"]
     result["timing thermal distributed total [s]"] = timing_totals["thermal"]
     result["timing CZM model total [s]"] = timing_totals["czm"]
 
-    result["timing SPMe solve avg [ms]"] = 1000.0 * timing_totals["spme"] / call_count_safe
-    result["timing branch solver avg [ms]"] = 1000.0 * timing_totals["branch"] / call_count_safe
-    result["timing thermal distributed avg [ms]"] = 1000.0 * timing_totals["thermal"] / call_count_safe
-    result["timing CZM model avg [ms]"] = 1000.0 * timing_totals["czm"] / call_count_safe
+    result["timing SPMe solve avg [ms]"] = 1000.0 * timing_totals["spme"] / timing_call_count
+    result["timing branch solver avg [ms]"] = 1000.0 * timing_totals["branch"] / timing_call_count
+    result["timing thermal distributed avg [ms]"] = 1000.0 * timing_totals["thermal"] / timing_call_count
+    result["timing CZM model avg [ms]"] = 1000.0 * timing_totals["czm"] / timing_call_count
     result["timing CallModel calls"] = Float64(timing_call_count)
 
     if timing_total > 0
@@ -485,23 +511,8 @@ function Solve(case::Case;initial_state::Union{Dict{String,Any},Nothing}=nothing
         result["thermal2D nodes xy [m]"] = case.mesh["thermal2D"].node
     end
     print("finish the simulation\n")
-    errors = errors[1:v]
     if return_final_state
-        V_final = variables["cell voltage"] * case.param.scale.phi
-        t_final = max(0.0, t * case.param.scale.t0)
-        # 任务59 Q4：final_state 附 Vsolve 状态标量（V 在全失活静置时保留诊断数值）
-        final_state = Dict{String, Any}(
-            "y" => copy(y_old),
-            "T_nodes" => copy(T_nodes_carry),
-            "V" => V_final,
-            "t_global" => t_final
-        )
-        if haskey(variables, "thermal2D Vsolve status")
-            # 任务59 R5 返工：final_state 使用与历史/result 同名的完整键名
-            final_state["thermal2D Vsolve status"] = variables["thermal2D Vsolve status"]
-            final_state["thermal2D Vsolve converged"] = variables["thermal2D Vsolve converged"]
-        end
-        result["final_state"] = final_state
+        result["final_state"]=deepcopy(variables["accepted"])
     end
     return result
 end

@@ -1,20 +1,45 @@
 function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64},Float64}}, v::Int64)
     result = Dict()
+    multi_spme = case.opt.model == "SPMe" && case.opt.thermalmodel == "distributed2D"
     result["time [s]"]= variables["time"][1:v] * case.param.scale.t0
     result["cell voltage [V]"]= variables["cell voltage"][1:v] * case.param.scale.phi
     result["cell current [A]"]= variables["cell current"][1:v] * case.param_dim.cell.I1C
     result["temperature [K]"] = variables["temperature"][1:v] * case.param_dim.scale.T_ref
-    result["negative particle center radial stress[Pa]"] = variables["negative particle center radial stress"][:,1:v] * case.param.scale.E_n
-    result["positive particle center radial stress[Pa]"] = variables["positive particle center radial stress"][:,1:v] * case.param.scale.E_p
-    result["negative particle surface tangential stress[Pa]"] = variables["negative particle surface tangential stress"][:,1:v] * case.param.scale.E_n
-    result["positive particle surface tangential stress[Pa]"] = variables["positive particle surface tangential stress"][:,1:v] * case.param.scale.E_p
-    result["negative particle surface displacement[m]"] = variables["negative particle surface displacement"][:,1:v] * case.param.scale.r0
-    result["positive particle surface displacement[m]"] = variables["positive particle surface displacement"][:,1:v] * case.param.scale.r0
+    if !multi_spme || case.opt.mechanicalmodel == "full"
+        result["negative particle center radial stress[Pa]"] = variables["negative particle center radial stress"][:,1:v] * case.param.scale.E_n
+        result["positive particle center radial stress[Pa]"] = variables["positive particle center radial stress"][:,1:v] * case.param.scale.E_p
+        result["negative particle surface tangential stress[Pa]"] = variables["negative particle surface tangential stress"][:,1:v] * case.param.scale.E_n
+        result["positive particle surface tangential stress[Pa]"] = variables["positive particle surface tangential stress"][:,1:v] * case.param.scale.E_p
+        result["negative particle surface displacement[m]"] = variables["negative particle surface displacement"][:,1:v] * case.param.scale.r0
+        result["positive particle surface displacement[m]"] = variables["positive particle surface displacement"][:,1:v] * case.param.scale.r0
+    end
     if case.opt.model == "SPM"
         result["negative particle lithium concentration [mol/m^3]"] = variables["negative particle lithium concentration"][:,1:v] * case.param.scale.cn_max
         result["positive particle lithium concentration [mol/m^3]"] = variables["positive particle lithium concentration"][:,1:v] * case.param.scale.cp_max
         result["negative particle surface lithium concentration [mol/m^3]"] = variables["negative particle surface lithium concentration"][1:v] * case.param.scale.cn_max
         result["positive particle surface lithium concentration [mol/m^3]"] = variables["positive particle surface lithium concentration"][1:v] * case.param.scale.cp_max
+    elseif multi_spme
+        ne = size(case.mesh["thermal2D"].element, 1)
+        # 历史行按单元连续存储，公开场量显式恢复内部自由度与单元两个维度。
+        for (key, ndof, scale) in (
+            ("negative particle lithium concentration", case.mesh["negative particle"].nlen, case.param.scale.cn_max),
+            ("positive particle lithium concentration", case.mesh["positive particle"].nlen, case.param.scale.cp_max),
+            ("electrolyte lithium concentration", case.mesh["electrolyte"].nlen, case.param.scale.ce),
+        )
+            result[key * " [mol/m^3]"] = reshape(variables[key][:, 1:v], ndof, ne, v) .* scale
+        end
+        for (electrode, c_scale) in (("negative", case.param.scale.cn_max), ("positive", case.param.scale.cp_max))
+            key = electrode * " particle surface lithium concentration"
+            result[key * " [mol/m^3]"] = variables[key][:, 1:v] * c_scale
+            for quantity in ("exchange current density", "interfacial current density")
+                key = electrode * " electrode " * quantity
+                result[key * " [A/m^2]"] = variables[key][:, 1:v] * case.param.scale.j
+            end
+            for quantity in ("overpotential", "open circuit potential")
+                key = electrode * " electrode " * quantity
+                result[key * " [V]"] = variables[key][:, 1:v] * case.param.scale.phi
+            end
+        end
     elseif case.opt.model == "SPMe"
         result["negative particle lithium concentration [mol/m^3]"] = variables["negative particle lithium concentration"][:,1:v] * case.param.scale.cn_max
         result["positive particle lithium concentration [mol/m^3]"] = variables["positive particle lithium concentration"][:,1:v] * case.param.scale.cp_max
@@ -47,7 +72,9 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
     end
 
     if case.opt.thermalmodel == "lumped"
-        result["thermal lumped internal heat [W/m^3]"] = vec(variables["thermal lumped internal heat"][1, 1:v]) * case.param.scale.q
+        power=vec(variables["thermal lumped internal heat"][1,1:v])*case.param.scale.P_ref
+        result["thermal lumped internal heat [W]"]=power
+        result["thermal lumped internal heat [W/m^3]"]=power/case.param_dim.cell.volume
     elseif case.opt.thermalmodel == "distributed2D"
         # ── 热源物理单位还原 ──
         result["thermal2D Q_rxn_NE [W/m3]"] = variables["thermal2D q_rxn_ne"][:, 1:v] * case.param.scale.q
@@ -61,6 +88,7 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
         result["thermal2D Q_ohm_e_PE [W/m3]"] = variables["thermal2D q_ohm_e_pe"][:, 1:v] * case.param.scale.q
         result["thermal2D Q_PCC [W/m3]"] = variables["thermal2D q_pcc"][:, 1:v] * case.param.scale.q
         result["thermal2D Q_NCC [W/m3]"] = variables["thermal2D q_ncc"][:, 1:v] * case.param.scale.q
+        result["thermal2D Q_EL [W/m3]"] = variables["thermal2D q_el"][:, 1:v] * case.param.scale.q
 
         # ── 温度还原 ──
         result["thermal2D temperature at nodes [K]"] = variables["thermal2D temperature at nodes"][:, 1:v] * case.param_dim.scale.T_ref
@@ -79,15 +107,22 @@ function PostProcessing(case::Case, variables::Dict{String, Union{Array{Float64}
 
         # ── 热源场与总热源 ──
         result["heat_source_fields"] = variables["heat_source_fields"][:, 1:v]
-        result["total heat source [W]"] = vec(variables["total heat source"][1, 1:v])
+        result["total heat source [W]"] = vec(variables["total heat source"][1, 1:v]) * (case.param.scale.P_ref*case.param_dim.cell.width/case.param.scale.L)
 
         # ── 单元级变量（无量纲直传）──
         for key in ["thermal2D element current", "thermal2D eta_n_e", "thermal2D eta_p_e",
                     "thermal2D element soc_n", "thermal2D element soc_p",
                     "thermal2D element soc_n_vol", "thermal2D element soc_p_vol",
+                    "thermal2D element soc_n_nodeavg", "thermal2D element soc_p_nodeavg",
                     "thermal2D element voltages", "thermal2D element OCV",
                     "thermal2D dUdT_n_e", "thermal2D dUdT_p_e"]
             result[key] = variables[key][:, 1:v]
+        end
+
+        if case.opt.per_element_spme
+            result["thermal2D branch area factor"] = variables["thermal2D branch area factor"][:, 1:v]
+            result["thermal2D total effective area factor"] = vec(variables["thermal2D total effective area factor"][1, 1:v])
+            result["thermal2D element branch current [A]"] = variables["thermal2D element branch current [A]"][:, 1:v]
         end
 
         # ── 截止与激活信息（含任务59 Q4 面积失活状态接线）──

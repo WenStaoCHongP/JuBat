@@ -536,22 +536,25 @@ function setup_thermal2D_mesh(case, mesh_data; use_merged::Union{Bool,Nothing}=n
 
     case_new.mesh["thermal2D"] = mesh_th
 
-    _, layer_weights = jellyroll_element_properties(case_new.mesh["thermal2D"], case_new.param)
+    areas, layer_weights = jellyroll_element_properties(mesh_th, case_new.param)
 
     # 预计算边界边缓存（网格不变量）
     is_inner, is_outer = identify_boundary_nodes(mesh_th, case_new.param)
     boundary_cache = compute_boundary_edge_cache(mesh_th, is_outer)
 
-    case_new.geometry = MeshGeometry(
-        mesh_data.element_layer,
-        mesh_data.is_inner_layer,
-        layer_weights,
-        interface_pairs,
-        mesh_data.czm_element_map,
-        mesh_data.inner_nodes,
-        mesh_data.outer_nodes,
-        boundary_cache
-    )
+    case_new.mesh["thermal2D element area"] = areas
+    case_new.mesh["thermal2D layer weights"] = layer_weights
+    initialize_thermal_matrices!(case_new)
+    case_new.mesh["thermal2D boundary edges"] = boundary_cache
+    case_new.mesh["thermal2D interface pairs"] = interface_pairs
+    if case_new.opt.model == "SPMe" && case_new.opt.per_element_spme
+        n_chem = isempty(case_new.opt.y0) ?
+            case_new.mesh["negative particle"].nlen + case_new.mesh["positive particle"].nlen +
+            case_new.mesh["electrolyte"].nlen : length(case_new.opt.y0)
+        case_new.index["SPMe chemical block length"] = n_chem
+        case_new.index["thermal2D temperature"] = collect((size(mesh_th.element, 1) * n_chem + 1):
+            (size(mesh_th.element, 1) * n_chem + mesh_th.nlen))
+    end
 
     ne = size(mesh_th.element, 1)
     nnode = mesh_th.nlen

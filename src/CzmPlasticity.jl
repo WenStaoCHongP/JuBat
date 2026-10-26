@@ -1,7 +1,7 @@
 # PCC/NCC 平面应力 J2 塑性（Batch 3，spec §3.3；Simo–Hughes 一致返回映射）
 #
-# 单位契约：调用方传入的 C、σ_y、H 与 e_mech 同单位（生产路径均为 σ_czm/L 归一系；
-# 本构函数本身与单位无关，unit 测试直接用物理量纲）。
+# 单位契约：e_mech、eps_p、κ/Δκ均无量纲；C、σ_y、H及返回应力/切线使用同一应力单位。
+# 生产路径以scale.σ_czm归一，物理unit测试用Pa；本构函数不做单位转换。
 
 """
     PlasticState
@@ -22,8 +22,8 @@ PlasticState() = PlasticState(
     foil_params_of(param, mt) -> (σ_y, H)
 
 箔塑性屈服/硬化参数（Batch 3，`/σ_czm` 归一）。弹性模量/泊松比不在此取——
-统一走 `moduli_of(param, mt)`（`param.PCC.E` 为 ÷E_coat 归一，须乘
-`E_coat/σ_czm` 链才到 σ_czm 系；用户参数修正后 PCC.E/NCC.E 即物理箔模量）。
+统一走 `moduli_of(param, mt)`：`param_dim.PCC.E/NCC.E`以Pa给定，
+`param.PCC.E/NCC.E`已除以`scale.E_coat`；`moduli_of`乘`scale.E_coat/scale.σ_czm`，直接转换到σ_czm归一应力尺度。
 其余材料类型返回 `nothing`。
 """
 function foil_params_of(param, mt::Symbol)
@@ -197,7 +197,7 @@ end
 """
     winding_prestress_field(czm_mesh, param) -> Vector{NTuple{3,Float64}}
 
-卷绕预应力初始应力场 σ₀（Batch 2'，spec §3.7，D-B2'-1；σ_czm/L 归一系）。
+卷绕预应力初始应力场 σ₀（Batch 2'，spec §3.7，D-B2'-1；以scale.σ_czm归一，不含/L）。
 逐单元（质心）全局系三分量 (σ_xx, σ_yy, σ_xy)：
 
 1. **卷入张力（等应变/Voigt 分担）**：`ε_w,side = T_side/Ē_side`，

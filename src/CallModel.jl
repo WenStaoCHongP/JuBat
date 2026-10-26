@@ -9,14 +9,14 @@
 非法输入显式失败，不得吞并为无损或静默跳过。）
 """
 function map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, damage_states::AbstractVector{DamageState}, ne_thermal::Int)
-	czm_mesh.cohesive_to_thermal !== nothing || error(
+	czm_mesh.czm_submesh !== nothing || error(
 		"map_czm_damage_to_thermal: cohesive_to_thermal 映射缺失（结构非法，不得静默回退）")
-	n_coh = czm_mesh.n_cohesive
+	n_coh = length(czm_mesh.cohesive_elements)
 	length(damage_states) == n_coh || error(
 		"map_czm_damage_to_thermal: damage_states 长度 $(length(damage_states)) != n_cohesive $n_coh")
 	D_per_thermal = zeros(ne_thermal)
 	for e_coh in 1:n_coh
-		e_thermal = czm_mesh.cohesive_to_thermal[e_coh]
+		e_thermal = czm_mesh.czm_submesh.thermal_elem_map[czm_mesh.cohesive_elements[e_coh].host_outer_elem]
 		1 <= e_thermal <= ne_thermal || error(
 			"map_czm_damage_to_thermal: cohesive $e_coh 映射越界 e_thermal=$e_thermal（ne_thermal=$ne_thermal）")
 		D = damage_states[e_coh].D
@@ -50,35 +50,28 @@ function particle_volume_average(c::AbstractVector{Float64}, mesh::Mesh)
     return c_bar
 end
 
-function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
-    # 验证前提条件
-    if case.layout === nothing
-        error("CallModel_MultiSPMe requires case.layout to be set. Did you call ModelInitialisation_MultiSPMe?")
-    end
-    
-    layout = case.layout
-    ne = layout.ne
-    n_chem = layout.n_chem
-    nT = layout.nT
+function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi::String, mech::Union{Nothing,MechState})
     mesh_th = case.mesh["thermal2D"]
+    ne = size(mesh_th.element, 1)
+    n_chem = case.index["SPMe chemical block length"]
+    nT = mesh_th.nlen
     param = case.param
     
-    # 初始化 variables（提前，以便后续缓存/读取中使用）
+    # 唯一完整输出容器；电化学量由各单元真实结果填入。
     variables = StandardVariables(case, 1)
     
     # 1) 解析状态向量
     # 提取热场
-    T_nodes = get_thermal_dofs(yt, case.layout)
+    T_nodes = get_thermal_dofs(yt, case)
     # 提取每个单元的电化学状态（使用 @views 消除拷贝）
     yt_chem = Vector{SubArray{Float64,1}}(undef, ne)
     for e in 1:ne
-        offset = (e - 1) * layout.n_chem
-        yt_chem[e] = @view yt[(offset + 1):(offset + layout.n_chem)]
+        offset = (e - 1) * n_chem
+        yt_chem[e] = @view yt[(offset + 1):(offset + n_chem)]
     end
     
     # 2) 使用缓存的元素面积（网格不变量）
-    areas = layout.areas
-    variables["thermal2D element area"] = areas
+    areas = case.mesh["thermal2D element area"]
     
     Te_prev = zeros(Float64, ne)
     @inbounds for e in 1:ne
@@ -87,22 +80,11 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     end
     # 3) 分流求解（获取 I_e）
     # 使用与 SPMe 变量一致的电流无量纲尺度（param.scale.I_typ）
-    I_total = case.opt.Current(t * case.param.scale.t0) / case.param.scale.I_typ
+    I_applied = case.opt.Current(t * case.param.scale.t0)
+    I_total = I_applied / case.param.scale.I_typ
     
-    # 更新 variables（用于传递给分流求解器）
-    variables["cell current"] = I_total
-    variables["thermal2D temperature at nodes"] = T_nodes
-    variables["thermal2D element area"] = areas
-    
-    # 分流求解需要代表性的全局状态（用于计算 prefactor）。
-    # 这里使用所有单元的平均状态，并先生成与之匹配的电化学变量，确保标度一致。
-    yt_representative = mean(yt_chem)
-    T_rep = mean(Te_prev)
-    vars_rep = SPMe_variables(case, yt_representative, t; I_app=I_total, T_e=T_rep)
-    for (k, v) in vars_rep
-        variables[k] = v
-    end
-    # 保留热相关场
+    # 结果电流沿用 I1C 尺度；分流方程使用上面的 I_typ 尺度。
+    variables["cell current"] = I_applied / case.param_dim.cell.I1C
     variables["thermal2D temperature at nodes"] = T_nodes
     variables["thermal2D element area"] = areas
 
@@ -111,12 +93,12 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 不再按 czm.enabled 分叉；完全没有反馈源（未挂 czm_mesh 且 CZM 关）才是合法几何权重路径。
     D_elem_area_loss = nothing
     if case.opt.czm.area_loss_enabled
-        if case.czm_mesh !== nothing
-            case.mech !== nothing || error(
-                "CallModel_MultiSPMe: area_loss_enabled 且存在 czm_mesh（反馈源），但 case.mech 缺失（非法状态）")
-            case.czm_mesh.cohesive_to_thermal !== nothing || error(
+        if haskey(case.mesh, "czm")
+            mech !== nothing || error(
+                "CallModel_MultiSPMe: area_loss_enabled 且存在 czm_mesh（反馈源），但 mech 缺失（非法状态）")
+            case.mesh["czm"].czm_submesh !== nothing || error(
                 "CallModel_MultiSPMe: area_loss_enabled 且反馈源存在，但 cohesive_to_thermal 映射缺失（非法状态，不得静默回退几何权重）")
-            D_elem_area_loss = map_czm_damage_to_thermal(case.czm_mesh, case.mech.damage_states, ne)
+            D_elem_area_loss = map_czm_damage_to_thermal(case.mesh["czm"], mech.damage_states, ne)
         elseif case.opt.czm.enabled
             error("CallModel_MultiSPMe: area_loss_enabled 且 CZM 启用，但缺少 czm_mesh（非法状态，不得静默回退几何权重）")
         end
@@ -124,8 +106,18 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     end
 
     t_branch_ns = time_ns()
-    variables, I_e, Vc = solve_branch_currents(case, variables, yt_representative, t, I_total, areas, Te_prev, nothing; D_elem=D_elem_area_loss)
+    variables, I_e, Vc = solve_branch_currents(case, variables, t, I_total, areas, Te_prev, nothing; D_elem=D_elem_area_loss, yt_chem=yt_chem)
     t_branch_s = (time_ns() - t_branch_ns) * 1e-9
+
+    # Voltage-exhausted positive area cannot carry the requested current.
+    # Keep status4's legitimate zero-current diffusion/thermal mode intact.
+    if variables["thermal2D Vsolve status"] == 5.0
+        n_active = variables["thermal2D n_active_elements"]
+        error("MultiSPMe voltage cutoff exhausted the active set: status=5, " *
+            "n_active=$n_active, " *
+            "I_total=$I_total (normalized), t=$t (normalized), " *
+            "time_s=$(t * case.param.scale.t0); refusing SPMe/thermal assembly")
+    end
 
     # 任务63 B2（R4/5.5）：可选分流消费观察点——每次实际消费后原位回调，惰性无开销。
     # 事件携带真实消费输入（D_elem、areas）与产出（I_e、w、A_eff、活动集），t 为归一化时间。
@@ -134,6 +126,9 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         D_elem=D_elem_area_loss, I_e=copy(I_e), Vc=Vc, Te_prev=copy(Te_prev),
         w=copy(variables["thermal2D branch weight"]),
         A_eff=copy(variables["thermal2D effective area"]),
+        a=copy(variables["thermal2D branch area factor"]),
+        gamma=variables["thermal2D total effective area factor"],
+        I_branch=copy(variables["thermal2D element branch current [A]"]),
         active_mask=copy(variables["thermal2D active_mask"]),
         deactivated_mask=copy(variables["thermal2D deactivated_mask"]),
         inactive_reason=copy(variables["thermal2D inactive_reason"])))
@@ -156,11 +151,11 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     Threads.@threads for e in 1:ne
         tid = Threads.threadid()
         ws_e = ws_pool[tid]
-        M_e, K_e, F_e, vars_e = SPMe_element(case, yt_chem[e], t, e;I_e=I_e[e], T_e=Te_prev[e],jacobi=jacobi, workspace=ws_e)
+        M_e, K_e, F_e, vars_e = SPMe(case, yt_chem[e], t; e=e, I_e=I_e[e], T_e=Te_prev[e],jacobi=jacobi, workspace=ws_e)
         M_elems[e] = M_e
         K_elems[e] = K_e
         F_elems[e] = vec(F_e)
-        variables_elems[e] = copy_element_results(vars_e)
+        variables_elems[e] = copy_element_results(case, vars_e)
     end
     t_spme_s = (time_ns() - t_spme_ns) * 1e-9
     
@@ -172,32 +167,44 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     # 6) 计算逐单元热源（调用 ThermalDistributed.jl 中的统一函数)
     t_thermal_ns = time_ns()
     t_czm_model_s = 0.0
-    if case.opt.czm.enabled == true && case.czm_mesh !== nothing
+    if case.opt.czm.enabled == true && haskey(case.mesh, "czm")
         t_czm_ns = time_ns()
-        variables = compute_heat_sources_with_czm(case, variables, variables_elems, I_e, Te_prev, areas, case.czm_mesh, mesh_th)
+        variables = compute_heat_sources(case, variables, variables_elems, I_e, Te_prev, areas)
         t_czm_model_s = (time_ns() - t_czm_ns) * 1e-9
         # 记录 CZM 摘要统计
-        stats = get_damage_statistics(case.mech.damage_states)
+        length(mech.damage_states)==length(case.mesh["czm"].cohesive_elements) || throw(DimensionMismatch("CZM summary damage count"))
+        stats = get_damage_statistics(mech.damage_states)
         variables["czm D_max"] = [stats.max_D]
         if case.opt.czm.winding_prestress
             variables["winding prestress"] = [1.0]   # 浮点历史标记；最终结果再解释为功能开启
         end
         variables["czm D_mean"] = [stats.mean_D]
-        δ_max_n_vals = [s.δ_max_n for s in case.mech.damage_states]
-        δ_max_eff_vals = [s.δ_max_eff for s in case.mech.damage_states]
+        δ_max_n_vals = [s.δ_max_n for s in mech.damage_states]
+        δ_max_eff_vals = [s.δ_max_eff for s in mech.damage_states]
+        all(isfinite,δ_max_n_vals) && all(isfinite,δ_max_eff_vals) || throw(ArgumentError("non-finite CZM separation history"))
         variables["czm δ_max_n"] = [maximum(δ_max_n_vals)]
         variables["czm δ_max_eff"] = [maximum(δ_max_eff_vals)]
         variables["czm δ_mean_n"] = [mean(δ_max_n_vals)]
         variables["czm n_fractured"] = [Float64(stats.n_fractured)]
     else
-        variables = compute_heat_sources(case, variables, variables_elems, I_e, Te_prev, areas; per_element_spme=true)
+        variables = compute_heat_sources(case, variables, variables_elems, I_e, Te_prev, areas)
     end
 
     # 保存辅助变量（用于调试）；M0：体积平均改用 NE/PE 对应 particle 径向网格
     mesh_np = case.mesh["negative particle"]
     mesh_pp = case.mesh["positive particle"]
+    element_output_keys = spme_element_output_keys(case)
     for e in 1:ne
         vars_e = variables_elems[e]
+        for key in element_output_keys
+            value = vars_e[key]
+            if value isa Float64
+                variables[key][e, 1] = value
+            else
+                n = size(variables[key], 1) ÷ ne
+                variables[key][((e - 1) * n + 1):(e * n), 1] = vec(value)
+            end
+        end
         variables["thermal2D eta_n_e"][e] = vars_e["negative electrode overpotential"][1]
         variables["thermal2D eta_p_e"][e] = vars_e["positive electrode overpotential"][end]
         cn_surf_e = vars_e["negative particle surface lithium concentration"][1]
@@ -206,19 +213,23 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         variables["thermal2D dUdT_p_e"][e] = param.PE.dUdT(cp_surf_e)[1]
         csn_data = vars_e["negative particle lithium concentration"]
         csp_data = vars_e["positive particle lithium concentration"]
-        variables["thermal2D element soc_n"][e] = mean(vec(csn_data))
-        variables["thermal2D element soc_p"][e] = mean(vec(csp_data))
-        # R0-c/M0：同步记录 FE 球体积平均（诊断键；M0 生产消费仍为节点算术平均，M1 才切换）
-        variables["thermal2D element soc_n_vol"][e] = particle_volume_average(vec(csn_data), mesh_np)
-        variables["thermal2D element soc_p_vol"][e] = particle_volume_average(vec(csp_data), mesh_pp)
+        # M1（2026-10-12 用户裁决）：生产化学膨胀消费切换为 FE 球体积平均（1ᵀMc/1ᵀM1，
+        # 与扩散质量装配同一积分；静置零通量时库存守恒、平均严格不变）。
+        # 旧节点均值保留为有界诊断键（*_nodeavg）。
+        vol_n = particle_volume_average(vec(csn_data), mesh_np)
+        vol_p = particle_volume_average(vec(csp_data), mesh_pp)
+        variables["thermal2D element soc_n"][e] = vol_n
+        variables["thermal2D element soc_p"][e] = vol_p
+        variables["thermal2D element soc_n_vol"][e] = vol_n   # 同一正确值，不再各算一套
+        variables["thermal2D element soc_p_vol"][e] = vol_p
+        variables["thermal2D element soc_n_nodeavg"][e] = mean(vec(csn_data))
+        variables["thermal2D element soc_p_nodeavg"][e] = mean(vec(csp_data))
     end
     variables["thermal2D element current"] = I_e
     
     # 7) 装配热学矩阵
     MT, KT, FT = ThermalDistributed2D(case, variables)
     # 统一时间尺度：电化学和热模型使用相同时间尺度 t0，时间比为 1
-    t_ratio = 1.0
-    MT = MT .* t_ratio
     KT, FT = ThermalDistributed2D_BC(KT, FT, case, t)
     t_thermal_s = (time_ns() - t_thermal_ns) * 1e-9
     
@@ -236,6 +247,11 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
 
     # 可选：添加单元电压分布（用于诊断）
     variables["thermal2D element voltages"] = [variables_elems[e]["cell voltage"] for e in 1:ne]
+    active_idx = findall(==(1.0), variables["thermal2D active_mask"])
+    if !isempty(active_idx)
+        residual = maximum(abs(variables["thermal2D element voltages"][e] - Vc) for e in active_idx)
+        residual <= 1e-8 || error("MultiSPMe local voltage mismatch: residual=$residual")
+    end
     variables["timing branch solver [s]"] = t_branch_s
     variables["timing spme solve [s]"] = t_spme_s
     variables["timing thermal distributed [s]"] = t_thermal_s
@@ -245,10 +261,10 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     
     return M, K, F, variables, y_phi
 end
-function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
+function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String, mech::Union{Nothing,MechState}=nothing)
     # 多SPMe模式：由 per_element_spme 控制，直接委托给 CallModel_MultiSPMe
     if case.opt.per_element_spme
-        return CallModel_MultiSPMe(case, yt, t, jacobi=jacobi)
+        return CallModel_MultiSPMe(case, yt, t; jacobi=jacobi,mech=mech)
     end
 
     # 单模型模式：与 main 分支逻辑一致
@@ -275,32 +291,17 @@ function CallModel(case::Case, yt::Array{Float64}, t::Float64; jacobi::String)
 end
 
 """
-    copy_element_results(vars_e)
+    copy_element_results(case, vars_e)
 
-从 workspace Dict 中提取下游代码需要的键，返回轻量级独立 Dict。
-状态提取键（通过 case.index 原位写入 workspace）必须 copy()。
-计算结果键（通过 = 赋值，每次创建新数组/标量）可安全引用拷贝。
+从 workspace Dict 中保留逐单元输出及热源所需的结果。
+这些键均由 SPMe_variables / Mechanicaloutput 替换赋值，后续 workspace
+复用不会原位修改已保存数组；包括 full 模式真实颗粒应力结果。
 """
-function copy_element_results(vars_e)
-    Dict{String, Union{Array{Float64},Float64}}(
-        # ── 计算结果键：每次 = 赋值创建新对象，引用安全 ──
-        "negative electrode overpotential"             => vars_e["negative electrode overpotential"],
-        "positive electrode overpotential"             => vars_e["positive electrode overpotential"],
-        "cell voltage"                                 => vars_e["cell voltage"],
-        "negative electrode exchange current density"  => vars_e["negative electrode exchange current density"],
-        "positive electrode exchange current density"  => vars_e["positive electrode exchange current density"],
-        "negative electrode interfacial current density" => vars_e["negative electrode interfacial current density"],
-        "positive electrode interfacial current density" => vars_e["positive electrode interfacial current density"],
-        "negative electrode open circuit potential"    => vars_e["negative electrode open circuit potential"],
-        "positive electrode open circuit potential"    => vars_e["positive electrode open circuit potential"],
-        "temperature"                                  => vars_e["temperature"],
-        "electrolyte lithium concentration at negative electrode Gauss point" => vars_e["electrolyte lithium concentration at negative electrode Gauss point"],
-        "electrolyte lithium concentration at positive electrode Gauss point" => vars_e["electrolyte lithium concentration at positive electrode Gauss point"],
-        "electrolyte lithium concentration at separator Gauss point" => vars_e["electrolyte lithium concentration at separator Gauss point"],
-        # ── 状态提取键：替换赋值，workspace 不再持有引用，直接传递 ──
-        "negative particle surface lithium concentration" => vars_e["negative particle surface lithium concentration"],
-        "positive particle surface lithium concentration" => vars_e["positive particle surface lithium concentration"],
-        "negative particle lithium concentration"      => vars_e["negative particle lithium concentration"],
-        "positive particle lithium concentration"      => vars_e["positive particle lithium concentration"],
+function copy_element_results(case::Case, vars_e)
+    result = Dict{String, Union{Array{Float64},Float64}}(
+        key => vars_e[key] for key in spme_element_output_keys(case)
     )
+    result["cell voltage"] = vars_e["cell voltage"]
+    result["temperature"] = vars_e["temperature"]
+    return result
 end

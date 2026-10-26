@@ -8,12 +8,24 @@ function  ElectrodeDiffusion(electrode::Electrode, mesh::Mesh, mlen::Int64, c::M
         outputs = M -- mass matrix
                   K -- stiffness matrix
     """
-    Vi = mesh.element[mesh.gs.ele,:]
-    Vj = mesh.element[mesh.gs.ele,:]
-    coeff = mesh.gs.x.^2 .* mesh.gs.weight .* mesh.gs.detJ
-    M = Assemble(Vi, Vj, mesh.gs.Ni, mesh.gs.Ni, coeff , mlen)
-    Ds_eff =  electrode.Ds * Arrhenius(electrode.Eac_D, T).* (1 .+ (theta.*c))
-    coeff = - Ds_eff .* mesh.gs.x.^2 .* mesh.gs.weight .* mesh.gs.detJ
-    K = Assemble(Vi, Vj, mesh.gs.dNidx, mesh.gs.dNidx, coeff, mlen) 
+    M = electrode_diffusion_mass(mesh, mlen)
+    K = electrode_diffusion_stiffness(electrode, mesh, mlen, c, theta, T)
     return M, K
+end
+
+function electrode_diffusion_mass(mesh::Mesh, mlen::Int64)
+    Vi = mesh.element[mesh.gs.ele,:]
+    coeff = mesh.gs.x.^2 .* mesh.gs.weight .* mesh.gs.detJ
+    return Assemble(Vi, Vi, mesh.gs.Ni, mesh.gs.Ni, coeff, mlen)
+end
+
+function electrode_diffusion_stiffness(electrode::Electrode, mesh::Mesh, mlen::Int64, c::Matrix{Float64}, theta::Float64, T::Float64=1.0)
+    Ds_eff =  electrode.Ds * Arrhenius(electrode.Eac_D, T).* (1 .+ (theta.*c))
+    return electrode_diffusion_stiffness(mesh, mlen, Ds_eff)
+end
+
+function electrode_diffusion_stiffness(mesh::Mesh, mlen::Int64, Ds_eff)
+    Vi = mesh.element[mesh.gs.ele,:]
+    coeff = - Ds_eff .* mesh.gs.x.^2 .* mesh.gs.weight .* mesh.gs.detJ
+    return Assemble(Vi, Vi, mesh.gs.dNidx, mesh.gs.dNidx, coeff, mlen)
 end

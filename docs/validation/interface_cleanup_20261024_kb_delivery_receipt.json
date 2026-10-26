@@ -1,0 +1,15 @@
+{
+  "tests": {
+    "test_case_batch_a.jl": "5d71f1907172a1a934c287b886f921d75a3d8db5c6ac507d8e0d00d358169fbf",
+    "test_czm_arc_gp_history.jl": "518d40b3d727a25bcdf81016f7de4096e23031d07a79b915f663d4f99ca53bfe",
+    "test_review_p1_voltage_consistency.jl": "b5e18f8964095bc82741bcecb5137c023199d216c40c06219bddfb36a7c1a9ad"
+  },
+  "protected_test_files": 101,
+  "protected_stable": true,
+  "baseline": {
+    "parent": "21/21",
+    "formal75": "20/21 known hoop minimum difference"
+  },
+  "tests_executed": false,
+  "kb_commit": "a12ca637abde12592863a9bf1bbb993b443b3892"
+}

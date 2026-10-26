@@ -60,10 +60,10 @@ function create_unit_czm_strip(param; width=nothing, y0::Float64=1.0, gsorder::I
     tgs = GetGS(te, tn, gsorder, "Q4")
     dummy_thermal = Mesh("Q4", 2, tn, 4, te, tgs)
 
-    czm_mesh = create_czm_mesh(submesh, dummy_thermal, param)
+    czm_mesh = create_czm_mesh(submesh, dummy_thermal)
 
     # ---- 硬断言（方案 C）----
-    @assert czm_mesh.n_cohesive == 4 "expected 4 cohesive, got $(czm_mesh.n_cohesive)"
+    @assert length(czm_mesh.cohesive_elements) == 4 "expected 4 cohesive, got $(length(czm_mesh.cohesive_elements))"
     types = [e.interface_type for e in czm_mesh.cohesive_elements]
     @assert count(==(:PE_PCC), types) == 2 "PE_PCC count"
     @assert count(==(:NE_NCC), types) == 2 "NE_NCC count"

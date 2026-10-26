@@ -5,7 +5,7 @@ include("Option.jl")
 include("SetMesh.jl")
 include("SetParams.jl")
 include("CzmPlasticity.jl")  # 平面应力 J2 塑性（Batch 3）
-include("CouplingState.jl")  # MultiSPMeLayout + MeshGeometry 类型定义
+include("CouplingState.jl")  # 固定边界几何及 CZM 工作区类型定义
 include("SetCase.jl")
 include("CzmBC.jl")  # CZM 边界条件（含支承/端点约束解析、方向投影与刚体转动规范）
 include("czm.jl")  # CZM 本构与系统装配
@@ -37,16 +37,14 @@ include("Jellyrollmodel.jl")
 include("ring.jl")
 include("CycleSolver.jl")  # 充放电循环求解器
 include("CyclePostProcess.jl")  # 循环结果汇总、终止判据与绘图
-include("CycleData.jl")
-include("CsvExport.jl")  # CZM CSV export (after CycleSolver for type availability)
 
 
 export Assemble, ElectrodeDiffusion, ElectrolyteDiffusion, PostProcessing, SetCase, SetMesh, ChooseCell
 export Mesh1D, Mesh2D, GetGS, LagrangeBasis, GSweight, ShapeFunction1D, NormaliseParam, StandardVariables
-export SPM, Solve, SPMe, SPMe_element, ModelInitialisation
+export SPM, Solve, SPMe, ModelInitialisation
 export ModelInitialisation_MultiSPMe, extract_element_state, get_thermal_dofs
 export update_state
-export MultiSPMeLayout, MeshGeometry, CohesiveElementGeom, CZMAssemblyWorkspace
+export CohesiveElementGeom, CZMAssemblyWorkspace, CZMWorkspace
 export Arrhenius, IntV, IntQ4
 export jellyroll_collector_seed_mesh, jellyroll_element_properties
 export jellyroll_tab_node_indices, edge_boundary
@@ -58,13 +56,13 @@ export ThermalDistributed2D, ThermalDistributed2D_BC
 export ThermalDistributed2D_Ring, ThermalRing2D_BC
 export ThermalPolar2D_Ring
 export identify_boundary_nodes, apply_convection_bc, apply_cool_method
-export compute_heat_sources, compute_heat_sources_with_czm, solve_branch_currents
+export compute_heat_sources, solve_branch_currents
 export thermal_diffusion_stress_2D
 # CZM exports
-export CohesiveElement, CohesiveMesh, DamageState, CZMResult
+export CohesiveElement, CohesiveMesh, DamageState, MechanicalLoad, CZMResult
 export CzmSubmesh
 export create_czm_mesh, create_unit_czm_strip, compute_separation
-export bilinear_traction, bilinear_tangent, update_damage
+export BilinearCohesiveLaw, CohesiveStepData, cohesive_response
 export assemble_czm_system, assemble_coupled_system, assemble_bulk_stiffness
 export assemble_thermal_chemical_load, assemble_coupled_system_full
 export apply_bc_czm, identify_bc_nodes_czm
@@ -81,10 +79,6 @@ export CycleOption, PhaseType, PHASE_CHARGE, PHASE_REST, PHASE_DISCHARGE
 export PhaseResult, CycleResult, CyclingResult
 export solve_phase, solve_cycling, plot_cycling_results
 export compute_cs0_from_soc, apply_initial_soc!
-# Cycle data export
-export TimeStepData, CycleExportData
-export solve_phase_with_export, solve_cycle_with_export
-export export_cycle_data_to_csv
-# CSV export for cycling results
-export CZMSnapshot, export_cycling_csv, CsvExportOptions
+# Mechanical snapshots used by the cycling examples' CSV writers
+export CZMSnapshot
 end

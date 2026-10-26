@@ -1,10 +1,80 @@
+"""Validate the native radial-major, uniformly spaced periodic ring layout."""
+function _polar_ring_grid(mesh::Mesh, mesh_data, param::Params)
+    bad(message) = throw(ArgumentError("ThermalPolar2D_Ring: " * message))
+    mesh_data !== nothing && hasproperty(mesh_data, :r) && hasproperty(mesh_data, :ntheta) ||
+        bad("mesh_data must supply r and ntheta")
+    r, nt = mesh_data.r, mesh_data.ntheta
+    r isa AbstractVector{<:Real} && length(r) >= 2 && all(isfinite, r) &&
+        all(>(0), r) && all(>(0), diff(r)) || bad("r must be finite, positive and strictly increasing")
+    nt isa Integer && nt >= 3 || bad("ntheta must be an integer >= 3")
+    nr = length(r) - 1
+    mesh.type == "Q4" && mesh.dimension == 2 || bad("a two-dimensional Q4 mesh is required")
+    mesh.nlen == length(r) * nt && size(mesh.node) == (mesh.nlen, 2) ||
+        bad("node layout must contain exactly length(r)*ntheta unique nodes")
+    size(mesh.element) == (nr * nt, 4) || bad("element layout must contain nr*ntheta Q4 cells")
+    all(isfinite, mesh.node) || bad("node coordinates must be finite")
+    tol = 128 * eps(Float64)
+    close(a, b) = isapprox(a, b; rtol=tol, atol=tol * maximum(r))
+    close(first(r), param.cell.Rin) && close(last(r), param.cell.Rout) ||
+        bad("normalized mesh radii must match cell.Rin/Rout")
+    phase = atan(mesh.node[1, 2], mesh.node[1, 1])
+    dtheta = 2pi / nt
+    for ir in eachindex(r), it in 1:nt
+        n = (ir - 1) * nt + it
+        angle = phase + (it - 1) * dtheta
+        close(mesh.node[n, 1], r[ir] * cos(angle)) &&
+            close(mesh.node[n, 2], r[ir] * sin(angle)) ||
+            bad("nodes must follow the same uniform angular order on every radius")
+    end
+    for ir in 1:nr, it in 1:nt
+        itp = it == nt ? 1 : it + 1
+        e = (ir - 1) * nt + it
+        expected = ((ir - 1) * nt + it, ir * nt + it, ir * nt + itp, (ir - 1) * nt + itp)
+        all(mesh.element[e, j] == expected[j] for j in 1:4) ||
+            bad("element numbering must match the native periodic ring connectivity")
+    end
+    # The old minimal (r, ntheta) caller remains valid. Full ring_mesh metadata,
+    # when supplied, must describe this same mesh rather than another partition.
+    if hasproperty(mesh_data, :nr)
+        mesh_data.nr isa Integer && mesh_data.nr == nr || bad("nr disagrees with r")
+    end
+    if hasproperty(mesh_data, :theta)
+        theta = mesh_data.theta
+        theta isa AbstractVector{<:Real} && length(theta) == nt + 1 && all(isfinite, theta) ||
+            bad("theta must include exactly one periodic closing angle")
+        all(isapprox(x, dtheta; rtol=tol, atol=tol) for x in diff(theta)) &&
+            isapprox(cos(theta[1]), cos(phase); atol=tol, rtol=tol) &&
+            isapprox(sin(theta[1]), sin(phase); atol=tol, rtol=tol) ||
+            bad("theta disagrees with the actual uniform angular grid")
+    end
+    if hasproperty(mesh_data, :mesh)
+        other = mesh_data.mesh
+        other isa Mesh && other.type == mesh.type && other.dimension == mesh.dimension &&
+            other.nlen == mesh.nlen && other.node == mesh.node && other.element == mesh.element ||
+            bad("mesh_data.mesh disagrees with case.mesh[\"thermal2D\"]")
+    end
+    return r, nt
+end
+
+"""
+    ThermalPolar2D_Ring(case, variables, mesh_data)
+
+Assemble the native annular-sector FVM. `heat_source_fields[e]` is the signed
+average dimensionless volumetric source on curved sector e, with area
+`Asector[e] = (r_outer^2-r_inner^2)*pi/ntheta`. Mesh coordinates and radii are
+normalized, e.g. from `ring_mesh(case.param)`.
+
+A source from the same-numbered straight Q4 ring has a different integration
+domain. Its caller must first convert EACH cell's power:
+`qsector = qQ4 .* AQ4 ./ Asector`, using the actual Q4 areas. A global power
+rescaling, or treating a Jellyroll partition as this ring, is not a valid bridge.
+"""
 function ThermalPolar2D_Ring(case::Case, variables::AbstractDict{String,<:Any}, mesh_data)
     mesh = case.mesh["thermal2D"]
     param = case.param  # Use normalized parameters
     scale = case.param.scale
 
-    r_nodes = mesh_data.r  # Already normalized (ring_mesh called with L=scale.L)
-    ntheta = mesh_data.ntheta
+    r_nodes, ntheta = _polar_ring_grid(mesh, mesh_data, param)
 
     # Grid spacing (in radians)
     dtheta = 2.0 * pi / ntheta
@@ -34,18 +104,24 @@ function ThermalPolar2D_Ring(case::Case, variables::AbstractDict{String,<:Any}, 
     F = zeros(Float64, nnode)
     M = zeros(Float64, nnode)
 
-    # --- Heat source mapping: element -> node ---
+    # Each sector contributes its four true overlaps with nodal control volumes.
+    # Column sums equal sector areas; row sums equal the control areas below.
     q_elem = variables["heat_source_fields"]
-    q_node = zeros(Float64, nnode)
-    counts = zeros(Int, nnode)
-    for e in 1:size(mesh.element, 1)
-        for n in mesh.element[e, :]
-            q_node[n] += q_elem[e]
-            counts[n] += 1
+    q_elem isa AbstractVector{<:Real} && length(q_elem) == size(mesh.element, 1) &&
+        all(isfinite, q_elem) || throw(ArgumentError(
+            "ThermalPolar2D_Ring: heat_source_fields must be a finite real vector with one value per sector"))
+    for ir in 1:(length(r_nodes) - 1)
+        rmid = 0.5 * (r_nodes[ir] + r_nodes[ir + 1])
+        win = 0.25 * (rmid^2 - r_nodes[ir]^2) * dtheta
+        wout = 0.25 * (r_nodes[ir + 1]^2 - rmid^2) * dtheta
+        for it in 1:ntheta
+            e = (ir - 1) * ntheta + it
+            n1, n2, n3, n4 = mesh.element[e, :]
+            F[n1] += win * q_elem[e]
+            F[n4] += win * q_elem[e]
+            F[n2] += wout * q_elem[e]
+            F[n3] += wout * q_elem[e]
         end
-    end
-    for i in 1:nnode
-        counts[i] > 0 && (q_node[i] /= counts[i])
     end
 
     # --- FVM assembly over radial rings ---
@@ -72,9 +148,6 @@ function ThermalPolar2D_Ring(case::Case, variables::AbstractDict{String,<:Any}, 
 
             # --- Mass matrix: M[idx] = (ρc)* · V* ---
             M[idx] = rho_c_nd * vol_nd
-
-            # --- Load vector: F[idx] += q* · V* ---
-            F[idx] += q_node[idx] * vol_nd
 
             # --- Radial conduction (inner neighbor) ---
             if ir > 1

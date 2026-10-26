@@ -1,46 +1,63 @@
-# CouplingState.jl — 类型安全的状态布局与网格几何定义
-# 替代 Dict{String,Any} 的 multi_spme_layout
+"""
+    MechanicalLoad(czm_mesh; dT, Δsoc_n, Δsoc_p, F_ext, dt_seconds, sample_time_seconds)
+
+One sampled mechanical load. dT = ΔT/T_ref; Δsoc_n and Δsoc_p are differences
+of each electrode's c/c_max from its reference value. F_ext keeps the solver's
+existing dimensionless nodal-force units. sample_time_seconds is the source
+electrochemical/thermal state's global physical time; dt_seconds separately
+accumulates elapsed mechanical time. Arrays are borrowed read-only; static
+loads explicitly use dt_seconds=0.
+"""
+struct MechanicalLoad
+    dT::Vector{Float64}
+    Δsoc_n::Vector{Float64}
+    Δsoc_p::Vector{Float64}
+    F_ext::Vector{Float64}
+    dt_seconds::Float64
+    sample_time_seconds::Float64
+
+    function MechanicalLoad(czm_mesh::CohesiveMesh;
+            dT::Vector{Float64}, Δsoc_n::Vector{Float64}, Δsoc_p::Vector{Float64},
+            F_ext::Vector{Float64}, dt_seconds::Real, sample_time_seconds::Real)
+        ne = size(czm_mesh.bulk_element, 1)
+        all(a -> length(a) == ne, (dT, Δsoc_n, Δsoc_p)) ||
+            throw(DimensionMismatch("mechanical load fields must match $ne bulk elements"))
+        length(F_ext) == 2 * size(czm_mesh.node, 1) ||
+            throw(DimensionMismatch("mechanical external force must match the mesh DOFs"))
+        all(isfinite, dT) || throw(ArgumentError("CZM temperature increment contains non-finite values"))
+        all(isfinite, Δsoc_n) || throw(ArgumentError("CZM negative-electrode SOC increment contains non-finite values"))
+        all(isfinite, Δsoc_p) || throw(ArgumentError("CZM positive-electrode SOC increment contains non-finite values"))
+        all(isfinite, F_ext) || throw(ArgumentError("mechanical external force contains non-finite values"))
+        dt = Float64(dt_seconds)
+        sample_time = Float64(sample_time_seconds)
+        isfinite(dt) && dt >= 0.0 ||
+            throw(ArgumentError("mechanical elapsed time must be finite and nonnegative seconds"))
+        isfinite(sample_time) ||
+            throw(ArgumentError("mechanical sampling time must be finite global seconds"))
+        return new(dT, Δsoc_n, Δsoc_p, F_ext, dt, sample_time)
+    end
+end
+
+"""Session-owned CZM caches; never part of the accepted physical state."""
+mutable struct CZMWorkspace
+    mesh::CohesiveMesh
+    param::Params
+    K_bulk::Union{Nothing, SparseMatrixCSC}
+    cohesive_geom::Union{Nothing, Vector}
+    bulk_gp_geom::Union{Nothing, Vector}
+    bulk_asm::Any
+    ws::Any
+end
+
+CZMWorkspace(mesh::CohesiveMesh, param::Params) =
+    CZMWorkspace(mesh, param, nothing, nothing, nothing, nothing, nothing)
+
+function check_czm_workspace(mesh::CohesiveMesh, workspace::CZMWorkspace)
+    workspace.mesh === mesh || throw(ArgumentError("CZM workspace belongs to a different mesh; create a new session workspace"))
+    return workspace
+end
 
 using Parameters: @with_kw
-
-
-"""
-    MultiSPMeLayout
-
-多SPMe状态向量的布局索引。初始化后不可变。
-"""
-struct MultiSPMeLayout
-    ne::Int                        # 热单元数
-    n_chem::Int                    # 每单元电化学 DOF 数 = Nrn + Nrp + Nel
-    nT::Int                        # 热节点 DOF 数
-    n_total::Int                   # 全局状态向量总长 = ne*n_chem + nT
-    chem_range::UnitRange{Int}     # 1:(ne*n_chem)
-    thermal_range::UnitRange{Int}  # (ne*n_chem+1):(ne*n_chem+nT)
-    areas::Vector{Float64}         # 预计算的单元面积（网格不变量）
-end
-
-"""便捷构造器：自动计算 range 和 n_total，areas 延迟填充"""
-function MultiSPMeLayout(ne::Int, n_chem::Int, nT::Int)
-    MultiSPMeLayout(
-        ne, n_chem, nT,
-        ne * n_chem + nT,
-        1:(ne * n_chem),
-        (ne * n_chem + 1):(ne * n_chem + nT),
-        zeros(Float64, ne)
-    )
-end
-
-"""便捷构造器：接收 mesh 计算单元面积"""
-function MultiSPMeLayout(ne::Int, n_chem::Int, nT::Int, mesh_th)
-    thermal_range = (ne * n_chem + 1):(ne * n_chem + nT)
-    areas = zeros(Float64, ne)
-    ngs = length(mesh_th.gs.detJ)
-    @inbounds for g in 1:ngs
-        e = mesh_th.gs.ele[g]
-        areas[e] += mesh_th.gs.weight[g] * mesh_th.gs.detJ[g]
-    end
-    return MultiSPMeLayout(ne, n_chem, nT, ne * n_chem + nT,1:(ne * n_chem), thermal_range, areas)
-end
 
 """
     BoundaryEdgeCache
@@ -78,22 +95,6 @@ function compute_boundary_edge_cache(mesh, is_outer)
         end
     end
     return BoundaryEdgeCache(edges, L_edge)
-end
-
-"""
-    MeshGeometry
-
-Jellyroll 网格的几何拓扑信息。构建后不可变。
-"""
-struct MeshGeometry
-    element_layer::Vector{Int}                      # 每个单元的层类型 (1=NE, 2=SP, 3=PE, 4=NCC, 5=PCC)
-    is_inner_layer::Vector{Bool}                    # 是否为内层
-    layer_weights::Matrix{Float64}                  # ne × 5 层面积权重 [NE, SP, PE, PCC, NCC]
-    interface_pairs::Vector{Tuple{Int,Int}}         # CZM 界面配对 (top_elem, bot_elem)
-    czm_element_map::Dict{Int,Vector{Int}}          # 热单元号 → CZM 单元索引向量（一对多映射）
-    inner_nodes::Vector{Int}                        # 内边界节点索引
-    outer_nodes::Vector{Int}                        # 外边界节点索引
-    boundary_edges::BoundaryEdgeCache                  # 预计算的边界边
 end
 
 # ========================================================================
@@ -175,13 +176,13 @@ end
 早于本文件可用。）
 
 # 字段
-- `D`: 等效损伤 D_eq [0, 1]，由当前双线性律计算
+- `D`: 不可逆包络损伤 D_eq [0, 1]，历次当前方向双线性损伤的最大值
 - `D_visc`: 粘性有效损伤，用于牵引力和切线（粘性正则化关闭时 D_visc = D）
-- `δ_max_n`: 历史最大法向分离位移
-- `δ_max_t`: 历史最大切向分离位移
-- `δ_max_eff`: 历史最大等效分离位移
-- `fractured`: 是否已完全断裂
-- `accumulated_damage`: 累积损伤（用于循环加载）
+- `δ_max_n`: 历史最大正法向分离位移（几何统计，不控制损伤门）
+- `δ_max_t`: 历史最大切向分离绝对值（几何统计）
+- `δ_max_eff`: 历史最大等效分离位移（几何统计）
+- `fractured`: 退化方向已饱和，规范状态须 D = D_visc = 1；model1 切向及压缩刚度保留
+- `accumulated_damage`: 本构更新取历史最大值；外部循环接口另见73，不代表能量或独立疲劳模型
 """
 mutable struct DamageState
     D::Float64                     # 等效损伤 D_eq
@@ -200,37 +201,45 @@ end
     MechState
 
 CZM 求解的演化状态聚合（2026-08-30 重构：吸收 CzmLayout；损伤态从 czm_mesh 迁入）。
-缓存随网格（CohesiveMesh.K_bulk/标架/ws），演化状态随求解（本结构）。
+缓存归会话 CZMWorkspace，演化状态随求解（本结构）。
 求解器在收敛后原位提交；失败/试探不触碰本结构。
 """
 mutable struct MechState
     u_prev::Vector{Float64}               # 上一步收敛位移（跨时间步持有）
-    damage_states::Vector{DamageState}    # 逐 cohesive 单元损伤状态（原 czm_mesh.damage_states）
-    gp_damage_states::Union{Nothing, Matrix{DamageState}} # 可选逐 cohesive GP 历史；收敛后才提交
+    damage_states::Vector{DamageState}    # 逐 cohesive 单元输出聚合；不得反推GP恢复历史
+    gp_damage_states::Union{Nothing, Matrix{DamageState}} # 真实逐GP接受史；仅首次推进前可缺席
     plastic_states::Union{Nothing, Matrix{PlasticState}}  # PCC/NCC 高斯点塑性状态（Batch 3，[ne,4]；收敛才提交 D-B3-2）
     winding_prestress::Union{Nothing, Vector{NTuple{3, Float64}}}  # 卷绕预应力 σ₀（Batch 2'；几何固定一次计算持久持有）
     node_ref::Union{Nothing, Matrix{Float64}}   # 初始螺旋节点快照（Δ_core 基准，永不重置）
-    contact::Nothing                      # SP–涂层接触预留位（AGENTS §9.8）
+    mechanics_initialized::Bool            # true after an actual successful mechanical advance
+    last_eigenstrain::Union{Nothing,NamedTuple{(:dT,:Δsn,:Δsp),Tuple{Vector{Float64},Vector{Float64},Vector{Float64}}}} # actual last successful bulk load
 end
 
 """便捷构造器：从 czm_mesh 初始化"""
 function MechState(czm_mesh::CohesiveMesh)
-    ndof = 2 * czm_mesh.nnode
+    ndof = 2 * size(czm_mesh.node, 1)
     MechState(zeros(Float64, ndof),
-              [DamageState() for _ in 1:czm_mesh.n_cohesive],
-              nothing, nothing, nothing, nothing, nothing)
+              [DamageState() for _ in 1:length(czm_mesh.cohesive_elements)],
+              nothing, nothing, nothing, nothing, false, nothing)
+end
+
+function require_mechanical_load_history(ms::MechState)
+    ms.mechanics_initialized && ms.last_eigenstrain===nothing &&
+        throw(ArgumentError("initialized mechanics lacks successful eigenstrain history"))
+    return ms.last_eigenstrain
 end
 
 """
-    ensure_node_ref!(case) -> Matrix{Float64}
+    ensure_node_ref!(case, mech) -> Matrix{Float64}
 
 初始螺旋节点快照（惰性建立、永不重置）：Δ_core 始终相对初始完美螺旋计算（spec §3.5）。
 """
-function ensure_node_ref!(case)
-    if case.mech.node_ref === nothing
-        case.mech.node_ref = copy(case.czm_mesh.node)
-    end
-    return case.mech.node_ref
+function ensure_node_ref!(case, mech::MechState)
+    ref = mech.node_ref === nothing ? copy(case.mesh["czm"].node) : mech.node_ref
+    size(ref)==size(case.mesh["czm"].node) || throw(DimensionMismatch("reference-node shape"))
+    all(isfinite,ref) || throw(ArgumentError("non-finite reference nodes"))
+    mech.node_ref=ref
+    return ref
 end
 
 """
@@ -278,15 +287,15 @@ end
 # 数据流
 - dT_czm：粗热单元 dT (= avg(T_nodes[thermal_elem[e]]) - T0)
           → thermal_elem_map 直接取值（element-to-element）
-- Δsoc_p/n：variables["thermal2D element soc_p/n"] (粗热单元 mol/m³)
+- Δsoc_p/n：variables["thermal2D element soc_p/n"] (粗热单元无量纲 c/c_max)
              → thermal_elem_map 直接取值 - cs0，按 material_type 分发
 
 # 单位契约
-- T_nodes, T0, dT_czm: Kelvin
-- soc_p/n, cs0, Δsoc: mol/m³
+- T_nodes、param.cell.T0 为 T/T_ref；dT_czm 为 ΔT/T_ref，例如 12.3 K 输入 12.3/T_ref。
+- soc_p/n, cs0, Δsoc: 无量纲 c/c_max；Omega 已乘 cs_max，ΩΔsoc/3 的尺度契约不变。
 """
 function compute_czm_strain_inputs(case, variables, T_nodes)
-    czm_mesh = case.czm_mesh
+    czm_mesh = case.mesh["czm"]
     submesh = czm_mesh.czm_submesh
     param = case.param
     ne_czm = size(submesh.mesh.element, 1)
@@ -376,25 +385,27 @@ function compute_czm_strain_inputs(case, variables, T_nodes)
 end
 
 """
-    update_czm_damage!(case, variables, T_nodes_carry)
+    update_czm_damage!(case, mech, variables, T_nodes_carry; dt_seconds, sample_time_seconds, czm_workspace)
 
 更新 CZM 网格的损伤状态。
 
 使用牛顿-拉弗森迭代求解力学平衡方程，通过载荷子步法处理软化收敛问题。
-从 case.czm_mesh、case.param、case.mech 与 case.opt.czm 获取拓扑、参数、演化状态和求解选项。
+从 case.mesh["czm"]、case.param、mech 与 case.opt.czm 获取拓扑、参数、演化状态和求解选项。
 
 # 参数
 - `case`: Case 对象（需已设置 czm_mesh 和 mech）
 - `variables`: 当前时间步的变量字典
-- `T_nodes_carry`: 当前温度场
+- `T_nodes_carry`: 已接受左端温度场
+- `dt_seconds`: 自上次机械推进累计的实际秒数
+- `sample_time_seconds`: 载荷采样的全局物理秒数
 
 # 返回
 - `result`: 完整的 `CZMResult`，包含位移、损伤、分离、牵引力和求解诊断
 
 输入或求解结果包含非有限值、或非线性求解未收敛时抛出异常。
 """
-function update_czm_damage!(case, variables, T_nodes_carry; dt_seconds::Union{Nothing, Real}=nothing)
-    czm_mesh = case.czm_mesh
+function update_czm_damage!(case, mech::MechState, variables, T_nodes_carry; czm_workspace::CZMWorkspace, dt_seconds::Real, sample_time_seconds::Real)
+    czm_mesh = case.mesh["czm"]
     param = case.param
     czm_opt = case.opt.czm
 
@@ -405,28 +416,28 @@ function update_czm_damage!(case, variables, T_nodes_carry; dt_seconds::Union{No
     Δsoc_p_elem = strain_in.Δsoc_p_czm
 
     # 外力向量（一般为零）
-    ndof = 2 * czm_mesh.nnode
+    ndof = 2 * size(czm_mesh.node, 1)
     F_ext = zeros(Float64, ndof)
 
     all(isfinite, T_nodes_carry) || throw(ArgumentError("CZM temperature input contains non-finite values"))
     all(isfinite, variables["thermal2D element soc_n"]) || throw(ArgumentError("CZM negative-electrode SOC input contains non-finite values"))
     all(isfinite, variables["thermal2D element soc_p"]) || throw(ArgumentError("CZM positive-electrode SOC input contains non-finite values"))
-    all(isfinite, dT_elem) || throw(ArgumentError("CZM temperature increment contains non-finite values"))
-    all(isfinite, Δsoc_n_elem) || throw(ArgumentError("CZM negative-electrode SOC increment contains non-finite values"))
-    all(isfinite, Δsoc_p_elem) || throw(ArgumentError("CZM positive-electrode SOC increment contains non-finite values"))
+    load = MechanicalLoad(czm_mesh; dT=dT_elem, Δsoc_n=Δsoc_n_elem,
+        Δsoc_p=Δsoc_p_elem, F_ext=F_ext, dt_seconds=dt_seconds,
+        sample_time_seconds=sample_time_seconds)
 
     # 初始化位移与配置由 ms/czm_opt 携带；粘性系数按实际经过的物理秒数计算。
     geo_nl = czm_opt.geo_nonlinear
-    eig = geo_nl ? (dT=dT_elem, Δsn=Δsoc_n_elem, Δsp=Δsoc_p_elem) : nothing
     prestress = nothing
     if czm_opt.winding_prestress
         geo_nl || error("update_czm_damage!: winding_prestress=true 需要 geo_nonlinear=true（D-B2'-2）。")
         (param.cell.winding_T_ne > 0.0 || param.cell.winding_T_pe > 0.0) || error(
             "update_czm_damage!: winding_prestress=true 但 cell.winding_T_ne/pe 均为 0（未设置）。缺参即拦截（AGENTS 9.4/9.7）。")
-        if case.mech.winding_prestress === nothing
-            case.mech.winding_prestress = winding_prestress_field(czm_mesh, param)
+        if mech.winding_prestress === nothing
+            mech.mechanics_initialized && throw(ArgumentError("initialized mechanics lacks winding prestress"))
+            mech.winding_prestress = winding_prestress_field(czm_mesh, param)
         end
-        prestress = case.mech.winding_prestress
+        prestress = mech.winding_prestress
     end
     if czm_opt.j2_plasticity
         geo_nl || error("update_czm_damage!: j2_plasticity=true 需要 geo_nonlinear=true（D-B3-1）。")
@@ -434,11 +445,10 @@ function update_czm_damage!(case, variables, T_nodes_carry; dt_seconds::Union{No
             "update_czm_damage!: j2_plasticity=true 但 PCC/NCC 的 sigma_y ≤ 0（未设置）。缺参即拦截，不默认、不置零（AGENTS 9.4/9.7）。")
     end
 
-    # 求解器收敛后在 case.mech 上原位提交损伤/位移（失败不触碰）
+    # 求解器收敛后在 mech 上原位提交损伤/位移（失败不触碰）
     result = solve_czm_step(
-        czm_mesh, case.mech, param, F_ext, czm_opt;
-        dT_elem=dT_elem, Δsoc_n_elem=Δsoc_n_elem, Δsoc_p_elem=Δsoc_p_elem,
-        eigenstrain=eig, prestress=prestress, dt_seconds=dt_seconds
+        czm_mesh, mech, param, load, czm_opt; czm_workspace=czm_workspace,
+        prestress=prestress
     )
 
     all(isfinite, result.displacement) || error("CZM solve returned non-finite displacement")
@@ -451,7 +461,7 @@ function update_czm_damage!(case, variables, T_nodes_carry; dt_seconds::Union{No
     result.converged || error("CZM solve did not converge after $(result.iterations) iterations (residual=$(result.residual_norm))")
 
     if case.opt.debug_coupling
-        stats = get_damage_statistics(case.mech.damage_states)
+        stats = get_damage_statistics(mech.damage_states)
         max_delta_n = isempty(result.separation_n) ? 0.0 : maximum(result.separation_n)
         max_delta_eff = 0.0
         for (δ_n, δ_t) in zip(result.separation_n, result.separation_t)
@@ -461,7 +471,7 @@ function update_czm_damage!(case, variables, T_nodes_carry; dt_seconds::Union{No
                 max_delta_eff = max(max_delta_eff, sqrt(max(δ_n, 0.0)^2 + δ_t^2))
             end
         end
-        D_visc_max = isempty(case.mech.damage_states) ? 0.0 : maximum(ds.D_visc for ds in case.mech.damage_states)
+        D_visc_max = isempty(mech.damage_states) ? 0.0 : maximum(ds.D_visc for ds in mech.damage_states)
         println("[CZM-Debug] max(δ_n)=$(round(max_delta_n; digits=6)), max(δ_eff)=$(round(max_delta_eff; digits=6)), converged=$(result.converged), D_max(commit)=$(round(stats.max_D; digits=6)), D_visc_max=$(round(D_visc_max; digits=6))")
     end
 
@@ -480,11 +490,13 @@ All physical values are stored in NORMALIZED (dimensionless) form.
 Denormalization happens at CSV write time using `case.param.scale`.
 """
 mutable struct CZMSnapshot
-    time_s::Float64                     # physical time (already denormalized)
+    time_s::Float64                     # phase-local physical time [s]; add PhaseResult.t_start for global CSV time
     cycle::Int                          # cycle number
     phase::String                       # phase name
     displacement::Vector{Float64}       # ndof-length, normalized
     damage::Vector{Float64}             # n_coh-length, [0,1]
+    damage_visc::Vector{Float64}         # real accepted viscous damage
+    fractured::BitVector               # all actual GP flags, never a D threshold
     separation_n::Vector{Float64}       # n_coh-length, normalized
     separation_t::Vector{Float64}       # n_coh-length, normalized
     traction_n::Vector{Float64}         # n_coh-length, normalized
@@ -493,4 +505,14 @@ mutable struct CZMSnapshot
     iterations::Int
     residual_norm::Float64
     method::String                      # "basic", "load_substep", or "arc_length"
+    mechanical_dt_s::Float64            # actual accumulated mechanical interval [s]
+    czm_model::String                   # model used by this accepted step
+    gp_damage_states::Matrix{DamageState} # copied accepted history, indexed (COH element, GP)
+    gp_points::Vector{Float64}          # actual NCweight point order
+    gp_separation_n::Matrix{Float64}    # current separations, not history peaks
+    gp_separation_t::Matrix{Float64}
+    gp_traction_n::Matrix{Float64}      # fixed accepted history, visc_beta=0
+    gp_traction_t::Matrix{Float64}
+    plasticity::Bool
+    bulk_kappa::Union{Nothing,Matrix{Float64}} # separate (bulk element, bulk GP); absent with J2 off
 end

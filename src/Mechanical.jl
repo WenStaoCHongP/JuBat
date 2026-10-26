@@ -144,11 +144,14 @@ function Calstressdisp(electrode::Electrode, mesh::Mesh, cs::Array{Float64}, T::
 """
     recover_bulk_stress(node, element, material_type, u, ε0, param)
 
-逐单元恢复层分辨宏观应力（σ_czm 归一空间）。平面应力 σ = D·(ε − ε0·[1,1,0])，
+逐单元中心小应变恢复层分辨宏观应力（σ_czm 归一空间）；不支持有限转动或预应力。
+平面应力 σ = D·(ε − ε0·[1,1,0])，
 D 由 `moduli_of(param, material_type[e])` 逐层给出；`u` 为 L 归一化位移
 （按 [u1x,u1y,u2x,u2y,...] 排布），`ε0` 为逐单元特征应变。
 """
 function recover_bulk_stress(node, element, material_type, u, ε0, param)
+    length(u)==2size(node,1) || throw(DimensionMismatch("recover_bulk_stress: displacement length"))
+    all(isfinite,u) || throw(ArgumentError("recover_bulk_stress: non-finite displacement"))
     ne = size(element, 1)
     sigma_xx = zeros(Float64, ne)
     sigma_yy = zeros(Float64, ne)
@@ -173,13 +176,83 @@ function recover_bulk_stress(node, element, material_type, u, ε0, param)
 end
 
 """
-    recover_bulk_strain(node, element, u) -> (eps_xx, eps_yy, gam_xy)
+    recover_bulk_stress_geo(czm_mesh, u, param, ε0; prestress=nothing)
+
+显式载荷的只读弹性 GL/TL 恢复：坐标、位移均除 L，ε0 是本次机械输入的逐单元
+特征应变；prestress 为同次输入的参考 PK2 S0（σ_czm 归一）。nothing 明确表示
+本次无 S0；本函数没有 options，不能判断生产开启预应力但缺失其来源的情况。
+四个参考 GP 的 Cauchy σ=F*S*F'/det(F₂D) 按参考 w*detJ 加权；vonMises 是逐 GP
+值的加权平均，通常不同于平均应力的 vonMises。返回 (xx,yy,xy,vonMises)，单位
+σ_czm；保留现有二维平面应力约定，不主张完整三维厚度伸长。仅可惰性填充参考
+mesh 几何缓存，不调用返回映射，不创建或提交塑性/损伤状态。
+"""
+function recover_bulk_stress_geo(czm_mesh, u, param, ε0; czm_workspace::CZMWorkspace, prestress=nothing)
+    node, element = czm_mesh.node, czm_mesh.bulk_element
+    ne = size(element, 1)
+    size(node) == (size(czm_mesh.node, 1), 2) || throw(DimensionMismatch("recover_bulk_stress_geo: node shape must be (nnode, 2)"))
+    size(element, 2) == 4 || throw(DimensionMismatch("recover_bulk_stress_geo: bulk connectivity must have four columns"))
+    u isa AbstractVector && length(u) == 2 * size(czm_mesh.node, 1) || throw(DimensionMismatch("recover_bulk_stress_geo: u must have 2*nnode entries"))
+    ε0 isa AbstractVector && length(ε0) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: ε0 must have one entry per bulk element"))
+    czm_mesh.czm_submesh === nothing && error("recover_bulk_stress_geo: missing bulk material source")
+    mt = czm_mesh.czm_submesh.material_type
+    length(mt) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: material count must equal bulk element count"))
+    all(n -> 1 <= n <= size(czm_mesh.node, 1), element) || throw(DimensionMismatch("recover_bulk_stress_geo: bulk node index out of bounds"))
+    all(isfinite, node) && all(isfinite, u) && all(isfinite, ε0) || error("recover_bulk_stress_geo: non-finite geometry, displacement or eigenstrain")
+    if prestress !== nothing
+        prestress isa AbstractVector && length(prestress) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: S0 must have one entry per bulk element"))
+        all(s -> length(s) == 3, prestress) || throw(DimensionMismatch("recover_bulk_stress_geo: each S0 must have three components"))
+        all(s -> all(isfinite, s), prestress) || error("recover_bulk_stress_geo: non-finite S0")
+    end
+    geom = bulk_gauss_geometry(czm_mesh; czm_workspace=czm_workspace, gsorder=2)
+    length(geom) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: reference geometry element count mismatch"))
+    xx = zeros(ne); yy = zeros(ne); xy = zeros(ne); vm = zeros(ne)
+    for e in 1:ne
+        length(geom[e]) == 4 || throw(DimensionMismatch("recover_bulk_stress_geo: every bulk element requires four reference Gauss points"))
+        nodes = element[e, :]
+        ue = [u[d] for n in nodes for d in (2*n-1, 2*n)]
+        C = plane_stress_C(moduli_of(param, mt[e])...)
+        all(isfinite, C) || error("recover_bulk_stress_geo: non-finite material stiffness at element $e")
+        area = 0.0
+        for g in geom[e]
+            length(g.dNdx) == 4 && length(g.dNdy) == 4 || throw(DimensionMismatch("recover_bulk_stress_geo: each gradient requires four entries"))
+            all(isfinite, g.dNdx) && all(isfinite, g.dNdy) && isfinite(g.w) && g.w > 0.0 && isfinite(g.detJ) && g.detJ > 0.0 || error("recover_bulk_stress_geo: invalid reference Gauss geometry at element $e")
+            k = bulk_gl_kinematics(ue, g.dNdx, g.dNdy)
+            S1 = C[1,1] * (k.E11 - ε0[e]) + C[1,2] * (k.E22 - ε0[e])
+            S2 = C[1,2] * (k.E11 - ε0[e]) + C[2,2] * (k.E22 - ε0[e])
+            S3 = C[3,3] * k.g12
+            if prestress !== nothing
+                S1 += prestress[e][1]; S2 += prestress[e][2]; S3 += prestress[e][3]
+            end
+            sigma = cauchy_from_second_piola((S1,S2,S3), k.F11,k.F12,k.F21,k.F22)
+            q = qbar(sigma)
+            isfinite(q) || error("recover_bulk_stress_geo: non-finite pointwise von Mises at element $e")
+            wJ = g.w * g.detJ
+            xx[e] += wJ * sigma[1]; yy[e] += wJ * sigma[2]; xy[e] += wJ * sigma[3]
+            vm[e] += wJ * q; area += wJ
+        end
+        isfinite(area) && area > 0.0 || error("recover_bulk_stress_geo: invalid reference area at element $e")
+        xx[e] /= area; yy[e] /= area; xy[e] /= area; vm[e] /= area
+        all(isfinite, (xx[e],yy[e],xy[e],vm[e])) || error("recover_bulk_stress_geo: non-finite average at element $e")
+    end
+    return (xx=xx,yy=yy,xy=xy,vonMises=vm)
+end
+
+"""
+    recover_bulk_strain(node, element, u; geo_nl=false) -> (eps_xx, eps_yy, gam_xy)
 
 单元中心总机械应变（无量纲）：由 L 归一化位移在 Q4 中心梯度求值，与
 `recover_bulk_stress` 同一几何离散。不含特征应变（热/化学自由膨胀）扣减；
-弹性应变 = 总应变 − ε0·[1,1,0]，或由已导出应力按层刚度反解。
+geo_nl=false 保留小应变；geo_nl=true 返回 Green–Lagrange E11/E22/2E12。
+弹性应变 = 总应变 − ε0·[1,1,0]；仅匹配的小应变弹性中心应力可按层刚度反解。
 """
-function recover_bulk_strain(node, element, u)
+function recover_bulk_strain(node, element, u; geo_nl::Bool=false)
+    if geo_nl
+        node isa AbstractMatrix && size(node, 2) == 2 || throw(DimensionMismatch("recover_bulk_strain: node must have two columns"))
+        element isa AbstractMatrix && size(element, 2) == 4 || throw(DimensionMismatch("recover_bulk_strain: element must have four columns"))
+        u isa AbstractVector && length(u) == 2 * size(node, 1) || throw(DimensionMismatch("recover_bulk_strain: u must have 2*nnode entries"))
+        all(n -> n isa Integer && 1 <= n <= size(node, 1), element) || throw(DimensionMismatch("recover_bulk_strain: node index out of bounds"))
+        all(isfinite, node) && all(isfinite, u) || error("recover_bulk_strain: non-finite geometry or displacement")
+    end
     ne = size(element, 1)
     eps_xx = zeros(Float64, ne)
     eps_yy = zeros(Float64, ne)
@@ -187,9 +260,16 @@ function recover_bulk_strain(node, element, u)
     @inbounds for e in 1:ne
         nodes = element[e, :]
         dNdx, dNdy, _ = q4_center_gradients(node, nodes)
-        eps_xx[e] = sum(dNdx[i] * u[2 * nodes[i] - 1] for i in 1:4)
-        eps_yy[e] = sum(dNdy[i] * u[2 * nodes[i]] for i in 1:4)
-        gam_xy[e] = sum(dNdy[i] * u[2 * nodes[i] - 1] + dNdx[i] * u[2 * nodes[i]] for i in 1:4)
+        if geo_nl
+            ue = [u[d] for n in nodes for d in (2*n-1, 2*n)]
+            k = bulk_gl_kinematics(ue, dNdx, dNdy)
+            all(isfinite, (k.E11,k.E22,k.g12)) || error("recover_bulk_strain: non-finite Green-Lagrange strain at element $e")
+            eps_xx[e] = k.E11; eps_yy[e] = k.E22; gam_xy[e] = k.g12
+        else
+            eps_xx[e] = sum(dNdx[i] * u[2 * nodes[i] - 1] for i in 1:4)
+            eps_yy[e] = sum(dNdy[i] * u[2 * nodes[i]] for i in 1:4)
+            gam_xy[e] = sum(dNdy[i] * u[2 * nodes[i] - 1] + dNdx[i] * u[2 * nodes[i]] for i in 1:4)
+        end
     end
     return eps_xx, eps_yy, gam_xy
 end
@@ -204,7 +284,7 @@ alphaT(mt)·dT + Ω(mt)/3·Δsoc(mt)，α/β 分层分辨率）；dT 按父热�
 function macro_eigenstrain(case, variables, T_nodes)
     param = case.param
     strain_in = compute_czm_strain_inputs(case, variables, T_nodes)
-    mt = case.czm_mesh.czm_submesh.material_type
+    mt = case.mesh["czm"].czm_submesh.material_type
     return [eigenstrain_of(param, mt[e], strain_in.dT_czm[e],
                            strain_in.Δsoc_n_czm[e], strain_in.Δsoc_p_czm[e])
             for e in eachindex(mt)]
@@ -229,7 +309,7 @@ function project_bulk_stress(czm_mesh, plastic_states)
     gp_count = zeros(Int, ne)
     max_vm = -Inf
     max_kappa = -Inf
-    gs = czm_mesh.bulk_mesh.gs
+    gs = czm_mesh.czm_submesh.mesh_bonded.gs
     for q in eachindex(gs.weight)
         e = gs.ele[q]
         1 <= e <= ne || error(
@@ -264,22 +344,28 @@ function project_bulk_stress(czm_mesh, plastic_states)
 end
 
 """
-    compute_macro_stress(case, variables, T_nodes)
+    compute_macro_stress(case, mech, variables, T_nodes)
 
-以当前已收敛 `case.mech.u_prev` 和同一时间层载荷恢复四个层分辨应力分量。
+以当前已收敛 `mech.u_prev` 和同一时间层载荷恢复四个层分辨应力分量。
 返回归一化到 `scale.σ_czm` 的 NamedTuple；调用方负责决定历史记录时刻。
 """
-function compute_macro_stress(case, variables, T_nodes)
+function compute_macro_stress(case, mech::MechState, variables, T_nodes)
+    load=require_mechanical_load_history(mech)
+    load===nothing && error("compute_macro_stress: no successful mechanical solution")
     if case.opt.czm.j2_plasticity
-        case.mech.plastic_states === nothing && error(
+        mech.plastic_states === nothing && error(
             "compute_macro_stress: J2 state is unavailable before the first converged mechanical solve")
-        return project_bulk_stress(case.czm_mesh, case.mech.plastic_states)
+        return project_bulk_stress(case.mesh["czm"], mech.plastic_states)
     end
-    czm_mesh = case.czm_mesh
-    ε0 = macro_eigenstrain(case, variables, T_nodes)
+    czm_mesh = case.mesh["czm"]
+    mt=czm_mesh.czm_submesh.material_type
+    ne=length(mt)
+    all(a->length(a)==ne,(load.dT,load.Δsn,load.Δsp)) || throw(DimensionMismatch("mechanical eigenstrain history shape"))
+    all(a->all(isfinite,a),(load.dT,load.Δsn,load.Δsp)) || throw(ArgumentError("non-finite mechanical eigenstrain history"))
+    ε0=[eigenstrain_of(case.param,mt[e],load.dT[e],load.Δsn[e],load.Δsp[e]) for e in eachindex(mt)]
     sigma_xx, sigma_yy, sigma_xy, sigma_vm = recover_bulk_stress(
         czm_mesh.node, czm_mesh.bulk_element, czm_mesh.czm_submesh.material_type,
-        case.mech.u_prev, ε0, case.param)
+        mech.u_prev, ε0, case.param)
     return (xx=sigma_xx, yy=sigma_yy, xy=sigma_xy, vonMises=sigma_vm)
 end
 
@@ -303,10 +389,10 @@ end
 J2 路径读取 committed 高斯点状态；无 J2 状态的其他非线性路径不分配历史键，
 此处按既有门控原样返回。
 """
-function export_macro_stress(case, variables, variables_hist, v, T_nodes)
-    (case.opt.czm.enabled && case.czm_mesh !== nothing) || return variables_hist
+function export_macro_stress(case, mech::MechState, variables, variables_hist, v, T_nodes)
+    (case.opt.czm.enabled && haskey(case.mesh, "czm")) || return variables_hist
     haskey(variables_hist, "diffusion stress xx") || return variables_hist
-    stress = compute_macro_stress(case, variables, T_nodes)
+    stress = compute_macro_stress(case, mech, variables, T_nodes)
     write_macro_stress!(variables_hist, v, stress)
     return variables_hist
 end
@@ -319,7 +405,7 @@ end
 与逐层特征应变求解线性弹性静力平衡，返回有量纲结果。
 
 # 输入
-- `case.czm_mesh`：需由 `jellyroll_collector_seed_mesh(czm_enabled=true)` +
+- `case.mesh["czm"]`：需由 `jellyroll_collector_seed_mesh(czm_enabled=true)` +
   `create_czm_mesh` 构建（`opt.czm.enabled` 可保持 false，在线 CZM 路径不受影响）
 - `variables["T_nodes"]`：归一化节点温度（T/T_ref；向量或历史矩阵取末列）
 - `variables["thermal2D element soc_n/soc_p"]`：归一化化学计量比
@@ -353,18 +439,7 @@ function identify_bc_nodes_bonded(submesh::CzmSubmesh, mesh_bonded::Mesh, param;
             outer_count += 1
         end
     end
-    ne_b = size(mesh_bonded.element, 1)
-    n_segments = maximum(submesh.thermal_elem_map)
-    ne_b % n_segments == 0 || throw(DimensionMismatch(
-        "bonded element count $ne_b is not divisible by angular segment count $n_segments"))
-    n_layers = ne_b ÷ n_segments
-    layer_materials = [submesh.material_type[(l - 1) * n_segments + 1] for l in 1:n_layers]
-    second_sp_layer = findall(==(:SP), layer_materials)[2]
-    first_pe_layer = findfirst(==(:PE), layer_materials)
-    first_pe_layer === nothing && error(
-        "identify_bc_nodes_bonded requires at least one PE layer")
-    a_B = mesh_bonded.element[(second_sp_layer - 1) * n_segments + 1, 2]
-    b_B = mesh_bonded.element[first_pe_layer * n_segments, 4]
+    _, _, a_B, b_B = mechanical_endpoint_topology(submesh, mesh_bonded.element)
     # 双重属性端点补固定与计数：圈属性各自去重（跨圈重叠允许计入两边，
     # 总固定集合由 Dict 键天然去重）
     if !is_outer[a_B]
@@ -382,12 +457,16 @@ end
 # thermal_diffusion_stress_2D 的罚前装配（任务59 P2-R1 返工拆分：暴露罚前 K0/F0
 # 供自由 DOF 平衡残差独立验收；不改变装配本身、材料、罚或求解）。
 function assemble_bonded_elastic(case::Case, variables::Dict{String, Union{Array{Float64},Float64}})
-    param = case.param
-    submesh = case.czm_mesh.czm_submesh
-    mesh = submesh.mesh_bonded
     T_nodes = variables["T_nodes"]
     T_nodes = isa(T_nodes, AbstractVector) ? T_nodes : T_nodes[:, end]
     ε0 = macro_eigenstrain(case, variables, T_nodes)
+    return _assemble_bonded_elastic(case, ε0)
+end
+
+function _assemble_bonded_elastic(case::Case, ε0::Vector{Float64})
+    param = case.param
+    submesh = case.mesh["czm"].czm_submesh
+    mesh = submesh.mesh_bonded
 
     ne = size(mesh.element, 1)
     nnode = mesh.nlen
@@ -426,37 +505,31 @@ function assemble_bonded_elastic(case::Case, variables::Dict{String, Union{Array
 
     Vi_u = zeros(Int64, ngs, 4)
     Vi_v = zeros(Int64, ngs, 4)
-    Vj_u = zeros(Int64, ngs, 4)
-    Vj_v = zeros(Int64, ngs, 4)
     @inbounds for g in 1:ngs
         for i in 1:4
             node = mesh.element[ele_of_gp[g], i]
             Vi_u[g, i] = 2 * node - 1
             Vi_v[g, i] = 2 * node
-            Vj_u[g, i] = 2 * node - 1
-            Vj_v[g, i] = 2 * node
         end
     end
 
     wJ_D11 = wJ .* D11
     wJ_D33 = wJ .* D33
-    K_uu = Assemble(Vi_u, Vj_u, dNdx, dNdx, wJ_D11, ndof) + Assemble(Vi_u, Vj_u, dNdy, dNdy, wJ_D33, ndof)
-    K_vv = Assemble(Vi_v, Vj_v, dNdy, dNdy, wJ_D11, ndof) + Assemble(Vi_v, Vj_v, dNdx, dNdx, wJ_D33, ndof)
+    K_uu = Assemble(Vi_u, Vi_u, dNdx, dNdx, wJ_D11, ndof) + Assemble(Vi_u, Vi_u, dNdy, dNdy, wJ_D33, ndof)
+    K_vv = Assemble(Vi_v, Vi_v, dNdy, dNdy, wJ_D11, ndof) + Assemble(Vi_v, Vi_v, dNdx, dNdx, wJ_D33, ndof)
     wJ_D12 = wJ .* D12
-    K_uv = Assemble(Vi_u, Vj_v, dNdx, dNdy, wJ_D12, ndof) + Assemble(Vi_u, Vj_v, dNdy, dNdx, wJ_D33, ndof)
-    K_vu = Assemble(Vi_v, Vj_u, dNdy, dNdx, wJ_D12, ndof) + Assemble(Vi_v, Vj_u, dNdx, dNdy, wJ_D33, ndof)
+    K_uv = Assemble(Vi_u, Vi_v, dNdx, dNdy, wJ_D12, ndof) + Assemble(Vi_u, Vi_v, dNdy, dNdx, wJ_D33, ndof)
+    K_vu = Assemble(Vi_v, Vi_u, dNdy, dNdx, wJ_D12, ndof) + Assemble(Vi_v, Vi_u, dNdx, dNdy, wJ_D33, ndof)
     K_mech = K_uu + K_vv + K_uv + K_vu
 
-    coeff_u = Vector{Float64}(undef, ngs)
-    coeff_v = Vector{Float64}(undef, ngs)
+    coeff = Vector{Float64}(undef, ngs)
     @inbounds for g in 1:ngs
         e = ele_of_gp[g]
         E_e, ν_e = moduli_of(param, submesh.material_type[e])
         factor = E_e / (1.0 - ν_e^2) * ε0[e] * (1.0 + ν_e) * wJ[g]
-        coeff_u[g] = factor
-        coeff_v[g] = factor
+        coeff[g] = factor
     end
-    F_mech = Assemble1D(Vi_u, dNdx, coeff_u, ndof) + Assemble1D(Vi_v, dNdy, coeff_v, ndof)
+    F_mech = Assemble1D(Vi_u, dNdx, coeff, ndof) + Assemble1D(Vi_v, dNdy, coeff, ndof)
     return K_mech, F_mech
 end
 
@@ -465,12 +538,12 @@ function thermal_diffusion_stress_2D(case::Case, variables::Dict{String, Union{A
     @assert case.param_dim.PE.E_coat > 0 && case.param_dim.NE.E_coat > 0 "宏观力学分析需要 PE/NE.E_coat > 0；当前参数集未定义极片模量（E_coat=0）。请在参数文件中补全 PE/PE.nu_coat/NE.E_coat/NE.nu_coat，或禁用 mechanicalmodel=\"full\"。"
 
     param = case.param
-    submesh = case.czm_mesh.czm_submesh
+    submesh = case.mesh["czm"].czm_submesh
     mesh = submesh.mesh_bonded
-    K_mech, F_mech = assemble_bonded_elastic(case, variables)
     T_nodes = variables["T_nodes"]
     T_nodes = isa(T_nodes, AbstractVector) ? T_nodes : T_nodes[:, end]
     ε0 = macro_eigenstrain(case, variables, T_nodes)
+    K_mech, F_mech = _assemble_bonded_elastic(case, ε0)
 
     # 边界（任务59 P2-R1）：bonded 域机械圈属性——外圈 +（fix_inner 时）内圈，
     # 补双重属性端点 a_B（外圈）/b_B（内圈），相对罚

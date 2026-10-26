@@ -104,9 +104,9 @@ end
 
 
 """
-    assemble_czm_system(czm_mesh, u, param; damage_states=nothing, czm_model="model1", ...)
+    assemble_czm_system(czm_mesh, u, param; czm_workspace, gp_damage_states, czm_model="model1", ...)
 
-组装内聚力单元的全局刚度矩阵和内力向量。
+组装内聚力单元的全局刚度矩阵和内力向量；真实逐GP历史为唯一损伤输入。
 按 cohesive 单元 `interface_type` 直读界面参数宿主（:PE_PCC→`param.PCC`、
 :NE_NCC→`param.NCC`，2026-08-30 重构）；Λ 使用点内联 `param.scale.L/δ_czm`。
 
@@ -115,36 +115,36 @@ end
 - `f_int_coh`: 内聚力内力向量 (ndof,)
 - `separations`: 每个单元的分离位移
 - `tractions`: 每个单元的牵引力
+
+K_coh/f_int_coh/separations/tractions 均借用同一会话装配缓冲；跨下一次装配保留时由调用者 copy。
 """
 function assemble_czm_system(
     czm_mesh::CohesiveMesh,
     u::Vector{Float64},
-    param::Params;
-    damage_states=nothing,
-    gp_damage_states=nothing,
+    param::Params; czm_workspace::CZMWorkspace,
+    gp_damage_states::Matrix{DamageState},
     gp_trial_states=nothing,
-    geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,
-    ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,
+    gp_capture=nothing,
+    gp_history_loading=nothing,
     visc_beta::Float64=1.0,
     czm_model::String="model1"
 )
-    nnode = czm_mesh.nnode
+    nnode = size(czm_mesh.node, 1)
     ndof = 2 * nnode
-    n_coh = czm_mesh.n_cohesive
-    states = damage_states === nothing ? error("assemble_czm_system: damage_states 必须传入（2026-08-30 重构后不再挂网格）") : damage_states
-    if gp_damage_states !== nothing
-        ngp = length(NCweight(czm_mesh.bulk_mesh.gs.order)[1])
-        size(gp_damage_states) == (n_coh, ngp) || throw(DimensionMismatch("GP damage history size mismatch"))
-        gp_trial_states === nothing || size(gp_trial_states) == size(gp_damage_states) ||
-            throw(DimensionMismatch("GP trial history size mismatch"))
-    elseif gp_trial_states !== nothing
-        throw(ArgumentError("GP trial history requires GP committed history"))
+    n_coh = length(czm_mesh.cohesive_elements)
+    ngp = length(NCweight(czm_mesh.czm_submesh.mesh_bonded.gs.order)[1])
+    size(gp_damage_states) == (n_coh, ngp) || throw(DimensionMismatch("GP damage history size mismatch"))
+    gp_trial_states === nothing || size(gp_trial_states) == size(gp_damage_states) ||
+        throw(DimensionMismatch("GP trial history size mismatch"))
+    if gp_capture !== nothing
+        all(a -> size(a) == size(gp_damage_states),
+            (gp_capture.separation_n, gp_capture.separation_t,
+             gp_capture.traction_n, gp_capture.traction_t)) ||
+            throw(DimensionMismatch("GP output and history sizes differ"))
     end
 
-    # 使用或创建工作区
-    if ws === nothing
-        ws = CZMAssemblyWorkspace(ndof, n_coh)
-    end
+    geom_cache = cohesive_geometry(czm_mesh; czm_workspace=czm_workspace)
+    ws = assembly_workspace(czm_mesh; czm_workspace=czm_workspace)
 
     # 每轮重置
     fill!(ws.f_int_coh, 0.0)
@@ -158,14 +158,7 @@ function assemble_czm_system(
         sizehint!(I_pat, n_coh * 64)
         sizehint!(J_pat, n_coh * 64)
         for i in 1:n_coh
-            if geom_cache !== nothing
-                dofs = geom_cache[i].dofs
-            else
-                elem = czm_mesh.cohesive_elements[i]
-                n1, n2 = elem.nodes_bottom
-                n4, n3 = elem.nodes_top
-                dofs = [2*n1-1, 2*n1, 2*n2-1, 2*n2, 2*n3-1, 2*n3, 2*n4-1, 2*n4]
-            end
+            dofs = geom_cache[i].dofs
             for a in 1:8
                 for b in 1:8
                     push!(I_pat, dofs[a])
@@ -189,6 +182,7 @@ function assemble_czm_system(
         # 按 interface_type 直读界面参数宿主（:PE_PCC→PCC、:NE_NCC→NCC）
         iface = czm_mesh.cohesive_elements[i].interface_type
         ip = iface === :PE_PCC ? param.PCC : param.NCC
+        law = BilinearCohesiveLaw(ip, czm_model)
 
         fill!(ws.K_e, 0.0)
         fill!(ws.f_int_e, 0.0)
@@ -199,23 +193,13 @@ function assemble_czm_system(
         δ_t_avg = 0.0
         w_sum = 0.0
 
-        if geom_cache !== nothing
-            geom = geom_cache[i]
-            L = geom.length
-            L >= 1e-15 || error("degenerate cohesive element $i: tangential length is $L")
-            R = geom.R
-            dofs = geom.dofs
-            wts = geom.gauss_wts
-            pts = geom.gauss_pts
-        else
-            elem = czm_mesh.cohesive_elements[i]
-            n1, n2 = elem.nodes_bottom
-            n4, n3 = elem.nodes_top
-            L, _, _, R = cohesive_local_frame(czm_mesh, elem)
-            dofs = [2*n1-1, 2*n1, 2*n2-1, 2*n2, 2*n3-1, 2*n3, 2*n4-1, 2*n4]
-            order = czm_mesh.bulk_mesh.gs.order
-            wts, pts = NCweight(order)
-        end
+        geom = geom_cache[i]
+        L = geom.length
+        L >= 1e-15 || error("degenerate cohesive element $i: tangential length is $L")
+        R = geom.R
+        dofs = geom.dofs
+        wts = geom.gauss_wts
+        pts = geom.gauss_pts
 
         # 提取单元位移
             ws.u_e[1] = u[dofs[1]]; ws.u_e[2] = u[dofs[2]]
@@ -224,7 +208,7 @@ function assemble_czm_system(
             ws.u_e[7] = u[dofs[7]]; ws.u_e[8] = u[dofs[8]]
 
             for (g, (ξ, w)) in enumerate(zip(pts, wts))
-                damage_state = gp_damage_states === nothing ? states[i] : gp_damage_states[i, g]
+                damage_state = gp_damage_states[i, g]
                 N1 = 0.5 * (1.0 - ξ)
                 N2 = 0.5 * (1.0 + ξ)
 
@@ -243,11 +227,19 @@ function assemble_czm_system(
                 δ_n = Λ * ws.δ_local[1]
                 δ_t = Λ * ws.δ_local[2]
 
-                T_n, T_t, _, new_state = bilinear_traction_state(δ_n, δ_t, damage_state, ip, czm_model; visc_beta=visc_beta)
+                step_data = CohesiveStepData(visc_beta,
+                    gp_history_loading !== nothing && gp_history_loading[i,g])
+                traction, dT_dδ, new_state = cohesive_response(law, (δ_n, δ_t), damage_state, step_data)
+                T_n, T_t = traction
+                if gp_capture !== nothing
+                    gp_capture.separation_n[i, g] = δ_n
+                    gp_capture.separation_t[i, g] = δ_t
+                    gp_capture.traction_n[i, g] = T_n
+                    gp_capture.traction_t[i, g] = T_t
+                end
                 if gp_trial_states !== nothing
                     gp_trial_states[i, g] = new_state
                 end
-                dT_dδ = bilinear_tangent(δ_n, δ_t, damage_state, ip, czm_model; visc_beta=visc_beta)
 
                 J = L / 2.0
                 wJ = w * J
@@ -302,6 +294,30 @@ function assemble_czm_system(
     return K_coh, ws.f_int_coh, ws.separations, ws.tractions
 end
 
+"""GP gaps from cached mesh kinematics; independent output/scratch, no assembly-buffer writes."""
+function cohesive_gp_separations(czm_mesh::CohesiveMesh, u, param::Params;
+        czm_workspace::CZMWorkspace)
+    geometry = cohesive_geometry(czm_mesh; czm_workspace=czm_workspace)
+    scale = param.scale.L / param.scale.δ_czm
+    n, ng = length(geometry), length(geometry[1].gauss_pts)
+    dn, dt = zeros(n, ng), zeros(n, ng)
+    B, B_local, u_e, delta = zeros(2,8), zeros(2,8), zeros(8), zeros(2)
+    for (i, geom) in enumerate(geometry), (g, xi) in enumerate(geom.gauss_pts)
+        N1, N2 = 0.5 * (1 - xi), 0.5 * (1 + xi)
+        B[1,1] = B[2,2] = -N1
+        B[1,3] = B[2,4] = -N2
+        B[1,5] = B[2,6] = N2
+        B[1,7] = B[2,8] = N1
+        for k in eachindex(u_e)
+            u_e[k] = u[geom.dofs[k]]
+        end
+        mul!(B_local, geom.R, B)
+        mul!(delta, B_local, u_e)
+        dn[i,g], dt[i,g] = scale * delta[1], scale * delta[2]
+    end
+    return (separation_n=dn, separation_t=dt)
+end
+
 """
     assemble_bulk_stiffness(czm_mesh, param)
 
@@ -312,7 +328,7 @@ end
 - `K_bulk`: 固体刚度矩阵 (ndof × ndof)
 """
 function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, param::Params)
-    nnode = czm_mesh.nnode
+    nnode = size(czm_mesh.node, 1)
     ndof = 2 * nnode
     submesh = czm_mesh.czm_submesh
     submesh === nothing && error(
@@ -383,10 +399,10 @@ function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, param::Params)
 end
 
 """
-    bulk_gauss_geometry(czm_mesh; gsorder=2) -> Vector{Vector{BulkElementGP}}
+    bulk_gauss_geometry(czm_mesh; czm_workspace, gsorder=2) -> Vector{Vector{BulkElementGP}}
 
 逐单元参考几何高斯数据（w/detJ/dNdx/dNdy，与 u 无关）的惰性缓存，挂
-`CohesiveMesh.bulk_gp_geom`（参数冻结契约：对象身份即失效判据）。值由 IntQ4
+`CZMWorkspace.bulk_gp_geom`（参数冻结契约：对象身份即失效判据）。值由 IntQ4
 原路径一次性填充，供 `gl_element_residual_tangent` 逐 GP 复用，省去每次装配
 对 LagrangeBasis/Jacobian/inv 的重复计算。
 """
@@ -397,8 +413,9 @@ struct BulkElementGP
     dNdy::Vector{Float64}
 end
 
-function bulk_gauss_geometry(czm_mesh::CohesiveMesh; gsorder::Int=2)
-    cache = czm_mesh.bulk_gp_geom
+function bulk_gauss_geometry(czm_mesh::CohesiveMesh; czm_workspace::CZMWorkspace, gsorder::Int=2)
+    check_czm_workspace(czm_mesh, czm_workspace)
+    cache = czm_workspace.bulk_gp_geom
     if cache === nothing
         element = czm_mesh.bulk_element
         node = czm_mesh.node
@@ -414,7 +431,7 @@ function bulk_gauss_geometry(czm_mesh::CohesiveMesh; gsorder::Int=2)
             end
             cache[e] = gps
         end
-        czm_mesh.bulk_gp_geom = cache
+        czm_workspace.bulk_gp_geom = cache
     end
     return cache::Vector{Vector{BulkElementGP}}
 end
@@ -463,12 +480,13 @@ struct BulkAssemblyCache
     scratch::Vector{BulkGPScratch}
 end
 
-function bulk_assembly_cache(czm_mesh::CohesiveMesh)
-    cache = czm_mesh.bulk_asm
+function bulk_assembly_cache(czm_mesh::CohesiveMesh; czm_workspace::CZMWorkspace)
+    check_czm_workspace(czm_mesh, czm_workspace)
+    cache = czm_workspace.bulk_asm
     if cache === nothing
         element = czm_mesh.bulk_element
         ne0 = size(element, 1)
-        ndof = 2 * czm_mesh.nnode
+        ndof = 2 * size(czm_mesh.node, 1)
         I_idx = Int64[]
         J_idx = Int64[]
         sizehint!(I_idx, ne0 * 64)
@@ -505,7 +523,7 @@ function bulk_assembly_cache(czm_mesh::CohesiveMesh)
         cache = BulkAssemblyCache(zeros(Float64, 8, 8, ne0), zeros(Float64, 8, ne0),
             K0.colptr, K0.rowval, zeros(Float64, nnz(K0)), pmap,
             [BulkGPScratch() for _ in 1:Threads.nthreads()])
-        czm_mesh.bulk_asm = cache
+        czm_workspace.bulk_asm = cache
     end
     return cache::BulkAssemblyCache
 end
@@ -562,6 +580,23 @@ function bulk_element_kernel!(ke::Array{Float64, 3}, fe::Matrix{Float64}, e::Int
     return nothing
 end
 
+"""Pure Q4 scalar kinematics from interleaved u_e and reference gradients; returns ∇u, F and E11/E22/2E12."""
+@inline function bulk_gl_kinematics(u_e, dNdx, dNdy)
+    # Preserve the production gradient accumulation and expanded GL arithmetic.
+    uxx = 0.0; uxy = 0.0; uyx = 0.0; uyy = 0.0
+    for i in 1:4
+        uxx += dNdx[i] * u_e[2*i-1]
+        uxy += dNdy[i] * u_e[2*i-1]
+        uyx += dNdx[i] * u_e[2*i]
+        uyy += dNdy[i] * u_e[2*i]
+    end
+    E11 = uxx + 0.5 * (uxx * uxx + uyx * uyx)
+    E22 = uyy + 0.5 * (uxy * uxy + uyy * uyy)
+    g12 = (uxy + uyx) + (uxx * uxy + uyx * uyy)
+    return (; uxx, uxy, uyx, uyy, F11=1.0 + uxx, F12=uxy,
+            F21=uyx, F22=1.0 + uyy, E11, E22, g12)
+end
+
 """
     gl_element_residual_tangent(x_e, y_e, u_e, D_mat, ε0, gsorder) -> (f_e, K_e)
 
@@ -582,6 +617,7 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
                                      split_KG::Bool=false,
                                      gp_geom=nothing,
                                      scratch=nothing)
+    all(isfinite,sigma0) || throw(ArgumentError("non-finite reference prestress"))
     (committed_gp_states === nothing) == (trial_gp_states === nothing) ||
         error("gl_element_residual_tangent: committed/trial Gauss-point states must be supplied together")
     if committed_gp_states !== nothing
@@ -609,18 +645,9 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
     gp = 0
     run_gp = (w, dNdx, dNdy, detJ) -> begin
         gp += 1
-        # ∇u
-        uxx = 0.0; uxy = 0.0; uyx = 0.0; uyy = 0.0
-        for i in 1:4
-            uxx += dNdx[i] * u_e[2*i-1]
-            uxy += dNdy[i] * u_e[2*i-1]
-            uyx += dNdx[i] * u_e[2*i]
-            uyy += dNdy[i] * u_e[2*i]
-        end
-        # 完全 GL 应变（E = ½(FᵀF − I)）
-        E11 = uxx + 0.5 * (uxx * uxx + uyx * uyx)
-        E22 = uyy + 0.5 * (uxy * uxy + uyy * uyy)
-        g12 = (uxy + uyx) + (uxx * uxy + uyx * uyy)
+        kin = bulk_gl_kinematics(u_e, dNdx, dNdy)
+        uxx, uxy, uyx, uyy = kin.uxx, kin.uxy, kin.uyx, kin.uyy
+        E11, E22, g12 = kin.E11, kin.E22, kin.g12
         # 应力与（塑性时的）算法一致切线
         local S1::Float64, S2::Float64, S3::Float64, D_tan::Matrix{Float64}
         if committed_gp_states === nothing
@@ -698,7 +725,7 @@ end
                                   geo_nl=false, plasticity=false,
                                   committed_plastic_states=nothing,
                                   trial_plastic_states=nothing,
-                                  K_bulk_cached=nothing, eigenstrain=nothing)
+                                  eigenstrain=nothing)
         -> (f_int_bulk, K_tangent)
 
 bulk 残差/切线的统一入口（spec 2026-08-20-core-collapse-mechanics-design.md §4.2）。
@@ -710,7 +737,7 @@ bulk 残差/切线的统一入口（spec 2026-08-20-core-collapse-mechanics-desi
 2. **几何非线性**（`geo_nl=true`，Batch 2）：完全 Green-Lagrange 全 Lagrangian——
    `gl_element_residual_tangent` 逐单元装配，S = C:(E_GL − ε₀I)（D-B2-1，ε₀ 与
    `assemble_thermal_chemical_load` 同式）；切线含标准初应力 K_G。切线依赖 u，
-   禁止传 `K_bulk_cached`。`eigenstrain` 为 NamedTuple `(dT, Δsn, Δsp)`，
+   逐迭代重组，不消费线性体刚度缓存。`eigenstrain` 为 NamedTuple `(dT, Δsn, Δsp)`，
    `nothing` 表示本次调用无本征应变（ε₀≡0，运动学场景合法状态）。
 3. **J2 塑性**（`plasticity=true`）：PCC/NCC 平面应力一致返回映射；committed/trial
    两份 `PlasticState[ne,4]` 显式传入，装配只写 trial。
@@ -722,20 +749,19 @@ bulk 残差/切线的统一入口（spec 2026-08-20-core-collapse-mechanics-desi
 function assemble_bulk_residual_tangent(
     czm_mesh::CohesiveMesh,
     u::Vector{Float64},
-    param::Params;
+    param::Params; czm_workspace::CZMWorkspace,
     geo_nl::Bool=false,
     plasticity::Bool=false,
     committed_plastic_states=nothing,
     trial_plastic_states=nothing,
-    K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,
     eigenstrain=nothing,
     prestress=nothing,
     split_KG::Bool=false
 )
-    ndof = 2 * czm_mesh.nnode
+    ndof = 2 * size(czm_mesh.node, 1)
     length(u) == ndof || throw(DimensionMismatch(
         "assemble_bulk_residual_tangent: u 长度为 $(length(u))，应为 $ndof " *
-        "(2 × nnode=$(czm_mesh.nnode))"))
+        "(2 × nnode=$(size(czm_mesh.node, 1)))"))
 
     if plasticity && !geo_nl
         error("assemble_bulk_residual_tangent: plasticity=true 需要 geo_nl=true（D-B3-1：塑性逐 GP " *
@@ -755,9 +781,6 @@ function assemble_bulk_residual_tangent(
             "assemble_bulk_residual_tangent: prestress 长度 $(length(prestress)) 应为 bulk 单元数 $(size(czm_mesh.bulk_element, 1))"))
     end
     if geo_nl
-        K_bulk_cached !== nothing && error(
-            "assemble_bulk_residual_tangent: geo_nl=true 时切线依赖 u，" *
-            "不得传 K_bulk_cached（须逐迭代重组）。")
         if plasticity
             # D-B3-1：塑性逐 GP 应力评估仅在 GL 单元路径实现
             committed_plastic_states isa Matrix{PlasticState} || error(
@@ -785,14 +808,10 @@ function assemble_bulk_residual_tangent(
             size(trial_plastic_states) == (ne0, 4) || throw(DimensionMismatch(
                 "assemble_bulk_residual_tangent: trial state size $(size(trial_plastic_states)) must equal ($ne0, 4)"))
         end
-        I_idx = Int64[]; J_idx = Int64[]; K_vals = Float64[]
-        sizehint!(I_idx, ne0 * 64); sizehint!(J_idx, ne0 * 64); sizehint!(K_vals, ne0 * 64)
-        I_mat = split_KG ? Int64[] : nothing; J_mat = split_KG ? Int64[] : nothing; V_mat = split_KG ? Float64[] : nothing
-        I_G = split_KG ? Int64[] : nothing; J_G = split_KG ? Int64[] : nothing; V_G = split_KG ? Float64[] : nothing
         f_gl = zeros(Float64, ndof)
-        gp_cache = bulk_gauss_geometry(czm_mesh)
+        gp_cache = bulk_gauss_geometry(czm_mesh; czm_workspace=czm_workspace)
         if !split_KG
-            cache = bulk_assembly_cache(czm_mesh)
+            cache = bulk_assembly_cache(czm_mesh; czm_workspace=czm_workspace)
             Threads.@threads for e in 1:ne0
                 bulk_element_kernel!(cache.ke, cache.fe, e, element, node, u, param,
                     submesh.material_type, plasticity, committed_plastic_states,
@@ -815,6 +834,8 @@ function assemble_bulk_residual_tangent(
             # 缓冲区本体仅阶段二内部使用
             return f_gl, SparseMatrixCSC(ndof, ndof, cache.colptr, cache.rowval, copy(cache.nzval))
         end
+        I_mat = Int64[]; J_mat = Int64[]; V_mat = Float64[]
+        I_G = Int64[]; J_G = Int64[]; V_G = Float64[]
         for e in 1:ne0
             mt = submesh.material_type[e]
             local D_mat::Matrix{Float64}, plastic_params
@@ -844,18 +865,13 @@ function assemble_bulk_residual_tangent(
                 u_e[2*k-1] = u[2*n-1]
                 u_e[2*k] = u[2*n]
             end
-            res_gl = gl_element_residual_tangent(x_e, y_e, u_e, D_mat, ε0, 2;
+            f_e, K_mat_e, K_G_e = gl_element_residual_tangent(x_e, y_e, u_e, D_mat, ε0, 2;
                                                    committed_gp_states=plasticity ? view(committed_plastic_states, e, :) : nothing,
                                                    trial_gp_states=plasticity ? view(trial_plastic_states, e, :) : nothing,
                                                    plastic_params=plastic_params,
                                                    sigma0=prestress === nothing ? (0.0, 0.0, 0.0) : prestress[e],
-                                                   split_KG=split_KG,
+                                                   split_KG=true,
                                                    gp_geom=gp_cache[e])
-            if split_KG
-                f_e, K_mat_e, K_G_e = res_gl
-            else
-                f_e, K_e = res_gl
-            end
             dofs = Int64[]
             for n in elem_nodes
                 push!(dofs, 2*n - 1)
@@ -864,22 +880,14 @@ function assemble_bulk_residual_tangent(
             for a in 1:8
                 f_gl[dofs[a]] += f_e[a]
                 for b in 1:8
-                    if split_KG
-                        push!(I_mat, dofs[a]); push!(J_mat, dofs[b]); push!(V_mat, K_mat_e[a, b])
-                        push!(I_G, dofs[a]); push!(J_G, dofs[b]); push!(V_G, K_G_e[a, b])
-                    else
-                        push!(I_idx, dofs[a]); push!(J_idx, dofs[b]); push!(K_vals, K_e[a, b])
-                    end
+                    push!(I_mat, dofs[a]); push!(J_mat, dofs[b]); push!(V_mat, K_mat_e[a, b])
+                    push!(I_G, dofs[a]); push!(J_G, dofs[b]); push!(V_G, K_G_e[a, b])
                 end
             end
         end
-        if split_KG
-            return f_gl, sparse(I_mat, J_mat, V_mat, ndof, ndof), sparse(I_G, J_G, V_G, ndof, ndof)
-        end
-        return f_gl, sparse(I_idx, J_idx, K_vals, ndof, ndof)
+        return f_gl, sparse(I_mat, J_mat, V_mat, ndof, ndof), sparse(I_G, J_G, V_G, ndof, ndof)
     else
-        K_tangent = K_bulk_cached !== nothing ? K_bulk_cached :
-                    assemble_bulk_stiffness(czm_mesh, param)
+        K_tangent = bulk_stiffness(czm_mesh, param; czm_workspace=czm_workspace)
         f_int_bulk = K_tangent * u
         return f_int_bulk, K_tangent
     end
@@ -897,7 +905,7 @@ function assemble_thermal_chemical_load(
     param::Params,
     dT_elem::Vector{Float64}, Δsoc_n_elem::Vector{Float64}, Δsoc_p_elem::Vector{Float64}
 )
-    nnode = czm_mesh.nnode
+    nnode = size(czm_mesh.node, 1)
     ndof = 2 * nnode
     submesh = czm_mesh.czm_submesh
     submesh === nothing && error(
@@ -958,23 +966,23 @@ end
 
 
 """
-    assemble_coupled_system(czm_mesh, u, param; F_ext=nothing, ...)
+    assemble_coupled_system(czm_mesh, u, param; czm_workspace, ...)
 
 组装耦合系统（体刚度 + 内聚力）。签名按 spec v2 §7.1 改为接受 `param`，
 体内刚度按 `czm_submesh.material_type` 分组取模量。
+逐GP历史必须显式提供，元素损伤汇总不参与装配。
+返回 `(K_total, f_int_total, separations, tractions)`；载荷残差由调用者计算，
+或使用 `assemble_coupled_system_full`。本接口不接受外力/热化学载荷关键字。
+K_total/f_int_total 为新数组；separations/tractions 借用会话缓冲，跨后续装配保留须 copy。
 """
 function assemble_coupled_system(
     czm_mesh::CohesiveMesh,
     u::Vector{Float64},
-    param::Params;
-    F_ext::Union{Vector{Float64}, Nothing}=nothing,
-    F_thermo_chem::Union{Vector{Float64}, Nothing}=nothing,
-    damage_states=nothing,
-    gp_damage_states=nothing,
+    param::Params; czm_workspace::CZMWorkspace,
+    gp_damage_states::Matrix{DamageState},
     gp_trial_states=nothing,
-    K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,
-    geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,
-    ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,
+    gp_capture=nothing,
+    gp_history_loading=nothing,
     visc_beta::Float64=1.0,
     czm_model::String="model1",
     geo_nl::Bool=false,
@@ -984,14 +992,12 @@ function assemble_coupled_system(
     trial_plastic_states=nothing,
     prestress=nothing
 )
-    ndof = 2 * czm_mesh.nnode
-
     # 固体残差与切线（统一入口，spec §4.2）。geo_nl=false 为 Batch 1 线弹性槽位
     # （与 K_bulk*u 逐位等价）；geo_nl=true 走完全 GL（Batch 2），ε* 内嵌（D-B2-1）；
     # plasticity=true 时 PCC/NCC 用物理箔 J2（Batch 3，D-B3-0）；
     # prestress 叠加卷绕预应力 σ₀ 进残差与 K_G（Batch 2'，D-B2'-1/2）。
     f_int_bulk, K_bulk = assemble_bulk_residual_tangent(
-        czm_mesh, u, param; K_bulk_cached=K_bulk_cached,
+        czm_mesh, u, param; czm_workspace=czm_workspace,
         geo_nl=geo_nl, eigenstrain=eigenstrain,
         plasticity=plasticity,
         committed_plastic_states=committed_plastic_states,
@@ -1000,9 +1006,10 @@ function assemble_coupled_system(
 
     # 内聚力刚度和内力（使用几何缓存和工作区，透传 param）
     K_coh, f_int_coh, separations, tractions = assemble_czm_system(
-        czm_mesh, u, param; damage_states=damage_states,
+        czm_mesh, u, param; czm_workspace=czm_workspace,
         gp_damage_states=gp_damage_states, gp_trial_states=gp_trial_states,
-        geom_cache=geom_cache, ws=ws, visc_beta=visc_beta, czm_model=czm_model)
+        gp_capture=gp_capture, gp_history_loading=gp_history_loading,
+        visc_beta=visc_beta, czm_model=czm_model)
 
     # 总刚度矩阵
     K_total = K_bulk + K_coh
@@ -1023,22 +1030,19 @@ function assemble_coupled_system_full(
     czm_mesh::CohesiveMesh,
     u::Vector{Float64},
     param::Params,
-    dT_elem::Vector{Float64}, Δsoc_n_elem::Vector{Float64}, Δsoc_p_elem::Vector{Float64};
+    dT_elem::Vector{Float64}, Δsoc_n_elem::Vector{Float64}, Δsoc_p_elem::Vector{Float64}; czm_workspace::CZMWorkspace,
     F_ext::Union{Vector{Float64}, Nothing}=nothing,
-    damage_states=nothing,
-    K_bulk_cached::Union{Nothing, SparseMatrixCSC{Float64, Int64}}=nothing,
-    geom_cache::Union{Nothing, Vector{CohesiveElementGeom}}=nothing,
-    ws::Union{Nothing, CZMAssemblyWorkspace}=nothing,
+    gp_damage_states::Matrix{DamageState},
     visc_beta::Float64=1.0,
     czm_model::String="model1"
 )
-    ndof = 2 * czm_mesh.nnode
+    ndof = 2 * size(czm_mesh.node, 1)
 
     # 组装基本系统（透传 param）
     K_total, f_int_total, separations, tractions = assemble_coupled_system(
-        czm_mesh, u, param;
-        damage_states=damage_states, K_bulk_cached=K_bulk_cached,
-        geom_cache=geom_cache, ws=ws, visc_beta=visc_beta)
+        czm_mesh, u, param; czm_workspace=czm_workspace,
+        gp_damage_states=gp_damage_states,
+        visc_beta=visc_beta, czm_model=czm_model)
 
     # 热-化学载荷（透传 param）
     F_thermo_chem = assemble_thermal_chemical_load(
@@ -1069,14 +1073,14 @@ function collector_params(param::Params, iface::Symbol)
 end
 
 """
-    build_cohesive_geometry(czm_mesh) -> Vector{CohesiveElementGeom}
+    build_cohesive_geometry(czm_mesh; czm_workspace) -> Vector{CohesiveElementGeom}
 
 预计算全部 cohesive 单元的局部标架/DOF/积分表（纯几何派生，gs 同款）。
 """
 function build_cohesive_geometry(czm_mesh::CohesiveMesh)
-    n_coh = czm_mesh.n_cohesive
+    n_coh = length(czm_mesh.cohesive_elements)
     geom = Vector{CohesiveElementGeom}(undef, n_coh)
-    order = czm_mesh.bulk_mesh.gs.order
+    order = czm_mesh.czm_submesh.mesh_bonded.gs.order
     for (i, elem) in enumerate(czm_mesh.cohesive_elements)
         n1, n2 = elem.nodes_bottom
         n4, n3 = elem.nodes_top
@@ -1090,32 +1094,36 @@ function build_cohesive_geometry(czm_mesh::CohesiveMesh)
 end
 
 """
-    bulk_stiffness(czm_mesh, param) -> SparseMatrixCSC
+    bulk_stiffness(czm_mesh, param; czm_workspace) -> SparseMatrixCSC
 
-体刚度惰性访问器：首次调用构建并挂到 `czm_mesh.K_bulk`，此后跨步只读。
+体刚度惰性访问器：首次调用构建并挂到 `czm_workspace.K_bulk`，此后跨步只读。
 仅线弹性路径消费（geo_nl/塑性路径切线依赖 u，不走此缓存）。
 """
-function bulk_stiffness(czm_mesh::CohesiveMesh, param::Params)
-    czm_mesh.K_bulk === nothing && (czm_mesh.K_bulk = assemble_bulk_stiffness(czm_mesh, param))
-    return czm_mesh.K_bulk::SparseMatrixCSC{Float64, Int64}
+function bulk_stiffness(czm_mesh::CohesiveMesh, param::Params; czm_workspace::CZMWorkspace)
+    check_czm_workspace(czm_mesh, czm_workspace)
+    czm_workspace.param === param || throw(ArgumentError("CZM workspace belongs to different frozen parameters"))
+    czm_workspace.K_bulk === nothing && (czm_workspace.K_bulk = assemble_bulk_stiffness(czm_mesh, param))
+    return czm_workspace.K_bulk::SparseMatrixCSC{Float64, Int64}
 end
 
 """
-    cohesive_geometry(czm_mesh) -> Vector{CohesiveElementGeom}
+    cohesive_geometry(czm_mesh; czm_workspace) -> Vector{CohesiveElementGeom}
 
-cohesive 标架惰性访问器：首次调用构建并挂到 `czm_mesh.cohesive_geom`。
+cohesive 标架惰性访问器：首次调用构建并挂到 `czm_workspace.cohesive_geom`。
 """
-function cohesive_geometry(czm_mesh::CohesiveMesh)
-    czm_mesh.cohesive_geom === nothing && (czm_mesh.cohesive_geom = build_cohesive_geometry(czm_mesh))
-    return czm_mesh.cohesive_geom::Vector{CohesiveElementGeom}
+function cohesive_geometry(czm_mesh::CohesiveMesh; czm_workspace::CZMWorkspace)
+    check_czm_workspace(czm_mesh, czm_workspace)
+    czm_workspace.cohesive_geom === nothing && (czm_workspace.cohesive_geom = build_cohesive_geometry(czm_mesh))
+    return czm_workspace.cohesive_geom::Vector{CohesiveElementGeom}
 end
 
 """
-    assembly_workspace(czm_mesh) -> CZMAssemblyWorkspace
+    assembly_workspace(czm_mesh; czm_workspace) -> CZMAssemblyWorkspace
 
-装配工作区惰性访问器：首次调用分配并挂到 `czm_mesh.ws`（预分配复用，值每轮重写）。
+装配工作区惰性访问器：首次调用分配并挂到 `czm_workspace.ws`（预分配复用，值每轮重写）。
 """
-function assembly_workspace(czm_mesh::CohesiveMesh)
-    czm_mesh.ws === nothing && (czm_mesh.ws = CZMAssemblyWorkspace(2 * czm_mesh.nnode, czm_mesh.n_cohesive))
-    return czm_mesh.ws::CZMAssemblyWorkspace
+function assembly_workspace(czm_mesh::CohesiveMesh; czm_workspace::CZMWorkspace)
+    check_czm_workspace(czm_mesh, czm_workspace)
+    czm_workspace.ws === nothing && (czm_workspace.ws = CZMAssemblyWorkspace(2 * size(czm_mesh.node, 1), length(czm_mesh.cohesive_elements)))
+    return czm_workspace.ws::CZMAssemblyWorkspace
 end

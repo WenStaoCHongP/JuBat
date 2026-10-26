@@ -9,17 +9,8 @@ using Parameters
     t_rest1::Float64 = 600.0                # 充电后静置
     t_discharge::Float64 = 3600.0           # 放电时长
     t_rest2::Float64 = 600.0                # 放电后静置
-    # 电流设置 (A)，均为正值
-    I_charge::Float64 = 5.0                 # 充电电流
-    I_discharge::Float64 = 5.0              # 放电电流
-    # 截止条件
-    V_upper::Float64 = 4.2                  # 充电截止电压
-    V_lower::Float64 = 2.5                  # 放电截止电压
     # 初始状态
     SOC_init::Float64 = 0.05                # 初始SOC
-    # 温度重置
-    reset_T_each_cycle::Bool = true         # 每循环重置温度
-    reset_T_before_charge::Bool = true      # 充电前重置温度（循环内）
     # 时间步长
     dt_cycle::Vector{Float64} = [1.0, 10.0] # [dt_min, dt_max]
 end
@@ -37,7 +28,6 @@ end
     model::String = "model1"             # "model1" or "mix"
     update_interval::Int64 = 1           # CZM损伤更新间隔（时间步数），1=每步更新
     soh_threshold::Float64 = 0.8         # SOH终止阈值，SOH≤此值时终止循环
-    inner_exit_only::Bool = true         # 断裂时仅内圈单元退出电化学反应
     fix_inner::Bool = true               # 固定/释放内圈；nothing 端点选项沿用既有规则
     outer_bc::Symbol = :fixed_xy         # :fixed_xy | :radial_slide（参考径向固定、切向自由）
     fix_start::Union{Nothing,Bool} = nothing # 所有材料层起点额外二维固定；nothing=沿用旧规则
@@ -47,7 +37,7 @@ end
     max_iter::Int64 = 100                # CZM 牛顿迭代最大步数
     tol::Float64 = 1e-4                  # CZM 收敛容差
     load_steps::Int64 = 2                # 初始载荷子步数（load_substep / arc_length）
-    arc_length_alpha::Float64 = 1.0      # geo=true: 球面载荷权重；geo=false: 柱面分支方向权重
+    arc_length_alpha::Float64 = 1.0      # geo=true: 球面载荷权重；柱面方向仅用位移余弦
     wall_time_limit_seconds::Float64 = 0.0 # 非几何弧长单个机械步耗时上限；0=关闭
     snapshot_path::String = ""            # 求解失败时保存机械步输入；空字符串=关闭
     viscous_enabled::Bool = false        # 粘性正则化开关
@@ -56,8 +46,14 @@ end
     geo_nonlinear::Bool = false          # 完全 Green-Lagrange TL 残差 + 标准初应力 K_G（Batch 2）
     winding_prestress::Bool = false      # 卷绕预应力初始应力场 σ₀(r)，缺参即 error（Batch 2'）
     j2_plasticity::Bool = false          # PCC/NCC 平面应力一致 J2 返回映射，缺 sigma_y 即 error（Batch 3）
-    continuous_feedback::Bool = false    # 连续损伤–电–热反馈 + 界面热阻（Batch 6）
+    continuous_feedback::Bool = false    # 未实现的连续电热反馈/界面热阻；true在case/求解入口显式拒绝
     friction_mu::Float64 = 0.10          # SP Coulomb 摩擦系数（Batch 8 预留，当前无消费者）
+end
+
+function check_continuous_feedback(czm::CzmOptions)
+    czm.continuous_feedback && throw(ArgumentError(
+        "continuous_feedback=true is not implemented; damage-dependent interface thermal resistance remains disabled"))
+    return nothing
 end
 
 @with_kw mutable struct Option
@@ -94,6 +90,6 @@ end
     collector_seeded::Bool = false     # use collector-seeded band mesh semantics (layer_weights)
     per_element_spme::Bool = false     # allow passing per-element I_app and T to SPMe
     czm::CzmOptions = CzmOptions()     # CZM (Cohesive Zone Model) 模块选项（嵌套收敛，2026-08-30 重构）
-    debug_coupling::Bool = false       # print detailed logs for electro-thermal coupling
+    debug_coupling::Bool = false       # enable coupling diagnostic checks and detailed logs
     debug_log_path::String = "output/debug.log"  # debug log file path
 end

@@ -1,4 +1,52 @@
+# 多 SPMe 输出按热单元顺序保存；场量在历史矩阵中按单元连续排列行。
+# PostProcessing 将场量恢复为（内部自由度，单元，时间），标量为（单元，时间）。
+const SPME_ELEMENT_CHEMICAL_OUTPUT_KEYS = (
+    "negative particle lithium concentration",
+    "positive particle lithium concentration",
+    "negative particle surface lithium concentration",
+    "positive particle surface lithium concentration",
+    "electrolyte lithium concentration",
+    "electrolyte lithium concentration in negative electrode",
+    "electrolyte lithium concentration in positive electrode",
+    "electrolyte lithium concentration in separator",
+    "electrolyte lithium concentration at negative electrode Gauss point",
+    "electrolyte lithium concentration at positive electrode Gauss point",
+    "electrolyte lithium concentration at separator Gauss point",
+    "negative electrode exchange current density",
+    "positive electrode exchange current density",
+    "negative electrode interfacial current density",
+    "positive electrode interfacial current density",
+    "negative electrode overpotential",
+    "positive electrode overpotential",
+    "negative electrode open circuit potential",
+    "positive electrode open circuit potential",
+)
+
+const SPME_ELEMENT_MECHANICAL_OUTPUT_KEYS = (
+    "negative particle center radial stress",
+    "positive particle center radial stress",
+    "negative particle surface tangential stress",
+    "positive particle surface tangential stress",
+    "negative particle surface displacement",
+    "positive particle surface displacement",
+    "negative particle stress coupling diffusion coefficient",
+    "positive particle stress coupling diffusion coefficient",
+    "negative particle concentration at gauss point",
+    "positive particle concentration at gauss point",
+)
+
+function spme_element_output_keys(case::Case)
+    if case.opt.mechanicalmodel == "full"
+        return (SPME_ELEMENT_CHEMICAL_OUTPUT_KEYS..., SPME_ELEMENT_MECHANICAL_OUTPUT_KEYS...)
+    end
+    return SPME_ELEMENT_CHEMICAL_OUTPUT_KEYS
+end
+
 function StandardVariables(case::Case, num::Int64)
+    n_spme = 1
+    if case.opt.model == "SPMe" && case.opt.thermalmodel == "distributed2D"
+        n_spme = size(case.mesh["thermal2D"].element, 1)
+    end
     Nrn = case.mesh["negative particle"].nlen
     Nrp = case.mesh["positive particle"].nlen
     if case.opt.model == "SPM" || case.opt.model == "SPMe"
@@ -14,36 +62,36 @@ function StandardVariables(case::Case, num::Int64)
     end
 
     variables = Dict{String, Union{Array{Float64}, Float64}}(
-        "negative particle lithium concentration" => zeros(Float64, Nrn, num),
-        "positive particle lithium concentration" => zeros(Float64, Nrp, num),
+        "negative particle lithium concentration" => zeros(Float64, Nrn * n_spme, num),
+        "positive particle lithium concentration" => zeros(Float64, Nrp * n_spme, num),
         "negative particle averaged lithium concentration" => zeros(Float64, Nn, num),
         "positive particle averaged lithium concentration" => zeros(Float64, Np, num),
-        "negative particle surface lithium concentration" => zeros(Float64, Nn, num),
-        "positive particle surface lithium concentration" => zeros(Float64, Np, num),
+        "negative particle surface lithium concentration" => zeros(Float64, Nn * n_spme, num),
+        "positive particle surface lithium concentration" => zeros(Float64, Np * n_spme, num),
         "negative electrode porosity" => zeros(Float64, Nn, num),
         "positive electrode porosity" => zeros(Float64, Np, num),
         "negative electrode temperature" => zeros(Float64, Nn, num),
         "positive electrode temperature" => zeros(Float64, Np, num),
-        "negative electrode exchange current density" => zeros(Float64, Nn, num),
-        "positive electrode exchange current density" => zeros(Float64, Np, num),
-        "negative electrode interfacial current density" => zeros(Float64, Nn, num),
-        "positive electrode interfacial current density" => zeros(Float64, Np, num),
-        "negative electrode overpotential" => zeros(Float64, Nn, num),
-        "positive electrode overpotential" => zeros(Float64, Np, num),
-        "negative electrode open circuit potential" => zeros(Float64, Nn, num),
-        "positive electrode open circuit potential" => zeros(Float64, Np, num),
-        "negative particle center radial stress" => zeros(Float64, Nn, num),
-        "positive particle center radial stress" => zeros(Float64, Np, num),
-        "negative particle surface tangential stress" => zeros(Float64, Nn, num),
-        "positive particle surface tangential stress" => zeros(Float64, Np, num),
-        "negative particle surface displacement" => zeros(Float64, Nn, num),
-        "positive particle surface displacement" => zeros(Float64, Np, num),
-        "negative particle concentration at gauss point" => zeros(Float64,  Nn* case.opt.Nrn* case.opt.gsorder, num),
-        "positive particle concentration at gauss point" => zeros(Float64,  Np* case.opt.Nrp* case.opt.gsorder, num),
+        "negative electrode exchange current density" => zeros(Float64, Nn * n_spme, num),
+        "positive electrode exchange current density" => zeros(Float64, Np * n_spme, num),
+        "negative electrode interfacial current density" => zeros(Float64, Nn * n_spme, num),
+        "positive electrode interfacial current density" => zeros(Float64, Np * n_spme, num),
+        "negative electrode overpotential" => zeros(Float64, Nn * n_spme, num),
+        "positive electrode overpotential" => zeros(Float64, Np * n_spme, num),
+        "negative electrode open circuit potential" => zeros(Float64, Nn * n_spme, num),
+        "positive electrode open circuit potential" => zeros(Float64, Np * n_spme, num),
+        "negative particle center radial stress" => zeros(Float64, Nn * n_spme, num),
+        "positive particle center radial stress" => zeros(Float64, Np * n_spme, num),
+        "negative particle surface tangential stress" => zeros(Float64, Nn * n_spme, num),
+        "positive particle surface tangential stress" => zeros(Float64, Np * n_spme, num),
+        "negative particle surface displacement" => zeros(Float64, Nn * n_spme, num),
+        "positive particle surface displacement" => zeros(Float64, Np * n_spme, num),
+        "negative particle concentration at gauss point" => zeros(Float64, Nn * case.opt.Nrn * case.opt.gsorder * n_spme, num),
+        "positive particle concentration at gauss point" => zeros(Float64, Np * case.opt.Nrp * case.opt.gsorder * n_spme, num),
         "negative particle surface tangential stress at gauss point" => zeros(Float64, Ne_ngs, num),
         "positive particle surface tangential stress at gauss point" => zeros(Float64, Ne_pgs, num),
-        "negative particle stress coupling diffusion coefficient" => zeros(Float64, Nn, num),
-        "positive particle stress coupling diffusion coefficient" => zeros(Float64, Np, num),
+        "negative particle stress coupling diffusion coefficient" => zeros(Float64, Nn * n_spme, num),
+        "positive particle stress coupling diffusion coefficient" => zeros(Float64, Np * n_spme, num),
         "cell voltage" => zeros(Float64, 1, num),
         "time" => zeros(Float64, 1, num),
         "cell current" => zeros(Float64, 1, num),
@@ -57,13 +105,13 @@ function StandardVariables(case::Case, num::Int64)
         Ne_ngs = case.opt.Nn * case.opt.gsorder
         Ne_pgs = case.opt.Np * case.opt.gsorder
         Ne_spgs = case.opt.Ns * case.opt.gsorder
-        variables["electrolyte lithium concentration"] = zeros(Float64, Ne, num)
-        variables["electrolyte lithium concentration in negative electrode"] = zeros(Float64, Ne_n, num)
-        variables["electrolyte lithium concentration in positive electrode"] = zeros(Float64, Ne_p, num)
-        variables["electrolyte lithium concentration in separator"] = zeros(Float64, Ne_sp, num)
-        variables["electrolyte lithium concentration at negative electrode Gauss point"] = zeros(Float64, Ne_ngs, num)
-        variables["electrolyte lithium concentration at positive electrode Gauss point"] = zeros(Float64, Ne_pgs, num)
-        variables["electrolyte lithium concentration at separator Gauss point"] = zeros(Float64, Ne_spgs, num)
+        variables["electrolyte lithium concentration"] = zeros(Float64, Ne * n_spme, num)
+        variables["electrolyte lithium concentration in negative electrode"] = zeros(Float64, Ne_n * n_spme, num)
+        variables["electrolyte lithium concentration in positive electrode"] = zeros(Float64, Ne_p * n_spme, num)
+        variables["electrolyte lithium concentration in separator"] = zeros(Float64, Ne_sp * n_spme, num)
+        variables["electrolyte lithium concentration at negative electrode Gauss point"] = zeros(Float64, Ne_ngs * n_spme, num)
+        variables["electrolyte lithium concentration at positive electrode Gauss point"] = zeros(Float64, Ne_pgs * n_spme, num)
+        variables["electrolyte lithium concentration at separator Gauss point"] = zeros(Float64, Ne_spgs * n_spme, num)
     end
     # extra variables for P2D
     if case.opt.model == "P2D"
@@ -95,7 +143,6 @@ function StandardVariables(case::Case, num::Int64)
         ne = size(case.mesh["thermal2D"].element, 1)
         nT = case.mesh["thermal2D"].nlen
         variables["thermal2D temperature at nodes"] = zeros(Float64, nT, num)
-        variables["thermal2D temperature history"] = zeros(Float64, ne, num)
         variables["heat_source_fields"] = zeros(Float64, ne, num)
         variables["thermal2D q_rxn_ne"] = zeros(Float64, ne, num)
         variables["thermal2D q_rev_ne"] = zeros(Float64, ne, num)
@@ -108,7 +155,13 @@ function StandardVariables(case::Case, num::Int64)
         variables["thermal2D q_ohm_e_pe"] = zeros(Float64, ne, num)
         variables["thermal2D q_pcc"] = zeros(Float64, ne, num)
         variables["thermal2D q_ncc"] = zeros(Float64, ne, num)
+        variables["thermal2D q_el"] = zeros(Float64, ne, num)
         variables["thermal2D element current"] = zeros(Float64, ne, num)
+        if case.opt.per_element_spme
+            variables["thermal2D branch area factor"] = zeros(Float64, ne, num)
+            variables["thermal2D total effective area factor"] = zeros(Float64, 1, num)
+            variables["thermal2D element branch current [A]"] = zeros(Float64, ne, num)
+        end
         variables["thermal2D eta_n_e"] = zeros(Float64, ne, num)
         variables["thermal2D eta_p_e"] = zeros(Float64, ne, num)
         variables["thermal2D dUdT_n_e"] = zeros(Float64, ne, num)
@@ -116,6 +169,8 @@ function StandardVariables(case::Case, num::Int64)
         variables["thermal2D element soc_n"] = zeros(Float64, ne, num)
         variables["thermal2D element soc_n_vol"] = zeros(Float64, ne, num)
         variables["thermal2D element soc_p_vol"] = zeros(Float64, ne, num)
+        variables["thermal2D element soc_n_nodeavg"] = zeros(Float64, ne, num)
+        variables["thermal2D element soc_p_nodeavg"] = zeros(Float64, ne, num)
         variables["thermal2D element soc_p"] = zeros(Float64, ne, num)
         variables["thermal2D element voltages"] = zeros(Float64, ne, num)
         variables["thermal2D element OCV"] = zeros(Float64, ne, num)
@@ -145,9 +200,9 @@ function StandardVariables(case::Case, num::Int64)
         if case.opt.czm.winding_prestress
             variables["winding prestress"] = zeros(Float64, 1, num)
         end
-        if case.czm_mesh !== nothing
-            n_coh = case.czm_mesh.n_cohesive
-            n_czm_nodes = case.czm_mesh.nnode
+        if haskey(case.mesh, "czm")
+            n_coh = length(case.mesh["czm"].cohesive_elements)
+            n_czm_nodes = size(case.mesh["czm"].node, 1)
             variables["czm damage"] = zeros(Float64, n_coh, num)
             variables["czm displacement x"] = zeros(Float64, n_czm_nodes, num)
             variables["czm displacement y"] = zeros(Float64, n_czm_nodes, num)
@@ -156,7 +211,7 @@ function StandardVariables(case::Case, num::Int64)
             variables["czm separation normal"] = zeros(Float64, n_coh, num)
             variables["czm separation tangent"] = zeros(Float64, n_coh, num)
             variables["czm separation effective"] = zeros(Float64, n_coh, num)
-            ne_czm = size(case.czm_mesh.bulk_element, 1)
+            ne_czm = size(case.mesh["czm"].bulk_element, 1)
             if case.opt.czm.j2_plasticity
                 variables["diffusion stress xx"] = fill(NaN, ne_czm, num)
                 variables["diffusion stress yy"] = fill(NaN, ne_czm, num)
@@ -165,10 +220,10 @@ function StandardVariables(case::Case, num::Int64)
                 variables["diffusion stress max vonMises"] = fill(NaN, 1, num)
                 variables["equivalent plastic strain max"] = fill(NaN, 1, num)
             elseif !(case.opt.czm.geo_nonlinear || case.opt.czm.winding_prestress)
-                variables["diffusion stress xx"] = zeros(Float64, ne_czm, num)
-                variables["diffusion stress yy"] = zeros(Float64, ne_czm, num)
-                variables["diffusion stress xy"] = zeros(Float64, ne_czm, num)
-                variables["diffusion stress vonMises"] = zeros(Float64, ne_czm, num)
+                variables["diffusion stress xx"] = fill(NaN, ne_czm, num)
+                variables["diffusion stress yy"] = fill(NaN, ne_czm, num)
+                variables["diffusion stress xy"] = fill(NaN, ne_czm, num)
+                variables["diffusion stress vonMises"] = fill(NaN, ne_czm, num)
             else
                 @warn "层分辨应力恢复与无 J2 状态的几何非线性/预应力路径不相容，本运行不导出 diffusion stress 历史" maxlog=1
             end
@@ -180,7 +235,7 @@ end
 """
     create_element_workspace(case)
 
-创建精简型单元工作区 Dict，仅包含 SPMe_element 调用链实际需要的键。
+创建精简型单元工作区 Dict，仅包含 SPMe 分布式单元调用链实际需要的键。
 排除 distributed2D 专用的 ~30 个 thermal2D 键（由 CallModel_MultiSPMe
 在单元循环外独立管理）。比 StandardVariables(case, 1) 减少约 60% 数组分配。
 """
@@ -193,7 +248,7 @@ function create_element_workspace(case::Case)
 
     ws = Dict{String, Union{Array{Float64}, Float64}}()
 
-    # ── 状态提取键（case.index 对应，SPMe_variables! 从 yt 原位覆写）──
+    # ── 状态提取键（case.index 对应，SPMe_variables 的 workspace 模式从 yt 原位覆写）──
     ws["negative particle lithium concentration"] = zeros(Float64, Nrn, 1)
     ws["positive particle lithium concentration"] = zeros(Float64, Nrp, 1)
     ws["negative particle surface lithium concentration"] = zeros(Float64, Nn, 1)
@@ -216,7 +271,7 @@ function create_element_workspace(case::Case)
 
     ws["temperature"] = 0.0
 
-    # ── SPMe_variables! 计算结果键 ──
+    # ── SPMe_variables 的 workspace 模式计算结果键 ──
     ws["cell voltage"] = 0.0
     ws["time"] = 0.0
     ws["cell current"] = 0.0
@@ -229,7 +284,7 @@ function create_element_workspace(case::Case)
     ws["negative electrode open circuit potential"] = zeros(Float64, Nn, 1)
     ws["positive electrode open circuit potential"] = zeros(Float64, Np, 1)
 
-    # ── 高斯点浓度键（SPMe_element L52-53 无条件读取）──
+    # ── 高斯点浓度键（SPMe 装配无条件读取）──
     # 注意：用 opt.Nrn/Nrp（单元数）而非 mesh.nlen（节点数）来计算高斯点数
     ws["negative particle concentration at gauss point"] = zeros(Float64, Nn * case.opt.Nrn * case.opt.gsorder, 1)
     ws["positive particle concentration at gauss point"] = zeros(Float64, Np * case.opt.Nrp * case.opt.gsorder, 1)
@@ -255,66 +310,64 @@ function create_element_workspace(case::Case)
         ws["czm D_max"] = 0.0
         ws["czm D_mean"] = 0.0
         ws["czm n_fractured"] = 0.0
-        if case.czm_mesh !== nothing
-            ws["czm damage"] = zeros(Float64, case.czm_mesh.n_cohesive, 1)
+        if haskey(case.mesh, "czm")
+            ws["czm damage"] = zeros(Float64, length(case.mesh["czm"].cohesive_elements), 1)
         end
     end
 
     return ws
 end
 
-function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Float64}}, variables::Dict{String, Union{Array{Float64},Float64}}, v::Int64)
-    # 检查是否需要扩展数组（动态增长）
-    for k in keys(variables_hist)
-        if isa(variables_hist[k], Array{Float64}) && ndims(variables_hist[k]) == 2
-            current_size = size(variables_hist[k], 2)
-            if v > current_size
-                # 需要扩展
-                expansion_size = max(1000, current_size ÷ 2)
-                @warn "时间步 $(v) 超过预分配 $(current_size)，扩展 $(expansion_size) 步（变量: $(k)）"
-                n_rows = size(variables_hist[k], 1)
-                new_cols = zeros(Float64, n_rows, expansion_size)
-                variables_hist[k] = hcat(variables_hist[k], new_cols)
+function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Float64}}, variables::Dict{String, Union{Array{Float64},Float64}}, v::Int64; debug_coupling::Bool=false)
+    v >= 1 || throw(BoundsError(variables_hist,v))
+    # Resolve a complete column and all growth before touching any existing history.
+    updates = Tuple{String,Union{Matrix{Float64},Float64},Union{Vector{Float64},Float64}}[]
+    for (k,hist_val) in variables_hist
+        val = variables[k]
+        if hist_val isa Array{Float64}
+            ndims(hist_val) == 2 || throw(DimensionMismatch("history variable \"$k\" must be a matrix"))
+            nrows,ncols = size(hist_val)
+            column = if val isa Array{Float64}
+                if debug_coupling
+                    if ndims(val) == 2
+                        size(val,2) == 1 || throw(DimensionMismatch(
+                            "variable \"$k\" must have exactly one column, got size $(size(val))"))
+                    elseif ndims(val) != 1
+                        throw(DimensionMismatch(
+                            "variable \"$k\" must be a vector or single-column matrix, got $(ndims(val)) dimensions"))
+                    end
+                end
+                length(val) == nrows || throw(DimensionMismatch(
+                    "variable \"$k\" length $(length(val)) does not match history row count $nrows"))
+                copy(vec(val))
+            else
+                nrows == 1 || throw(DimensionMismatch(
+                    "scalar variable \"$k\" cannot populate history with $nrows rows"))
+                [val]
             end
+            target = hist_val
+            if v > ncols
+                expansion = max(1000,ncols÷2)
+                v <= ncols+expansion || throw(BoundsError(hist_val,(:,v)))
+                @warn "时间步 $(v) 超过预分配 $(ncols)，扩展 $(expansion) 步（变量: $(k)）"
+                target = hcat(hist_val,zeros(nrows,expansion))
+            end
+            push!(updates,(k,target,column))
+        else
+            val isa Float64 || throw(ArgumentError(
+                "scalar history variable \"$k\" requires a Float64 value, got $(typeof(val))"))
+            push!(updates,(k,hist_val,val))
         end
     end
-
-    hist_keys = Set(keys(variables_hist))
-    for (k, val) in pairs(variables)
-        k in hist_keys || continue
-        hist_val = variables_hist[k]
-        if isa(hist_val, Array{Float64})
-            ndims(hist_val) == 2 || throw(DimensionMismatch("history variable \"$k\" must be a matrix"))
-            nrows = size(hist_val, 1)
-            if isa(val, Array{Float64})
-                if ndims(val) == 1
-                    col = val
-                elseif ndims(val) == 2
-                    size(val, 2) == 1 || throw(DimensionMismatch(
-                        "variable \"$k\" must have exactly one column, got size $(size(val))"
-                    ))
-                    col = @view val[:, 1]
-                else
-                    throw(DimensionMismatch(
-                        "variable \"$k\" must be a vector or single-column matrix, got $(ndims(val)) dimensions"
-                    ))
-                end
-
-                length(col) == nrows || throw(DimensionMismatch(
-                    "variable \"$k\" length $(length(col)) does not match history row count $nrows"
-                ))
-                hist_val[:, v] = col
-            elseif isa(val, Float64)
-                nrows == 1 || throw(DimensionMismatch(
-                    "scalar variable \"$k\" cannot populate history with $nrows rows"
-                ))
-                hist_val[1, v] = val
+    # Only checked scalar assignments remain; no callbacks or allocations in publication.
+    for (k,target,column) in updates
+        if target isa Matrix{Float64}
+            for i in eachindex(column)
+                target[i,v] = column[i]
             end
-        elseif isa(hist_val, Float64)
-            isa(val, Float64) || throw(ArgumentError(
-                "scalar history variable \"$k\" requires a Float64 value, got $(typeof(val))"
-            ))
-            variables_hist[k] = val
+            variables_hist[k] = target
+        else
+            variables_hist[k] = column
         end
     end
     return variables_hist

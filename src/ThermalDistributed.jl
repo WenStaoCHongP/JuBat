@@ -1,4 +1,4 @@
-function ThermalDistributed2D(case::Case, variables::Dict{String,<:Any})
+function initialize_thermal_matrices!(case::Case)
     mesh = case.mesh["thermal2D"]
     param = case.param  # 只使用无量纲参数
     nnode = mesh.nlen
@@ -12,7 +12,7 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,<:Any})
     ele_of_gp = mesh.gs.ele
 
     # setup_thermal2D_mesh guarantees the precomputed geometry.
-    fks = case.geometry.layer_weights
+    fks = case.mesh["thermal2D layer weights"]
 
     # ========== 质量矩阵 ==========
     rho_c_weights = thermal_capacity_weights_2d(param, fks, ele_of_gp, wJ)
@@ -35,7 +35,21 @@ function ThermalDistributed2D(case::Case, variables::Dict{String,<:Any})
     KT_yy = Assemble(Vi, Vj, dNdy, dNdy, cyy, nnode)
 
     KT = KT_xx + KT_xy + KT_yx + KT_yy
+    # 参数和最终热网格冻结后缓存于 mesh 并只读；边界处理复制 KT 后再修改。
+    case.mesh["thermal2D MT"] = MT
+    case.mesh["thermal2D KT"] = KT
+    return case
+end
 
+function ThermalDistributed2D(case::Case, variables::Dict{String,<:Any})
+    mesh = case.mesh["thermal2D"]
+    nnode = mesh.nlen
+    Ni = mesh.gs.Ni
+    wJ = mesh.gs.weight .* mesh.gs.detJ
+    Vi = mesh.element[mesh.gs.ele, :]
+    ele_of_gp = mesh.gs.ele
+    MT = case.mesh["thermal2D MT"]
+    KT = case.mesh["thermal2D KT"]
     # ========== 载荷向量 ==========
     FT = zeros(Float64, nnode)
     q_elem = variables["heat_source_fields"]
@@ -114,7 +128,7 @@ function apply_cool_method(K, F, mesh, case, t::Float64)
     elseif cool_method == "surface"
         param = case.param
         Bi = case.param_dim.scale.h
-        conv_factor = 2.0 * Bi / param.cell.width
+        conv_factor = 2.0 * Bi * param.cell.lambda_r / param.cell.width
 
         ngs = length(mesh.gs.detJ)
         Ni = mesh.gs.Ni
@@ -154,7 +168,7 @@ function apply_cool_method(K, F, mesh, case, t::Float64)
 
         for (i, n) in enumerate(tab_nodes)
             weight = arc_lengths[i] / total_arc_length
-            coeff = param.tab.h * param.tab.area * weight / param.cell.width
+            coeff = param.tab.h * param.cell.lambda_r * param.tab.area * weight / param.cell.width
             K[n, n] -= coeff
             F[n] += coeff * param.cell.T_amb
         end
@@ -206,10 +220,10 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64)
     # 恢复前提：恢复未合并热网格拓扑，启用本块，并重新验证双向耦合与收敛行为。
     # =========================================================================================
     # if case.opt.czm.enabled
-    #     czm_mesh = case.czm_mesh
+    #     czm_mesh = case.mesh["czm"]
     #     param = case.param
     #     for (elem_idx, czm_elem) in enumerate(czm_mesh.cohesive_elements)
-    #         state = case.mech.damage_states[elem_idx]
+    #         state = accepted.mech.damage_states[elem_idx]
     #         D = state.D
     #         δ_n = state.δ_max_n
     #         ip = collector_params(param, czm_elem.interface_type)
@@ -227,7 +241,7 @@ function ThermalDistributed2D_BC(KT, FT, case::Case, t::Float64)
     # end
 
     # 使用 setup_thermal2D_mesh 预计算的边界缓存。
-    K, F = apply_convection_bc(K, F, mesh, nothing, case; edge_cache=case.geometry.boundary_edges)
+    K, F = apply_convection_bc(K, F, mesh, nothing, case; edge_cache=case.mesh["thermal2D boundary edges"])
     K, F = apply_cool_method(K, F, mesh, case, t)
     return K, F
 end
@@ -292,12 +306,19 @@ function ThermalRing2D_BC(KT, FT, case::Case, outer_nodes, t::Float64)
     return apply_convection_bc(KT, FT, mesh, is_outer, case)
 end
 
-function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union{Vector{<:Dict}, Nothing},I_e::Vector{Float64}, T_e::Vector{Float64},areas::Vector{Float64}; per_element_spme::Bool=false)
+function compute_heat_sources(case::Case, variables::Dict,variables_elems::Vector{<:Dict},I_e::Vector{Float64}, T_e::Vector{Float64},areas::Vector{Float64})
     mesh = case.mesh["thermal2D"]
     ne = size(mesh.element, 1)
     param = case.param
 
-    fks = case.geometry.layer_weights
+    fks = case.mesh["thermal2D layer weights"]
+    area_sum = sum(areas)
+    length(areas) == ne && all(x -> isfinite(x) && x > 0.0, areas) && isfinite(area_sum) && area_sum > 0.0 ||
+        throw(ArgumentError("Q_EL requires positive parent element areas"))
+    A_eff = variables["thermal2D effective area"]
+    length(A_eff) == ne && all(e -> isfinite(A_eff[e]) && 0.0 <= A_eff[e] <= areas[e], 1:ne) ||
+        throw(ArgumentError("Q_EL effective areas differ from the branch support"))
+    a = A_eff / area_sum
 
     # 从 variables 获取预分配的数组
     q_rxn_ne = variables["thermal2D q_rxn_ne"]
@@ -323,35 +344,20 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
     q_total = zeros(Float64, ne)
 
     for e in 1:ne
-        # 获取电化学变量（根据 per_element_spme 判断）
-        if per_element_spme
-            vars_e = variables_elems[e]
-            eta_n = vars_e["negative electrode overpotential"][1]
-            eta_p = vars_e["positive electrode overpotential"][end]
-            j_n = vars_e["negative electrode interfacial current density"]
-            j_p = vars_e["positive electrode interfacial current density"]
-            cn_surf = vars_e["negative particle surface lithium concentration"][1]
-            cp_surf = vars_e["positive particle surface lithium concentration"][end]
-            ce_n_gs = vars_e["electrolyte lithium concentration at negative electrode Gauss point"]
-            ce_p_gs = vars_e["electrolyte lithium concentration at positive electrode Gauss point"]
-            ce_sp_gs = vars_e["electrolyte lithium concentration at separator Gauss point"]
-            mesh_ne = case.mesh["negative electrode"]
-            mesh_pe = case.mesh["positive electrode"]
-            mesh_sp = case.mesh["separator"]
-        else
-            eta_n = variables["negative electrode overpotential"][1]
-            eta_p = variables["positive electrode overpotential"][end]
-            j_n = variables["negative electrode interfacial current density"]
-            j_p = variables["positive electrode interfacial current density"]
-            cn_surf = variables["negative particle surface lithium concentration"][1]
-            cp_surf = variables["positive particle surface lithium concentration"][end]
-            ce_n_gs = variables["electrolyte lithium concentration at negative electrode Gauss point"]
-            ce_p_gs = variables["electrolyte lithium concentration at positive electrode Gauss point"]
-            ce_sp_gs = variables["electrolyte lithium concentration at separator Gauss point"]
-            mesh_ne = case.mesh["negative electrode"]
-            mesh_pe = case.mesh["positive electrode"]
-            mesh_sp = case.mesh["separator"]
-        end
+        # 获取逐单元电化学变量
+        vars_e = variables_elems[e]
+        eta_n = vars_e["negative electrode overpotential"][1]
+        eta_p = vars_e["positive electrode overpotential"][end]
+        j_n = vars_e["negative electrode interfacial current density"]
+        j_p = vars_e["positive electrode interfacial current density"]
+        cn_surf = vars_e["negative particle surface lithium concentration"][1]
+        cp_surf = vars_e["positive particle surface lithium concentration"][end]
+        ce_n_gs = vars_e["electrolyte lithium concentration at negative electrode Gauss point"]
+        ce_p_gs = vars_e["electrolyte lithium concentration at positive electrode Gauss point"]
+        ce_sp_gs = vars_e["electrolyte lithium concentration at separator Gauss point"]
+        mesh_ne = case.mesh["negative electrode"]
+        mesh_pe = case.mesh["positive electrode"]
+        mesh_sp = case.mesh["separator"]
 
         T = T_e[e]
         I_local = I_e[e]
@@ -400,37 +406,45 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Union
         q_ohm_e_pe[e] = fks[e,3] * Q_ohm_e_PE
         q_pcc[e] = fks[e,4] * Q_PCC
         q_ncc[e] = fks[e,5] * Q_NCC
-        q_el[e] = (fks[e,1]+fks[e,3]) * Q_EL
+        # I_e is a local density; a_e converts Q_EL to signed branch power.
+        P_EL = case.param_dim.scale.P_ref * a[e] * Q_EL
+        V_th = areas[e] * case.param_dim.scale.L^2 * case.param_dim.cell.width
+        isfinite(P_EL) && isfinite(V_th) && V_th > 0.0 ||
+            throw(ArgumentError("invalid Q_EL power or parent volume"))
+        # Combined full NE/PE coating volume; this is not a surviving-material volume.
+        f_nepe = fks[e,1] + fks[e,3]
+        isfinite(f_nepe) && fks[e,1] >= 0.0 && fks[e,3] >= 0.0 ||
+            throw(ArgumentError("invalid Q_EL NE/PE layer fractions"))
+        V_nepe = V_th * f_nepe
+        isfinite(V_nepe) || throw(ArgumentError("nonfinite Q_EL NE/PE volume"))
+        if V_nepe > 0.0
+            q_el[e] = f_nepe * (P_EL / V_nepe) *
+                case.param_dim.cell.area * case.param_dim.scale.L / case.param_dim.scale.P_ref
+        elseif !iszero(P_EL)
+            throw(ArgumentError("nonzero Q_EL power has no NE/PE layer support"))
+        end
 
-        # 总热源
+        # All components now use the common raw scale P_ref/(A_cell L).
         q_total[e] = q_rxn_ne[e] + q_rev_ne[e] + q_ohm_s_ne[e] + q_ohm_e_ne[e] + q_sp[e] + q_rxn_pe[e] + q_rev_pe[e] + q_ohm_s_pe[e] + q_ohm_e_pe[e] + q_pcc[e] + q_ncc[e] + q_el[e]
     end
 
     # 写入 variables
-    variables["heat_source_fields"] = q_total * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_rxn_ne"] = q_rxn_ne * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_rev_ne"] = q_rev_ne * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_ohm_s_ne"] = q_ohm_s_ne * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_ohm_e_ne"] = q_ohm_e_ne * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_sp"] = q_sp * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_rxn_pe"] = q_rxn_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_rev_pe"] = q_rev_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_ohm_s_pe"] = q_ohm_s_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_ohm_e_pe"] = q_ohm_e_pe * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_pcc"] = q_pcc * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["thermal2D q_ncc"] = q_ncc * case.param_dim.scale.L^3 / case.param_dim.cell.volume
-    variables["total heat source"] = [dot(q_total, areas) * case.param_dim.scale.L^3 / case.param_dim.cell.volume]
+    # Normalize every component, including Q_EL, to the FEM scale P_ref/L^3.
+    variables["heat_source_fields"] = q_total * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_el"] = q_el * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_rxn_ne"] = q_rxn_ne * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_rev_ne"] = q_rev_ne * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_ohm_s_ne"] = q_ohm_s_ne * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_ohm_e_ne"] = q_ohm_e_ne * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_sp"] = q_sp * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_rxn_pe"] = q_rxn_pe * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_rev_pe"] = q_rev_pe * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_ohm_s_pe"] = q_ohm_s_pe * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_ohm_e_pe"] = q_ohm_e_pe * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_pcc"] = q_pcc * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["thermal2D q_ncc"] = q_ncc * case.param_dim.scale.L^2 / case.param_dim.cell.area
+    variables["total heat source"] = [dot(variables["heat_source_fields"], areas)]
 
     return variables
 end
 
-"""
-	compute_heat_sources_with_czm(case, variables, variables_elems, I_e, T_e, areas, czm_mesh, mesh_data)
-
-统一热源薄包装（任务59 P1）：直接委托 `compute_heat_sources`，按实际 I_e 计算各分量与总量。
-不再消费 fractured/D>=0.99（停流统一由无阈值面积失活承担），不覆写 heat_source_fields
-或总热源。保留原公开签名；`active_elements` 等活动诊断键由分流结果提供，本函数不改动。
-"""
-function compute_heat_sources_with_czm(case::Case, variables::Dict, variables_elems::Union{Vector{<:Dict}, Nothing}, I_e::Vector{Float64}, T_e::Vector{Float64}, areas::Vector{Float64}, czm_mesh, mesh_data)
-    return compute_heat_sources(case, variables, variables_elems, I_e, T_e, areas; per_element_spme=true)
-end

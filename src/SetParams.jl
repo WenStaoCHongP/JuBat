@@ -106,7 +106,7 @@ end
     δ_0_t::Float64 = 0.0
     G_c_t::Float64 = 0.0
     δ_c_t::Float64 = 0.0
-    eta::Float64 = 1.0      # BK 混合模式指数 [-]
+    eta::Float64 = 1.0      # mix 方向开度阈值插值指数（非能量 BK）[-]
     h_c0::Float64 = 1e7     # 界面热阻（md/07）
     k_air::Float64 = 0.026
     lambda_m::Float64 = 70e-9
@@ -154,10 +154,6 @@ end
     layer::Float64 = 0.0
     lambda_r::Float64 = 0.0
     lambda_t::Float64 = 0.0
-    # Thermal mesh divisions for jellyroll top-view (optional)
-    Nr_th::Int = 0
-    Nθ_th::Int = 0
-    n_windings::Int = 0
 end
 
 @with_kw mutable struct Tab
@@ -170,7 +166,7 @@ end
     sig_pos::Float64 = 0     # 正极耳（Al）电导率 [S/m]；0=不产热（参照 PCC.sig=3.55e7）
     sig_neg::Float64 = 0     # 负极耳电导率 [S/m]；0=不产热（镀镍铜参照 NCC.sig=5.96e7，纯镍耳≈1.43e7）
     thickness::Float64 = 0   # 极耳带厚 [m]；0=不产热（Li 2021 实测 165e-6）
-    power_scale::Float64 = 0 # 派生无量纲常数（NormaliseParam 预计算）：P* = P·L/(λ_r·W)
+    power_scale::Float64 = 0 # 点功率转二维载荷：L/H，物理功率还原为 P_ref*(H/L)*sum(F)
 end
 # param_dim.Tab.width = 0.75 * param_dim.Tab.length  
 # param_dim.Tab.area = param_dim.Tab.length * param_dim.Tab.width
@@ -483,9 +479,8 @@ function NormaliseParam(param_dim::Params)
     param.tab.sig_pos = param_dim.tab.sig_pos * param_dim.scale.L * param_dim.scale.phi / param_dim.scale.I_typ
     param.tab.sig_neg = param_dim.tab.sig_neg * param_dim.scale.L * param_dim.scale.phi / param_dim.scale.I_typ
     param.tab.thickness = param_dim.tab.thickness / param.scale.L
-    # 点功率注入因子（无量纲）：P* = P·L/(λ_r·W)，与 tab/表面 BC 的 λ_r·W 分母族同构
-    param.tab.power_scale = param_dim.scale.P_ref * param_dim.scale.L /
-        (param_dim.cell.lambda_r * param_dim.cell.width)
+    # I*²R* 为 P/P_ref；二维截面载荷除以无量纲高度 H/L。
+    param.tab.power_scale = param_dim.scale.L / param_dim.cell.width
     
     # CZM 界面字段归一化（PE-PCC 界面 = PCC，NE-NCC 界面 = NCC；2026-08-30 重构）
     # PCC（PE-PCC 界面）

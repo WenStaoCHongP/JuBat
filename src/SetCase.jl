@@ -5,6 +5,7 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
         Output: case 
     """
 
+    check_continuous_feedback(opt.czm)
     param = NormaliseParam(param_dim)
 
     # |--negative--|--separator--|--positive--|
@@ -13,7 +14,7 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
         mesh_np = SetMesh([0, param.NE.rs], opt.Nrn, opt.meshType, opt.gsorder)
         # positive particle
         mesh_pp = SetMesh([0, param.PE.rs], opt.Nrp, opt.meshType, opt.gsorder)
-        mesh = Dict("negative particle"=> mesh_np, "positive particle"=>mesh_pp)
+        mesh = Dict{String,Any}("negative particle"=> mesh_np, "positive particle"=>mesh_pp)
         index = Dict(
             "negative particle lithium concentration"=> collect(1:mesh_np.nlen),
             "positive particle lithium concentration"=> mesh_np.nlen .+ collect(1:mesh_pp.nlen),
@@ -36,7 +37,7 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
             index["electrolyte lithium concentration"] = v0 .+ collect(1:mesh_el.nlen)
             index["electrolyte lithium concentration in negative electrode"] = v0 .+ collect(1:mesh_el_ne.nlen)
             index["electrolyte lithium concentration in positive electrode"] = v0 + mesh_el.nlen .- collect(mesh_el_pe.nlen - 1:-1:0)
-            index["electrolyte lithium concentration in separator"] = v0 + mesh_el_ne.nlen .+ collect(1: mesh_el_sp.nlen)
+            index["electrolyte lithium concentration in separator"] = v0 + mesh_el_ne.nlen - 1 .+ collect(1: mesh_el_sp.nlen)
             v0 += mesh_el.nlen
         end
     elseif opt.model == "P2D"
@@ -53,7 +54,7 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
         mesh_nps = MultipleMesh(mesh_np, mesh_el_ne.nlen)
         mesh_pps = MultipleMesh(mesh_pp, mesh_el_pe.nlen)
 
-        mesh = Dict(
+        mesh = Dict{String,Any}(
             "negative particle" => mesh_nps, 
             "positive particle" => mesh_pps,
             "electrolyte" => mesh_el,
@@ -91,6 +92,9 @@ function SetCase(param_dim::Params, opt::Option, y0::Array=[])
         index["electrolyte potential in separator"] =  v0 + mesh_el_ne.nlen - 1 .+ collect(1: mesh_el_sp.nlen)
     end
     case = Case(param_dim, param, opt, mesh, index)
+    if opt.model == "SPMe" && opt.per_element_spme
+        initialize_spme_matrices!(case)
+    end
     return case
 end
 
@@ -99,15 +103,6 @@ mutable struct Case
     param_dim::Params                      # dimensional parameters
     param::Params                          # dimensionless parameters
     opt::Option                            # solver options
-    mesh::Dict{String, Mesh}               # discretisation meshes
+    mesh::Dict{String, Any}               # discretisation meshes
     index::Dict{String, Union{Array{Int64}, Int64}} # indices of unknowns
-    layout::Union{Nothing, MultiSPMeLayout}   # 布局索引（初始化后不变）
-    geometry::Union{Nothing, MeshGeometry}   # 几何拓扑（构建后不变）
-    czm_mesh::Union{Nothing, CohesiveMesh}   # CZM 网格（演化但类型明确）
-    mech::Union{Nothing, MechState}      # CZM 布局+u_prev（跨时间步）
-end
-
-# 5 参数兼容构造器
-function Case(param_dim, param, opt, mesh, index)
-    Case(param_dim, param, opt, mesh, index, nothing, nothing, nothing, nothing)
 end

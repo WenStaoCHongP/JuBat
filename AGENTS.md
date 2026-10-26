@@ -1,474 +1,78 @@
-# AGENTS.md
-
-本文档为 Codex 提供 JuBat 项目中 **Jellyroll 果冻卷电池 SPMe-二维分布式热-CZM 耦合模型**的开发指导。
-
----
-
-## 1. 项目概述
-
-JuBat 是基于 Julia 的电池建模框架，采用二阶有限元方法 (FEM) 求解方程。本项目专注于 **Jellyroll（果冻卷）型号电池**的多物理场耦合仿真：
-
-| 物理场 | 模型 | 技术文档（KB raw 底稿） |
-|--------|------|----------|
-| 电化学 | SPMe (Single Particle Model with electrolyte) | `KB/raw/repos/jubat/md-raw/04_电化学模型_SPMe.md` |
-| 热学 | 二维分布式热模型 (各向异性导热) | `KB/raw/repos/jubat/md-raw/05_热模型_二维分布式.md` |
-| 力学 | 内聚力模型 (CZM) | `KB/raw/repos/jubat/md-raw/06_内聚力模型_CZM.md` |
-| 耦合 | 界面热阻模型 | `KB/raw/repos/jubat/md-raw/07_界面热阻模型.md` |
-
-**参考文献**: W. Ai, Y. Liu, Improving the convergence rate of Newman's battery model using 2nd order finite element method, J. Energy Storage. 67 (2023) 107512.
-
----
+# JuBat 项目协作规则
 
-## 2. 技术文档索引
-
-> **2026-09-09 迁移**：原 `md/` 手册与 `test/`、`tools/` 已迁出至知识库
-> `KB = D:/OneDrive/Desktop/lib知识库/lib-knowledge-base`（下称 KB）。
-> - 原始手册底稿（只读）：`KB/raw/repos/jubat/md-raw/`（原 `md/` 全部 65 文件，含 `对照/`、`源码函数索引/`）
-> - 编译后互链文章：`KB/wiki/concepts|topics/`（一模型一文；SPMe/CZM 与既有文献概念互链）
-> - `test/`、`tools/` 快照：`KB/raw/repos/jubat/{test,tools}/`；工作区恢复用仓库根 `restore-from-kb.jl`
-> - docs 历史归档：`KB/raw/repos/jubat/docs-archive/`
-
-### 第一层：参数与基础 (01-03)
-| 编号 | 底稿（KB/raw/repos/jubat/md-raw/） | 内容 |
-|------|------|------|
-| 01 | `01_参数定义与归一化.md` | 物理参数、电化学/热学/机械归一化、Jellyroll专用参数 |
-| 02 | `02_几何与网格.md` | 阿基米德螺旋线、collector-seeded网格、COH2D4单元、CohesiveMesh结构 |
-| 03 | `03_边界条件.md` | 侧面/极耳冷却、界面热阻边界条件 |
+JuBat：Julia 的 Jellyroll SPMe–二维热–CZM 耦合模型。此文件是项目规则的维护入口；技术导航与历史配置见 [PROJECT_REFERENCE.md](PROJECT_REFERENCE.md)，理论编辑另读 [Theory/CLAUDE.md](Theory/CLAUDE.md)。
 
-### 第二层：模型实现 (04-07)
-| 编号 | 底稿（KB/raw/repos/jubat/md-raw/） | 内容 |
-|------|------|------|
-| 04 | `04_电化学模型_SPMe.md` | 颗粒扩散、电解液守恒、Butler-Volmer、机械耦合 |
-| 05 | `05_热模型_二维分布式.md` | 能量方程、分层热源、各向异性导热、极坐标FVM |
-| 06 | `06_内聚力模型_CZM.md` | 双线性牵引-分离律、CZMResult结构、热-化学载荷 |
-| 07 | `07_界面热阻模型.md` | 间隙导热系数、损伤耦合、使用建议 |
+## 1. 工作与证据边界
 
-### 第三层：算法与求解 (08-10)
-| 编号 | 底稿（KB/raw/repos/jubat/md-raw/） | 内容 |
-|------|------|------|
-| 08 | `08_逐单元算法.md` | 多SPMe并行架构、状态向量设计、分层热源计算 |
-| 09 | `09_分流求解器.md` | Newton-Raphson分流、截止电压检测、CZM失效处理 |
-| 10 | `10_参数传递与模块架构.md` | Case/variables结构、CycleSolver、耦合数据流 |
+- 修改前确认实际工作目录和相关未提交差异；行为修改再核对受影响调用者与数据契约，科学对照/回滚/提交时记录分支与源码身份。问答、文档或机械修改不做无关的全库审计/哈希。不同 JuBat 克隆、历史候选、局部验证、源码集成和生产物理验收不得互相替代。
+- 保留无关修改；只暂存、恢复或清理明确范围。清理/回滚先列路径、备份并校验，事后核对未涉及文件及 HEAD/index；不批量 stash/reset/clean。
+- 历史记忆用于定位证据；“库内记录”不等于本次复现，“计划完成”不等于实现，“日期最新”不自动代表有效。结论注明源码身份、配置、工况和验证范围。
+- 必需的物理状态必须来自真实来源。缺失状态、形状/有限性错误和未收敛必须显式失败；不得补零、沿用旧值、截断、取首项、跳过计算或吞异常后继续。
+- 所有参数在传递时不得添加无明确根本理论依据的兜底回退。不得用 `haskey`、`get(..., default)`、`? :`、`nothing` 分支等，把缺失或非法参数/状态静默替换为默认值、零值、旧值或另一来源，使数值错误无法暴露。必需数据直接从真实来源读取，缺失即显式失败；检查后报错及有明确物理定义的模式分支、首次初始化不属于兜底，但不能用于重建已丢失的运行历史。
+- 每次提交前审查当前未提交 `src/` 的实际差异，涵盖暂存、未暂存及未跟踪源码；重点检查新增或改变的 `? :`、`haskey`、`get`/`get!` 默认值、`nothing`、零值/旧值/另一来源替代、提前跳过和吞异常等，结合真实数据来源与调用合同逐项判断并记录位置和依据。明确物理模式、首次初始化及显式报错不因条件语法本身被禁止；必需状态缺失或非法后仍静默继续的路径须阻止提交并定位修复。同一差异已有适用审查证据可复用，审后新增差异再审查；该审查不代表自动确保无错。
+- 保留现有显式契约检查；删除须在独立简化批次证明原生赋值/索引/求解仍显式失败，并通过相关完整正常路径与适用行为基线。新增检查针对真实输入、状态提交或公开契约边界；不在每层重复检查同一条件，不为假设性风险扩建测试。
+- 重复、规则明确且适合自动化的检查，优先整理为可复用的 Python 脚本，避免反复拼临时命令；例如源码身份、文字指标对照、文件同步哈希和文书结构/链接检查。检查器保持只读，失败明确报错并非零退出；复制、删除、提交与检查分开执行。脚本替代机械重复，不替代物理判断，也不因整理脚本而重跑已有有效仿真或扩大检查范围。
+- 科学失败先建立生产路径回归及回滚/验收契约；不得靠放宽容差、增加预算、跳过失败步或改变物理开关宣称修复。单因素对照从相同初态开始。
 
-### 第四层：验证方案 (11-13)
-| 编号 | 底稿（KB/raw/repos/jubat/md-raw/） | 内容 |
-|------|------|------|
-| 11 | `11_电化学验证方案.md` | SPMe验证、验收标准 |
-| 12 | `12_热模型验证方案.md` | 圆环精确解、FVM验证 |
-| 13 | `13_耦合验证方案.md` | 电-热-CZM全耦合验证 |
-
----
-
-## 3. 快速开始
-
-### 3.1 模块加载
-
-```julia
-include("src/JuBat.jl")
-using .JuBat
-```
-
-### 3.2 基础仿真流程
+## 2. 科学与状态契约
 
-```julia
-# 1. 选择 Jellyroll 电池参数
-param_dim = JuBat.ChooseCell("Jellyroll")
+- 统一归一化：`t₀=3600 s`、`T_ref=298 K`、`L=t_PE+t_SP+t_NE`、`P_ref=φ_ref×I_typ`。网格面积无量纲，物理面积乘 `scale.L^2`；`scale.q=P_ref/L³`，电化学/热学不另加时间缩放。
+- `PE.E/NE.E` 是颗粒模量；`PE.E_coat/NE.E_coat` 是涂层宏观模量；连续层用各自 `E`。bulk 不作全叠合厚度加权；该加权仅用于参考尺度 `scale.E_coat`。不得恢复已废弃的 bulk `E_eff` 路径。
+- `SetCase` 归一化后冻结 `param`，保证装配缓存有效；缺失必需模量不得补零。界面参数属于 `CurrentCollector`（PCC/NCC），逐层模量经 `moduli_of`。
+- 会话 `variables["accepted"]` 只保存普通 `(y, mech, t_global)` 续算记录，`mech::MechState` 持有位移、损伤、塑性、预应力和参考节点。各物理模块负责求解有效性与收敛；主循环在候选计算和必要输出准备成功后赋值，失败不污染旧状态、历史或快照。力学 `mechanics_initialized` 记录是否真正完成过推进，恢复时必需历史不得重建补零。相位入口设置 `case.opt.time = [0.0 t_max]` 和 `case.opt.dt = dt_range`，退出（含异常）恢复两者原数组引用，`Solve` 直接读取这两项配置。机械调度计数和待积步长为相位内局部变量；`variables["history"]` 保存输出历史，`variables["czm_workspace"]` 仅为会话缓存，不进入物理 checkpoint。BC 每次求解入口计算，不缓存。
+- 循环通过 `final_state → initial_state` 传递，损伤跨周期累积；温度随接受态逐步、逐相位及逐周期继承，不重置温度。
+- 电流直接读取 `case.opt.Current`：相位作用域保存原函数，放电沿用原波形、充电仅反号、静置置零，退出（含异常）恢复原函数；不在步内改写 `opt.time/dt`。
+- 力学/CZM 直接继承热网格实际角节点；禁止独立 `nθ_czm` 或重造角度数组。`thermal_elem_map` 由共享角段的父子拓扑构造。
+- 层序 PE→PCC→PE→SP→NE→NCC→NE→SP。cohesive 为 2 种材料类型（PE_PCC/NE_NCC）、每重复单元 4 个真实面、离散数 `4*(length(theta)-1)`；`phi_pairs` 为跨匝配对，不计入 cohesive 数。
+- CZM 配置用 `opt.czm.*`；网格生成关键字仍为 `czm_enabled`。边界的外/内圈、起/终点与 a/b 特殊端点语义必须分别核对；CZM 与 bonded 路径保持同语义，计数按实际网格验证。
+- `Current` 默认零电流，带载必须显式设置。`soh` 属于 `CyclingResult.soh`，不是单次求解 result 字典键。结果键、单位、CSV 列及有效状态语义属于公开契约。
 
-# 2. 配置选项
-opt = JuBat.Option()
-opt.model = "SPMe"
-opt.thermal_enabled = true
-opt.thermalmodel = "distributed2D"
-opt.per_element_spme = true
-opt.czm.enabled = true
-opt.mechanicalmodel = "full"
-
-# 3. 创建案例
-case = JuBat.SetCase(param_dim, opt)
-
-# 4. 创建热网格 (Jellyroll 专用)
-mesh_data = JuBat.jellyroll_collector_seed_mesh(param_dim; nθ=80, gsorder=2)
-case = JuBat.setup_thermal2D_mesh(case, mesh_data)
-
-# 5. 求解
-result = JuBat.Solve(case)
-```
-
-### 3.3 循环仿真
-
-```julia
-cycle_opt = JuBat.CycleOption(
-    n_cycles = 50,
-    I_charge = 5.0,
-    I_discharge = 5.0,
-    t_charge = 3600,
-    t_discharge = 3600,
-    V_upper = 4.2,
-    V_lower = 2.5,
-    SOC_init = 0.05
-)
-result = JuBat.solve_cycling(case, cycle_opt)
-```
-
----
-
-## 4. 核心架构
-
-### 4.1 多 SPMe 并行架构
-
-当 `opt.per_element_spme = true` 时，每个热单元拥有独立的 SPMe 模型：
-
-```
-状态向量结构:
-yt_global = [yt_chem[1]; yt_chem[2]; ...; yt_chem[ne]; T_nodes]
-
-每个单元状态:
-yt_chem[e] = [cn_surf[1:Nrn]; cp_surf[1:Nrp]; ce[1:Nel]]
-
-矩阵结构:
-M_global = blockdiag(M_elems..., MT)
-```
-
-详见 `KB/raw/repos/jubat/md-raw/08_逐单元算法.md`。
-
-### 4.2 Jellyroll 几何
-
-采用阿基米德螺旋线描述：`r(θ) = a + bθ`
-
-- 内半径 `a = R_in`
-- 螺旋增长率 `b = t_repeat / (2π)`
-- 层序: PE → PCC → PE → SP → NE → NCC → NE → SP
-
-详见 `KB/raw/repos/jubat/md-raw/02_几何与网格.md`。
-
-### 4.3 耦合数据流
-
-```
-SPMe (电化学)
-    │ 传递内热源 q_e (反应热+可逆热+欧姆热)
-    ▼
-Thermal2D (热模型)
-    │ 传递单元均温 T_e
-    ▼
-SPMe (温度影响反应速率、电导率)
-    │
-    │ 传递扩散应力 + 热应力
-    ▼
-CZM (内聚力模型)
-    │ 传递损伤状态 D
-    ▼
-┌─────────────────────────────┐
-│ 分流求解器 (影响电流分布)    │
-│ 界面热阻模型 (影响层间导热)  │
-└─────────────────────────────┘
-```
-
-详见 `KB/raw/repos/jubat/md-raw/10_参数传递与模块架构.md`。
-
----
-
-## 5. 关键配置选项
-
-### 5.1 Option 结构 (`src/Option.jl`)
-
-| 字段 | 默认值 | 说明 |
-|------|--------|------|
-| `model` | "SPM" | 模型类型，Jellyroll 用 "SPMe" |
-| `Nrp`, `Nrn` | 10 | 正/负极颗粒网格点数 |
-| `Np`, `Ns`, `Nn` | 10 | 电极/隔膜网格点数 |
-| `gsorder` | 2 | 高斯积分阶数 |
-| `Current` | x->0 | 电流函数 I(t)（默认零电流静置；带载工况须显式设置） |
-| `time` | [0, 3600] | 仿真时间范围 |
-| `dt` | [1e-6, 10] | 自适应时间步范围 |
-| `solveType` | "Crank-Nicolson" | 时间离散格式 |
-
-### 5.2 热学选项
-
-| 字段 | 默认值 | 说明 |
-|------|--------|------|
-| `thermal_enabled` | false | 启用热耦合 |
-| `thermalmodel` | "none" | 热模型类型，用 "distributed2D" 或 "ring2D_polar" |
-| `cool_method` | "surface" | 冷却方式: "surface" 或 "tab" |
-| `per_element_spme` | false | 启用逐单元 SPMe |
-
-### 5.3 机械/CZM 选项（opt.czm 嵌套子结构，2026-08-30 重构）
-
-`Option` 上的 CZM 选项收敛为 `opt.czm::CzmOptions` 嵌套结构（20 字段，同名去 `czm_` 前缀）：
-
-| 字段（`opt.czm.X`） | 默认值 | 说明 |
-|------|--------|------|
-| `mechanicalmodel`（顶层） | "none" | 机械模型，用 "full" |
-| `czm.enabled` | false | 启用 CZM |
-| `czm.model` | "model1" | 本构选择（"model1"/"mix"） |
-| `czm.update_interval` | 1 | 损伤更新间隔 |
-| `czm.iter_method` | "basic" | CZM 迭代方法（"basic"/"load_substep"/"arc_length"） |
-| `czm.max_iter` / `czm.tol` | 100 / 1e-4 | Newton 迭代上限与容差 |
-| `czm.load_steps` | 2 | 载荷子步数 |
-| `czm.arc_length_alpha` | 1.0 | 弧长法系数 |
-| `czm.viscous_enabled` / `czm.viscous_tau` | false / 0.0 | 粘性正则化开关与松弛时间 [s] |
-| `czm.geo_nonlinear` | false | 完全 GL/TL 残差 + 初应力 K_G |
-| `czm.winding_prestress` | false | 卷绕预应力 σ₀ |
-| `czm.j2_plasticity` | false | PCC/NCC J2 塑性 |
-| `czm.area_loss_enabled` | false | 渐进式有效面积损失（无阈值 factor=1−D，任务59 P1；D=1 支路面积失活、I_e=0，全失活带载报错/静置 status=4 诊断） |
-| `czm.fix_inner` | true | 机械边界模式（任务59 P2）：true=固定 O∪I∪S∪E（含双重属性端点 a/b）；false=固定 O∪(E\{b})——全部层起点 S 释放、a 具外圈属性仍固定、b 自由。CZM 关闭的 bonded 路径同步消费 a_B/b_B 圈属性（true O_B∪I_B / false O_B）。nθ=80 计数：CZM true 81/81/184、false 0/81/92 |
-| `czm.outer_bc` / `czm.fix_start` / `czm.fix_end` | :fixed_xy / nothing / nothing | 任务62 公开边界配置：外圈 :fixed_xy\|:radial_slide（径向小位移滑移，geo=true 拒绝）；fix_start/fix_end 显式布尔增加/不增加所有材料层起点 S/终点 E 的二维固定，nothing=沿用 fix_inner 旧规则；CZM 与 bonded 路径同语义 |
-| `czm.endpoint_variant` | :keep | 特殊端点实验选择（任务62，2026-10-09 用户裁决公开化）：:keep\|:omit_a\|:omit_b\|:omit_ab——omit 删除对应点（a=卷绕起点端子，人工外圈属性；b=卷绕末端端子，人工内圈属性，仅 fix_inner=true 激活）的人工圈属性补充与 S/E 端点固定贡献，保留真实几何 O/I 支承；非法值在求解入口报错。任务62 对照结论：E1_omit_b ≡ 任务59 旧规则约束集合；omit_a 显著改变接缝损伤位置与收敛性（S0_E0 keep 完成 vs omit_a 492 步失稳） |
-| `czm.soh_threshold` | 0.8 | SOH 终止阈值 |
-| `czm.friction_mu` | 0.10 | SP Coulomb 摩擦（Batch 8 预留） |
-
-其余字段（`inner_exit_only`、`continuous_feedback` 等）见 `src/Option.jl` 的 `CzmOptions` 定义。
-
----
-
-## 6. 输出变量
-
-### 6.1 基础变量
-
-| 键 | 类型 | 说明 |
-|----|------|------|
-| `time [s]` | Vector | 时间序列 |
-| `cell voltage [V]` | Vector | 端电压 |
-| `temperature` | Float64 | 体积平均温度 (K) |
-
-### 6.2 热学变量
-
-| 键 | 说明 |
-|----|------|
-| `thermal2D temperature [K]` | 节点温度场 |
-| `thermal2D element current` | 各单元电流 |
-| `thermal2D element area` | 各单元面积 |
-| `heat_source_fields` | 各单元热源 |
-
-### 6.3 分层热源 (W/m³)
-
-| 键 | 说明 |
-|----|------|
-| `thermal2D Q_rxn_NE [W/m3]` | 负极反应热 |
-| `thermal2D Q_rev_NE [W/m3]` | 负极可逆热 |
-| `thermal2D Q_SP [W/m3]` | 隔膜欧姆热 |
-| `thermal2D Q_rxn_PE [W/m3]` | 正极反应热 |
-| `thermal2D Q_PCC/NCC [W/m3]` | 集流体欧姆热 |
-
-### 6.4 CZM 变量
+## 3. 验证门与当前基线边界
 
-| 键 | 说明 |
-|----|------|
-| `czm D_max` | 最大损伤值 |
-| `czm D_mean` | 平均损伤值 |
-| `czm n_fractured` | 完全断裂数量 |
-| `czm δ_max_n [m]` / `czm δ_mean_n [m]` | 最大/平均法向分离 |
-
-注意：`soh` 不是单次求解 result 字典的键，而是 `CyclingResult.soh::Vector{Float64}` 字段（`cycle_summary.csv` 中同名列）。
-
----
-
-## 7. 代码文件组织
-
-### 7.1 核心求解
-
-| 文件 | 功能 |
-|------|------|
-| `src/Solve.jl` | 主求解器（时间推进、纯热分支） |
-| `src/CallModel.jl` | 模型调度：CallModel、CallModel_MultiSPMe |
-| `src/SPMe.jl` | SPMe 模型、SPMe_element |
-| `src/CycleSolver.jl` | 循环求解器、PhaseResult/CycleResult |
-
-### 7.2 热模型
-
-| 文件 | 功能 |
-|------|------|
-| `src/ThermalDistributed.jl` | 二维分布式热模型、边界条件 |
-| `src/ThermalPolar2D.jl` | 极坐标 FVM 求解器 |
-
-### 7.3 CZM
+**已有明确结论任务的延期验证约定（2026-10-24）**：已有明确结论、修改范围清楚的任务，可以先仅修改源码，不逐项运行测试或基线；待用户评审后，再对最终候选统一做一次适用基线验证。此流程下，下述逐项测试与开发小步检查不作为立即执行要求，不自行补跑整套专项测试。评审前状态记为“已修改，待用户评审/验证”，不能称为“已验证”或“验收通过”；修改前的必要调用/契约核对和修改后的差异审查仍保留。遇到会改变既有结论的新问题，先说明问题及影响，不将其默认为继续扩大测试的授权。
 
-| 文件 | 功能 |
-|------|------|
-| `src/CzmMesh.jl` | CZM 界面单元拓扑与 `create_czm_mesh` |
-| `src/czm.jl` | CZM 损伤状态、材料映射与系统装配 |
-| `src/CzmBC.jl` | CZM 边界条件：Cartesian 罚法、边界节点识别、`resolve_mechanical_bc` 支承/端点约束解析（MechanicalBoundary + endpoint_variant 过滤）、方向正交消元与刚体转动规范（MechanicalBCDOFs，2026-10-09 自 MechanicalBC.jl/MechanicalBCSolve.jl 合并） |
-| `src/CzmSolve.jl` | Newton-Raphson CZM 求解 |
-| `src/Mechanical.jl` | 应力计算 |
-
-### 7.4 Jellyroll
-
-| 文件 | 功能 |
-|------|------|
-| `src/Jellyrollmodel.jl` | 螺旋几何、collector-seeded网格 |
-| `src/parameters/Jellyroll.jl` | Jellyroll 参数集 |
+按行为影响选择验证，不按文件数、行数或工具调用次数分级：
 
-### 7.5 并行求解
+| 修改范围 | 必要验证 |
+|---|---|
+| 问答、文档、注释、格式等不改变运行行为 | 核对相关内容/差异，必要时检查链接或渲染；不运行 Julia 仿真，不新增代码测试 |
+| 局部工具或非科学行为 | 受影响的现有测试或代表性路径；仅为未覆盖的具体行为/真实缺陷补测试 |
+| 方程、归一化、网格、求解器、接受态提交/回滚、科学输出契约及相关行为重构 | 生产路径回归或关键小算例、受影响测试，以及最终候选的一次适用文字基线；长循环只在历史依赖风险或明确验收要求下运行 |
 
-| 文件 | 功能 |
-|------|------|
-| `src/Parallelsolution.jl` | 分流求解器、solve_branch_currents_newton |
+一行热源尺度修改也属于科学行为修改。开发小步使用受影响检查；最终候选完成后运行一次适用的 `example/testexample.jl` 文字对照，已有覆盖该候选的有效结果可复用。先读 [Simplify/baseline.md](Simplify/baseline.md)，明确该批适用的参考版本与配置；没有适用基线时先明确验收方案，不自动套用历史指标或重新冻结。
 
----
+记录足以判断适用性的源码/差异、命令、配置和结果。相关代码、依赖、配置、输入和环境未变且结果完整时，执行者、评审者和最终答复共用证据；不因阶段切换重复运行。相关变化、新失败/疑点或偶发性调查才重跑受影响范围；验证通过后不追加无具体目的的加固测试。
 
-## 8. 调试与验证
+- 固定运行口径：Julia 1.11.2，`-t1 --startup-file=no`，`OPENBLAS_NUM_THREADS=1`，`GKSwstype=100`，nθ=20、60 s。
+- 检查退出码、网格/步数及科学结果（含应力文字指标），按记录精度一致。耗时只供参考；强制指标不一致即停止后续批次并定位/回退，不能以“数值接近”代替通过。
+- 2026-10-20 裁决：简化基线不生图、不运行 `couple_example.jl`、不设 PNG 哈希门；绘图功能仅在另行要求时验证。历史 PNG 证据仍保留为历史。
+- 2026-10-21 P1 专项：目标为 3df40fe 原生求解器，v12 只属混合候选历史。相同配置 reference/candidate 的 17 结果＋3 网格＋退出码精确对照仅是本批证据；不重冻结，不等于完整物理验收，也不自动作为后续批次基线。
+- 多线程耗时、粗网格短程通过、单圈或 ON/OFF 对照均限于实测配置；不得扩大为生产网格、多圈或其他物理开关已通过。
 
-### 8.1 调试选项
+测试/工具的归档源在 `KB/raw/repos/jubat/{test,tools}/`。先检查本地已有文件，缺少时用 `julia restore-from-kb.jl --what test`（tools 同理）；修改后按项 `--sync` 回写并提交 KB。清理只针对本次恢复且已验证回写的副本，不整目录删除已有测试或未备份诊断。
 
-```julia
-opt.debug_coupling = true
-opt.debug_log_path = "output/debug.log"
-```
+允许合理删除已确认过时、与当前接口或物理状态合同不兼容的测试夹具及其依赖，无需逐项再次确认；结合实际验证价值决定删除或替换，不能为消除真实失败而删除有效回归，也不因删除夹具自动删除历史证据。
 
-### 8.2 验证脚本
+## 4. 接触与摩擦扩展
 
-热模型验证脚本位于 `example/热模块验证/`：
+理论中的接触模型不能证明源码已经实现。共享节点/完美粘结及 Φ 配对不能解释为 SP–PE/SP–NE 单边接触、滑移或 Coulomb 摩擦。
 
-| 文件 | 说明 | 状态 |
-|------|------|------|
-| `thermal_verify.jl` | 圆环精确解验证 | ✓ 已更新 |
-| `thermal_error_source_analysis.jl` | 热误差来源分析 | ✓ 已修正几何尺度 (2026-03-15) |
-| `thermal_equivalent_lumped_compare.jl` | 2D等效集总量对比 | ✓ 已修正几何尺度 (2026-03-15) |
+后续扩展须复用 `phi_pairs` 与内部界面双侧节点，单独建立接触状态、间隙、法向罚/增广 Lagrange 和切向 stick-slip 方程，不并入 COH2D4 牵引–分离本构。无可靠证据不得伪造 SP–涂层 `G_c/T_max`；摩擦参数须有实验或明确文献依据。新增零穿透、零抗拉、摩擦锥、stick/slip、Φ 配对完整性测试及适用文字基线。
 
-**重要说明**：
-- 验证脚本已更新以使用统一归一化方案
-- 网格坐标已归一化（`x* = x / L`），从网格积分得到的 `A_elem` 是无量纲面积
-- 计算物理功率时必须乘以 `scale.L^2` 转换为物理面积
-- 详见 `KB/raw/repos/jubat/docs-archive/thermal_verify/`（原 docs/plans，已归档）
+## 5. 文档、计划与输出
 
-### 8.3 常见问题
-
-| 问题 | 解决方案 |
-|------|----------|
-| 收敛困难 | 减小 `dt_max`，检查参数归一化 |
-| 温度异常 | 检查热源计算、边界条件 |
-| CZM 不收敛 | 降低 `czm_update_interval`，检查刚度参数 |
-| 截止电压误触发 | 检查分流求解器预因子 |
-| 功率计算量级异常 | 检查是否正确使用 `scale.L^2` 转换无量纲面积 |
-| 热源归一化错误 | 确保使用 `scale.q = P_ref / L³` 进行归一化 |
+`KB = D:/OneDrive/Desktop/lib知识库/lib-knowledge-base`。
 
----
+- 手册底稿只读：`KB/raw/repos/jubat/md-raw/`；互链知识：`KB/wiki/concepts|topics/`；历史归档：`KB/raw/repos/jubat/docs-archive/`。沿用现有结构与索引，不另建平行知识体系。
+- 只有用户要求持久计划、跨会话、复杂依赖或多阶段科学证据需要追踪时才使用 planning-with-files；普通研究和短修改用会话内简短安排即可，不按工具调用次数建档。启用后，三件套放在 `docs/planning-with-files/<简短中文任务名>/`，不放根目录。增删/迁移后更新 [任务索引](docs/planning-with-files/index.md) 的说明、日期、Git 修改次数及跟踪状态。
+- 已建立计划目录的任务完成后，归档到 `KB/raw/repos/jubat/docs-archive/planning-with-files/`，校验后删除对应本地任务目录；索引标记“已归档 KB + 日期”。未完成/挂起任务保留。
+- 脚本输出到 `output/<脚本文件主干>/`；基于 `@__DIR__`（其他语言用脚本自身目录）构造路径，目录不存在时创建，不依赖 cwd。同脚本可覆盖自身旧输出。用户明确指定位置时按指定位置执行。
+- 任务状态与数值证据放对应任务记录；本文件只维护稳定契约和必要的当前裁决，避免复制整份手册或实验日志。
 
-## 9. 开发约定
+## 6. GPT-6 Astra / GPT-6.1sol 或 zcode 分工
 
-### 9.1 无量纲化（统一归一化方案）
+启用子代理功能时，可根据任务需要自动委派适合独立处理的子任务，并按各子任务的复杂程度、科学风险和不确定性选择模型支持的思考强度，无需逐次确认。简单明确任务采用较低强度，跨模块、科学模型、状态契约或复杂排错采用较高强度；不为简单任务强行拆分。思考强度选择不改变以下模型分工及验收要求。
 
-> **重要更新 (2026-03-12)**: JuBat 采用**统一时间尺度**和**统一能量尺度**策略。
+使用 GPT-6 Astra 时，它只制定/拆解任务、评审方案与执行结果，以及修改计划、方案和评审意见。源码修复、具体代码修改、运行脚本/测试及简单执行任务交给 GPT-6.1sol 或 zcode；交接须明确范围、约束与验收标准，返工仍由所选执行者完成。
 
-内部计算使用无量纲变量，参数在 `NormaliseParam` 中归一化：
-
-**统一参考尺度**：
-- **时间尺度**: `t_0 = 3600` s（电化学与热模型统一）
-- **功率尺度**: `P_ref = φ_ref × I_typ`（统一能量尺度）
-- **长度尺度**: `L = t_PE + t_SP + t_NE`（电极堆叠厚度）
-- **温度尺度**: `T_ref = 298` K
-- **电流尺度**: `I_typ`（1C 电流）
-
-**热参数归一化**（基于能量守恒原则）：
-- **密度**: `ρ* = ρ / ρ_ref`
-- **比热容**: `c* = c × ρ_ref × L³ × T_ref / (t_0 × P_ref)`
-- **体积热容**: `(ρc)* = ρc × L³ × T_ref / (t_0 × P_ref)`
-- **导热率**: `k* = k × L × T_ref / P_ref`
-- **热源**: `q* = q × L³ / P_ref`（即 `q* = q / scale.q`）
-
-**关键特征**：
-- 电化学和热模型使用相同时间尺度，无需额外时间缩放因子
-- 所有热参数归一化基于统一的电功率参考 `P_ref`
-- 网格坐标已归一化（`x* = x / L`），因此网格积分得到的面积是无量纲的
-
-**结果还原**：
-结果需通过 `param_dim.scale` 中的参考值还原为物理单位。
-
-详见 `KB/raw/repos/jubat/md-raw/01_参数定义与归一化.md`。
-
-### 9.2 状态管理
-
-- 循环仿真中，`final_state` 作为下一相位的 `initial_state`
-- 损伤状态跨周期累积
-- 可通过 `reset_T_each_cycle = true` 重置温度
-
-### 9.3 网格分辨率
-
-- `nθ` 同时控制热网格与分层力学/CZM 网格的周向分辨率 (典型值 80-200)；力学网格必须直接继承热网格的实际角节点，不得另设 `nθ_czm` 或独立角度数组
-- CZM 求解选项用 `opt.czm.enabled=true` 启用；网格生成器的对应关键字仍为 `czm_enabled=true`。`thermal_elem_map` 必须由共享角段的父子拓扑直接构造
-- `CzmSubmesh.phi_pairs` 保存 `(outer_node_at_θ, inner_node_at_θ+2π)` 力学匝间配对，供后续接触/约束装配使用
-- cohesive 计数统一为：2 种本构/材料类型（`:PE_PCC`、`:NE_NCC`），每个 8 层卷绕重复单元 4 个真实箔–涂层面，完整离散单元数 `4 * (length(theta)-1)`；`phi_pairs` 不参与该计数
-- `gsorder` 控制积分精度 (2-3)
-- 平衡精度与计算成本
-
-### 9.4 弹性模量字段层级（颗粒 vs 极片）
-
-JuBat 区分两个尺度的弹性模量，**不可混用**：
-
-| 字段 | 物理对象 | 典型值 | 用于 |
-|------|----------|--------|------|
-| `PE.E` / `NE.E` | 活性物质**颗粒**（particle） | ~1e10 Pa | 颗粒扩散应力（`Calstressdisp`） |
-| `PE.E_coat` / `NE.E_coat` | **极片**涂层（coating） | ~5e8 Pa | CZM 应变驱动、二维宏观应力 |
-| `SP.E` / `PCC.E` / `NCC.E` | 隔膜/集流体连续层 | — | 同极片，参与厚度加权 |
-| `scale.E_p` / `scale.E_n` | 颗粒扩散应力归一化尺度 | cs_max·R·T_ref | 颗粒应力无量纲化 |
-| `scale.E_coat` | 极片宏观模量参考（全叠合厚度加权） | — | CZM/宏观应力无量纲化 |
-
-**CZM/二维宏观应力统一入口（2026-08-30 重构后）**：装配函数直读 `param::Params`——热路径分派 `ip = iface === :PE_PCC ? param.PCC : param.NCC`（`collector_params` 助手），界面本构/热阻字段挂 `CurrentCollector`（`Cohesive`/`CzmInterfaceParams`/`CzmParamCache` 已删除）。逐层模量经 `moduli_of(param, mt)`。**E_eff 概念已消亡**：bulk 刚度按材料类型直读 `E_coat`/连续层 `E`，不做全叠合厚度加权；全叠合厚度加权仅保留在参考尺度 `scale.E_coat` 的定义中。锚点：`scale.σ_czm = PCC.σ_max`（量纲阶段）、`scale.δ_czm = 2·PCC.G_c/PCC.σ_max`。
-
-**契约（2026-08-30 起）**：① **参数冻结**——`SetCase` 归一化后不得修改 `param` 任何字段，装配缓存（`CohesiveMesh.K_bulk/标架/ws`，惰性挂载、对象身份即失效判据）的新鲜度由此保证（电化学 `M_d` 同款敞口）；② **状态归属**——演化状态（u_prev/damage_states/plastic_states/prestress/node_ref）聚合在 `case.mech::MechState`，求解器收敛后原位提交、失败不触碰；③ BC 每次求解入口现算，不缓存。缺失 `E_coat` 时 `ChooseCell` 触发 `@warn`，归一化不补零，耦合结果有限性门与 `thermal_diffusion_stress_2D` 入口检查阻止非法状态成为有效输出。宏观应力已层分辨：耦合流程由 `export_macro_stress` 在线收割导出 `diffusion stress xx/yy/xy/vonMises [Pa]`；czm-off 走 `thermal_diffusion_stress_2D`（mesh_bonded 域）。
-
-CZM 求解统一入口：`solve_czm_step(czm_mesh, case.mech, param, F_ext, opt.czm; dT_elem=…, Δsoc_n_elem=…, Δsoc_p_elem=…) -> CZMResult`。
-
-详见 `KB/raw/repos/jubat/md-raw/15_颗粒与极片模量区分.md`。
-
-### 9.5 planning-with-files 文件存放约定
-
-- 使用 `planning-with-files` 技能生成的 `task_plan.md`、`findings.md`、`progress.md`，统一保存到 `docs/planning-with-files/<中文任务名>/`。
-- `<中文任务名>` 采用与 `docs/planning-with-files/` 现有子目录一致的简短中文主题命名，例如 `代码简化计划评审`。
-- 不得将这三个文件直接创建在项目根目录；若误建，应迁移到对应任务子目录，并避免覆盖已有任务记录。
-- `docs/planning-with-files/index.md` 是规划文件总索引；新增、迁移或删除任务目录/文件后，须同步更新任务说明、时间、Git 修改次数与跟踪状态。
-- **任务收尾归档（2026-09-09 起）**：任务完成后，任务目录归档至 `KB/raw/repos/jubat/docs-archive/planning-with-files/` 并从仓库删除；`index.md` 对应行标注"已归档 KB + 日期"。挂起/未完成任务目录保留在仓库。
-
-### 9.6 代码简化基线约定（两级验证，2026-08-29 减负；2026-09-09 适配归档工作流）
-
-- `example/testexample.jl`（纯文字结果输出，60 s）是 `src/` 代码修改的快速行为基线；基线档案位于 `Simplify/baseline/testexample/`，总入口为 `Simplify/baseline.md`。全套绘图代码在 `example/couple_example.jl`（输出 `output/couple_example/`）。
-- **test/tools 已归档 KB**：`test/`、`tools/` 不在工作区，位于 `KB/raw/repos/jubat/`。修改 `src/` 需要跑测试时的标准流程：
-  1. `julia restore-from-kb.jl --what test`（需要 tools 时另加 `--what tools`）
-  2. 运行相关 `test/` 文件与示例脚本验证
-  3. 若测试/工具被修改：`julia restore-from-kb.jl --sync --what test`（逐项）回写 KB，并提交 KB
-  4. `rm -rf test tools` 清理恢复副本，保持 `git status` 干净
-- 常规修改不必跑全套验证，只需：① 按上述流程运行受影响部分的验证；② 以 Julia 1.11.2、单线程、`GKSwstype=100`、`--startup-file=no` 跑一次 60 秒 `testexample.jl`。
-- 快速门判定：退出码、网格/步数、`metrics.toml` 中的科学结果（含应力范围文字指标）按记录精度一致；运行耗时仅供参考。
-- 仅当修改涉及绘图/后处理代码时，另跑 `example/couple_example.jl` 并核对三张 final PNG SHA-256。
-- **多线程运行口径（2026-09-09 T1-c 起）**：bulk 装配两阶段化为 `Threads.@threads` 并行计算+串行散射（位级不变，`-t1` 语义与现状一致）；提速运行入口实测最优为 `julia -t8` 并配 `OPENBLAS_NUM_THREADS=8`（14700K 混合核上 `-t12`/`-t16` 反而退化：E 核拖慢并行段；逐 GP 去分配后 -t8 达 159 s，-t12 仍 172 s），基线门仍以 `-t1` 为准。
-- 任一强制指标不一致时，停止后续修改并定位或回退该批次，不得以“数值接近”代替基线一致。
-
-### 9.7 严格契约判断的后续简化计划
-
-- 当前为暴露静默回退而加入的类型、维度、有限性和收敛判断应先保留，例如 `Variable_update!` 对历史矩阵与当前变量形状的显式检查。
-- 待完整正常路径测试与强制行为基线全部通过，并确认实际工程流程不会触发这些错误判断后，可在独立的代码简化批次中删除已证明冗余的显式分支，以保持库实现简洁。
-- 删除判断时必须依赖直接赋值、索引或求解操作的原生失败语义；不得重新引入补零、保留旧值、截断数组、取首元素或继续计算等静默回退。
-- 简化前后仍须遵守第 9.6 节基线约定；科学结果、网格/步数和 PNG SHA-256 任一变化都表示该判断不可删除。
-
-### 9.8 SP–涂层接触与摩擦后续开发建议
-
-- 当前力学网格只建立 Φ 匝间节点配对，尚未装配 SP–PE、SP–NE 的单边法向接触、相对滑移与 Coulomb 摩擦；不得把共享节点的完美粘结结果解释为已实现接触。
-- 后续实现应复用 `CzmSubmesh.phi_pairs` 及内部 SP–涂层界面双侧节点，单独建立接触状态、间隙、法向罚/增广 Lagrange 与切向 stick-slip 方程，不得并入 COH2D4 牵引–分离本构。
-- SP–涂层没有可靠 $G_c$、$T_{\max}$ 时不得伪造 CZM 参数；基准摩擦系数及敏感性范围应由实验或明确文献给出。
-- 接触扩展必须新增：零穿透、零抗拉、摩擦锥、stick/slip 切换、Φ 配对完整性及 `example/testexample.jl` 强制基线测试。
-
-### 9.9 结果输出存放约定
-
-- 所有脚本（`tools/`、`example/`、`test/` 等，`tools/`、`test/` 已归档 KB、按 §9.6 恢复使用）输出结果数据（CSV、PNG/SVG 图片、报告、日志等）时，必须写入 `output/<脚本名>/` 子目录；`<脚本名>` 取脚本文件主干（不含扩展名），保证从目录名即可识别输出来源，例如 `tools/check_collector_mesh.jl` 的输出写入 `output/check_collector_mesh/`。
-- 输出路径必须基于 `@__DIR__` 构造（如 `joinpath(@__DIR__, "..", "output", "<脚本名>")`），不得依赖运行时工作目录，也不得写入仓库根目录、`tools/` 目录或其他与脚本名无关的 `output/` 子目录。
-- 目录不存在时用 `mkpath` 创建；同脚本重复运行允许覆盖旧输出。
-
-### 9.10 Astra 与 zcode 分工
-
-- 当使用 Astra 时，Astra 只负责制定和拆解任务、评审方案与执行结果，以及修改任务计划、方案和评审意见。
-- 源码修复、具体代码修改、脚本运行、测试执行及其他简单执行任务，统一交给 zcode；Astra 不自行代做。
-- Astra 向 zcode 明确任务范围、约束和验收标准，并根据其提交的代码差异、日志与测试结果进行评审；需要返工时，由 Astra 提出修改要求，交给 zcode 执行。
-- 若当前环境无法调用 zcode，Astra 应说明阻碍并提供可交接的任务说明，不得将其他模型冒充 zcode，也不得擅自接管执行工作。
-- zcode 对任务计划、方案或评审意见有疑问时，在对应任务目录的计划文件（`task_plan.md` 的“疑义记录”节，必要时 `findings.md`）中以 `【疑义】日期-编号：内容` 标明提出，供讨论；Astra 在同节以 `【回复】` 应答。疑义闭环前，zcode 不实施相关批次。
-
----
-
-## 10. 示例文件
-
-| 文件 | 说明 |
-|------|------|
-| `example/minimal_example.jl` | 基础仿真 |
-| `example/SPMe_Thermal_example.jl` | 电化学-热耦合 |
-| `example/czm_cycle_example.jl` | CZM 循环仿真 |
-| `example/testexample.jl` | 全耦合仿真（纯文字快速基线，60 s） |
-| `example/couple_example.jl` | 全耦合仿真 + 三张最终场云图（温度、环向应力、切向剪应力） |
-| `example/jellyroll_stress_displacement.jl` | 二维应力/位移场后处理（无 CZM） |
+GPT-6.1sol 与 zcode 均无法调用时，说明阻碍并提供交接说明；不得冒充指定执行者或由 GPT-6 Astra 接管执行。执行者有疑义时，在任务 `task_plan.md` 的“疑义记录”节以 `【疑义】日期-编号：内容` 记录（必要时补 findings）；GPT-6 Astra 以 `【回复】` 应答，闭环前不实施相关批次。

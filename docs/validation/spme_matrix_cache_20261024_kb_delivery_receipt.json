@@ -1,0 +1,15 @@
+{
+  "tests": {
+    "test_case_batch_a.jl": "ee140af3b61e71d5c7c1d2022d10ba354e7056b2a550efa17bf2799f1bf81800",
+    "test_review_p1_voltage_consistency.jl": "e4aa93eb6ce9ea597b9d374ac8f836df309ed5922b6140a4c62abd91f66e6362",
+    "test_thermal_fem_rotation.jl": "b624fab7b3719dbc2c44cda4583f150df76b83b3d1e0c03c3d06e7dec44df208"
+  },
+  "protected_test_files": 101,
+  "protected_stable": true,
+  "tests_executed": false,
+  "baseline": {
+    "parent": "21/21",
+    "formal75": "20/21 known hoop minimum difference"
+  },
+  "kb_commit": "bda0c699b28d8b13b3787d5ddfbd5fcc726c6db6"
+}

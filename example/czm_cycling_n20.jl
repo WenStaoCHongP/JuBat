@@ -41,20 +41,13 @@ rng/2 只变 n（Δθ=rng/8）；尺寸组固定 n/θ/面积 29.7 mm² 只变长
 工况中负极耳几何随正极耳联动（负耳 I²R 为二阶小量，~8 mW）；theta_neg 恒为
 默认 [44π]（最外节点线），单因素设计只动正极耳。
 
-界面参数口径（2026-10-12 两轮标定）：基线 × 强度0.085 / 刚度0.1 / G_c2
-→ σ_max 6.97/7.82 MPa。表面冷却口径临界 s*=0.0863/0.0772（r_max 0.958/0.858）；
-tab 冷却口径（Case 2 ×0.10 无损伤参考反推）s*=0.0866/0.0775（r_max 0.866/0.775，
-分布更集中于阈值：524/840 单元 r>0.8）。取 0.085≈0.98·s*：最差单元超阈 ~2%，
-启动单元数十个、NE_NCC 保持弹性——比表面口径的 0.95·s* 更浅，为跨工况
-（θ/数量/尺寸改变温度场→牵引分布漂移）留鲁棒余量；各工况损伤差异本身是
-研究对象。若个别工况损伤未启动或过猛，用 JUBAT_STRENGTH_SCALE 微调。
+界面参数直接以物理量赋给 param_dim.PCC（PE-PCC）和 param_dim.NCC（NE-NCC）：
+σ_max/τ_max 为 6.97/7.82 MPa，K_n/K_t 为 2.4e16/1.2e16 Pa/m，
+G_c/G_c_t 为 50.6/12.4 J/m²；沿用原脚本默认数值，分离量及归一化尺度由主参数计算。
 
 环境变量：
   JUBAT_TAB_CASES=<csv>      运行的工况号（默认 "1,2,3,5,6,7,9" 独立集；"all"=1:9）
   JUBAT_TAB_H=<f>            极耳等效换热系数（默认按表面冷却容量匹配 ≈800）
-  JUBAT_STRENGTH_SCALE=<f>   界面强度缩放（默认 0.085，tab 冷却口径标定）
-  JUBAT_STIFFNESS_SCALE=<f>  界面刚度缩放（默认 0.1）
-  JUBAT_GC_SCALE=<f>         断裂能缩放（默认 2.0）
   JUBAT_CZM_METHOD=<name>    求解方法（默认 gp_basic；basic 在此参数下不收敛）
   JUBAT_CZM_TAU_SECONDS=<s>  物理时间粘性 τ（默认 5；设为空串关闭粘性）
   JUBAT_RUN_TAG=<name>       输出子目录名（默认 tabstudy_a0.82_n20）
@@ -70,8 +63,10 @@ postprocess/plot_tab_study_clouds.py 绘图）。
 """
 
 using Printf
+# CSV 时间使用相位起点加真实局部时间；相位身份来自求解器，保留重复时间记录。
 include(joinpath(@__DIR__, "../src/JuBat.jl"))
 using .JuBat
+include(joinpath(@__DIR__, "cycling_csv_time.jl"))
 
 # ── 工况矩阵定义（W/L 单位 m；theta_kind 在求值期以 rng 解释） ──
 struct TabCase
@@ -126,9 +121,6 @@ function apply_tab_design!(param_dim, tc::TabCase, thetas::Vector{Float64}, h_ta
 end
 
 function main()
-    strength_scale = parse(Float64, get(ENV, "JUBAT_STRENGTH_SCALE", "0.085"))
-    stiffness_scale = parse(Float64, get(ENV, "JUBAT_STIFFNESS_SCALE", "0.1"))
-    gc_scale = parse(Float64, get(ENV, "JUBAT_GC_SCALE", "2.0"))
     iter_method = get(ENV, "JUBAT_CZM_METHOD", "gp_basic")
     tau_seconds = get(ENV, "JUBAT_CZM_TAU_SECONDS", "5")
 
@@ -160,8 +152,7 @@ function main()
     @printf("  螺旋累计角范围 rng = %.2f rad = %.2fπ（θ_pos 按分数取值）\n", rng, rng / π)
     @printf("  极耳总面积恒定 %.2f mm² → 匹配 tab.h = %.1f W/m²K（表面冷却容量等价）\n",
         tab_area_ref * 1e6, h_tab)
-    @printf("  界面缩放: 强度×%.3f / 刚度×%.2f / G_c×%.1f ｜ CZM: %s / τ=%s s\n",
-        strength_scale, stiffness_scale, gc_scale, iter_method,
+    @printf("  CZM: %s / τ=%s s\n", iter_method,
         isempty(tau_seconds) ? "关" : tau_seconds)
     println("  工况: " * join(case_ids, ","))
 
@@ -174,7 +165,7 @@ function main()
         tc = TAB_CASES[id]
         thetas = theta_pos_for(tc.theta_kind, rng)
         summary, mesh_data = run_tab_case(tc, thetas, h_tab, outdir, mesh_data;
-            n_theta, n_cycles, strength_scale, stiffness_scale, gc_scale,
+            n_theta, n_cycles,
             iter_method, tau_seconds)
         push!(summaries, summary)
     end
@@ -219,9 +210,9 @@ struct TabCaseSummary
     capacity_Ah::Float64; status::String; wall_s::Float64; note::String
 end
 
-function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
-        outdir::String, mesh_data; n_theta, n_cycles, strength_scale,
-        stiffness_scale, gc_scale, iter_method, tau_seconds)
+function build_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
+        outdir::String, mesh_data; n_theta, n_cycles, iter_method, tau_seconds,
+        phase_times=(discharge=1800.0, rest1=600.0, charge=1800.0, rest2=600.0), dt_cycle=[1.0, 10.0])
     casedir = joinpath(outdir, "case$(tc.id)")
     mkpath(casedir)
     println("\n" * "-"^78)
@@ -233,13 +224,21 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
     param_dim = JuBat.ChooseCell("Jellyroll")
     param_dim.cell.v_l = 2.5
     param_dim.cell.v_h = 4.2
+    # PE-PCC 界面：强度 [Pa]、刚度 [Pa/m]、断裂能 [J/m²]
+    param_dim.PCC.σ_max = 6.97e6
+    param_dim.PCC.τ_max = 6.97e6
+    param_dim.PCC.K_n = 2.4e16
+    param_dim.PCC.K_t = 2.4e16
+    param_dim.PCC.G_c = 50.6
+    param_dim.PCC.G_c_t = 50.6
+    # NE-NCC 界面：强度 [Pa]、刚度 [Pa/m]、断裂能 [J/m²]
+    param_dim.NCC.σ_max = 7.82e6
+    param_dim.NCC.τ_max = 7.82e6
+    param_dim.NCC.K_n = 1.2e16
+    param_dim.NCC.K_t = 1.2e16
+    param_dim.NCC.G_c = 12.4
+    param_dim.NCC.G_c_t = 12.4
     for ip in (param_dim.PCC, param_dim.NCC)
-        ip.σ_max *= strength_scale
-        ip.τ_max *= strength_scale
-        ip.K_n *= stiffness_scale
-        ip.K_t *= stiffness_scale
-        ip.G_c *= gc_scale
-        ip.G_c_t *= gc_scale
         ip.δ_0 = ip.σ_max / ip.K_n
         ip.δ_0_t = ip.τ_max / ip.K_t
         ip.δ_c = 2.0 * ip.G_c / ip.σ_max
@@ -249,6 +248,10 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
     param_dim.scale.δ_czm = 2.0 * param_dim.PCC.G_c / param_dim.PCC.σ_max
     param_dim.scale.G_czm = param_dim.scale.σ_czm * param_dim.scale.δ_czm
     param_dim.scale.K_czm = param_dim.scale.σ_czm / param_dim.scale.δ_czm
+    for (label, ip) in (("PE-PCC", param_dim.PCC), ("NE-NCC", param_dim.NCC))
+        @printf("  %s: σ_max/τ_max=%.2f/%.2f MPa, K_n/K_t=%.1e/%.1e Pa/m, G_c/G_c_t=%.1f/%.1f J/m²\n",
+            label, ip.σ_max * 1e-6, ip.τ_max * 1e-6, ip.K_n, ip.K_t, ip.G_c, ip.G_c_t)
+    end
     apply_tab_design!(param_dim, tc, thetas, h_tab)
 
     opt = JuBat.Option()
@@ -291,17 +294,12 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
 
     cycle_opt = JuBat.CycleOption(
         n_cycles = n_cycles,
-        I_charge = i,
-        I_discharge = i,
-        t_charge = 1800.0,
-        t_discharge = 1800.0,
-        t_rest1 = 600.0,
-        t_rest2 = 600.0,
-        V_upper = 4.2,
-        V_lower = 2.5,
+        t_charge = phase_times.charge,
+        t_discharge = phase_times.discharge,
+        t_rest1 = phase_times.rest1,
+        t_rest2 = phase_times.rest2,
         SOC_init = 0.65,
-        reset_T_each_cycle = false,
-        reset_T_before_charge = true,
+        dt_cycle = dt_cycle,
     )
 
     # 2. 案例 + 网格（几何与极耳无关 → 首工况构建后复用）
@@ -311,8 +309,21 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
     end
     case = JuBat.setup_thermal2D_mesh(case, mesh_data)
     mesh_th = case.mesh["thermal2D"]
-    case.czm_mesh = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th, case.param)
-    case.mech = JuBat.MechState(case.czm_mesh)
+    case.mesh["czm"] = JuBat.create_czm_mesh(mesh_data.czm_submesh, mesh_th)
+    mechanical_seed=JuBat.MechState(case.mesh["czm"])
+    return (; case, mesh_data, mechanical_seed, cycle_opt, casedir)
+end
+
+function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
+        outdir::String, mesh_data; n_theta, n_cycles, iter_method, tau_seconds,
+        phase_times=(discharge=1800.0, rest1=600.0, charge=1800.0, rest2=600.0), dt_cycle=[1.0, 10.0])
+    (; case, mesh_data, mechanical_seed, cycle_opt, casedir) =
+        build_tab_case(tc, thetas, h_tab, outdir, mesh_data;
+            n_theta, n_cycles,
+            iter_method, tau_seconds, phase_times, dt_cycle)
+    mesh_th = case.mesh["thermal2D"]
+    runtime=Dict{String,Any}()
+
 
     # 极耳窗口节点组核对（空组=极耳物理静默，必须在结果中可见）
     pos_groups, neg_groups = JuBat.jellyroll_tab_node_groups(mesh_th, case.param)
@@ -325,16 +336,16 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
 
     # 3. 求解（失败不中断矩阵，状态记录后继续）
     t0 = time_ns()
-    local result
+    local result = nothing
     status = "OK"
     err_msg = ""
     try
-        result = JuBat.solve_cycling(case, cycle_opt, case.mech; save_detailed = true)
+        result = JuBat.solve_cycling(case, cycle_opt, mechanical_seed; variables=runtime, save_detailed = true)
     catch err
         status = "失败"
         err_msg = first(sprint(showerror, err), 160)
         println("  [诊断] Case $(tc.id) solve_cycling 失败: $err_msg")
-        mech = case.mech
+        mech = runtime["accepted"].mech
         if mech.gp_damage_states !== nothing
             gp = mech.gp_damage_states
             @printf("  GP: D_max=%.4f, D>=0.99=%d / %d\n",
@@ -346,9 +357,9 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
     # 4. 结果汇总 + 导出
     if status == "OK"
         k = length(result.cycle_idx)
-        fm = result.final_mech === nothing ? case.mech : result.final_mech
-        idx_pcc = findall(e -> e.interface_type == :PE_PCC, case.czm_mesh.cohesive_elements)
-        idx_ncc = findall(e -> e.interface_type == :NE_NCC, case.czm_mesh.cohesive_elements)
+        fm = result.final_mech
+        idx_pcc = findall(e -> e.interface_type == :PE_PCC, case.mesh["czm"].cohesive_elements)
+        idx_ncc = findall(e -> e.interface_type == :NE_NCC, case.mesh["czm"].cohesive_elements)
         pcc_dmg = count(s -> s.D > 1e-8, fm.damage_states[idx_pcc])
         ncc_dmg = count(s -> s.D > 1e-8, fm.damage_states[idx_ncc])
         @printf("  OK: 墙钟 %.1f s ｜ T_max=%.2f K ｜ D_max=%.3e（PCC %d / NCC %d 损伤）｜ 放电 %.3f Ah\n",
@@ -376,64 +387,11 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
                 end
             end
         end
+        snapshot_rows = write_czm_snapshot_csv(result,case,casedir)
         if !isempty(result.czm_snapshots)
-            n_coh = length(result.czm_snapshots[1].damage)
-            open(joinpath(casedir, "element_map.csv"), "w") do io
-                println(io, "elem_id,interface,x_m,y_m")
-                for (j, elem) in enumerate(case.czm_mesh.cohesive_elements)
-                    ns = vcat(elem.nodes_bottom, elem.nodes_top)
-                    x = sum(case.czm_mesh.node[ns, 1]) / length(ns) * case.param.scale.L
-                    y = sum(case.czm_mesh.node[ns, 2]) / length(ns) * case.param.scale.L
-                    println(io, "$j,$(string(elem.interface_type)),$x,$y")
-                end
-            end
-            δ_czm = case.param.scale.δ_czm
-            σ_czm = case.param.scale.σ_czm
-            # 快照 time_s 为相位内局部时间：按插入顺序分块（局部时间回落=新相位），
-            # 用 phase.t_start 映射绝对时间；相位名按分块序（rest1/rest2 可区分）
-            snaps = result.czm_snapshots
-            blocks = Vector{Vector{Int}}()
-            cur_blk = [1]
-            for i in 2:length(snaps)
-                if snaps[i].time_s < snaps[i - 1].time_s
-                    push!(blocks, cur_blk)
-                    cur_blk = [i]
-                else
-                    push!(cur_blk, i)
-                end
-            end
-            push!(blocks, cur_blk)
-            phase_list = [ph for ph in (result.cycle_results[1].discharge,
-                result.cycle_results[1].rest1, result.cycle_results[1].charge,
-                result.cycle_results[1].rest2) if ph !== nothing]
-            length(blocks) == length(phase_list) ||
-                @warn "快照分块数与相位数不一致，绝对时间映射可能偏移" n_blocks = length(blocks) n_phases = length(phase_list)
-            phase_names = ("discharge", "rest1", "charge", "rest2")
-            t_abs = Vector{Float64}(undef, length(snaps))
-            for (b, idxs) in enumerate(blocks)
-                b > length(phase_list) && break
-                for i in idxs
-                    t_abs[i] = phase_list[b].t_start + snaps[i].time_s
-                end
-            end
-            phase_of_snap(i) = begin
-                b = findfirst(bl -> i in bl, blocks)
-                (b === nothing || b > length(phase_list)) ? "NA" : string(phase_names[b])
-            end
-            header = "t_s," * join(("e$j" for j in 1:n_coh), ",")
-            for (fname, getcol) in (
-                    ("damage_history_cyc1.csv", s -> s.damage),
-                    ("sep_n_history_cyc1.csv", s -> s.separation_n .* δ_czm),
-                    ("sep_t_history_cyc1.csv", s -> s.separation_t .* δ_czm),
-                    ("traction_n_history_cyc1.csv", s -> s.traction_n .* σ_czm),
-                    ("traction_t_history_cyc1.csv", s -> s.traction_t .* σ_czm))
-                open(joinpath(casedir, fname), "w") do io
-                    println(io, header)
-                    for (i, s) in enumerate(snaps)
-                        println(io, string(t_abs[i]) * "," * join(getcol(s), ","))
-                    end
-                end
-            end
+            snaps = [row.snapshot for row in snapshot_rows]
+            t_abs = [row.time_s for row in snapshot_rows]
+            phase_of_snap(i) = snapshot_rows[i].phase
         end
         # —— 云图数据导出（Python 后处理契约，仿 run_boundary_current_clouds.jl）：
         #    损伤最大时刻瞬态（损伤/温度/电流）+ 网格 + 极耳窗口节点 + 起始信息 manifest
@@ -475,30 +433,22 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
             init_xy = if e_init == 0
                 (NaN, NaN)
             else
-                ns = vcat(case.czm_mesh.cohesive_elements[e_init].nodes_bottom,
-                          case.czm_mesh.cohesive_elements[e_init].nodes_top)
-                (sum(case.czm_mesh.node[ns, 1]) / length(ns) * L_scale,
-                 sum(case.czm_mesh.node[ns, 2]) / length(ns) * L_scale)
+                ns = vcat(case.mesh["czm"].cohesive_elements[e_init].nodes_bottom,
+                          case.mesh["czm"].cohesive_elements[e_init].nodes_top)
+                (sum(case.mesh["czm"].node[ns, 1]) / length(ns) * L_scale,
+                 sum(case.mesh["czm"].node[ns, 2]) / length(ns) * L_scale)
             end
-            # 温度/电流：逐相位 solve_result 时间序列中取 |t−t_sel| 最近步
-            node_T = fill(NaN, size(mesh_th.node, 1))
-            elem_I = fill(NaN, size(mesh_th.element, 1))
-            best_dt = Inf
-            for cr in result.cycle_results, ph in (cr.discharge, cr.rest1, cr.charge, cr.rest2)
-                ph === nothing && continue
-                sr = ph.solve_result
-                (sr === nothing || !haskey(sr, "time [s]")) && continue
-                tvec = sr["time [s]"]
-                raw_T = get(sr, "thermal2D temperature at nodes [K]", nothing)
-                raw_I = get(sr, "thermal2D element current", nothing)
-                for kk in eachindex(tvec)
-                    dt = abs(ph.t_start + tvec[kk] - tvec[1] - t_sel)
-                    dt < best_dt || continue
-                    best_dt = dt
-                    raw_T === nothing || (node_T .= raw_T[:, kk])
-                    raw_I === nothing || (elem_I .= raw_I[:, kk])
-                end
-            end
+            # Sample only the selected snapshot's real cycle/phase, including at phase seams.
+            selected = snaps[i_sel]
+            ph = cycling_csv_phases(result)[(selected.cycle, selected.phase)]
+            sr = ph.solve_result
+            raw_T = sr["thermal2D temperature at nodes [K]"]
+            raw_I = sr["thermal2D element current"]
+            size(raw_T, 2) == size(raw_I, 2) || throw(DimensionMismatch("cloud field times differ"))
+            tvec = cycling_csv_times(ph, size(raw_T, 2))
+            k_sel = argmin(abs.(tvec .- t_sel))
+            node_T = raw_T[:, k_sel]
+            elem_I = raw_I[:, k_sel]
             open(joinpath(casedir, "cloud_damage.csv"), "w") do io
                 println(io, "coh_id,D")
                 for j in eachindex(D_sel)
@@ -551,7 +501,9 @@ function run_tab_case(tc::TabCase, thetas::Vector{Float64}, h_tab::Float64,
             n_pos_nodes, n_neg_nodes,
             NaN, NaN, NaN, NaN, 0, 0, 0, NaN, status, wall_s, err_msg)
     end
-    return summary, mesh_data
+    return (; summary, mesh_data, result, case, casedir)
 end
 
-main()
+if abspath(PROGRAM_FILE) == @__FILE__
+    main()
+end

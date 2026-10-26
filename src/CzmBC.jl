@@ -108,7 +108,7 @@ function apply_bc_czm(K::SparseMatrixCSC{Float64,Int64}, F::Vector{Float64}; bc_
 end
 
 function identify_bc_nodes_czm(czm_mesh::CohesiveMesh, param; opt=nothing, fix_inner::Bool=true)
-    nnode = czm_mesh.nnode
+    nnode = size(czm_mesh.node, 1)
     bc_nodes = Dict{Int64, Symbol}()
 
     is_inner, is_outer = identify_boundary_nodes(czm_mesh, param, opt)
@@ -132,36 +132,7 @@ function identify_bc_nodes_czm(czm_mesh::CohesiveMesh, param; opt=nothing, fix_i
     submesh = czm_mesh.czm_submesh
     submesh === nothing && error(
         "identify_bc_nodes_czm requires a layered CzmSubmesh to identify spiral endpoints")
-    n_segments = maximum(submesh.thermal_elem_map)
-    n_bulk = size(czm_mesh.bulk_element, 1)
-    n_bulk % n_segments == 0 || throw(DimensionMismatch(
-        "CZM bulk element count $n_bulk is not divisible by angular segment count $n_segments"))
-    n_layers = n_bulk ÷ n_segments
-
-    start_nodes = Set{Int64}()
-    end_nodes = Set{Int64}()
-    layer_materials = Vector{Symbol}(undef, n_layers)
-    for layer in 1:n_layers
-        first_elem = (layer - 1) * n_segments + 1
-        last_elem = layer * n_segments
-        layer_materials[layer] = submesh.material_type[first_elem]
-        union!(start_nodes,
-            (czm_mesh.bulk_element[first_elem, 1],
-             czm_mesh.bulk_element[first_elem, 2]))
-        union!(end_nodes,
-            (czm_mesh.bulk_element[last_elem, 4],
-             czm_mesh.bulk_element[last_elem, 3]))
-    end
-
-    # a=第二个 SP 层靠外起点（用户指定外圈固定属性）；b=第一层 PE 靠内终点（内圈属性）
-    second_sp_layer = findall(==(:SP), layer_materials)[2]
-    first_pe_layer = findfirst(==(:PE), layer_materials)
-    first_pe_layer === nothing && error(
-        "identify_bc_nodes_czm requires at least one PE layer")
-    second_sp_first_elem = (second_sp_layer - 1) * n_segments + 1
-    first_pe_last_elem = first_pe_layer * n_segments
-    a = czm_mesh.bulk_element[second_sp_first_elem, 2]
-    b = czm_mesh.bulk_element[first_pe_last_elem, 4]
+    start_nodes, end_nodes, a, b = mechanical_endpoint_topology(submesh, czm_mesh.bulk_element)
 
     if fix_inner
         # 任务59 P2：固定模式 F = O ∪ I ∪ S ∪ E——a、b 补回，不再排除两处开口端
@@ -445,14 +416,16 @@ function set_czm_residual!(R, u, d::MechanicalBCDOFs, vals)
     return R
 end
 
-function czm_linear_solve(K, R, d::AbstractVector{Int64}; ws=nothing, equilibrated=false)
+function czm_linear_solve(K, R, d::AbstractVector{Int64}; czm_workspace::Union{Nothing,CZMWorkspace}=nothing, equilibrated=false)
     equilibrated && return solve_equilibrated(K,R)
-    return ws === nothing ? K\R : solve_czm_linear_system_cached!(ws,K,R)
+    return czm_workspace === nothing ? K\R : solve_czm_linear_system_cached!(
+        assembly_workspace(czm_workspace.mesh;czm_workspace=czm_workspace),K,R)
 end
-function czm_linear_solve(K, R, d::MechanicalBCDOFs; ws=nothing, equilibrated=false)
+function czm_linear_solve(K, R, d::MechanicalBCDOFs; czm_workspace::Union{Nothing,CZMWorkspace}=nothing, equilibrated=false)
     if d.gauge === nothing
         delta = equilibrated ? solve_equilibrated(K,R) :
-            (ws === nothing ? K\R : solve_czm_linear_system_cached!(ws,K,R))
+            (czm_workspace === nothing ? K\R : solve_czm_linear_system_cached!(
+                assembly_workspace(czm_workspace.mesh;czm_workspace=czm_workspace),K,R))
     else
         z = d.gauge
         norm(K*z) <= 1e-9*max(1.0,opnorm(K,Inf)) || throw(ArgumentError(
