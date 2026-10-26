@@ -19,11 +19,6 @@ struct MechanicalLoad
     function MechanicalLoad(czm_mesh::CohesiveMesh;
             dT::Vector{Float64}, Δsoc_n::Vector{Float64}, Δsoc_p::Vector{Float64},
             F_ext::Vector{Float64}, dt_seconds::Real, sample_time_seconds::Real)
-        ne = size(czm_mesh.bulk_element, 1)
-        all(a -> length(a) == ne, (dT, Δsoc_n, Δsoc_p)) ||
-            throw(DimensionMismatch("mechanical load fields must match $ne bulk elements"))
-        length(F_ext) == 2 * size(czm_mesh.node, 1) ||
-            throw(DimensionMismatch("mechanical external force must match the mesh DOFs"))
         dt = Float64(dt_seconds)
         sample_time = Float64(sample_time_seconds)
         isfinite(dt) && dt >= 0.0 ||

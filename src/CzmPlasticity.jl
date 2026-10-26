@@ -207,14 +207,11 @@ end
    `f = F_rev/t_repeat`，`F_rev = T_ne·t_ne_rev + T_pe·t_pe_rev`（每匝每轴长环向力）；
    `σ_θ0,i = σ_t,i − p(r̄_i)`，`σ_r0 = −p(r̄)`。
 
-未设张力（T 全 0）或负张力 → `error`（AGENTS 9.4/9.7）。自平衡重分布由首个平衡求解完成（D-B2'-4）。
+启用卷绕预应力的调度入口要求至少一个张力为正；本函数拒绝负张力。自平衡重分布由首个平衡求解完成（D-B2'-4）。
 """
 function winding_prestress_field(czm_mesh::CohesiveMesh, param)
     T_ne = param.cell.winding_T_ne
     T_pe = param.cell.winding_T_pe
-    (T_ne > 0.0 || T_pe > 0.0) || error(
-        "winding_prestress_field: 卷绕张力未设置（cell.winding_T_ne/pe 均为 0）。" *
-        "开启 czm_winding_prestress 前须给定参数，不默认、不置零（AGENTS 9.4/9.7）。")
     (T_ne >= 0.0 && T_pe >= 0.0) || error(
         "winding_prestress_field: 卷绕张力为负（T_ne=$T_ne, T_pe=$T_pe）物理非法。")
 

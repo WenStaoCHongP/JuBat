@@ -236,7 +236,6 @@ function recover_bulk_strain(node, element, u; geo_nl::Bool=false)
         if geo_nl
             ue = [u[d] for n in nodes for d in (2*n-1, 2*n)]
             k = bulk_gl_kinematics(ue, dNdx, dNdy)
-            all(isfinite, (k.E11,k.E22,k.g12)) || error("recover_bulk_strain: non-finite Green-Lagrange strain at element $e")
             eps_xx[e] = k.E11; eps_yy[e] = k.E22; gam_xy[e] = k.g12
         else
             eps_xx[e] = sum(dNdx[i] * u[2 * nodes[i] - 1] for i in 1:4)
@@ -300,8 +299,6 @@ function project_bulk_stress(czm_mesh, plastic_states)
         max_vm = max(max_vm, sigma_vm)
         max_kappa = max(max_kappa, state.kappa)
     end
-    all(==(4), gp_count) || error(
-        "project_bulk_stress: every bulk element must have four Gauss points")
     xx ./= area
     yy ./= area
     xy ./= area

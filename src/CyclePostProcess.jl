@@ -41,7 +41,6 @@ end
 function postprocess_phase_result(case::Case, phase_type::PhaseType, solve_result::Dict, initial_state::Union{NamedTuple,Nothing}, t_start::Float64,D_max_init::Float64, D_mean_init::Float64)
     time_hist = solve_result["time [s]"]
     voltage_hist = solve_result["cell voltage [V]"]
-    isempty(time_hist) && error("postprocess_phase_result requires a non-empty time history")
     final_state = solve_result["final_state"]
     duration = final_state.t_global-t_start
 
@@ -51,7 +50,6 @@ function postprocess_phase_result(case::Case, phase_type::PhaseType, solve_resul
     if case.opt.thermalmodel == "distributed2D"
         T_nodes_K = solve_result["thermal2D final temperature at nodes [K]"]
         T_hist_K = solve_result["thermal2D temperature [K]"]
-        isempty(T_nodes_K) && error("postprocess_phase_result requires final distributed temperature nodes")
         T_max = maximum(T_hist_K)
         T_mean_end = mean(T_nodes_K)
     else

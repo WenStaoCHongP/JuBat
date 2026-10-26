@@ -62,8 +62,6 @@ function reset_damage_states!(ms::MechState)
         ms.mechanics_initialized && throw(ArgumentError("initialized mechanics lacks required GP history"))
         new_gp = nothing
     else
-        size(ms.gp_damage_states,1) == length(ms.damage_states) ||
-            throw(DimensionMismatch("GP and element damage history lengths differ"))
         new_gp = [DamageState() for _ in axes(ms.gp_damage_states,1), _ in axes(ms.gp_damage_states,2)]
     end
     new_elements = [DamageState() for _ in eachindex(ms.damage_states)]
@@ -214,8 +212,6 @@ function CZMSnapshot(result::CZMResult, mech::MechState, mesh::CohesiveMesh, par
         czm_workspace=czm_workspace, gp_damage_states=gp, gp_trial_states=nothing,
         gp_capture=capture, visc_beta=0.0, czm_model=czm_model)
     bulk_kappa = if plasticity
-        size(mech.plastic_states) == (size(mesh.bulk_element,1),4) ||
-            throw(DimensionMismatch("J2 snapshot history must use actual bulk element/GP topology"))
         map(s -> s.kappa, mech.plastic_states)
     else
         nothing

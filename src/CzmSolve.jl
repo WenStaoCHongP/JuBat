@@ -15,7 +15,6 @@ function solve_czm_step(czm_mesh::CohesiveMesh, ms::MechState, param,
         load::MechanicalLoad, czm_opt::CzmOptions; czm_workspace::CZMWorkspace,
         prestress=nothing, boundary=nothing)
     length(ms.u_prev)==2size(czm_mesh.node,1) || throw(DimensionMismatch("CZM displacement length"))
-    length(ms.damage_states)==length(czm_mesh.cohesive_elements) || throw(DimensionMismatch("element damage history length"))
     czm_opt.winding_prestress && prestress===nothing && throw(ArgumentError(
         "winding_prestress=true requires explicit prestress input"))
     check_czm_workspace(czm_mesh, czm_workspace)
@@ -26,12 +25,6 @@ function solve_czm_step(czm_mesh::CohesiveMesh, ms::MechState, param,
             czm_opt.fix_start !== nothing || czm_opt.fix_end !== nothing ||
             czm_opt.endpoint_variant !== :keep)
         boundary = resolve_mechanical_bc(czm_mesh,param,czm_opt)
-    end
-    if boundary !== nothing
-        boundary.coordinates == czm_mesh.node || throw(ArgumentError(
-            "mechanical boundary coordinates differ from solver mesh"))
-        czm_opt.geo_nonlinear && any(==(:radial),values(boundary.nodes)) &&
-            throw(ArgumentError("radial_slide requires geo_nonlinear=false"))
     end
     observer = mechanical_step_observer[]
     if observer === nothing

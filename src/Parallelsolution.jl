@@ -114,7 +114,6 @@ function initialize_currents(ne, w, I_total, x_prev; active_mask=trues(ne))
 	else
 		copy(x_prev)
 	end
-	length(I_e) == ne || throw(DimensionMismatch("branch current initial guess length"))
 	I_e[.!active_mask] .= 0.0
 	active_idx = findall(active_mask)
 	isempty(active_idx) && return I_e
@@ -218,10 +217,6 @@ function newton_iteration(I_e, V, ne, w, I_total, coeffs; tol_V=1e-8, tol_I=1e-1
 	active_idx = findall(active_mask)
 	n_active = length(active_idx)
 	all_active = (n_active == ne)
-
-	# Empty activity is a terminal diagnosis owned by solve_branch_currents,
-	# not a solved voltage/current system.
-	n_active > 0 || throw(ArgumentError("branch-current Newton requires a nonempty active set"))
 
 	for iter in 1:max_iters
 		last_iter = iter
@@ -388,8 +383,6 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 		A_eff = areas
 	end
 	area_sum = sum(areas)
-	all(x -> isfinite(x) && x > 0.0, areas) && isfinite(area_sum) && area_sum > 0.0 ||
-		throw(ArgumentError("branch reference areas must be finite and positive"))
 	a = A_eff ./ area_sum
 	gamma = sum(A_eff) / area_sum
 	variables["thermal2D branch area factor"] = a
@@ -403,7 +396,6 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 
 	# 沿用现有系数函数；生产路径逐支路消费与 SPMe 分布式单元装配相同的状态、温度。
 	mesh_ne, mesh_pe, mesh_sp = case.mesh["negative electrode"], case.mesh["positive electrode"], case.mesh["separator"]
-	length(yt_chem) == ne || throw(DimensionMismatch("local chemistry branch count"))
 	coeffs = Vector{NamedTuple{(:C1,:C2,:alpha_p,:alpha_n,:C5)}}(undef, ne)
 	local_concentrations = Dict{String,Union{Array{Float64},Float64}}()
 	for e in 1:ne

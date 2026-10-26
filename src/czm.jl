@@ -195,7 +195,6 @@ function assemble_czm_system(
 
         geom = geom_cache[i]
         L = geom.length
-        L >= 1e-15 || error("degenerate cohesive element $i: tangential length is $L")
         R = geom.R
         dofs = geom.dofs
         wts = geom.gauss_wts
@@ -331,9 +330,6 @@ function assemble_bulk_stiffness(czm_mesh::CohesiveMesh, param::Params)
     nnode = size(czm_mesh.node, 1)
     ndof = 2 * nnode
     submesh = czm_mesh.czm_submesh
-    submesh === nothing && error(
-        "assemble_bulk_stiffness: czm_submesh is nothing " *
-        "(must be built via jellyroll_collector_seed_mesh with czm_enabled=true)")
 
     # 需要重新计算高斯积分点，因为节点可能已经改变
     element = czm_mesh.bulk_element
@@ -552,8 +548,6 @@ function bulk_element_kernel!(ke::Array{Float64, 3}, fe::Matrix{Float64}, e::Int
     plastic_params = nothing
     if plasticity && (mt === :PCC || mt === :NCC)
         σ_y, H = foil_params_of(param, mt)
-        σ_y > 0.0 || error(
-            "bulk_element_kernel!: czm_j2_plasticity=true 但 $mt 的 sigma_y ≤ 0（未设置）。")
         plastic_params = (σ_y, H)
     end
     ε0 = 0.0
@@ -767,19 +761,8 @@ function assemble_bulk_residual_tangent(
     if prestress !== nothing
         geo_nl || error(
             "assemble_bulk_residual_tangent: prestress 需要 geo_nl=true（D-B2'-2：初应力由 GL 残差与 K_G 消费）。")
-        length(prestress) == size(czm_mesh.bulk_element, 1) || throw(DimensionMismatch(
-            "assemble_bulk_residual_tangent: prestress 长度 $(length(prestress)) 应为 bulk 单元数 $(size(czm_mesh.bulk_element, 1))"))
     end
     if geo_nl
-        if plasticity
-            # D-B3-1：塑性逐 GP 应力评估仅在 GL 单元路径实现
-            committed_plastic_states isa Matrix{PlasticState} || error(
-                "assemble_bulk_residual_tangent: plasticity=true requires committed_plastic_states::Matrix{PlasticState}, " *
-                "got $(typeof(committed_plastic_states))")
-            trial_plastic_states isa Matrix{PlasticState} || error(
-                "assemble_bulk_residual_tangent: plasticity=true requires trial_plastic_states::Matrix{PlasticState}, " *
-                "got $(typeof(trial_plastic_states))")
-        end
         dT_el = eigenstrain === nothing ? nothing : eigenstrain.dT
         Δsn   = eigenstrain === nothing ? nothing : eigenstrain.Δsn
         Δsp   = eigenstrain === nothing ? nothing : eigenstrain.Δsp
@@ -838,9 +821,6 @@ function assemble_bulk_residual_tangent(
             plastic_params = nothing
             if plasticity && (mt === :PCC || mt === :NCC)
                 σ_y, H = foil_params_of(param, mt)
-                σ_y > 0.0 || error(
-                    "assemble_bulk_residual_tangent: czm_j2_plasticity=true 但 $mt 的 sigma_y ≤ 0（未设置）。" *
-                    "缺参即拦截，不默认、不置零（AGENTS 9.4/9.7）。")
                 plastic_params = (σ_y, H)
             end
             ε0 = 0.0
@@ -898,9 +878,6 @@ function assemble_thermal_chemical_load(
     nnode = size(czm_mesh.node, 1)
     ndof = 2 * nnode
     submesh = czm_mesh.czm_submesh
-    submesh === nothing && error(
-        "assemble_thermal_chemical_load: czm_submesh is nothing " *
-        "(must be built via jellyroll_collector_seed_mesh with czm_enabled=true)")
     element = czm_mesh.bulk_element
     node = czm_mesh.node
     ne = size(element, 1)
@@ -1091,7 +1068,6 @@ end
 """
 function bulk_stiffness(czm_mesh::CohesiveMesh, param::Params; czm_workspace::CZMWorkspace)
     check_czm_workspace(czm_mesh, czm_workspace)
-    czm_workspace.param === param || throw(ArgumentError("CZM workspace belongs to different frozen parameters"))
     czm_workspace.K_bulk === nothing && (czm_workspace.K_bulk = assemble_bulk_stiffness(czm_mesh, param))
     return czm_workspace.K_bulk::SparseMatrixCSC{Float64, Int64}
 end

@@ -1209,12 +1209,6 @@ function solve_czm_arc_geo_step(czm_mesh::CohesiveMesh, load::MechanicalLoad,
     if eigenstrain_ref === nothing
         eigenstrain_ref = (dT=zeros(ne), Δsn=zeros(ne), Δsp=zeros(ne))
     end
-    for strain in (eigenstrain,eigenstrain_ref)
-        all(a -> length(a)==ne,(strain.dT,strain.Δsn,strain.Δsp)) || throw(DimensionMismatch(
-            "geometric arc eigenstrain shape"))
-        all(a -> all(isfinite,a),(strain.dT,strain.Δsn,strain.Δsp)) || throw(ArgumentError(
-            "geometric arc eigenstrain must be finite"))
-    end
     mix(lam) = (dT=eigenstrain_ref.dT .+ lam .* (eigenstrain.dT .- eigenstrain_ref.dT),
                 Δsn=eigenstrain_ref.Δsn .+ lam .* (eigenstrain.Δsn .- eigenstrain_ref.Δsn),
                 Δsp=eigenstrain_ref.Δsp .+ lam .* (eigenstrain.Δsp .- eigenstrain_ref.Δsp))

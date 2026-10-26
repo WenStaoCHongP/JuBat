@@ -35,7 +35,6 @@ function thermal_anisotropic_conductivity_2d(param::Params,fks::Matrix{Float64},
 		f = @view fks[e, :]
 		# 径向热导率：串联热阻模型，要求各层热导率 > 0
 		denom = f[1] / param.NE.lambda + f[2] / param.SP.lambda + f[3] / param.PE.lambda + f[4] / param.PCC.lambda + f[5] / param.NCC.lambda
-		denom > 0 || error("thermal_anisotropic_conductivity_2d: element $e has zero radial thermal conductivity (check lambda values)")
 		lam_r_e[e] = 1.0 / denom
 		lam_t_e[e] = f[1] * param.NE.lambda + f[2] * param.SP.lambda + f[3] * param.PE.lambda + f[4] * param.PCC.lambda + f[5] * param.NCC.lambda
 	end

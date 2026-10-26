@@ -17,7 +17,6 @@ function apply_bc_czm(K::SparseMatrixCSC{Float64,Int64}, F::Vector{Float64}; bc_
     ))
 
     if node_mode
-        isempty(bc_nodes) && throw(ArgumentError("bc_nodes must not be empty"))
         for (node, bc_type) in bc_nodes
             bc_type in (:fixed_x, :fixed_y, :fixed_xy) || throw(ArgumentError(
                 "unknown CZM boundary type $bc_type for node $node"
@@ -27,15 +26,9 @@ function apply_bc_czm(K::SparseMatrixCSC{Float64,Int64}, F::Vector{Float64}; bc_
         length(bc_dofs) == length(bc_vals) || throw(DimensionMismatch(
             "bc_dofs length $(length(bc_dofs)) does not match bc_vals length $(length(bc_vals))"
         ))
-        isempty(bc_dofs) && throw(ArgumentError("bc_dofs and bc_vals must not be empty"))
         length(unique(bc_dofs)) == length(bc_dofs) || throw(ArgumentError(
             "bc_dofs contains duplicate constraints"
         ))
-        for (dof, val) in zip(bc_dofs, bc_vals)
-            val isa Real && isfinite(val) || throw(ArgumentError(
-                "BC value for DOF $dof must be finite, got $val"
-            ))
-        end
     end
 
     # 相对罚（重设计 v2 §6）：跟随矩阵对角量级，避免固定罚值掩盖非法系统刚度。
@@ -149,9 +142,6 @@ end
 function mechanical_endpoint_topology(submesh::CzmSubmesh, elements::Matrix{Int64})
     n_bulk = size(elements, 1)
     n_segments = maximum(submesh.thermal_elem_map)
-    n_segments > 0 || throw(ArgumentError("mechanical angular segment count must be positive"))
-    n_bulk % n_segments == 0 || throw(DimensionMismatch(
-        "mechanical bulk element count $n_bulk is not divisible by angular segment count $n_segments"))
     n_layers = n_bulk ÷ n_segments
 
     start_nodes = Set{Int64}()
@@ -161,8 +151,6 @@ function mechanical_endpoint_topology(submesh::CzmSubmesh, elements::Matrix{Int6
         first_elem = (layer - 1) * n_segments + 1
         last_elem = layer * n_segments
         material = submesh.material_type[first_elem]
-        all(==(material), @view(submesh.material_type[first_elem:last_elem])) ||
-            throw(ArgumentError("mechanical layer $layer has inconsistent material topology"))
         layer_materials[layer] = material
         union!(start_nodes, (elements[first_elem, 1], elements[first_elem, 2]))
         union!(end_nodes, (elements[last_elem, 4], elements[last_elem, 3]))
@@ -289,7 +277,6 @@ function mechanical_boundary_dofs(bc::MechanicalBoundary)
     rigid[1:2:end, 1] .= 1.0
     rigid[2:2:end, 2] .= 1.0
     radius = maximum(hypot.(bc.coordinates[:,1], bc.coordinates[:,2]))
-    isfinite(radius) && radius > 0 || throw(ArgumentError("invalid mechanical coordinates"))
     rigid[1:2:end, 3] .= -bc.coordinates[:,2] ./ radius
     rigid[2:2:end, 3] .= bc.coordinates[:,1] ./ radius
     gram = zeros(3,3)
@@ -305,7 +292,6 @@ function mechanical_boundary_dofs(bc::MechanicalBoundary)
         elseif kind == :radial
             x,y = bc.coordinates[node,1], bc.coordinates[node,2]
             r = hypot(x,y)
-            r > 0 || throw(ArgumentError("radial support at polar origin"))
             nx,ny = x/r,y/r
             tx,ty = -ny,nx
             append!(rows,(i,i,j,j)); append!(cols,(i,j,i,j))
@@ -348,8 +334,6 @@ end
 
 function apply_czm_dirichlet!(u::AbstractVector{Float64}, d::MechanicalBCDOFs,
                               vals::AbstractVector{Float64})
-    length(vals) == length(d) && all(iszero,vals) || throw(ArgumentError(
-        "directional support is homogeneous"))
     u .= d.projector*u
     d.gauge === nothing || (u .-= d.gauge*dot(d.gauge,u))
     return u

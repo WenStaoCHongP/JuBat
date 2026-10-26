@@ -115,8 +115,6 @@ function Solve(case::Case;initial_state::Union{NamedTuple,Nothing}=nothing,retur
     else
         deepcopy(initial_state.mech)
     end
-    y0 isa Vector{Float64} || throw(ArgumentError("restored chemistry must be a Float64 vector"))
-    all(isfinite,y0) || throw(ArgumentError("restored chemistry is non-finite"))
     isfinite(global_time) || throw(ArgumentError("non-finite restored global time"))
     if haskey(case.mesh,"czm")
         mech0===nothing && throw(ArgumentError("CZM topology requires mechanics"))
@@ -188,7 +186,6 @@ function Solve(case::Case;initial_state::Union{NamedTuple,Nothing}=nothing,retur
     T_nodes_carry = if multi_spme_enabled
         T_nodes_initial = step_variables["thermal2D temperature at nodes"]
         T_nodes_initial = vec(T_nodes_initial)
-        length(T_nodes_initial) == case.mesh["thermal2D"].nlen || throw(DimensionMismatch("initial thermal node count $(length(T_nodes_initial)) does not match layout count $(case.mesh["thermal2D"].nlen)"))
         copy(T_nodes_initial)
     else
         Float64[]

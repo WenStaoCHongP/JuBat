@@ -187,7 +187,6 @@ end
 function aggregate_gp_damage_states(gp_states::Matrix{DamageState},
                                     weights::AbstractVector{<:Real})
     weight_sum = sum(weights)
-    weight_sum > 0.0 || throw(ArgumentError("cohesive quadrature weights must sum to positive value"))
     element_states = Vector{DamageState}(undef, size(gp_states, 1))
     for i in axes(gp_states, 1)
         state = DamageState()

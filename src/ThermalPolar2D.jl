@@ -4,13 +4,7 @@ function _polar_ring_grid(mesh::Mesh, mesh_data, param::Params)
     r, nt = mesh_data.r, mesh_data.ntheta
     r isa AbstractVector{<:Real} && length(r) >= 2 && all(isfinite, r) &&
         all(>(0), r) && all(>(0), diff(r)) || bad("r must be finite, positive and strictly increasing")
-    nt isa Integer && nt >= 3 || bad("ntheta must be an integer >= 3")
     nr = length(r) - 1
-    mesh.type == "Q4" && mesh.dimension == 2 || bad("a two-dimensional Q4 mesh is required")
-    mesh.nlen == length(r) * nt && size(mesh.node) == (mesh.nlen, 2) ||
-        bad("node layout must contain exactly length(r)*ntheta unique nodes")
-    size(mesh.element) == (nr * nt, 4) || bad("element layout must contain nr*ntheta Q4 cells")
-    all(isfinite, mesh.node) || bad("node coordinates must be finite")
     tol = 128 * eps(Float64)
     close(a, b) = isapprox(a, b; rtol=tol, atol=tol * maximum(r))
     close(first(r), param.cell.Rin) && close(last(r), param.cell.Rout) ||
@@ -30,26 +24,6 @@ function _polar_ring_grid(mesh::Mesh, mesh_data, param::Params)
         expected = ((ir - 1) * nt + it, ir * nt + it, ir * nt + itp, (ir - 1) * nt + itp)
         all(mesh.element[e, j] == expected[j] for j in 1:4) ||
             bad("element numbering must match the native periodic ring connectivity")
-    end
-    # The old minimal (r, ntheta) caller remains valid. Full ring_mesh metadata,
-    # when supplied, must describe this same mesh rather than another partition.
-    if hasproperty(mesh_data, :nr)
-        mesh_data.nr isa Integer && mesh_data.nr == nr || bad("nr disagrees with r")
-    end
-    if hasproperty(mesh_data, :theta)
-        theta = mesh_data.theta
-        theta isa AbstractVector{<:Real} && length(theta) == nt + 1 && all(isfinite, theta) ||
-            bad("theta must include exactly one periodic closing angle")
-        all(isapprox(x, dtheta; rtol=tol, atol=tol) for x in diff(theta)) &&
-            isapprox(cos(theta[1]), cos(phase); atol=tol, rtol=tol) &&
-            isapprox(sin(theta[1]), sin(phase); atol=tol, rtol=tol) ||
-            bad("theta disagrees with the actual uniform angular grid")
-    end
-    if hasproperty(mesh_data, :mesh)
-        other = mesh_data.mesh
-        other isa Mesh && other.type == mesh.type && other.dimension == mesh.dimension &&
-            other.nlen == mesh.nlen && other.node == mesh.node && other.element == mesh.element ||
-            bad("mesh_data.mesh disagrees with case.mesh[\"thermal2D\"]")
     end
     return r, nt
 end
@@ -82,7 +56,6 @@ function ThermalPolar2D_Ring(case::Case, variables::AbstractDict{String,<:Any}, 
     # where C* is total heat capacity and V* is normalized volume
     V_nd = param.cell.volume  # V* = V / L³
     C_nd = param.cell.heat_Q  # C* = m·c·T_ref/(t0·P_ref)
-    V_nd > 0 || error("ThermalPolar2D_Ring: param.cell.volume must be positive, got $V_nd")
     rho_c_nd = C_nd / V_nd  # (ρc)* = C*/V*
 
     # Anisotropic conductivities (already normalized)

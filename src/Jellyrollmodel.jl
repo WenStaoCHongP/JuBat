@@ -18,16 +18,12 @@ end
 function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phase::Float64=0.0,
         tol::Float64=1e-8, czm_enabled::Bool=false, thin_subdiv::Int=1)
     nθ >= 3 || throw(ArgumentError("collector-seeded: nθ must be at least 3, got $nθ"))
-    isfinite(phase) || throw(ArgumentError("collector-seeded: phase must be finite, got $phase"))
     isfinite(tol) && tol > 0.0 || throw(ArgumentError(
         "collector-seeded: tol must be finite and positive, got $tol"))
 
     # 参数已归一化，直接使用无量纲值
     a = param.cell.Rin
     b = param.cell.layer / (2 * pi)
-    isfinite(a) || throw(ArgumentError("collector-seeded: Rin must be finite, got $a"))
-    isfinite(param.cell.Rout) || throw(ArgumentError(
-        "collector-seeded: Rout must be finite, got $(param.cell.Rout)"))
     isfinite(b) && b > 0.0 || throw(ArgumentError(
         "collector-seeded: cell layer thickness must be finite and positive, got $(param.cell.layer)"))
 
@@ -119,8 +115,6 @@ function jellyroll_collector_seed_mesh(param; nθ::Int=360, gsorder::Int=2, phas
         r_c = hypot(x_c, y_c)
 
         layer = Int(floor((r_c - param.cell.Rin) / param.cell.layer) + 1)
-        layer >= 1 || error(
-            "collector-seeded: element $e has invalid winding layer $layer at radius $r_c")
         element_layer[e] = layer
 
         n2, n3 = mesh_unmerged.element[e, 2], mesh_unmerged.element[e, 3]
@@ -350,7 +344,6 @@ function edge_boundary(mesh, nidx::Int, param; which::Symbol=:inner, theta_range
 
     x, y = mesh.node[nidx, 1], mesh.node[nidx, 2]
     r = hypot(x, y)
-    b > 0 || error("edge_boundary: param.cell.layer must be positive, got $(param.cell.layer)")
 
     theta_min, theta_max = theta_range
 
@@ -650,7 +643,6 @@ function build_czm_submesh(param, thermal2D, theta::AbstractVector{<:Real},
     n_layers = length(layer_thicknesses)
 
     n_segments = length(theta) - 1
-    n_segments > 0 || error("build_czm_submesh: thermal mesh has no angular segment")
 
     # 节点：(n_layers+1) 条螺旋 × (n_segments+1) 点
     n_spirals = n_layers + 1

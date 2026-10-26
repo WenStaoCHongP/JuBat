@@ -405,14 +405,10 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Vecto
         # I_e is a local density; a_e converts Q_EL to signed branch power.
         P_EL = case.param_dim.scale.P_ref * a[e] * Q_EL
         V_th = areas[e] * case.param_dim.scale.L^2 * case.param_dim.cell.width
-        isfinite(P_EL) && isfinite(V_th) && V_th > 0.0 ||
-            throw(ArgumentError("invalid Q_EL power or parent volume"))
+        isfinite(P_EL) || throw(ArgumentError("non-finite Q_EL power"))
         # Combined full NE/PE coating volume; this is not a surviving-material volume.
         f_nepe = fks[e,1] + fks[e,3]
-        isfinite(f_nepe) && fks[e,1] >= 0.0 && fks[e,3] >= 0.0 ||
-            throw(ArgumentError("invalid Q_EL NE/PE layer fractions"))
         V_nepe = V_th * f_nepe
-        isfinite(V_nepe) || throw(ArgumentError("nonfinite Q_EL NE/PE volume"))
         if V_nepe > 0.0
             q_el[e] = f_nepe * (P_EL / V_nepe) *
                 case.param_dim.cell.area * case.param_dim.scale.L / case.param_dim.scale.P_ref

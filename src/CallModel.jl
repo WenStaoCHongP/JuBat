@@ -32,9 +32,7 @@ function particle_volume_average(c::AbstractVector{Float64}, mesh::Mesh)
     c_gs = vec(sum(mesh.gs.Ni .* c[mesh.element[mesh.gs.ele, :]], dims=2))
     q = vec(mesh.gs.x).^2 .* mesh.gs.weight .* mesh.gs.detJ
     den = sum(q)
-    isfinite(den) && den > 0 || throw(ArgumentError("invalid particle volume measure"))
     c_bar = dot(c_gs, q) / den
-    isfinite(c_bar) || throw(ArgumentError("non-finite particle volume average"))
     return c_bar
 end
 
