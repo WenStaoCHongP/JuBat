@@ -419,7 +419,6 @@ function update_czm_damage!(case, mech::MechState, variables, T_nodes_carry; czm
     ndof = 2 * size(czm_mesh.node, 1)
     F_ext = zeros(Float64, ndof)
 
-    all(isfinite, T_nodes_carry) || throw(ArgumentError("CZM temperature input contains non-finite values"))
     all(isfinite, variables["thermal2D element soc_n"]) || throw(ArgumentError("CZM negative-electrode SOC input contains non-finite values"))
     all(isfinite, variables["thermal2D element soc_p"]) || throw(ArgumentError("CZM positive-electrode SOC input contains non-finite values"))
     load = MechanicalLoad(czm_mesh; dT=dT_elem, Δsoc_n=Δsoc_n_elem,

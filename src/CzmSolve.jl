@@ -109,8 +109,6 @@ end
 
 function replay_czm_step_snapshot(path::String)
     snapshot = open(deserialize, path)
-    snapshot.format_version == 1 && throw(ArgumentError(
-        "CZM snapshot format 1 lacks the mechanical sampling time and cannot be migrated automatically"))
     snapshot.format_version == 2 || throw(ArgumentError(
         "unsupported CZM snapshot format $(snapshot.format_version)"))
     snapshot.source == czm_snapshot_source_state() || throw(ArgumentError(
@@ -135,10 +133,6 @@ function _solve_czm_step_impl(czm_mesh::CohesiveMesh, ms::MechState, param, load
     method = lowercase(czm_opt.iter_method)
     gp_arc = method in ("arc_length", "arclength", "arc-length") &&
         !czm_opt.geo_nonlinear
-    if gp_arc && ms.gp_damage_states !== nothing &&
-       any(s -> s.D_visc != s.D, ms.gp_damage_states)
-        throw(ArgumentError("nongeometric arc_length cannot advance lagged GP viscous damage without physical-time relaxation"))
-    end
     if czm_opt.viscous_enabled && czm_opt.viscous_tau > 0.0 && method != "gp_basic"
         throw(ArgumentError("Physical-time CZM viscosity requires gp_basic so damage relaxes once per accepted time step"))
     end

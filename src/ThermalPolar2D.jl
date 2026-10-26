@@ -152,7 +152,6 @@ function ThermalPolar2D_Ring(case::Case, variables::AbstractDict{String,<:Any}, 
             # --- Radial conduction (inner neighbor) ---
             if ir > 1
                 # Conductance: a = k* · r_face · Δθ / Δr
-                dr_im > 0 || error("ThermalPolar2D_Ring: radial spacing dr_im must be positive at ir=$ir, got $dr_im")
                 a_rm = k_r_nd * r_imh * dtheta / dr_im
                 push!(I, idx); push!(J, idx); push!(V, -a_rm)
                 idxm = (ir - 2) * ntheta + it
@@ -161,7 +160,6 @@ function ThermalPolar2D_Ring(case::Case, variables::AbstractDict{String,<:Any}, 
 
             # --- Radial conduction (outer neighbor) ---
             if ir < length(r_nodes)
-                dr_ip > 0 || error("ThermalPolar2D_Ring: radial spacing dr_ip must be positive at ir=$ir, got $dr_ip")
                 a_rp = k_r_nd * r_iph * dtheta / dr_ip
                 push!(I, idx); push!(J, idx); push!(V, -a_rp)
                 idxp = ir * ntheta + it
@@ -178,7 +176,6 @@ function ThermalPolar2D_Ring(case::Case, variables::AbstractDict{String,<:Any}, 
             itp = it == ntheta ? 1 : it + 1
             itm = it == 1 ? ntheta : it - 1
             # Conductance: a = k_t* · Δr_face / (r · Δθ)
-            r_i > 0 || error("ThermalPolar2D_Ring: radial position r_i must be positive at ir=$ir, got $r_i")
             a_t = k_t_nd * area_theta_nd / (r_i * dtheta)
             push!(I, idx); push!(J, idx); push!(V, -2.0 * a_t)
             push!(I, idx); push!(J, (ir - 1) * ntheta + itp); push!(V, a_t)
