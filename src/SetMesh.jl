@@ -96,11 +96,9 @@ function Mesh2D(domain::Vector{Float64}, num::Any, type::String="Q4", gsorder::I
         num = [nx, ny] 或 Tuple(nx, ny)
     """
     dim = 2
-    @assert length(domain) == 4 "domain for Q4 must be [x0,x1,y0,y1]"
     if isa(num, Tuple) || isa(num, NTuple{2,Int})
         nx, ny = num
     else
-        @assert length(num) == 2 "num for Q4 must have length 2"
         nx = Int(num[1]); ny = Int(num[2])
     end
     x0, x1, y0, y1 = domain

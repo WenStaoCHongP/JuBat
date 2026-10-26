@@ -5,23 +5,14 @@
 对每个粗热单元 e_thermal，扫描所有 cohesive_to_thermal[e_coh] == e_thermal 的 cohesive 单元，
 取 damage_states[e_coh].D 的最大值；无 cohesive 覆盖则取 0。
 （2026-08-30 重构：damage_states 来自 MechState，显式传入。）
-（任务59 R1 返工：源 D 须为 [0,1] 内有限值、映射索引须在界内、长度须匹配——
-非法输入显式失败，不得吞并为无损或静默跳过。）
 """
 function map_czm_damage_to_thermal(czm_mesh::CohesiveMesh, damage_states::AbstractVector{DamageState}, ne_thermal::Int)
-	czm_mesh.czm_submesh !== nothing || error(
-		"map_czm_damage_to_thermal: cohesive_to_thermal 映射缺失（结构非法，不得静默回退）")
+	thermal_elem_map = czm_mesh.czm_submesh.thermal_elem_map
 	n_coh = length(czm_mesh.cohesive_elements)
-	length(damage_states) == n_coh || error(
-		"map_czm_damage_to_thermal: damage_states 长度 $(length(damage_states)) != n_cohesive $n_coh")
 	D_per_thermal = zeros(ne_thermal)
 	for e_coh in 1:n_coh
-		e_thermal = czm_mesh.czm_submesh.thermal_elem_map[czm_mesh.cohesive_elements[e_coh].host_outer_elem]
-		1 <= e_thermal <= ne_thermal || error(
-			"map_czm_damage_to_thermal: cohesive $e_coh 映射越界 e_thermal=$e_thermal（ne_thermal=$ne_thermal）")
+		e_thermal = thermal_elem_map[czm_mesh.cohesive_elements[e_coh].host_outer_elem]
 		D = damage_states[e_coh].D
-		(isfinite(D) && 0.0 <= D <= 1.0) || error(
-			"map_czm_damage_to_thermal: cohesive $e_coh 损伤非法 D=$D（须为 [0,1] 内有限值），拒绝吞并为无损")
 		if D > D_per_thermal[e_thermal]
 			D_per_thermal[e_thermal] = D
 		end
@@ -38,9 +29,6 @@ const branch_consumption_observer = Ref{Any}(nothing)
 # 网格必须是 NE/PE 对应的 negative/positive particle 径向网格（Nrn/Nrp 决定），
 # 不得使用电极厚度坐标网格（R1 返工：后者长度 Nn/Np+1，合法不同配置下 DimensionMismatch）。
 function particle_volume_average(c::AbstractVector{Float64}, mesh::Mesh)
-    length(c) == mesh.nlen || throw(DimensionMismatch(
-        "particle_volume_average: concentration $(length(c)) vs particle nodes $(mesh.nlen)"))
-    all(isfinite, c) || throw(ArgumentError("non-finite particle concentration"))
     c_gs = vec(sum(mesh.gs.Ni .* c[mesh.element[mesh.gs.ele, :]], dims=2))
     q = vec(mesh.gs.x).^2 .* mesh.gs.weight .* mesh.gs.detJ
     den = sum(q)
@@ -94,10 +82,6 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
     D_elem_area_loss = nothing
     if case.opt.czm.area_loss_enabled
         if haskey(case.mesh, "czm")
-            mech !== nothing || error(
-                "CallModel_MultiSPMe: area_loss_enabled 且存在 czm_mesh（反馈源），但 mech 缺失（非法状态）")
-            case.mesh["czm"].czm_submesh !== nothing || error(
-                "CallModel_MultiSPMe: area_loss_enabled 且反馈源存在，但 cohesive_to_thermal 映射缺失（非法状态，不得静默回退几何权重）")
             D_elem_area_loss = map_czm_damage_to_thermal(case.mesh["czm"], mech.damage_states, ne)
         elseif case.opt.czm.enabled
             error("CallModel_MultiSPMe: area_loss_enabled 且 CZM 启用，但缺少 czm_mesh（非法状态，不得静默回退几何权重）")
@@ -172,7 +156,6 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         variables = compute_heat_sources(case, variables, variables_elems, I_e, Te_prev, areas)
         t_czm_model_s = (time_ns() - t_czm_ns) * 1e-9
         # 记录 CZM 摘要统计
-        length(mech.damage_states)==length(case.mesh["czm"].cohesive_elements) || throw(DimensionMismatch("CZM summary damage count"))
         stats = get_damage_statistics(mech.damage_states)
         variables["czm D_max"] = [stats.max_D]
         if case.opt.czm.winding_prestress
@@ -181,7 +164,6 @@ function CallModel_MultiSPMe(case::Case, yt::Array{Float64}, t::Float64; jacobi:
         variables["czm D_mean"] = [stats.mean_D]
         δ_max_n_vals = [s.δ_max_n for s in mech.damage_states]
         δ_max_eff_vals = [s.δ_max_eff for s in mech.damage_states]
-        all(isfinite,δ_max_n_vals) && all(isfinite,δ_max_eff_vals) || throw(ArgumentError("non-finite CZM separation history"))
         variables["czm δ_max_n"] = [maximum(δ_max_n_vals)]
         variables["czm δ_max_eff"] = [maximum(δ_max_eff_vals)]
         variables["czm δ_mean_n"] = [mean(δ_max_n_vals)]

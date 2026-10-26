@@ -13,8 +13,6 @@ end
 function spherical_arc_length_correction(delta_u_bar::AbstractVector{<:Real},
         delta_lambda_bar::Real, delta_u_R::AbstractVector{<:Real},
         delta_u_F::AbstractVector{<:Real}, arc_length_alpha::Real, arc_radius::Real)
-    length(delta_u_bar) == length(delta_u_R) == length(delta_u_F) ||
-        throw(DimensionMismatch("spherical arc correction vectors must have equal length"))
     isfinite(arc_radius) && arc_radius > 0.0 || throw(ArgumentError(
         "spherical arc correction requires finite positive radius, got $arc_radius"))
     g = dot(delta_u_bar, delta_u_bar) +

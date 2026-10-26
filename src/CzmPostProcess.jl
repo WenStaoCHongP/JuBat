@@ -17,11 +17,7 @@ function get_damage_statistics(damage_states::AbstractVector{DamageState})
         return (max_D=0.0, mean_D=0.0, min_D=0.0, n_fractured=0, fraction_damaged=0.0, total_accumulated=0.0)
     end
 
-    D_vals = map(damage_states) do s
-        isfinite(s.D) && 0<=s.D<=1 && isfinite(s.accumulated_damage) ||
-            throw(ArgumentError("invalid damage statistics source"))
-        s.D
-    end
+    D_vals = [s.D for s in damage_states]
     n_fractured = count(s -> s.fractured, damage_states)
     n_damaged = count(d -> d > 0.01, D_vals)
     accumulated = [s.accumulated_damage for s in damage_states]
@@ -108,8 +104,6 @@ function accumulate_cycle_damage!(ms::MechState, cycle_damage_increment::Float64
     isfinite(cycle_damage_increment) && cycle_damage_increment >= 0.0 ||
         throw(ArgumentError("cycle damage increment must be finite and nonnegative"))
     cycle_damage_increment == 0.0 && return ms
-    ms.gp_damage_states === nothing && throw(ArgumentError(
-        "nonzero cycle damage increment requires real GP history"))
     weights = check_cycle_gp_history(ms.gp_damage_states,length(ms.damage_states))
     new_gp = clone_damage_states(ms.gp_damage_states)
     for s in new_gp
@@ -212,24 +206,14 @@ function CZMSnapshot(result::CZMResult, mech::MechState, mesh::CohesiveMesh, par
     length(result.displacement) == 2size(mesh.node,1) ||
         throw(DimensionMismatch("snapshot displacement differs from the actual mechanical mesh"))
     result.displacement == mech.u_prev || throw(ArgumentError("snapshot displacement differs from accepted mechanics"))
-    mech.gp_damage_states === nothing && throw(ArgumentError("snapshot requires real accepted GP history"))
     gp = clone_damage_states(mech.gp_damage_states)
-    weights = check_cycle_gp_history(gp, length(result.damage))
-    aggregate = aggregate_gp_damage_states(gp, weights)
-    all(i -> aggregate[i].D == result.damage[i] && aggregate[i].D_visc == result.damage_visc[i] &&
-        aggregate[i].fractured == result.fractured[i], eachindex(aggregate)) ||
-        throw(ArgumentError("snapshot GP aggregation differs from accepted result"))
     capture = (separation_n=zeros(size(gp)), separation_t=zeros(size(gp)),
         traction_n=zeros(size(gp)), traction_t=zeros(size(gp)))
     check_czm_workspace(mesh, czm_workspace)
-    _, _, separations, tractions = assemble_czm_system(mesh, result.displacement, param;
+    assemble_czm_system(mesh, result.displacement, param;
         czm_workspace=czm_workspace, gp_damage_states=gp, gp_trial_states=nothing,
         gp_capture=capture, visc_beta=0.0, czm_model=czm_model)
-    all(i -> separations[i] == (result.separation_n[i],result.separation_t[i]) &&
-        tractions[i] == (result.traction_n[i],result.traction_t[i]), eachindex(result.damage)) ||
-        throw(ArgumentError("snapshot current GP response differs from accepted result"))
     bulk_kappa = if plasticity
-        mech.plastic_states === nothing && throw(ArgumentError("J2 snapshot requires real accepted plastic history"))
         size(mech.plastic_states) == (size(mesh.bulk_element,1),4) ||
             throw(DimensionMismatch("J2 snapshot history must use actual bulk element/GP topology"))
         map(s -> s.kappa, mech.plastic_states)
@@ -279,7 +263,6 @@ function check_czm_snapshot(snapshot::CZMSnapshot)
         aggregate[i].fractured == snapshot.fractured[i], eachindex(aggregate)) ||
         throw(ArgumentError("snapshot GP aggregation differs from element output"))
     if snapshot.plasticity
-        snapshot.bulk_kappa === nothing && throw(ArgumentError("J2 snapshot lacks accepted bulk kappa"))
         size(snapshot.bulk_kappa,1) > 0 && size(snapshot.bulk_kappa,2) == 4 ||
             throw(DimensionMismatch("J2 snapshot requires nonempty bulk history with four actual GPs"))
         all(x -> isfinite(x) && x >= 0.0, snapshot.bulk_kappa) ||

@@ -115,7 +115,6 @@ function initialize_currents(ne, w, I_total, x_prev; active_mask=trues(ne))
 		copy(x_prev)
 	end
 	length(I_e) == ne || throw(DimensionMismatch("branch current initial guess length"))
-	all(isfinite, I_e) || error("nonfinite branch current initial guess")
 	I_e[.!active_mask] .= 0.0
 	active_idx = findall(active_mask)
 	isempty(active_idx) && return I_e
@@ -384,8 +383,6 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 	ne = length(areas)
 	# 渐进式有效面积损失：无阈值 factor = 1 - D（仅开关开启时消费 D）
 	if case.opt.czm.area_loss_enabled && D_elem !== nothing
-		all(d -> isfinite(d) && 0.0 <= d <= 1.0, D_elem) || error(
-			"solve_branch_currents: D_elem 含 NaN/越界值（合法域 [0,1]），面积损失路径拒绝消费")
 		A_eff = areas .* (1.0 .- D_elem)
 	else
 		A_eff = areas
@@ -441,13 +438,6 @@ function solve_branch_currents(case::Case, variables::Dict{String,Union{Array{Fl
 		if I_total != 0.0
 			error("面积全失活，无法承载外加电流：I_total=$(I_total)（无量纲，×I_typ=$(case.param.scale.I_typ) A = $(I_total * case.param.scale.I_typ) A），t=$(t)（无量纲，×t0=$(case.param.scale.t0) s）")
 		end
-		# R3 返工：诊断值发布前的合法性门——非法温度/非有限 OCV 直接抛错，不发布 NaN 诊断电压
-		(all(isfinite, Te_prev) && minimum(Te_prev) > 0.0) || error(
-			"solve_branch_currents: 全失活静置诊断拒绝非法温度（NaN/非正绝对温度），Te_prev 最小值=$(if isempty(Te_prev)
-				NaN
-			else
-				minimum(Te_prev)
-			end)")
 		I_e = zeros(Float64, ne)
 		V = mean(c.C1 for c in coeffs)   # OCV 算术均值诊断值，非求解所得公共端电压
 		isfinite(V) || error(

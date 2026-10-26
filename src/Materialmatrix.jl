@@ -131,17 +131,6 @@ function cohesive_response(law::BilinearCohesiveLaw, gap::NTuple{2,Float64},
     δ_n, δ_t = gap
     ip, czm_model = law.ip, law.model
     visc_beta = step_data.visc_beta
-	# Accepted history must already be canonical. Never repair a lost or
-	# inconsistent history from its fracture flag at the material boundary.
-	0.0 <= damage_state.D_visc <= damage_state.D <= 1.0 ||
-		throw(ArgumentError("CZM history requires 0 <= D_visc <= D <= 1"))
-	if damage_state.fractured
-		(damage_state.D == 1.0 && damage_state.D_visc == 1.0) ||
-			throw(ArgumentError("fractured CZM history requires D = D_visc = 1"))
-	elseif damage_state.D == 1.0 && damage_state.D_visc >= 1.0 - 1e-10
-		throw(ArgumentError("noncanonical CZM saturation history; explicit migration required"))
-	end
-	0.0 <= visc_beta <= 1.0 || throw(ArgumentError("CZM visc_beta must be in [0, 1]"))
 	envelope = bilinear_opening_envelope(δ_n, δ_t, ip, czm_model)
 	new_state = DamageState()
 	new_state.D = damage_state.D

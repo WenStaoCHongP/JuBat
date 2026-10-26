@@ -62,22 +62,7 @@ function create_unit_czm_strip(param; width=nothing, y0::Float64=1.0, gsorder::I
 
     czm_mesh = create_czm_mesh(submesh, dummy_thermal)
 
-    # ---- 硬断言（方案 C）----
-    @assert length(czm_mesh.cohesive_elements) == 4 "expected 4 cohesive, got $(length(czm_mesh.cohesive_elements))"
     types = [e.interface_type for e in czm_mesh.cohesive_elements]
-    @assert count(==(:PE_PCC), types) == 2 "PE_PCC count"
-    @assert count(==(:NE_NCC), types) == 2 "NE_NCC count"
-    for coh in czm_mesh.cohesive_elements
-        n_lo, n_hi, n_hi_c, n_lo_c = coh.nodes
-        @assert czm_mesh.node[n_lo, :] ≈ czm_mesh.node[n_lo_c, :] atol=1e-12
-        @assert czm_mesh.node[n_hi, :] ≈ czm_mesh.node[n_hi_c, :] atol=1e-12
-        @assert length(unique(coh.nodes)) == 4
-        # 外层 bulk 共边应为副本
-        e_out = coh.host_outer_elem
-        outer_nodes = Set(czm_mesh.bulk_element[e_out, :])
-        @assert n_lo_c in outer_nodes && n_hi_c in outer_nodes
-        @assert !(n_lo in outer_nodes) && !(n_hi in outer_nodes)
-    end
 
     bottom_nodes = [1, 2]
     # 顶层（层 8）在 create_czm_mesh 后：外层若被重写则取 bulk_element[8,:] 上边

@@ -617,16 +617,6 @@ function gl_element_residual_tangent(x_e, y_e, u_e::Vector{Float64},
                                      split_KG::Bool=false,
                                      gp_geom=nothing,
                                      scratch=nothing)
-    all(isfinite,sigma0) || throw(ArgumentError("non-finite reference prestress"))
-    (committed_gp_states === nothing) == (trial_gp_states === nothing) ||
-        error("gl_element_residual_tangent: committed/trial Gauss-point states must be supplied together")
-    if committed_gp_states !== nothing
-        length(committed_gp_states) == 4 && length(trial_gp_states) == 4 ||
-            throw(DimensionMismatch(
-                "gl_element_residual_tangent: committed/trial states must each contain four Gauss points"))
-    elseif plastic_params !== nothing
-        error("gl_element_residual_tangent: plastic_params requires committed/trial Gauss-point states")
-    end
     own = scratch === nothing
     f_e = own ? zeros(Float64, 8) : scratch.f_e
     K_e = own ? zeros(Float64, 8, 8) : scratch.K_e

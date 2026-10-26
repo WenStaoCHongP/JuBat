@@ -399,7 +399,6 @@ neg_groups 同理。跨组去重沿用 jellyroll_tab_node_indices 的 keep-first
 角度优先）；窗口算法与其逐字相同（任务 50 多极耳拓展）。
 """
 function jellyroll_tab_node_groups(mesh, param)
-    @assert mesh.dimension == 2 "jellyroll_tab_node_groups 仅适用于 2D 网格"
 
     a = param.cell.Rin
     b = param.cell.layer / (2 * pi)
@@ -580,8 +579,6 @@ function merge_phi_pairs(mesh::Mesh, phi_pairs::Vector{Tuple{Int,Int}}, gsorder:
 
     merge_map = Dict{Int,Int}()
     for (outer_n, inner_n) in phi_pairs
-        1 <= outer_n <= nnode || throw(BoundsError(mesh.node, (outer_n, :)))
-        1 <= inner_n <= nnode || throw(BoundsError(mesh.node, (inner_n, :)))
         outer_n != inner_n || error(
             "merge_phi_pairs: physical Φ pair must contain distinct nodes, got ($outer_n, $inner_n)")
         haskey(merge_map, outer_n) && error(
@@ -651,12 +648,8 @@ function build_czm_submesh(param, thermal2D, theta::AbstractVector{<:Real},
         material_sequence = ms
     end
     n_layers = length(layer_thicknesses)
-    @assert sum(layer_thicknesses) ≈ s_total rtol=1e-6
 
-    n_thermal = size(thermal2D.element, 1)
     n_segments = length(theta) - 1
-    n_segments == n_thermal || throw(DimensionMismatch(
-        "build_czm_submesh: thermal theta segments $n_segments do not match thermal elements $n_thermal"))
     n_segments > 0 || error("build_czm_submesh: thermal mesh has no angular segment")
 
     # 节点：(n_layers+1) 条螺旋 × (n_segments+1) 点

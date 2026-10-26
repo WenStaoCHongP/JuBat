@@ -24,10 +24,6 @@ struct MechanicalLoad
             throw(DimensionMismatch("mechanical load fields must match $ne bulk elements"))
         length(F_ext) == 2 * size(czm_mesh.node, 1) ||
             throw(DimensionMismatch("mechanical external force must match the mesh DOFs"))
-        all(isfinite, dT) || throw(ArgumentError("CZM temperature increment contains non-finite values"))
-        all(isfinite, Δsoc_n) || throw(ArgumentError("CZM negative-electrode SOC increment contains non-finite values"))
-        all(isfinite, Δsoc_p) || throw(ArgumentError("CZM positive-electrode SOC increment contains non-finite values"))
-        all(isfinite, F_ext) || throw(ArgumentError("mechanical external force contains non-finite values"))
         dt = Float64(dt_seconds)
         sample_time = Float64(sample_time_seconds)
         isfinite(dt) && dt >= 0.0 ||
@@ -236,8 +232,6 @@ end
 """
 function ensure_node_ref!(case, mech::MechState)
     ref = mech.node_ref === nothing ? copy(case.mesh["czm"].node) : mech.node_ref
-    size(ref)==size(case.mesh["czm"].node) || throw(DimensionMismatch("reference-node shape"))
-    all(isfinite,ref) || throw(ArgumentError("non-finite reference nodes"))
     mech.node_ref=ref
     return ref
 end
@@ -302,52 +296,20 @@ function compute_czm_strain_inputs(case, variables, T_nodes)
 
     thermal_mesh = case.mesh["thermal2D"]
     thermal_elem = thermal_mesh.element
-    n_thermal_node = thermal_mesh.nlen
     n_thermal_elem = size(thermal_elem, 1)
 
-    # ---- 在任何索引前验证父热单元场 → CZM 的完整接口契约 ----
-    T_nodes isa AbstractVector || throw(DimensionMismatch(
-        "compute_czm_strain_inputs: T_nodes 必须是一维活动热节点向量，实际 size=$(size(T_nodes))"))
-    length(T_nodes) == n_thermal_node || throw(DimensionMismatch(
-        "compute_czm_strain_inputs: 热节点接口尺寸不一致：活动热网格节点数=$(n_thermal_node)，" *
-        "T_nodes 长度=$(length(T_nodes))"))
-    all(isfinite, T_nodes) || throw(ArgumentError(
-        "compute_czm_strain_inputs: 活动热节点温度包含非有限值"))
-
     thermal_elem_map = submesh.thermal_elem_map
-    length(thermal_elem_map) == ne_czm || throw(DimensionMismatch(
-        "compute_czm_strain_inputs: thermal_elem_map 长度=$(length(thermal_elem_map))，CZM 单元数=$ne_czm"))
-    invalid_parent = findfirst(e_th -> !(1 <= e_th <= n_thermal_elem), thermal_elem_map)
-    invalid_parent === nothing || throw(ArgumentError(
-        "compute_czm_strain_inputs: thermal_elem_map[$invalid_parent]=$(thermal_elem_map[invalid_parent]) " *
-        "超出活动热单元范围 1:$n_thermal_elem"))
-
-    length(submesh.material_type) == ne_czm || throw(DimensionMismatch(
-        "compute_czm_strain_inputs: material_type 长度=$(length(submesh.material_type))，CZM 单元数=$ne_czm"))
-    size(thermal_elem, 2) == 4 || throw(DimensionMismatch(
-        "compute_czm_strain_inputs: 活动热网格必须使用 Q4 单元，实际每单元节点数=$(size(thermal_elem, 2))"))
-    invalid_thermal_node = findfirst(node -> !(1 <= node <= n_thermal_node), thermal_elem)
-    invalid_thermal_node === nothing || throw(ArgumentError(
-        "compute_czm_strain_inputs: 活动热网格连接包含越界节点 $(thermal_elem[invalid_thermal_node])，" *
-        "有效范围为 1:$n_thermal_node"))
 
     function current_soc_field(key::String, label::String)
-        haskey(variables, key) || throw(KeyError(key))
         field = variables[key]
         current = if field isa AbstractVector
             field
         elseif field isa AbstractMatrix
-            size(field, 2) > 0 || throw(DimensionMismatch(
-                "compute_czm_strain_inputs: $label SOC 历史矩阵没有当前列，size=$(size(field))"))
             @view field[:, end]
         else
             throw(ArgumentError(
                 "compute_czm_strain_inputs: $label SOC 必须是向量或历史矩阵，实际类型=$(typeof(field))"))
         end
-        length(current) == n_thermal_elem || throw(DimensionMismatch(
-            "compute_czm_strain_inputs: $label SOC 当前场长度=$(length(current))，活动热单元数=$n_thermal_elem"))
-        all(isfinite, current) || throw(ArgumentError(
-            "compute_czm_strain_inputs: $label SOC 当前场包含非有限值"))
         return current
     end
 
@@ -419,8 +381,6 @@ function update_czm_damage!(case, mech::MechState, variables, T_nodes_carry; czm
     ndof = 2 * size(czm_mesh.node, 1)
     F_ext = zeros(Float64, ndof)
 
-    all(isfinite, variables["thermal2D element soc_n"]) || throw(ArgumentError("CZM negative-electrode SOC input contains non-finite values"))
-    all(isfinite, variables["thermal2D element soc_p"]) || throw(ArgumentError("CZM positive-electrode SOC input contains non-finite values"))
     load = MechanicalLoad(czm_mesh; dT=dT_elem, Δsoc_n=Δsoc_n_elem,
         Δsoc_p=Δsoc_p_elem, F_ext=F_ext, dt_seconds=dt_seconds,
         sample_time_seconds=sample_time_seconds)

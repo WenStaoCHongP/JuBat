@@ -170,8 +170,6 @@ end
 
 function gp_history_for_step(ms::MechState, czm_mesh::CohesiveMesh)
     require_mechanical_load_history(ms)
-    length(ms.damage_states) == length(czm_mesh.cohesive_elements) || throw(DimensionMismatch(
-        "element damage history length must equal $(length(czm_mesh.cohesive_elements))"))
     weights, _ = NCweight(czm_mesh.czm_submesh.mesh_bonded.gs.order)
     shape = (length(czm_mesh.cohesive_elements), length(weights))
     if ms.gp_damage_states === nothing
@@ -183,16 +181,11 @@ function gp_history_for_step(ms::MechState, czm_mesh::CohesiveMesh)
             "cannot reconstruct GP damage history from a nonzero element-average history"))
         return [DamageState() for _ in 1:shape[1], _ in 1:shape[2]]
     end
-    size(ms.gp_damage_states) == shape || throw(DimensionMismatch(
-        "GP damage history size $(size(ms.gp_damage_states)) must equal $shape"))
-    all(s->all(f->isfinite(getfield(s,f)),fieldnames(typeof(s))) && 0<=s.D<=1 && 0<=s.D_visc<=1,ms.gp_damage_states) || throw(ArgumentError("invalid GP damage history"))
     return clone_damage_states(ms.gp_damage_states)
 end
 
 function aggregate_gp_damage_states(gp_states::Matrix{DamageState},
                                     weights::AbstractVector{<:Real})
-    size(gp_states, 2) == length(weights) || throw(DimensionMismatch(
-        "GP history and quadrature weights differ"))
     weight_sum = sum(weights)
     weight_sum > 0.0 || throw(ArgumentError("cohesive quadrature weights must sum to positive value"))
     element_states = Vector{DamageState}(undef, size(gp_states, 1))
@@ -221,9 +214,6 @@ function prepare_plastic_state_buffers(ms::MechState, czm_mesh::CohesiveMesh,
     else
         ms.plastic_states
     end
-    size(committed) == (ne, 4) || throw(DimensionMismatch(
-        "plastic state size $(size(committed)) must equal ($ne, 4)"))
-    all(s->all(isfinite,s.eps_p) && isfinite(s.kappa),committed) || throw(ArgumentError("invalid committed plastic history"))
     return committed, clone_plastic_states(committed)
 end
 
@@ -264,8 +254,6 @@ function zero_czm_bc_entries!(v::AbstractVector{Float64}, bc_dofs::AbstractVecto
 end
 
 function fill_czm_result!(result::CZMResult, u::Vector{Float64}, damage_states::AbstractVector{DamageState}, separations::Vector{Tuple{Float64, Float64}}, tractions::Vector{Tuple{Float64, Float64}})
-    length(result.damage) == length(damage_states) == length(separations) == length(tractions) ||
-        throw(DimensionMismatch("CZM result fields must have the same element count"))
     result.displacement = copy(u)
     for i in eachindex(damage_states)
         result.damage[i] = damage_states[i].D

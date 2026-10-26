@@ -328,15 +328,6 @@ function Variable_update!(variables_hist::Dict{String, Union{Array{Float64},Floa
             ndims(hist_val) == 2 || throw(DimensionMismatch("history variable \"$k\" must be a matrix"))
             nrows,ncols = size(hist_val)
             column = if val isa Array{Float64}
-                if debug_coupling
-                    if ndims(val) == 2
-                        size(val,2) == 1 || throw(DimensionMismatch(
-                            "variable \"$k\" must have exactly one column, got size $(size(val))"))
-                    elseif ndims(val) != 1
-                        throw(DimensionMismatch(
-                            "variable \"$k\" must be a vector or single-column matrix, got $(ndims(val)) dimensions"))
-                    end
-                end
                 length(val) == nrows || throw(DimensionMismatch(
                     "variable \"$k\" length $(length(val)) does not match history row count $nrows"))
                 copy(vec(val))

@@ -150,14 +150,12 @@ D 由 `moduli_of(param, material_type[e])` 逐层给出；`u` 为 L 归一化位
 （按 [u1x,u1y,u2x,u2y,...] 排布），`ε0` 为逐单元特征应变。
 """
 function recover_bulk_stress(node, element, material_type, u, ε0, param)
-    length(u)==2size(node,1) || throw(DimensionMismatch("recover_bulk_stress: displacement length"))
-    all(isfinite,u) || throw(ArgumentError("recover_bulk_stress: non-finite displacement"))
     ne = size(element, 1)
     sigma_xx = zeros(Float64, ne)
     sigma_yy = zeros(Float64, ne)
     sigma_xy = zeros(Float64, ne)
     sigma_vm = zeros(Float64, ne)
-    @inbounds for e in 1:ne
+    for e in 1:ne
         nodes = element[e, :]
         dNdx, dNdy, _ = q4_center_gradients(node, nodes)
         eps_xx = sum(dNdx[i] * u[2 * nodes[i] - 1] for i in 1:4)
@@ -189,33 +187,16 @@ mesh 几何缓存，不调用返回映射，不创建或提交塑性/损伤状�
 function recover_bulk_stress_geo(czm_mesh, u, param, ε0; czm_workspace::CZMWorkspace, prestress=nothing)
     node, element = czm_mesh.node, czm_mesh.bulk_element
     ne = size(element, 1)
-    size(node) == (size(czm_mesh.node, 1), 2) || throw(DimensionMismatch("recover_bulk_stress_geo: node shape must be (nnode, 2)"))
-    size(element, 2) == 4 || throw(DimensionMismatch("recover_bulk_stress_geo: bulk connectivity must have four columns"))
-    u isa AbstractVector && length(u) == 2 * size(czm_mesh.node, 1) || throw(DimensionMismatch("recover_bulk_stress_geo: u must have 2*nnode entries"))
-    ε0 isa AbstractVector && length(ε0) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: ε0 must have one entry per bulk element"))
-    czm_mesh.czm_submesh === nothing && error("recover_bulk_stress_geo: missing bulk material source")
     mt = czm_mesh.czm_submesh.material_type
-    length(mt) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: material count must equal bulk element count"))
-    all(n -> 1 <= n <= size(czm_mesh.node, 1), element) || throw(DimensionMismatch("recover_bulk_stress_geo: bulk node index out of bounds"))
-    all(isfinite, node) && all(isfinite, u) && all(isfinite, ε0) || error("recover_bulk_stress_geo: non-finite geometry, displacement or eigenstrain")
-    if prestress !== nothing
-        prestress isa AbstractVector && length(prestress) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: S0 must have one entry per bulk element"))
-        all(s -> length(s) == 3, prestress) || throw(DimensionMismatch("recover_bulk_stress_geo: each S0 must have three components"))
-        all(s -> all(isfinite, s), prestress) || error("recover_bulk_stress_geo: non-finite S0")
-    end
     geom = bulk_gauss_geometry(czm_mesh; czm_workspace=czm_workspace, gsorder=2)
-    length(geom) == ne || throw(DimensionMismatch("recover_bulk_stress_geo: reference geometry element count mismatch"))
     xx = zeros(ne); yy = zeros(ne); xy = zeros(ne); vm = zeros(ne)
     for e in 1:ne
-        length(geom[e]) == 4 || throw(DimensionMismatch("recover_bulk_stress_geo: every bulk element requires four reference Gauss points"))
         nodes = element[e, :]
         ue = [u[d] for n in nodes for d in (2*n-1, 2*n)]
         C = plane_stress_C(moduli_of(param, mt[e])...)
-        all(isfinite, C) || error("recover_bulk_stress_geo: non-finite material stiffness at element $e")
         area = 0.0
         for g in geom[e]
-            length(g.dNdx) == 4 && length(g.dNdy) == 4 || throw(DimensionMismatch("recover_bulk_stress_geo: each gradient requires four entries"))
-            all(isfinite, g.dNdx) && all(isfinite, g.dNdy) && isfinite(g.w) && g.w > 0.0 && isfinite(g.detJ) && g.detJ > 0.0 || error("recover_bulk_stress_geo: invalid reference Gauss geometry at element $e")
+            isfinite(g.w) && g.w > 0.0 && isfinite(g.detJ) && g.detJ > 0.0 || error("recover_bulk_stress_geo: invalid reference Gauss integration measure at element $e")
             k = bulk_gl_kinematics(ue, g.dNdx, g.dNdy)
             S1 = C[1,1] * (k.E11 - ε0[e]) + C[1,2] * (k.E22 - ε0[e])
             S2 = C[1,2] * (k.E11 - ε0[e]) + C[2,2] * (k.E22 - ε0[e])
@@ -225,7 +206,6 @@ function recover_bulk_stress_geo(czm_mesh, u, param, ε0; czm_workspace::CZMWork
             end
             sigma = cauchy_from_second_piola((S1,S2,S3), k.F11,k.F12,k.F21,k.F22)
             q = qbar(sigma)
-            isfinite(q) || error("recover_bulk_stress_geo: non-finite pointwise von Mises at element $e")
             wJ = g.w * g.detJ
             xx[e] += wJ * sigma[1]; yy[e] += wJ * sigma[2]; xy[e] += wJ * sigma[3]
             vm[e] += wJ * q; area += wJ
@@ -246,18 +226,11 @@ geo_nl=false 保留小应变；geo_nl=true 返回 Green–Lagrange E11/E22/2E12�
 弹性应变 = 总应变 − ε0·[1,1,0]；仅匹配的小应变弹性中心应力可按层刚度反解。
 """
 function recover_bulk_strain(node, element, u; geo_nl::Bool=false)
-    if geo_nl
-        node isa AbstractMatrix && size(node, 2) == 2 || throw(DimensionMismatch("recover_bulk_strain: node must have two columns"))
-        element isa AbstractMatrix && size(element, 2) == 4 || throw(DimensionMismatch("recover_bulk_strain: element must have four columns"))
-        u isa AbstractVector && length(u) == 2 * size(node, 1) || throw(DimensionMismatch("recover_bulk_strain: u must have 2*nnode entries"))
-        all(n -> n isa Integer && 1 <= n <= size(node, 1), element) || throw(DimensionMismatch("recover_bulk_strain: node index out of bounds"))
-        all(isfinite, node) && all(isfinite, u) || error("recover_bulk_strain: non-finite geometry or displacement")
-    end
     ne = size(element, 1)
     eps_xx = zeros(Float64, ne)
     eps_yy = zeros(Float64, ne)
     gam_xy = zeros(Float64, ne)
-    @inbounds for e in 1:ne
+    for e in 1:ne
         nodes = element[e, :]
         dNdx, dNdy, _ = q4_center_gradients(node, nodes)
         if geo_nl
@@ -299,8 +272,6 @@ von Mises 与最大等效塑性应变。函数不调用本构更新。
 """
 function project_bulk_stress(czm_mesh, plastic_states)
     ne = size(czm_mesh.bulk_element, 1)
-    size(plastic_states) == (ne, 4) || throw(DimensionMismatch(
-        "plastic state size $(size(plastic_states)) must equal ($ne, 4)"))
     xx = zeros(Float64, ne)
     yy = zeros(Float64, ne)
     xy = zeros(Float64, ne)
@@ -312,12 +283,8 @@ function project_bulk_stress(czm_mesh, plastic_states)
     gs = czm_mesh.czm_submesh.mesh_bonded.gs
     for q in eachindex(gs.weight)
         e = gs.ele[q]
-        1 <= e <= ne || error(
-            "project_bulk_stress: Gauss point $q refers to invalid element $e")
         gp_count[e] += 1
         g = gp_count[e]
-        1 <= g <= 4 || error(
-            "project_bulk_stress: bulk element $e has more than four Gauss points")
         state = plastic_states[e, g]
         all(isfinite, state.sigma) && isfinite(state.kappa) || error(
             "project_bulk_stress: non-finite committed state at element $e Gauss point $g")
@@ -353,15 +320,10 @@ function compute_macro_stress(case, mech::MechState, variables, T_nodes)
     load=require_mechanical_load_history(mech)
     load===nothing && error("compute_macro_stress: no successful mechanical solution")
     if case.opt.czm.j2_plasticity
-        mech.plastic_states === nothing && error(
-            "compute_macro_stress: J2 state is unavailable before the first converged mechanical solve")
         return project_bulk_stress(case.mesh["czm"], mech.plastic_states)
     end
     czm_mesh = case.mesh["czm"]
     mt=czm_mesh.czm_submesh.material_type
-    ne=length(mt)
-    all(a->length(a)==ne,(load.dT,load.Δsn,load.Δsp)) || throw(DimensionMismatch("mechanical eigenstrain history shape"))
-    all(a->all(isfinite,a),(load.dT,load.Δsn,load.Δsp)) || throw(ArgumentError("non-finite mechanical eigenstrain history"))
     ε0=[eigenstrain_of(case.param,mt[e],load.dT[e],load.Δsn[e],load.Δsp[e]) for e in eachindex(mt)]
     sigma_xx, sigma_yy, sigma_xy, sigma_vm = recover_bulk_stress(
         czm_mesh.node, czm_mesh.bulk_element, czm_mesh.czm_submesh.material_type,

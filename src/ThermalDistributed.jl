@@ -313,11 +313,7 @@ function compute_heat_sources(case::Case, variables::Dict,variables_elems::Vecto
 
     fks = case.mesh["thermal2D layer weights"]
     area_sum = sum(areas)
-    length(areas) == ne && all(x -> isfinite(x) && x > 0.0, areas) && isfinite(area_sum) && area_sum > 0.0 ||
-        throw(ArgumentError("Q_EL requires positive parent element areas"))
     A_eff = variables["thermal2D effective area"]
-    length(A_eff) == ne && all(e -> isfinite(A_eff[e]) && 0.0 <= A_eff[e] <= areas[e], 1:ne) ||
-        throw(ArgumentError("Q_EL effective areas differ from the branch support"))
     a = A_eff / area_sum
 
     # 从 variables 获取预分配的数组

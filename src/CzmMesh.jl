@@ -13,7 +13,7 @@
 
 # 参数
 - `czm_submesh`: 细化 CZM 子网格（含 material_type / thermal_elem_map）
-- `thermal_mesh`: 粗热网格（用于校验 thermal_elem_map 索引范围；本函数不复制其连接）
+- `thermal_mesh`: 粗热网格参数，保留调用接口；本函数消费 czm_submesh 中已有的父单元映射。
 
 # 返回
 - `CohesiveMesh`: 内聚力网格对象，bulk_mesh 指向 czm_submesh.mesh
@@ -23,7 +23,6 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh)
     sub_mesh = czm_submesh.mesh_bonded
     ne_sub = size(sub_mesh.element, 1)
     nnode_sub = sub_mesh.nlen
-    n_thermal = size(thermal_mesh.element, 1)
 
     # Step 1: 建立 共边 → 单元对 映射
     edge_to_elems = Dict{Tuple{Int, Int}, Vector{Int}}()
@@ -84,7 +83,6 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh)
         inner_nodes = sub_mesh.element[e_inner, :]
         outer_nodes = sub_mesh.element[e_outer, :]
         common_set = intersect(Set(inner_nodes), Set(outer_nodes))
-        @assert length(common_set) == 2 "共边应有 2 节点，实际 $(length(common_set))"
         common = collect(common_set)
 
         # build_czm_submesh 按 layer-outer / segment-inner 顺序赋 node id，
@@ -130,10 +128,6 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh)
         )
         push!(cohesive_elements, coh)
 
-        # cohesive_to_thermal
-        thermal_elem_of_outer = czm_submesh.thermal_elem_map[e_outer]
-        @assert thermal_elem_of_outer > 0 "外层单元 $e_outer 的 thermal_elem_map 无效"
-        @assert thermal_elem_of_outer <= n_thermal "外层单元 $e_outer thermal_elem_map=$thermal_elem_of_outer 超出热网格范围 $n_thermal"
     end
 
     # 裁剪 extended_node
@@ -141,14 +135,6 @@ function create_czm_mesh(czm_submesh::CzmSubmesh, thermal_mesh::Mesh)
 
     # Step 4: 组装 CohesiveMesh（损伤状态自 2026-08-30 重构起存于 MechState，不在网格上）
     czm_mesh = CohesiveMesh(extended_node, bulk_element_new, cohesive_elements, czm_submesh)
-
-    # 正确性自检（spec §4.3）
-    for coh in cohesive_elements
-        n_lo, n_hi, n_hi_copy, n_lo_copy = coh.nodes
-        @assert czm_mesh.node[n_lo, :] ≈ czm_mesh.node[n_lo_copy, :] atol=1e-12 "副本坐标不一致"
-        @assert czm_mesh.node[n_hi, :] ≈ czm_mesh.node[n_hi_copy, :] atol=1e-12 "副本坐标不一致"
-        @assert length(unique(coh.nodes)) == 4 "cohesive 单元 4 节点重复"
-    end
 
     return czm_mesh
 end

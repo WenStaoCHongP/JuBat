@@ -13,8 +13,6 @@ function phase_termination_symbol(phase_type::PhaseType, reason::String)
 end
 
 function state_concentration_variance(case::Case, y_state)
-    y_state === nothing && throw(ArgumentError("state_concentration_variance requires a state vector"))
-
     y = vec(y_state)
     multi_spme = case.opt.model == "SPMe" && case.opt.per_element_spme && case.opt.thermalmodel == "distributed2D"
     Nrn = case.mesh["negative particle"].nlen
@@ -23,7 +21,6 @@ function state_concentration_variance(case::Case, y_state)
     if multi_spme
         ne = size(case.mesh["thermal2D"].element, 1)
         n_chem = case.index["SPMe chemical block length"]
-        length(y) >= ne * n_chem || throw(DimensionMismatch("state vector length $(length(y)) is smaller than the multi-SPMe chemical state length $(ne * n_chem)"))
         cs_n_all = Float64[]
         cs_p_all = Float64[]
         for e in 1:ne
@@ -36,7 +33,6 @@ function state_concentration_variance(case::Case, y_state)
         return var(cs_n_all), var(cs_p_all)
     end
 
-    length(y) >= Nrn + Nrp || throw(DimensionMismatch("state vector length $(length(y)) is smaller than the required particle state length $(Nrn + Nrp)"))
     cs_n = y[1:Nrn]
     cs_p = y[(Nrn + 1):(Nrn + Nrp)]
     return var(cs_n), var(cs_p)
@@ -46,9 +42,7 @@ function postprocess_phase_result(case::Case, phase_type::PhaseType, solve_resul
     time_hist = solve_result["time [s]"]
     voltage_hist = solve_result["cell voltage [V]"]
     isempty(time_hist) && error("postprocess_phase_result requires a non-empty time history")
-    isempty(voltage_hist) && error("postprocess_phase_result requires a non-empty voltage history")
     final_state = solve_result["final_state"]
-    final_state isa NamedTuple || error("postprocess_phase_result requires NamedTuple")
     duration = final_state.t_global-t_start
 
     V_start = voltage_hist[1]
@@ -58,12 +52,10 @@ function postprocess_phase_result(case::Case, phase_type::PhaseType, solve_resul
         T_nodes_K = solve_result["thermal2D final temperature at nodes [K]"]
         T_hist_K = solve_result["thermal2D temperature [K]"]
         isempty(T_nodes_K) && error("postprocess_phase_result requires final distributed temperature nodes")
-        isempty(T_hist_K) && error("postprocess_phase_result requires distributed temperature history")
         T_max = maximum(T_hist_K)
         T_mean_end = mean(T_nodes_K)
     else
         T_hist_K = solve_result["temperature [K]"]
-        isempty(T_hist_K) && error("postprocess_phase_result requires a non-empty temperature history")
         T_max = maximum(T_hist_K)
         T_mean_end = T_hist_K[end]
     end
@@ -83,7 +75,6 @@ function postprocess_phase_result(case::Case, phase_type::PhaseType, solve_resul
     capacity=sum((0.5*(abs(current_A[k-1])+abs(current_A[k]))*(time_hist[k]-time_hist[k-1])/3600.0 for k in 2:length(time_hist));init=0.0)
 
     if phase_type == PHASE_REST
-        initial_state === nothing && error("REST post-processing requires an initial state")
         y_start = initial_state.y
         y_end = final_state.y
         cs_n_init_var, cs_p_init_var = state_concentration_variance(case, y_start)

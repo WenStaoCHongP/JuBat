@@ -112,8 +112,6 @@ function ModelInitialisation_MultiSPMe(case::Case; initial_soc_distribution::Uni
     # 6) 组装全局状态向量
     y0 = [y0_chem_all; T0_nodes]
     # 固定布局在 setup_thermal2D_mesh 建立；自定义 opt.y0 仍按原样逐单元复制。
-    n_chem == case.index["SPMe chemical block length"] || throw(DimensionMismatch(
-        "initial chemical block length $n_chem does not match configured multi-SPMe index"))
 
     return y0
 end
@@ -145,18 +143,15 @@ end
 """
 function update_state(y::AbstractVector, case::Case;element_index::Union{Nothing,Int}=nothing,element_state::Union{Nothing,Vector{Float64}}=nothing,thermal_nodes::Union{Nothing,Vector{Float64}}=nothing)
     ne = size(case.mesh["thermal2D"].element, 1)
-    nT = case.mesh["thermal2D"].nlen
     n_chem = case.index["SPMe chemical block length"]
     y_new = copy(y)
     if element_index !== nothing
         @assert 1 <= element_index <= ne "element_index $element_index out of range [1, $(ne)]"
-        @assert length(element_state) == n_chem "element_state length $(length(element_state)) != n_chem $(n_chem)"
         offset = (element_index - 1) * n_chem
-        y_new[(offset + 1):(offset + n_chem)] .= element_state
+        y_new[(offset + 1):(offset + n_chem)] = element_state
     end
     if thermal_nodes !== nothing
-        @assert length(thermal_nodes) == nT "thermal_nodes length $(length(thermal_nodes)) != nT $(nT)"
-        y_new[case.index["thermal2D temperature"]] .= thermal_nodes
+        y_new[case.index["thermal2D temperature"]] = thermal_nodes
     end
     return y_new
 end

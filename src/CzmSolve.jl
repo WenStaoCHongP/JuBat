@@ -15,9 +15,7 @@ function solve_czm_step(czm_mesh::CohesiveMesh, ms::MechState, param,
         load::MechanicalLoad, czm_opt::CzmOptions; czm_workspace::CZMWorkspace,
         prestress=nothing, boundary=nothing)
     length(ms.u_prev)==2size(czm_mesh.node,1) || throw(DimensionMismatch("CZM displacement length"))
-    all(isfinite,ms.u_prev) || throw(ArgumentError("non-finite CZM displacement"))
     length(ms.damage_states)==length(czm_mesh.cohesive_elements) || throw(DimensionMismatch("element damage history length"))
-    all(s->all(f->isfinite(getfield(s,f)),fieldnames(typeof(s))) && 0<=s.D<=1 && 0<=s.D_visc<=1,ms.damage_states) || throw(ArgumentError("invalid element damage history"))
     czm_opt.winding_prestress && prestress===nothing && throw(ArgumentError(
         "winding_prestress=true requires explicit prestress input"))
     check_czm_workspace(czm_mesh, czm_workspace)
@@ -67,8 +65,6 @@ function czm_viscous_beta(czm_opt::CzmOptions, dt_seconds::Union{Nothing, Real})
     isfinite(τ) && τ >= 0.0 || throw(ArgumentError(
         "CZM viscous_tau must be finite and nonnegative seconds, got $τ"))
     τ == 0.0 && return 1.0
-    dt_seconds === nothing && throw(ArgumentError(
-        "CZM viscosity requires the elapsed physical time in seconds"))
     Δt = Float64(dt_seconds)
     isfinite(Δt) && Δt > 0.0 || throw(ArgumentError(
         "CZM viscosity requires finite positive elapsed seconds, got $Δt"))

@@ -1,8 +1,6 @@
 """Validate the native radial-major, uniformly spaced periodic ring layout."""
 function _polar_ring_grid(mesh::Mesh, mesh_data, param::Params)
     bad(message) = throw(ArgumentError("ThermalPolar2D_Ring: " * message))
-    mesh_data !== nothing && hasproperty(mesh_data, :r) && hasproperty(mesh_data, :ntheta) ||
-        bad("mesh_data must supply r and ntheta")
     r, nt = mesh_data.r, mesh_data.ntheta
     r isa AbstractVector{<:Real} && length(r) >= 2 && all(isfinite, r) &&
         all(>(0), r) && all(>(0), diff(r)) || bad("r must be finite, positive and strictly increasing")
@@ -107,9 +105,6 @@ function ThermalPolar2D_Ring(case::Case, variables::AbstractDict{String,<:Any}, 
     # Each sector contributes its four true overlaps with nodal control volumes.
     # Column sums equal sector areas; row sums equal the control areas below.
     q_elem = variables["heat_source_fields"]
-    q_elem isa AbstractVector{<:Real} && length(q_elem) == size(mesh.element, 1) &&
-        all(isfinite, q_elem) || throw(ArgumentError(
-            "ThermalPolar2D_Ring: heat_source_fields must be a finite real vector with one value per sector"))
     for ir in 1:(length(r_nodes) - 1)
         rmid = 0.5 * (r_nodes[ir] + r_nodes[ir + 1])
         win = 0.25 * (rmid^2 - r_nodes[ir]^2) * dtheta

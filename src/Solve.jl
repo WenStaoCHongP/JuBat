@@ -1,9 +1,6 @@
 function Solve(case::Case;initial_state::Union{NamedTuple,Nothing}=nothing,return_final_state::Bool=false,thermal_variables::Union{Dict{String,Any},Nothing}=nothing,thermal_update_fn::Union{Function,Nothing}=nothing,thermal_record::Bool=false,polar_mesh_data::Any=nothing,czm_snapshots::Union{Vector{CZMSnapshot},Nothing}=nothing,czm_cycle::Int=1,czm_phase::String="unknown",phase_type::Union{Nothing,PhaseType}=nothing,chemical_step_observer::Union{Nothing,Function}=nothing,variables::Dict{String,Any}=Dict{String,Any}())
     check_continuous_feedback(case.opt.czm)
     if case.opt.model == "thermal"
-            if thermal_variables === nothing
-                error("Solve: model==\"thermal\" requires thermal_variables keyword argument")
-            end
             t0 = case.opt.time[1]/case.param.scale.t0
             t_end = case.opt.time[end]/case.param.scale.t0
             dt = case.opt.dt[1]/case.param.scale.t0
@@ -189,9 +186,7 @@ function Solve(case::Case;initial_state::Union{NamedTuple,Nothing}=nothing,retur
     println("\n[Solve] 初始化完成: V=$V_init V, t_end=$(t_end * case.param.scale.t0)")
     # 持久化热场（跨 CallModel 迭代携带）
     T_nodes_carry = if multi_spme_enabled
-        haskey(step_variables, "thermal2D temperature at nodes") || error("multi-SPMe step_variables are missing thermal node temperatures")
         T_nodes_initial = step_variables["thermal2D temperature at nodes"]
-        T_nodes_initial isa AbstractArray || error("multi-SPMe thermal node temperatures must be an array")
         T_nodes_initial = vec(T_nodes_initial)
         length(T_nodes_initial) == case.mesh["thermal2D"].nlen || throw(DimensionMismatch("initial thermal node count $(length(T_nodes_initial)) does not match layout count $(case.mesh["thermal2D"].nlen)"))
         copy(T_nodes_initial)

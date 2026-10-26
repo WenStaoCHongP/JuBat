@@ -7,20 +7,8 @@
 function apply_bc_czm(K::SparseMatrixCSC{Float64,Int64}, F::Vector{Float64}; bc_nodes=nothing, bc_dofs=nothing, bc_vals=nothing)
     if bc_dofs isa MechanicalBCDOFs
         bc_nodes === nothing || throw(ArgumentError("provide only one BC specification"))
-        bc_vals === nothing && throw(ArgumentError("bc_vals required"))
         return apply_mechanical_bc(K,F,bc_dofs,bc_vals)
     end
-    nrow, ncol = size(K)
-    nrow == ncol || throw(DimensionMismatch(
-        "apply_bc_czm requires a square stiffness matrix, got size $(size(K))"
-    ))
-    nrow > 0 || throw(ArgumentError("apply_bc_czm requires a nonempty stiffness matrix"))
-    iseven(nrow) || throw(DimensionMismatch(
-        "apply_bc_czm requires two DOFs per node, got matrix size $(size(K))"
-    ))
-    length(F) == nrow || throw(DimensionMismatch(
-        "load vector length $(length(F)) does not match stiffness size $nrow"
-    ))
 
     node_mode = bc_nodes !== nothing
     dof_mode = bc_dofs !== nothing || bc_vals !== nothing
@@ -30,22 +18,12 @@ function apply_bc_czm(K::SparseMatrixCSC{Float64,Int64}, F::Vector{Float64}; bc_
 
     if node_mode
         isempty(bc_nodes) && throw(ArgumentError("bc_nodes must not be empty"))
-        nnode = nrow ÷ 2
         for (node, bc_type) in bc_nodes
-            node isa Integer || throw(ArgumentError(
-                "BC node index must be an integer, got $(typeof(node))"
-            ))
-            1 <= node <= nnode || throw(ArgumentError(
-                "BC node index $node is outside 1:$nnode"
-            ))
             bc_type in (:fixed_x, :fixed_y, :fixed_xy) || throw(ArgumentError(
                 "unknown CZM boundary type $bc_type for node $node"
             ))
         end
     else
-        bc_dofs !== nothing && bc_vals !== nothing || throw(ArgumentError(
-            "bc_dofs and bc_vals must be provided together"
-        ))
         length(bc_dofs) == length(bc_vals) || throw(DimensionMismatch(
             "bc_dofs length $(length(bc_dofs)) does not match bc_vals length $(length(bc_vals))"
         ))
@@ -54,12 +32,6 @@ function apply_bc_czm(K::SparseMatrixCSC{Float64,Int64}, F::Vector{Float64}; bc_
             "bc_dofs contains duplicate constraints"
         ))
         for (dof, val) in zip(bc_dofs, bc_vals)
-            dof isa Integer || throw(ArgumentError(
-                "BC DOF index must be an integer, got $(typeof(dof))"
-            ))
-            1 <= dof <= nrow || throw(ArgumentError(
-                "BC DOF index $dof is outside 1:$nrow"
-            ))
             val isa Real && isfinite(val) || throw(ArgumentError(
                 "BC value for DOF $dof must be finite, got $val"
             ))
@@ -130,8 +102,6 @@ function identify_bc_nodes_czm(czm_mesh::CohesiveMesh, param; opt=nothing, fix_i
     # Q4 节点序为 [靠内起点, 靠外起点, 靠外终点, 靠内终点]；CZM 节点复制后
     # 必须从 bulk_element 读取，才能约束实际承载层上的节点。
     submesh = czm_mesh.czm_submesh
-    submesh === nothing && error(
-        "identify_bc_nodes_czm requires a layered CzmSubmesh to identify spiral endpoints")
     start_nodes, end_nodes, a, b = mechanical_endpoint_topology(submesh, czm_mesh.bulk_element)
 
     if fix_inner
@@ -177,13 +147,7 @@ struct MechanicalBoundary
 end
 
 function mechanical_endpoint_topology(submesh::CzmSubmesh, elements::Matrix{Int64})
-    n_bulk, n_vertices = size(elements)
-    n_vertices == 4 || throw(DimensionMismatch("mechanical endpoint topology requires Q4 elements"))
-    length(submesh.material_type) == n_bulk || throw(DimensionMismatch(
-        "mechanical material count does not match bulk element count $n_bulk"))
-    length(submesh.thermal_elem_map) == n_bulk || throw(DimensionMismatch(
-        "mechanical thermal map does not match bulk element count $n_bulk"))
-    isempty(submesh.thermal_elem_map) && throw(ArgumentError("mechanical thermal map must not be empty"))
+    n_bulk = size(elements, 1)
     n_segments = maximum(submesh.thermal_elem_map)
     n_segments > 0 || throw(ArgumentError("mechanical angular segment count must be positive"))
     n_bulk % n_segments == 0 || throw(DimensionMismatch(
@@ -204,9 +168,7 @@ function mechanical_endpoint_topology(submesh::CzmSubmesh, elements::Matrix{Int6
         union!(end_nodes, (elements[last_elem, 4], elements[last_elem, 3]))
     end
     sp_layers = findall(==(:SP), layer_materials)
-    length(sp_layers) >= 2 || throw(ArgumentError("mechanical endpoints require two SP layers"))
     pe_layer = findfirst(==(:PE), layer_materials)
-    pe_layer === nothing && throw(ArgumentError("mechanical endpoints require a PE layer"))
     a = elements[(sp_layers[2] - 1) * n_segments + 1, 2]
     b = elements[pe_layer * n_segments, 4]
     return start_nodes, end_nodes, a, b
@@ -288,8 +250,6 @@ relies on this override).
 function resolve_mechanical_bc(czm_mesh::CohesiveMesh, param, czm_opt::CzmOptions;
     endpoint_variant::Union{Nothing,Symbol}=nothing, opt=nothing)
     submesh = czm_mesh.czm_submesh
-    submesh === nothing && throw(ArgumentError(
-        "resolve_mechanical_bc requires a layered CzmSubmesh"))
     return _resolve_mechanical_bc(czm_mesh, czm_mesh.bulk_element, submesh, param, czm_opt;
         endpoint_variant=something(endpoint_variant, czm_opt.endpoint_variant), opt=opt, bonded=false)
 end
@@ -375,8 +335,6 @@ end
 
 function apply_mechanical_bc(K::SparseMatrixCSC{Float64,Int64}, F::Vector{Float64},
                              d::MechanicalBCDOFs, vals)
-    size(K,1) == size(K,2) == length(F) == size(d.projector,1) ||
-        throw(DimensionMismatch("directional BC matrix/load/mesh dimensions differ"))
     length(vals) == length(d) && all(iszero, vals) || throw(ArgumentError(
         "directional mechanical support requires homogeneous prescribed values"))
     scale = maximum(abs,diag(K))
